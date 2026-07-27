@@ -19,9 +19,9 @@ changes.
   Activities. Abuse limits are 300 requests per service per minute and 1,500 per account per minute.
 - Only `/api/health` is anonymously readable. Human-facing pages, docs exports, assets, and source
   links require an admitted session.
-- Production uses the `shark-prod` deployment, immutable SHA image tags, Bitwarden-fed secrets,
-  exact-schema SQLite checkpoint validation, encrypted Restic snapshots, and a restricted
-  manual-dispatch deployment key.
+- Production uses the `shark-prod` deployment, attested immutable GHCR digests,
+  Infisical-fed secrets, exact-schema SQLite checkpoint validation, encrypted Restic snapshots,
+  and operator promotion with no GitHub VM credential.
 
 ## Compatibility names kept intentionally
 

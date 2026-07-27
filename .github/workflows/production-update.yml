@@ -10,21 +10,23 @@ on:
 
 permissions:
   contents: read
+  packages: write
+  attestations: write
+  id-token: write
 
 concurrency:
   group: shark-production-update
   cancel-in-progress: false
 
 jobs:
-  verify-and-deploy:
-    name: Verify and deploy reviewed SHA
+  verify-and-publish:
+    name: Verify and publish reviewed SHA
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: shark-production
     timeout-minutes: 45
-    env:
-      DEPLOY_HOST: ${{ secrets.SHARK_DEPLOY_HOST }}
-      SSH_PRIVATE_KEY: ${{ secrets.SHARK_DEPLOY_SSH_PRIVATE_KEY }}
-      SSH_KNOWN_HOSTS: ${{ secrets.SHARK_DEPLOY_SSH_KNOWN_HOSTS }}
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
 
     steps:
       - name: Check out exact source
@@ -55,44 +57,42 @@ jobs:
           bash -n deploy/shark-deploy deploy/shark-backup \
             deploy/shark-materialize-secrets deploy/shark-restic-backup deploy/test-helpers
           deploy/test-helpers
-          docker build --tag "shark:${GITHUB_SHA}" .
 
-      - name: Create exact-source archive
-        run: git archive --format=tar.gz --output=shark-source.tar.gz "$GITHUB_SHA"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Configure restricted SSH transport
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish immutable image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Attest image provenance
+        uses: actions/attest@v4
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Record promotion coordinates
         run: |
-          install -m 700 -d ~/.ssh
-          install -m 600 /dev/null ~/.ssh/shark_deploy
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/shark_deploy
-          install -m 600 /dev/null ~/.ssh/known_hosts
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-
-      - name: Deploy through the host wrapper
-        run: |
-          ssh -i ~/.ssh/shark_deploy \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o RequestTTY=no \
-            "$DEPLOY_HOST" "deploy ${GITHUB_SHA}" < shark-source.tar.gz
-
-      - name: Verify private production boundary
-        run: |
-          curl --fail --show-error --silent --retry 12 --retry-all-errors \
-            https://shark.shuv.dev/api/health >/dev/null
-          for path in / /docs /privacy /terms /dashboard /cli/authorize; do
-            status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
-              "https://shark.shuv.dev${path}")"
-            case "$status" in
-              302|303|307|401) ;;
-              *) echo "Unexpected anonymous status ${status} for ${path}" >&2; exit 1 ;;
-            esac
-          done
-          for path in /robots.txt /sitemap.xml; do
-            status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
-              "https://shark.shuv.dev${path}")"
-            [[ "$status" == "404" ]] || {
-              echo "Unexpected removed-surface status ${status} for ${path}" >&2
-              exit 1
-            }
-          done
+          {
+            echo "## SHark production candidate"
+            echo
+            echo "- Git SHA: \`${GITHUB_SHA}\`"
+            echo "- Image: \`ghcr.io/${GITHUB_REPOSITORY}@${{ steps.push.outputs.digest }}\`"
+            echo
+            echo "Promote only after this run and its required source checks are green."
+          } >>"$GITHUB_STEP_SUMMARY"

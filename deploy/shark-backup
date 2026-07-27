@@ -2,11 +2,15 @@
 set -euo pipefail
 
 deploy_root="/home/exedev/shark"
-current_release="$(readlink "$deploy_root/current")"
-deploy_sha="$(basename "$current_release")"
+current_file="$deploy_root/current"
+compose_file="/etc/shark/compose.yaml"
 runtime_env="$deploy_root/.env"
+deploy_sha="$(jq -er '.git_sha' "$current_file")"
+image="$(jq -er '.image' "$current_file")"
 
-if [[ ! "$deploy_sha" =~ ^[0-9a-f]{40}$ || ! -f "$current_release/compose.yaml" ]]; then
+if [[ ! "$deploy_sha" =~ ^[0-9a-f]{40}$ ||
+  ! "$image" =~ ^ghcr\.io/shuv1337/shark@sha256:[0-9a-f]{64}$ ||
+  ! -f "$compose_file" ]]; then
   echo "No valid current SHark release." >&2
   exit 66
 fi
@@ -21,7 +25,7 @@ stage="$(mktemp -d "$deploy_root/nightly-backup.XXXXXXXX")"
 volume_backup=""
 cleanup() {
   if [[ -n "$volume_backup" ]]; then
-    docker run --rm --volume shark-data:/data "shark:$deploy_sha" \
+    docker run --rm --volume shark-data:/data "$image" \
       rm -f "$volume_backup" >/dev/null 2>&1 || true
   fi
   rm -rf "$stage"
@@ -30,11 +34,11 @@ compose=(
   docker compose
   --project-name shark
   --env-file "$runtime_env"
-  --file "$current_release/compose.yaml"
+  --file "$compose_file"
 )
 
 restart() {
-  DEPLOY_GIT_SHA="$deploy_sha" "${compose[@]}" up --detach
+  DEPLOY_GIT_SHA="$deploy_sha" SHARK_IMAGE="$image" "${compose[@]}" up --detach
 }
 trap 'restart; cleanup' EXIT
 
@@ -42,23 +46,23 @@ trap 'restart; cleanup' EXIT
 chmod 600 "$runtime_env.new"
 mv "$runtime_env.new" "$runtime_env"
 
-DEPLOY_GIT_SHA="$deploy_sha" "${compose[@]}" stop
+DEPLOY_GIT_SHA="$deploy_sha" SHARK_IMAGE="$image" "${compose[@]}" stop
 backup_name="hark.sqlite.nightly-$(date -u +%Y%m%dT%H%M%SZ)"
 volume_backup="/data/backups/$backup_name"
 docker run --rm \
   --volume shark-data:/data \
   --env DATABASE_URL=/data/hark.sqlite \
   --env "BACKUP_DATABASE_URL=$volume_backup" \
-  "shark:$deploy_sha" \
+  "$image" \
   node dist/operator/backup-database.js >/dev/null
 
-copy_container="$(docker create --volume shark-data:/data "shark:$deploy_sha")"
+copy_container="$(docker create --volume shark-data:/data "$image")"
 docker cp "$copy_container:/data/backups/$backup_name" "$stage/$backup_name"
 docker rm "$copy_container" >/dev/null
 
 snapshot_id="$(/usr/local/sbin/shark-restic-backup "$stage/$backup_name")"
 rm -f "$stage/$backup_name"
-docker run --rm --volume shark-data:/data "shark:$deploy_sha" \
+docker run --rm --volume shark-data:/data "$image" \
   rm -f "$volume_backup" >/dev/null
 volume_backup=""
 restart

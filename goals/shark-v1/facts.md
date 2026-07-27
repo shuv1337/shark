@@ -23,9 +23,10 @@
 - Internal TestFlight acceptance uses one allowlisted operator account on two physical iPhones; no public TestFlight or public App Store release is in v1.
 - Production runs on a new `shark-prod` exe.dev VM in PDX with 2 vCPU, 4 GB RAM, 25 GB disk, and deploy root `/home/exedev/shark`.
 - `shark.shuv.dev` uses a Cloudflare DNS-only CNAME and exe.dev managed HTTPS; `TRUSTED_CLIENT_IP_HEADER` remains unset in v1.
-- The VM fetches scoped application secrets from Bitwarden Secrets Manager; GitHub stores only its restricted deploy key and pinned host verification.
-- Deployment is manual-dispatch GitHub Actions over a VM-only forced-command SSH key with shell, PTY, agent forwarding, and port forwarding disabled; the key rotates every 90 days.
+- The VM fetches scoped secrets from separate application and backup Infisical projects using separate project-level Viewer machine identities.
+- Manual-dispatch GitHub Actions on `main` only verifies, publishes, and attests an immutable public GHCR image; it has no production VM credential and cannot deploy.
+- The operator promotes an exact GHCR digest through the existing exe.dev identity, and the VM verifies its repository, workflow, `main` source SHA, and hosted-runner attestation before cutover.
 - Restic backs up to rsync.net at 2:00 AM America/Los_Angeles and before deploys with 7 daily, 4 weekly, and 6 monthly retention.
-- The Restic password exists only in Bitwarden; repository verification is a quarterly restore drill with no additional weekly or monthly check job.
+- The Restic password exists only in Infisical; repository verification is a quarterly restore drill with no additional weekly or monthly check job.
 - Production retains only seven days of capped, redacted local logs and has no centralized logging or proactive alerts in v1.
 - Completion requires the full automated baseline, signed-artifact inspection, two-device acceptance, production deploy, backup/restore proof, rollback proof, internal TestFlight installation, and recorded release provenance.

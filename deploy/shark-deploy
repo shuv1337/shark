@@ -1,125 +1,116 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Reference forced-command wrapper for the dedicated shark-prod SSH key.
-# Install this outside the release tree and set authorized_keys command= to it.
+# Operator-invoked promotion helper. GitHub has no production shell credential.
 
-original_command="${SSH_ORIGINAL_COMMAND:-${*:-}}"
-read -r action deploy_sha extra <<<"$original_command"
-if [[ "$action" != "deploy" || ! "$deploy_sha" =~ ^[0-9a-f]{40}$ || -n "${extra:-}" ]]; then
-  echo "Rejected deployment command." >&2
+deploy_sha="${1:-}"
+image_digest="${2:-}"
+if [[ "$#" -ne 2 || ! "$deploy_sha" =~ ^[0-9a-f]{40}$ ||
+  ! "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  echo "Usage: shark-deploy <40-character Git SHA> <sha256:image-digest>" >&2
   exit 64
 fi
 
+for command in curl docker flock gh install jq; do
+  command -v "$command" >/dev/null || {
+    echo "Required command is unavailable: $command" >&2
+    exit 69
+  }
+done
+
 deploy_root="/home/exedev/shark"
-releases_root="$deploy_root/releases"
-release_dir="$releases_root/$deploy_sha"
+compose_file="/etc/shark/compose.yaml"
 runtime_env="$deploy_root/.env"
 provenance_root="$deploy_root/provenance"
 lock_file="$deploy_root/deploy.lock"
+image="ghcr.io/shuv1337/shark@$image_digest"
 
-install -d -m 700 "$deploy_root" "$releases_root" "$provenance_root"
+if [[ ! -f "$compose_file" || -L "$compose_file" ]]; then
+  echo "The root-owned SHark Compose definition is unavailable." >&2
+  exit 78
+fi
+
+install -d -m 700 "$deploy_root" "$provenance_root"
 exec 9>"$lock_file"
 flock -n 9 || {
   echo "Another SHark deployment is active." >&2
   exit 75
 }
 
-incoming="$(mktemp -d "$deploy_root/incoming.XXXXXXXX")"
-backup_stage="$(mktemp -d "$deploy_root/backup.XXXXXXXX")"
-volume_backup=""
-cleanup() {
-  if [[ -n "$volume_backup" ]]; then
-    docker run --rm --volume shark-data:/data "shark:$deploy_sha" \
-      rm -f "$volume_backup" >/dev/null 2>&1 || true
-  fi
-  rm -rf "$incoming" "$backup_stage"
-}
-trap cleanup EXIT
+# Fetch the attestation from the public OCI package so the VM needs neither a
+# GitHub shell credential nor a registry credential.
+gh attestation verify "oci://$image" \
+  --repo shuv1337/shark \
+  --bundle-from-oci \
+  --deny-self-hosted-runners \
+  --signer-workflow shuv1337/shark/.github/workflows/production-update.yml \
+  --source-ref refs/heads/main \
+  --source-digest "$deploy_sha" >/dev/null
 
-archive="$incoming/source.tar.gz"
-source_dir="$incoming/source"
-install -d -m 700 "$source_dir"
-umask 077
-dd of="$archive" status=none
-
-while IFS= read -r member; do
-  if [[ "$member" == /* || "$member" == ".." || "$member" == ../* || "$member" == */../* ]]; then
-    echo "Source archive contains an unsafe path." >&2
-    exit 65
-  fi
-done < <(tar -tzf "$archive")
-
-tar -xzf "$archive" -C "$source_dir"
-if [[ -e "$release_dir" ]]; then
-  echo "Release already exists: $deploy_sha" >&2
-  exit 65
+docker pull "$image" >/dev/null
+resolved_digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$image")"
+if [[ "$resolved_digest" != "$image" ]]; then
+  echo "Pulled image digest does not match the reviewed digest." >&2
+  exit 70
 fi
-mv "$source_dir" "$release_dir"
 
-# This root-owned helper fetches the scoped application secrets directly from
-# Bitwarden Secrets Manager and atomically writes the requested file.
 /usr/local/sbin/shark-materialize-secrets "$runtime_env.new"
 chmod 600 "$runtime_env.new"
 mv "$runtime_env.new" "$runtime_env"
 
-compose=(docker compose --project-name shark --env-file "$runtime_env" --file "$release_dir/compose.yaml")
-DEPLOY_GIT_SHA="$deploy_sha" "${compose[@]}" build
-
-previous_release=""
+compose=(docker compose --project-name shark --env-file "$runtime_env" --file "$compose_file")
 previous_sha=""
-if [[ -L "$deploy_root/current" ]]; then
-  previous_release="$(readlink "$deploy_root/current")"
-  previous_sha="$(basename "$previous_release")"
+previous_image=""
+current_file="$deploy_root/current"
+if [[ -f "$current_file" ]]; then
+  previous_sha="$(jq -er '.git_sha' "$current_file")"
+  previous_image="$(jq -er '.image' "$current_file")"
 fi
 
 rollback_previous() {
-  if [[ -n "$previous_release" && -f "$previous_release/compose.yaml" ]]; then
-    DEPLOY_GIT_SHA="$previous_sha" docker compose \
-      --project-name shark \
-      --env-file "$runtime_env" \
-      --file "$previous_release/compose.yaml" \
-      up --detach
+  if [[ "$previous_sha" =~ ^[0-9a-f]{40}$ &&
+    "$previous_image" =~ ^ghcr\.io/shuv1337/shark@sha256:[0-9a-f]{64}$ ]]; then
+    DEPLOY_GIT_SHA="$previous_sha" SHARK_IMAGE="$previous_image" "${compose[@]}" up --detach
   fi
 }
 
-if [[ -n "$previous_release" ]]; then
-  DEPLOY_GIT_SHA="$previous_sha" docker compose \
-    --project-name shark \
-    --env-file "$runtime_env" \
-    --file "$previous_release/compose.yaml" \
-    stop
+if [[ -n "$previous_image" ]]; then
+  DEPLOY_GIT_SHA="$previous_sha" SHARK_IMAGE="$previous_image" "${compose[@]}" stop
 fi
-trap 'rollback_previous; cleanup' ERR
+trap rollback_previous ERR
+
+backup_stage="$(mktemp -d "$deploy_root/backup.XXXXXXXX")"
+volume_backup=""
+cleanup() {
+  if [[ -n "$volume_backup" ]]; then
+    docker run --rm --volume shark-data:/data "$image" \
+      rm -f "$volume_backup" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$backup_stage"
+}
+trap cleanup EXIT
 
 backup_id="none-first-deploy"
-if docker run --rm --volume shark-data:/data "shark:$deploy_sha" \
-  sh -c 'test -f /data/hark.sqlite'
-then
+if docker run --rm --volume shark-data:/data "$image" sh -c 'test -f /data/hark.sqlite'; then
   backup_name="hark.sqlite.pre-$deploy_sha"
   volume_backup="/data/backups/$backup_name"
   docker run --rm \
     --volume shark-data:/data \
     --env DATABASE_URL=/data/hark.sqlite \
     --env "BACKUP_DATABASE_URL=$volume_backup" \
-    "shark:$deploy_sha" \
-    node dist/operator/backup-database.js >/dev/null
+    "$image" node dist/operator/backup-database.js >/dev/null
 
-  copy_container="$(docker create --volume shark-data:/data "shark:$deploy_sha")"
+  copy_container="$(docker create --volume shark-data:/data "$image")"
   docker cp "$copy_container:/data/backups/$backup_name" "$backup_stage/$backup_name"
   docker rm "$copy_container" >/dev/null
 
-  # This root-owned helper fetches the Restic repository credentials from
-  # Bitwarden, writes the encrypted snapshot, verifies it, applies retention,
-  # deletes the plaintext staging copy, and prints only the snapshot ID.
   backup_id="$(/usr/local/sbin/shark-restic-backup "$backup_stage/$backup_name")"
   rm -f "$backup_stage/$backup_name"
-  docker run --rm --volume shark-data:/data "shark:$deploy_sha" \
-    rm -f "$volume_backup" >/dev/null
+  docker run --rm --volume shark-data:/data "$image" rm -f "$volume_backup" >/dev/null
   volume_backup=""
 fi
 
-DEPLOY_GIT_SHA="$deploy_sha" "${compose[@]}" up --detach
+DEPLOY_GIT_SHA="$deploy_sha" SHARK_IMAGE="$image" "${compose[@]}" up --detach
 for _attempt in $(seq 1 30); do
   if curl --fail --silent http://127.0.0.1:8787/api/health >/dev/null; then
     break
@@ -128,16 +119,16 @@ for _attempt in $(seq 1 30); do
 done
 curl --fail --silent http://127.0.0.1:8787/api/health >/dev/null
 
-container_id="$(DEPLOY_GIT_SHA="$deploy_sha" "${compose[@]}" ps --quiet shark)"
+container_id="$(DEPLOY_GIT_SHA="$deploy_sha" SHARK_IMAGE="$image" "${compose[@]}" ps --quiet shark)"
 running_image_id="$(docker inspect --format '{{.Image}}' "$container_id")"
-expected_image_id="$(docker image inspect --format '{{.Id}}' "shark:$deploy_sha")"
+expected_image_id="$(docker image inspect --format '{{.Id}}' "$image")"
 if [[ "$running_image_id" != "$expected_image_id" ]]; then
-  echo "Running container image does not match reviewed SHA image." >&2
+  echo "Running container image does not match the reviewed digest." >&2
   exit 70
 fi
 
 curl --fail --silent https://shark.shuv.dev/api/health >/dev/null
-for path in / /docs; do
+for path in / /docs /privacy /terms /dashboard /cli/authorize; do
   status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
     "https://shark.shuv.dev${path}")"
   case "$status" in
@@ -145,15 +136,28 @@ for path in / /docs; do
     *) echo "Unexpected anonymous status $status for $path" >&2; exit 70 ;;
   esac
 done
+for path in /robots.txt /sitemap.xml; do
+  status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    "https://shark.shuv.dev${path}")"
+  [[ "$status" == "404" ]] || {
+    echo "Unexpected removed-surface status $status for $path" >&2
+    exit 70
+  }
+done
 
-ln -sfn "$release_dir" "$deploy_root/current"
-printf '%s\n' \
-  "git_sha=$deploy_sha" \
-  "image_id=$running_image_id" \
-  "backup_id=$backup_id" \
-  "deployed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  >"$provenance_root/$deploy_sha.txt"
-chmod 600 "$provenance_root/$deploy_sha.txt"
+provenance_file="$provenance_root/$deploy_sha.json"
+jq -n \
+  --arg git_sha "$deploy_sha" \
+  --arg image "$image" \
+  --arg image_id "$running_image_id" \
+  --arg backup_id "$backup_id" \
+  --arg deployed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  '{git_sha:$git_sha,image:$image,image_id:$image_id,backup_id:$backup_id,deployed_at:$deployed_at}' \
+  >"$provenance_file"
+chmod 600 "$provenance_file"
+cp "$provenance_file" "$current.new"
+mv "$current.new" "$current_file"
 
+trap - ERR
 trap cleanup EXIT
-echo "Deployed SHark $deploy_sha"
+echo "Deployed SHark $deploy_sha at $image_digest"

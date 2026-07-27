@@ -29,7 +29,7 @@ now been written into the plan:
   Apple relay address when that is the account's address. The plan now reflects
   this rather than the earlier “Share My Email required / relay denied” policy.
 - The deployment section is specialized for exe.dev, Cloudflare DNS-only,
-  rsync.net, Restic, and Bitwarden Secrets Manager.
+  GHCR, rsync.net, Restic, and Infisical.
 - All test builds must use Sqim.
 
 Grilling is complete and the user confirmed the resulting shared understanding.
@@ -82,16 +82,19 @@ The plan and this handoff now serve as the implementation contract.
     `X-Forwarded-For`.
   - Hark currently reads the first value, which would be spoofable.
   - Account/service rate limits remain active without a trusted IP header.
-- Deployment initiator: **manual-dispatch GitHub Actions workflow over SSH**.
+- Build/publish initiator: **manual-dispatch GitHub Actions workflow on
+  `main`**.
+- Deployment initiator: **the operator, through their existing exe.dev
+  identity, selecting an exact attested GHCR digest**.
 - VM name: **`shark-prod`**.
 - Deploy directory: **`/home/exedev/shark`**.
-- GitHub deploy authentication: a dedicated `shark-prod`-only forced-command
-  SSH key with shell, PTY, agent forwarding, and port forwarding disabled;
-  rotate every 90 days.
-- `shark-prod` fetches its own scoped application secrets from Bitwarden.
-  GitHub stores only the deploy key and pinned host-verification material.
-- Immutable images: retain full-Git-SHA tags **on the production host**, record
-  image digests, and keep enough tags for rollback.
+- GitHub has **no production VM credential** and cannot perform the cutover.
+- GitHub publishes and attests a public GHCR image for the exact `main` SHA;
+  `shark-prod` pulls it anonymously by digest and verifies repository,
+  workflow, ref, source SHA, and hosted-runner provenance.
+- `shark-prod` fetches its own scoped application secrets from Infisical.
+- Immutable images: deploy only full `ghcr.io/shuv1337/shark@sha256:...`
+  references and retain every recorded rollback digest.
 
 ### Backups and secrets
 
@@ -99,15 +102,15 @@ The plan and this handoff now serve as the implementation contract.
 - Backup tool: **Restic over SFTP**.
 - Restic provides encryption, repository checks, snapshots, retention, and
   restore support.
-- Secret source of truth: **Bitwarden**.
-- Machine access: **Bitwarden Secrets Manager** with scoped projects/machine
-  accounts, not a personal-vault CLI session.
+- Secret source of truth: **managed Infisical Cloud**.
+- Machine access: **two project-level Viewer machine identities using
+  Universal Auth**, one for application secrets and one for backup secrets.
 - GitHub and the production VM receive only the values they need.
 - Restic repository suffix: **`repos/shark-prod`**.
 - Backup cadence: nightly at **2:00 AM America/Los_Angeles** plus one verified
   pre-deploy snapshot.
 - Retention: **7 daily / 4 weekly / 6 monthly**.
-- The only Restic repository password copy is in Bitwarden; there is no offline
+- The only Restic repository password copy is in Infisical; there is no offline
   or second-vault copy.
 - Repository verification is a **quarterly restore drill only**. Do not add
   weekly or monthly check jobs in v1.

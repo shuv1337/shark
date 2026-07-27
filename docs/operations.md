@@ -27,7 +27,10 @@ webhooks, interaction credentials, device authorization, and Live Activity crede
 next request. Then run the bundled offboarding command in the production image:
 
 ```sh
-DEPLOY_GIT_SHA='<deployed-full-sha>' docker compose run --rm --no-deps \
+DEPLOY_GIT_SHA='<deployed-full-sha>' \
+SHARK_IMAGE='ghcr.io/shuv1337/shark@sha256:<deployed-digest>' \
+docker compose --env-file /home/exedev/shark/.env --file /etc/shark/compose.yaml \
+  run --rm --no-deps \
   -e OFFBOARD_EMAIL='exact-apple-email@example.com' \
   shark node dist/operator/offboard-user.js
 ```
@@ -37,14 +40,14 @@ authenticated account-deletion flow only for permanent deletion.
 
 ## Backup and restore
 
-Before every non-first deployment, the forced-command wrapper stops the app, checkpoints the WAL,
+Before every non-first deployment, the operator promotion helper stops the app, checkpoints the WAL,
 copies the main SQLite file, opens the copy read-only, requires `integrity_check = ok`, verifies the
 exact migration timestamp/count and required table set, then requires a verified encrypted Restic
 snapshot before starting the new image.
 
 The rsync.net repository suffix is `repos/shark-prod`. Nightly snapshots run at 02:00
 `America/Los_Angeles`; retention is 7 daily, 4 weekly, and 6 monthly. The Restic password exists
-only in Bitwarden Secrets Manager, so Bitwarden recovery is an explicit disaster-recovery
+only in Infisical, so Infisical recovery is an explicit disaster-recovery
 dependency.
 
 Quarterly, restore a selected snapshot into a disposable Compose project. Verify migration state,
@@ -54,10 +57,13 @@ Expired push tokens are expected; reopening each iPhone re-registers it.
 
 ## Deployment and rollback
 
-The manual GitHub workflow verifies the monorepo and a local image, archives the exact Git SHA, and
-sends it to a VM-only restricted SSH key. The host fetches application and backup secrets directly
-from Bitwarden. It builds `shark:<full-sha>`, records the image ID, pre-deploy snapshot ID, source
-SHA, and timestamp, and proves the running container uses that image.
+The manual GitHub workflow on `main` verifies the monorepo, publishes
+`ghcr.io/shuv1337/shark:<full-sha>`, and attests the exact image digest. It has no VM credential and
+does not deploy. The operator invokes the production helper through their existing exe.dev
+identity with the reviewed SHA and digest. The host anonymously pulls the public image, verifies
+its repository, signer workflow, `main` ref, source SHA, hosted runner, and digest, then fetches
+application and backup secrets through separate Infisical machine identities. It records the image
+ID and digest, pre-deploy snapshot ID, source SHA, and timestamp.
 
 For rollback, stop the current container, select the previous recorded full SHA and image ID,
 restore the matching pre-deploy database only when migrations are incompatible, start the previous

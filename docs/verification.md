@@ -48,6 +48,11 @@ logs. Unchecked release evidence keeps the goal active.
   commit `220ad59b0fde4cc57f421cc23f6ceca668370389` were installed root-owned on `shark-prod`.
   `/etc/shark` exists with the documented boundary; no credentials were installed and the backup
   timer remains disabled.
+- 2026-07-27: after exe.dev proved the forced-command boundary impossible, the reviewed plan and
+  helpers were revised to publish an attested public GHCR digest, require operator promotion, and
+  use separate Infisical application/backup identities. The new local helper fixtures pass and a
+  failed Infisical read preserves the last good runtime environment. The older `bws` binary and
+  wrappers installed on `shark-prod` are inactive and superseded, not production-ready evidence.
 - 2026-07-27: GitHub environment `shark-production` exists and accepts deployments only from
   `main`; it contains no production credentials.
 - 2026-07-27: `main` branch protection requires the strict, up-to-date GitHub Actions
@@ -76,11 +81,11 @@ logs. Unchecked release evidence keeps the goal active.
   portal steps.
 - Production DNS: the active Cloudflare token is read-only and the managed browser cannot reach
   the Cloudflare dashboard. `shark.shuv.dev` still does not resolve.
-- Bitwarden production projects and scoped machine accounts: the authenticated organization is at
-  its three-project plan limit. No unrelated project was reused or removed.
-- Restricted deployment transport: exe.dev terminates SSH at its account gateway and does not
-  expose a per-key VM `authorized_keys` boundary. A VM-tagged key would retain shell access, so no
-  GitHub deployment key was created while the operator chooses a safer replacement.
+- Infisical production organization, two projects, and two scoped Viewer machine identities:
+  pending operator-owned account setup and non-secret project IDs.
+- GHCR publication/promotion: pending merge to `main`, a green manual publisher run, explicit
+  public package visibility, anonymous pull/attestation verification on `shark-prod`, and
+  installation of the revised helpers and Compose definition. No GitHub deployment key exists.
 - Exact-head CI: all tests, typecheck, lint, and the production build pass on Ubuntu. The brand
   check found platform-dependent PNG compression bytes; decoded raster bytes are identical on
   macOS and Ubuntu. The focused pure-JavaScript compression fix awaits operator approval.

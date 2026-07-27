@@ -1,7 +1,6 @@
 services:
   shark:
-    image: shark:${DEPLOY_GIT_SHA:?set DEPLOY_GIT_SHA to the reviewed full Git SHA}
-    build: .
+    image: ${SHARK_IMAGE:?set SHARK_IMAGE to the reviewed immutable GHCR digest}
     ports:
       # Bind publicly only behind a trusted proxy; auth rate limits use its client-IP headers.
       - "127.0.0.1:8787:8787"

@@ -36,7 +36,7 @@ Complete these actions in Certificates, Identifiers & Profiles:
    `https://shark.shuv.dev/api/auth/callback/apple`.
 5. Create or select a Sign in with Apple key for this service and an APNs authentication key for
    SHark delivery. Record only their key IDs outside the portal; encode each downloaded `.p8` as
-   single-line base64 directly into its eventual Bitwarden project. Never commit or paste key
+   single-line base64 directly into its eventual Infisical project. Never commit or paste key
    material into an issue, PR, log, or chat.
 
 Apple's immutable default In-App Purchase capability on the primary ID is tolerated. Do not create
@@ -63,7 +63,7 @@ After completing the one-time `eas login` browser authorization:
 2. Record its UUID as `EAS_PROJECT_ID`; the repository must never fall back to an upstream UUID.
 3. Enable enhanced push security.
 4. Create a server access token for Expo Push Service and store it as `EXPO_ACCESS_TOKEN` in the
-   SHark application Bitwarden project. Do not use an interactive EAS session token as the server
+   SHark application Infisical project. Do not use an interactive EAS session token as the server
    credential.
 5. Import or create only operator-owned distribution, provisioning, and APNs credentials.
 
@@ -90,12 +90,14 @@ Do not make the exe.dev HTTP share public or change its selected port until the 
 container is ready on loopback port `8787`. At cutover, select port `8787`, make the share public,
 and verify that `/api/health` is the only anonymous content response.
 
-## Bitwarden Secrets Manager
+## Infisical
 
-The currently authenticated organization is at its three-project plan limit. Add capacity or use a
-separate operator-controlled organization; do not reuse, rename, or delete an unrelated project.
+Create an operator-owned managed Infisical Cloud organization. The current Free tier allows up to
+five identities and three projects, which fits the operator plus these two projects and two
+project-level machine identities. Do not self-host the secret control plane on `shark-prod`.
 
-Create two projects and two different read-only machine accounts:
+Create two projects with a `prod` environment and two different project-level Viewer machine
+identities using Universal Auth:
 
 - Application project:
   - `ALLOWED_EMAILS`
@@ -110,30 +112,37 @@ Create two projects and two different read-only machine accounts:
   - `RESTIC_REPOSITORY`
   - `RESTIC_PASSWORD`
 
-Provision their project UUIDs and machine tokens into the four root-owned `/etc/shark` bootstrap
-files documented in `../deploy/README.md`. The application and backup machine accounts must not be
-able to read each other's projects.
+Provision their project IDs, client IDs, and client secrets into the six root-owned `/etc/shark`
+bootstrap files documented in `../deploy/README.md`. Configure short-lived access tokens. The
+application and backup identities must not be able to read each other's projects.
 
 ## rsync.net/Restic
 
 Create a dedicated passwordless SSH key and an account-relative repository at
 `repos/shark-prod`. Pin the rsync.net host key and initialize the exact SFTP repository once. The
-only Restic repository-password copy lives in the backup Bitwarden project.
+only Restic repository-password copy lives in the backup Infisical project.
 
 Before enabling the nightly timer, require a real encrypted snapshot, exact byte-for-byte streamed
 restore verification, `restic check`, and a disposable database restore with schema and data
 checks.
 
-## Deployment transport decision
+## Deployment publication and promotion
 
 exe.dev terminates SSH at its account gateway and does not expose per-key VM `authorized_keys`.
-Therefore the originally planned VM-side forced-command SSH key is not implementable:
+The selected replacement is a split publish/promote boundary:
 
-- Recommended: GitHub verifies/packages the exact `main` SHA and the operator invokes the host
-  deployment with the existing exe.dev identity. GitHub stores no production shell credential.
-- Alternative: a key tagged only to `shark-prod`, explicitly accepting that possession of the key
-  grants shell access to that VM.
-- Alternative: a self-hosted GitHub runner on `shark-prod`, explicitly accepting its persistent
-  shell-level trust.
+1. The manual GitHub workflow runs only from `main`, verifies the source, publishes
+   `ghcr.io/shuv1337/shark:<full-sha>`, and attaches build provenance to the exact digest.
+2. Make that GHCR package public. It contains no secrets or private source, and public GHCR images
+   can be pulled without placing a registry credential on the VM.
+3. Record the full SHA and `sha256:` digest from the green workflow.
+4. Through the existing operator exe.dev identity, invoke:
 
-Do not configure a production transport until the operator selects one of these boundaries.
+   ```sh
+   /usr/local/sbin/shark-deploy <full-main-sha> <sha256:image-digest>
+   ```
+
+The host helper must verify repository, signer workflow, `refs/heads/main`, source SHA, hosted
+runner, and digest before it materializes secrets or touches the current service. GitHub stores no
+production shell credential. Do not add a self-hosted runner, deployment listener, VM bearer token,
+or additional public route.

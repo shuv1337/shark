@@ -677,16 +677,16 @@ Validation:
     than the current weak `c < 5` table-count guard.
 - [ ] Create a dedicated rsync.net Restic repository reachable over SFTP.
 - [ ] Use the account-relative repository suffix `repos/shark-prod`; keep the
-  rsync.net account and host values in Bitwarden.
+  rsync.net account and host values in the backup Infisical project.
 - [ ] Use Restic encryption for every off-host snapshot; do not upload the
   plaintext checkpoint copy.
 - [ ] Run a verified snapshot nightly at 2:00 AM `America/Los_Angeles` and an
   additional verified snapshot before every deployment.
 - [ ] Use this retention policy:
   7 daily, 4 weekly, and 6 monthly verified backups.
-- [ ] Store the only copy of the Restic repository password in Bitwarden
-  Secrets Manager. There is intentionally no offline or second-vault copy;
-  Bitwarden recovery is therefore a documented disaster-recovery dependency.
+- [ ] Store the only copy of the Restic repository password in managed
+  Infisical Cloud. There is intentionally no offline or second-vault copy;
+  Infisical recovery is therefore a documented disaster-recovery dependency.
 - [ ] Back up production secret references separately; never place plaintext
   secrets in the repository or database archive.
 - [ ] Perform a quarterly restore drill into a disposable Compose project and
@@ -697,15 +697,23 @@ Validation:
 
 ### 5.5 Deployment automation and rollback
 
-- [ ] Keep Bitwarden as the secret source of truth. Use scoped Bitwarden Secrets
-  Manager projects and machine accounts, not a personal-vault CLI session.
+- [ ] Keep managed Infisical Cloud as the secret source of truth. Use separate
+  application and backup projects with separate project-level Viewer machine
+  identities, not a personal CLI session.
 - [ ] Make `shark-prod` fetch its own scoped application secrets directly from
-  Bitwarden during deployment. GitHub receives no Apple, APNs, Expo, database,
+  Infisical during deployment. GitHub receives no Apple, APNs, Expo, database,
   Restic, or application secrets.
-- [ ] Use a manual-dispatch GitHub Actions workflow over SSH with a dedicated
-  key installed only for `shark-prod`. Restrict it to the deployment wrapper,
-  disable shell/PTY/agent forwarding/port forwarding, and rotate it every 90
-  days. GitHub stores only this key and pinned host-verification material.
+- [ ] Use a manual-dispatch GitHub Actions workflow only to verify, build,
+  publish, and attest the exact `main` image in GHCR. GitHub stores no
+  production shell or VM credential and cannot perform the cutover.
+- [ ] Make the GHCR package public so `shark-prod` can pull it without a
+  registry credential; the image contains no secrets or private source.
+- [ ] Require the operator to invoke the root-owned promotion helper through
+  their existing exe.dev identity with the reviewed full SHA and exact image
+  digest. Do not add a deployment listener, self-hosted runner, or public route.
+- [ ] Before touching the running service, verify the OCI attestation against
+  `shuv1337/shark`, the production publisher workflow, `refs/heads/main`, the
+  selected source SHA, and a GitHub-hosted runner.
 - [ ] Replace upstream-specific values in
   `.github/workflows/production-update.yml`:
   host, deploy path, environment name, compose project/volume names, domain,
@@ -713,15 +721,12 @@ Validation:
 - [ ] Explicitly remove `raven-cobra.exe.xyz`, `/home/exedev/hark`, and the
   `/pricing` smoke assertion for “100,000 notifications per month”; the
   self-hosted deployment must not retain or merely reword that paid-plan gate.
-- [ ] Keep CI source sync from deleting `.env`, `/data`, generated native
-  folders, or backups.
 - [ ] Gate deployment on typecheck, tests, lint, build, database backup
   verification, and image build.
 - [ ] Deploy an immutable image selected through an explicit Compose image
-  reference, for example `image: shark:${DEPLOY_GIT_SHA}` in an operator
-  override or generated deployment file.
-- [ ] Retain immutable `shark:<full-git-sha>` image tags on the production host
-  with a pruning policy that preserves every recorded rollback candidate.
+  reference of the form `ghcr.io/shuv1337/shark@sha256:<digest>`.
+- [ ] Retain every digest named by a recorded rollback candidate on the
+  production host.
 - [ ] Record the reviewed source SHA, image tag, and image digest together.
   Verify that the built image came from that source and that Compose is running
   the recorded digest before declaring deployment successful.
