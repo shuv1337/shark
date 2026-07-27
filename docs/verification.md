@@ -37,12 +37,26 @@ logs. Unchecked release evidence keeps the goal active.
 - 2026-07-27: the secret-free worktree built successfully as a Linux Docker image on `shark-prod`;
   an ephemeral loopback smoke container returned health 200, API-style root 401, browser-style root
   302, authenticated favicon 401, and removed pricing 404, then was deleted.
+- 2026-07-27: application-secret and off-host-backup helpers passed success and fail-closed fixture
+  tests on macOS and on the production Linux VM. A failed Bitwarden read preserved the last good
+  runtime environment; failed Restic verification preserved the staging copy; and an out-of-bound
+  input was rejected. The success path required an exact byte comparison against a copy streamed
+  back from the newly created encrypted snapshot before deleting plaintext.
+- 2026-07-27: checksum-verified official `bws` 2.1.0 and Restic 0.19.1 binaries were installed
+  root-owned on `shark-prod`.
 
 ## Blocked release evidence
 
 - Physical light, dark, tinted, splash, and mask appearance review: pending a development build.
-- Expo project ownership, Apple App Group/Services ID associations, App Store Connect record, and
-  release credentials: pending operator-authorized browser work.
+- Expo project ownership: the EAS CLI is waiting for the operator to complete its one-time browser
+  sign-in; the managed browser cannot reach `expo.dev`.
+- Apple App Group/Services ID associations and the App Store Connect record: the managed browser
+  cannot reach the Apple developer portal, so the operator must complete the recorded manual
+  portal steps.
+- Production DNS: the active Cloudflare token is read-only and the managed browser cannot reach
+  the Cloudflare dashboard. `shark.shuv.dev` still does not resolve.
+- Bitwarden production projects and scoped machine accounts: the authenticated organization is at
+  its three-project plan limit. No unrelated project was reused or removed.
 - Sqim development artifact, HTTPS install page, signed entitlements, and two-iPhone acceptance:
   pending operator-owned identities and assets.
 - `shark-prod` DNS/TLS, immutable running image, verified off-host snapshot, restore, no-op deploy,

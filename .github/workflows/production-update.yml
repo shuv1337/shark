@@ -51,6 +51,10 @@ jobs:
           pnpm test
           pnpm lint
           pnpm build
+          pnpm brand:check
+          bash -n deploy/shark-deploy deploy/shark-backup \
+            deploy/shark-materialize-secrets deploy/shark-restic-backup deploy/test-helpers
+          deploy/test-helpers
           docker build --tag "shark:${GITHUB_SHA}" .
 
       - name: Create exact-source archive
