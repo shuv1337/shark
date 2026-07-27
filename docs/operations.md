@@ -1,5 +1,9 @@
 # SHark v1 operations
 
+External Apple, Expo, DNS, vault, backup, and deployment-transport setup is tracked in
+[`provisioning-gates.md`](./provisioning-gates.md). Treat every unresolved item there as a release
+gate.
+
 ## Architecture
 
 `shark.shuv.dev` is a private single-operator web/API origin. exe.dev terminates HTTPS and proxies

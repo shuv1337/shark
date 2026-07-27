@@ -50,6 +50,18 @@ logs. Unchecked release evidence keeps the goal active.
   timer remains disabled.
 - 2026-07-27: GitHub environment `shark-production` exists and accepts deployments only from
   `main`; it contains no production credentials.
+- 2026-07-27: the deleted upstream `Production Deployment` workflow remained dispatchable in
+  GitHub after its source file was removed, so it was explicitly disabled. `SHark CI` and
+  `Production Update` remain active.
+- 2026-07-27: the reviewed `shark` skill was installed from exact commit
+  `fff807327b4d3af5c7e7f9abcb06584bd2513523` and hash-matches the repository source. `harkctl`
+  0.3.0 was packed from that commit, installed from the retained artifact with SHA-256
+  `3d36c5871cb5375fdcde804642e0b2da426d28b7250038dbe4959106fc1c5e7e`, and passed all 29 CLI
+  tests.
+- 2026-07-27: a tracked-history scan found no private-key blocks or common GitHub, Stripe, or Expo
+  token forms. No `.p8`, `.p12`, provisioning profile, `.env`, or production environment file
+  exists in the worktree; parser strings and runtime variable names were classified as code, not
+  credential values.
 
 ## Blocked release evidence
 
@@ -66,6 +78,9 @@ logs. Unchecked release evidence keeps the goal active.
 - Restricted deployment transport: exe.dev terminates SSH at its account gateway and does not
   expose a per-key VM `authorized_keys` boundary. A VM-tagged key would retain shell access, so no
   GitHub deployment key was created while the operator chooses a safer replacement.
+- Exact-head CI: all tests, typecheck, lint, and the production build pass on Ubuntu. The brand
+  check found platform-dependent PNG compression bytes; decoded raster bytes are identical on
+  macOS and Ubuntu. The focused pure-JavaScript compression fix awaits operator approval.
 - Sqim development artifact, HTTPS install page, signed entitlements, and two-iPhone acceptance:
   pending operator-owned identities and assets.
 - `shark-prod` DNS/TLS, immutable running image, verified off-host snapshot, restore, no-op deploy,
