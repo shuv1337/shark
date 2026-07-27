@@ -50,6 +50,9 @@ logs. Unchecked release evidence keeps the goal active.
   timer remains disabled.
 - 2026-07-27: GitHub environment `shark-production` exists and accepts deployments only from
   `main`; it contains no production credentials.
+- 2026-07-27: `main` branch protection requires the strict, up-to-date GitHub Actions
+  `Verify source` check, includes administrators, requires linear history and resolved
+  conversations, and disables force-pushes and deletion.
 - 2026-07-27: the deleted upstream `Production Deployment` workflow remained dispatchable in
   GitHub after its source file was removed, so it was explicitly disabled. `SHark CI` and
   `Production Update` remain active.
