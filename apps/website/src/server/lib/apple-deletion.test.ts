@@ -5,8 +5,8 @@ process.env.NODE_ENV = "test";
 process.env.DATABASE_URL = ":memory:";
 process.env.APPLE_TEAM_ID = "TEAM123";
 process.env.APPLE_SIGN_IN_KEY_ID = "KEY123";
-process.env.APPLE_SIGN_IN_SERVICE_ID = "ceo.ryan.hark.web";
-process.env.APPLE_SIGN_IN_BUNDLE_ID = "ceo.ryan.hark";
+process.env.APPLE_SIGN_IN_SERVICE_ID = "dev.shuv.shark.web";
+process.env.APPLE_SIGN_IN_BUNDLE_ID = "dev.shuv.shark";
 
 let db: typeof import("../db")["db"];
 let schema: typeof import("../db/schema");
@@ -61,7 +61,7 @@ describe("Apple account deletion revocation", () => {
       id: "native_grant",
       userId: "both_grants",
       appleSubject: "apple-subject",
-      clientId: "ceo.ryan.hark",
+      clientId: "dev.shuv.shark",
       refreshTokenCiphertext: encryptAppleRefreshToken("native-refresh"),
       authorizationCodeHash: "code-hash",
       createdAt: now,
@@ -83,12 +83,12 @@ describe("Apple account deletion revocation", () => {
     });
     expect(bodies).toEqual([
       expect.objectContaining({
-        client_id: "ceo.ryan.hark.web",
+        client_id: "dev.shuv.shark.web",
         token: "web-refresh",
         token_type_hint: "refresh_token",
       }),
       expect.objectContaining({
-        client_id: "ceo.ryan.hark",
+        client_id: "dev.shuv.shark",
         token: "native-refresh",
         token_type_hint: "refresh_token",
       }),

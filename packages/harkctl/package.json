@@ -1,13 +1,13 @@
 {
   "name": "harkctl",
   "version": "0.3.0",
-  "description": "CLI for Hark agent approvals and replies",
+  "description": "Compatibility CLI for SHark agent approvals and replies",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/R44VC0RP/hark.git",
+    "url": "git+https://github.com/shuv1337/shark.git",
     "directory": "packages/harkctl"
   },
-  "homepage": "https://github.com/R44VC0RP/hark#readme",
+  "homepage": "https://github.com/shuv1337/shark#readme",
   "keywords": [
     "hark",
     "approval",

@@ -1,0 +1,11 @@
+[Unit]
+Description=Verified encrypted SHark SQLite backup
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=exedev
+ExecStart=/usr/local/sbin/shark-backup
+PrivateTmp=true
+NoNewPrivileges=true

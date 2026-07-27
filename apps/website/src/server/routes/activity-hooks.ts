@@ -21,6 +21,7 @@ import {
   service as serviceTable,
   user as userTable,
 } from "../db/schema";
+import { isEmailAllowed } from "../lib/admission";
 import { checkNotificationAllowance, getBilling, trackNotification } from "../lib/billing";
 import { newId } from "../lib/id";
 import { hashWebhookToken } from "../lib/token";
@@ -59,7 +60,7 @@ async function authenticate(
     .innerJoin(userTable, eq(serviceTable.userId, userTable.id))
     .where(eq(serviceTable.tokenHash, hashWebhookToken(token)))
     .limit(1);
-  return match ?? null;
+  return match && isEmailAllowed(match.owner.email) ? match : null;
 }
 
 async function ownedActivity(
@@ -189,7 +190,7 @@ async function eligibleDevices(
 ) {
   const billing = await getBilling(owner, true);
   if (requestedIds && !billing.features.deviceRouting) {
-    return { error: "Device routing requires Hark Pro", status: 402 as const };
+    return { error: "Device routing is unavailable", status: 402 as const };
   }
   let targets = await db
     .select()
@@ -276,7 +277,7 @@ export const activityHooksRoute = new Hono()
     }
     const billing = await getBilling(owner, true);
     if (billing.plan !== "pro") {
-      return c.json({ ok: false, error: "Live Activities require Hark Pro" }, 402);
+      return c.json({ ok: false, error: "Live Activities are unavailable" }, 402);
     }
     const limited = await enforceRateLimit(service, owner);
     if (limited) {

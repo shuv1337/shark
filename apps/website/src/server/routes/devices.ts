@@ -175,7 +175,7 @@ export const devicesRoute = new Hono<AuthedEnv>()
       return c.json(
         {
           error:
-            "Activity token association is ambiguous; reopen Hark after other pending starts resolve.",
+            "Activity token association is ambiguous; reopen SHark after other pending starts resolve.",
         },
         409,
       );

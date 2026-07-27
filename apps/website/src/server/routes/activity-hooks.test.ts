@@ -157,6 +157,18 @@ async function start(token = TOKEN, idempotencyKey?: string) {
 }
 
 describe("Live Activity webhook routes", () => {
+  it("makes an existing activity webhook unknown after allowlist removal", async () => {
+    const { env } = await import("../env");
+    const previous = [...env.ALLOWED_EMAILS];
+    env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length, "somebody-else@example.com");
+    try {
+      expect((await start()).status).toBe(404);
+      expect(apnsCalls).toHaveLength(0);
+    } finally {
+      env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length, ...previous);
+    }
+  });
+
   it("starts, updates, reads, and ends one stateful activity", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-25T12:00:00.000Z"));
@@ -211,6 +223,27 @@ describe("Live Activity webhook routes", () => {
         }),
       });
       expect(invalidRegistration.status).toBe(404);
+      const { env } = await import("../env");
+      const previousAllowed = [...env.ALLOWED_EMAILS];
+      env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length, "somebody-else@example.com");
+      try {
+        expect(
+          (
+            await app.request("/api/live-activity/update-token", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                deliveryId: attributes.deliveryId,
+                registrationToken: attributes.tokenRegistrationToken,
+                nativeActivityId: "native-background",
+                updateToken,
+              }),
+            })
+          ).status,
+        ).toBe(404);
+      } finally {
+        env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length, ...previousAllowed);
+      }
       expect(
         (
           await app.request("/api/live-activity/update-token", {
@@ -556,7 +589,7 @@ describe("Live Activity webhook routes", () => {
     expect(response.status).toBe(402);
     expect(await response.json()).toMatchObject({
       ok: false,
-      error: "Live Activities require Hark Pro",
+      error: "Live Activities are unavailable",
     });
     expect(apnsCalls).toHaveLength(0);
   });

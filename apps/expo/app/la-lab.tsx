@@ -2,8 +2,8 @@
  * Dev-only Live Activity lab.
  *
  * Deliberately unauthenticated and unlinked from the app's navigation so a
- * simulator can reach it without a Google sign-in:
- *   xcrun simctl openurl booted "hark://la-lab"
+ * simulator can reach it without an Apple sign-in:
+ *   xcrun simctl openurl booted "shark://la-lab"
  *
  * Layout changes in src/widgets/HarkAgentActivity.tsx are picked up on a Metro
  * reload — the layout function is re-serialized into the App Group every time
@@ -38,7 +38,7 @@ function Lab() {
   const [title, setTitle] = useState("Deploy #184");
   const [status, setStatus] = useState("Building");
   const [detail, setDetail] = useState<string | undefined>(
-    "Compiling packages/website-runtime on raven-cobra",
+    "Compiling packages/website-runtime for SHark",
   );
   const [progress, setProgress] = useState<number | undefined>(0.25);
   const [symbol, setSymbol] = useState<LiveActivitySymbol>("build");
@@ -173,16 +173,13 @@ function Lab() {
           </Row>
           <Row>
             <Btn label="short title" onPress={() => setTitle("Deploy")} />
-            <Btn
-              label="long title"
-              onPress={() => setTitle("Deploy #184 to raven-cobra production")}
-            />
+            <Btn label="long title" onPress={() => setTitle("Deploy #184 to SHark production")} />
           </Row>
           <Row>
             <Btn
               label="detail on"
               selected={detail !== undefined}
-              onPress={() => setDetail("Compiling packages/website-runtime on raven-cobra")}
+              onPress={() => setDetail("Compiling packages/website-runtime for SHark")}
             />
             <Btn
               label="detail off"

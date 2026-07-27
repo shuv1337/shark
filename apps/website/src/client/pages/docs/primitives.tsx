@@ -7,25 +7,8 @@ import type {
 import { type DocAnchorId, type DocSectionId, docLabel } from "../../../shared/docs/nav";
 import { Inlines } from "./inlines";
 
-/** Marks a capability that is only available on a paid Hark Pro plan. */
-export function ProBadge() {
-  return (
-    <span className="inline-flex items-center rounded-full bg-accent-soft px-2 py-0.5 text-[0.6875rem] font-semibold tracking-wide text-accent-text uppercase">
-      Hark Pro
-    </span>
-  );
-}
-
 /** A top-level docs chapter. Its heading text comes from the sidebar nav. */
-export function DocSection({
-  id,
-  pro,
-  children,
-}: {
-  id: DocSectionId;
-  pro?: boolean;
-  children: React.ReactNode;
-}) {
+export function DocSection({ id, children }: { id: DocSectionId; children: React.ReactNode }) {
   return (
     <section aria-labelledby={`${id}-heading`} id={id}>
       <h2
@@ -34,36 +17,18 @@ export function DocSection({
       >
         {docLabel(id)}
       </h2>
-      {pro ? (
-        <p className="mt-3">
-          <ProBadge />
-        </p>
-      ) : null}
       {children}
     </section>
   );
 }
 
 /** A nested, individually linkable subsection. */
-export function DocSub({
-  id,
-  pro,
-  children,
-}: {
-  id: DocAnchorId;
-  pro?: boolean;
-  children: React.ReactNode;
-}) {
+export function DocSub({ id, children }: { id: DocAnchorId; children: React.ReactNode }) {
   return (
     <section aria-labelledby={`${id}-heading`} className="mt-10" id={id}>
       <h3 className="text-base font-semibold" id={`${id}-heading`}>
         {docLabel(id)}
       </h3>
-      {pro ? (
-        <p className="mt-2">
-          <ProBadge />
-        </p>
-      ) : null}
       <div className="mt-3 space-y-4">{children}</div>
     </section>
   );
@@ -182,7 +147,6 @@ export function RouteTable({ caption, rows }: { caption: string; rows: DocRouteR
   );
 }
 
-/** Free-versus-Pro comparison, used for the rate-limit table. */
 /* ------------------------------------------------------------------------ */
 /* Live Activity style previews                                             */
 /* ------------------------------------------------------------------------ */
@@ -395,15 +359,14 @@ export function StylePreviews({ styles }: { styles: DocStylePreview[] }) {
 export function PlanTable({ caption, rows }: { caption: string; rows: DocPlanRow[] }) {
   return (
     <TableShell caption={caption}>
-      <HeadRow headers={["Limit", "Free", "Pro"]} />
+      <HeadRow headers={["Limit", "Self-hosted"]} />
       <tbody className="divide-y divide-line border-y border-line">
         {rows.map((row) => (
           <tr key={row.limit}>
             <th className="py-3 pr-5 text-sm font-normal text-ink-subtle" scope="row">
               {row.limit}
             </th>
-            <td className="py-3 pr-5 font-mono text-xs text-ink-muted">{row.free}</td>
-            <td className="py-3 font-mono text-xs text-ink-muted">{row.pro}</td>
+            <td className="py-3 font-mono text-xs text-ink-muted">{row.value}</td>
           </tr>
         ))}
       </tbody>

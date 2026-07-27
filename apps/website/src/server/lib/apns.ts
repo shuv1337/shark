@@ -80,7 +80,7 @@ export function buildLiveActivityPayload(input: LiveActivityPayloadInput): Recor
     aps.alert = {
       title: input.props.privacyMode === "private" ? "Agent task started" : input.props.title,
       body:
-        input.props.privacyMode === "private" ? "Open Hark to view progress." : input.props.status,
+        input.props.privacyMode === "private" ? "Open SHark to view progress." : input.props.status,
     };
     aps["input-push-token"] = 1;
   }

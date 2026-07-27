@@ -1,12 +1,10 @@
 import { build } from "esbuild";
 
-await build({
-  entryPoints: ["src/server/index.ts"],
+const shared = {
   bundle: true,
   platform: "node",
   target: "node22",
   format: "esm",
-  outfile: "dist/server/index.js",
   // better-sqlite3 is a native module; expo-server-sdk reads its own package.json at runtime.
   external: ["better-sqlite3", "expo-server-sdk"],
   banner: {
@@ -16,4 +14,16 @@ await build({
     ].join("\n"),
   },
   logLevel: "info",
+};
+
+await build({
+  ...shared,
+  entryPoints: ["src/server/index.ts"],
+  outfile: "dist/server/index.js",
+});
+
+await build({
+  ...shared,
+  entryPoints: ["scripts/offboard-user.ts", "scripts/backup-database.ts", "scripts/analytics.mjs"],
+  outdir: "dist/operator",
 });

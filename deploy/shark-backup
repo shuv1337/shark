@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+deploy_root="/home/exedev/shark"
+current_release="$(readlink "$deploy_root/current")"
+deploy_sha="$(basename "$current_release")"
+runtime_env="$deploy_root/.env"
+
+if [[ ! "$deploy_sha" =~ ^[0-9a-f]{40}$ || ! -f "$current_release/compose.yaml" ]]; then
+  echo "No valid current SHark release." >&2
+  exit 66
+fi
+
+exec 9>"$deploy_root/deploy.lock"
+flock -n 9 || {
+  echo "A SHark deployment or backup is active." >&2
+  exit 75
+}
+
+stage="$(mktemp -d "$deploy_root/nightly-backup.XXXXXXXX")"
+volume_backup=""
+cleanup() {
+  if [[ -n "$volume_backup" ]]; then
+    docker run --rm --volume shark-data:/data "shark:$deploy_sha" \
+      rm -f "$volume_backup" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$stage"
+}
+compose=(
+  docker compose
+  --project-name shark
+  --env-file "$runtime_env"
+  --file "$current_release/compose.yaml"
+)
+
+restart() {
+  DEPLOY_GIT_SHA="$deploy_sha" "${compose[@]}" up --detach
+}
+trap 'restart; cleanup' EXIT
+
+/usr/local/sbin/shark-materialize-secrets "$runtime_env.new"
+chmod 600 "$runtime_env.new"
+mv "$runtime_env.new" "$runtime_env"
+
+DEPLOY_GIT_SHA="$deploy_sha" "${compose[@]}" stop
+backup_name="hark.sqlite.nightly-$(date -u +%Y%m%dT%H%M%SZ)"
+volume_backup="/data/backups/$backup_name"
+docker run --rm \
+  --volume shark-data:/data \
+  --env DATABASE_URL=/data/hark.sqlite \
+  --env "BACKUP_DATABASE_URL=$volume_backup" \
+  "shark:$deploy_sha" \
+  node dist/operator/backup-database.js >/dev/null
+
+copy_container="$(docker create --volume shark-data:/data "shark:$deploy_sha")"
+docker cp "$copy_container:/data/backups/$backup_name" "$stage/$backup_name"
+docker rm "$copy_container" >/dev/null
+
+snapshot_id="$(/usr/local/sbin/shark-restic-backup "$stage/$backup_name")"
+rm -f "$stage/$backup_name"
+docker run --rm --volume shark-data:/data "shark:$deploy_sha" \
+  rm -f "$volume_backup" >/dev/null
+volume_backup=""
+restart
+trap cleanup EXIT
+echo "Verified SHark snapshot $snapshot_id"

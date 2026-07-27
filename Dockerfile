@@ -37,8 +37,6 @@ WORKDIR /app
 COPY --from=build --chown=node:node /out/node_modules ./node_modules
 COPY --from=build --chown=node:node /repo/apps/website/dist ./dist
 COPY --from=build --chown=node:node /repo/apps/website/drizzle ./drizzle
-# Read-only operator scripts, e.g. `node scripts/analytics.mjs summary`.
-COPY --from=build --chown=node:node /repo/apps/website/scripts ./scripts
 COPY --from=build --chown=node:node /out/package.json ./package.json
 RUN mkdir -p /data && chown node:node /data
 USER node

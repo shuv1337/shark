@@ -3,7 +3,8 @@ import { and, eq, isNull, lte, or } from "drizzle-orm";
 import { createMiddleware } from "hono/factory";
 import { auth } from "./auth";
 import { db } from "./db";
-import { apiToken } from "./db/schema";
+import { apiToken, user } from "./db/schema";
+import { isEmailAllowed } from "./lib/admission";
 import { trackUserActive } from "./lib/analytics";
 import { hashApiToken } from "./lib/token";
 
@@ -30,6 +31,12 @@ export type AgentEnv = {
 export const requireAuth = createMiddleware<AuthedEnv>(async (c, next) => {
   const session = await auth.api.getSession({ headers: c.req.raw.headers });
   if (!session) {
+    if (c.req.header("accept")?.includes("text/html")) {
+      return c.redirect("/login");
+    }
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+  if (!isEmailAllowed(session.user.email)) {
     return c.json({ error: "Unauthorized" }, 401);
   }
   c.set("user", {
@@ -49,9 +56,10 @@ export const requireApiToken = createMiddleware<AgentEnv>(async (c, next) => {
   if (!match?.[1]) return c.json({ error: "Unauthorized" }, 401);
 
   const now = new Date();
-  const [token] = await db
-    .select()
+  const [matchRow] = await db
+    .select({ token: apiToken, ownerEmail: user.email })
     .from(apiToken)
+    .innerJoin(user, eq(apiToken.userId, user.id))
     .where(
       and(
         eq(apiToken.tokenHash, hashApiToken(match[1])),
@@ -60,7 +68,11 @@ export const requireApiToken = createMiddleware<AgentEnv>(async (c, next) => {
       ),
     )
     .limit(1);
+  const token = matchRow?.token;
   if (!token || (token.expiresAt && token.expiresAt <= now)) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+  if (!isEmailAllowed(matchRow.ownerEmail)) {
     return c.json({ error: "Unauthorized" }, 401);
   }
 

@@ -1,7 +1,7 @@
 import Intents
 import UserNotifications
 
-/// Rewrites incoming Hark pushes into iOS communication notifications.
+/// Rewrites incoming SHark pushes into iOS communication notifications.
 ///
 /// The server sends (via the Expo Push Service) a payload whose `data` object
 /// carries `sourceName`, `avatarUrl`, `conversationId`, etc. On iOS, Expo
@@ -39,7 +39,7 @@ final class NotificationService: UNNotificationServiceExtension {
       let sourceName = data["sourceName"] as? String,
       !sourceName.isEmpty
     else {
-      // Not a Hark communication payload — deliver unchanged.
+      // Not a SHark communication payload — deliver unchanged.
       completeOnce(with: content)
       return
     }
@@ -137,7 +137,7 @@ final class NotificationService: UNNotificationServiceExtension {
       content: content.body,
       speakableGroupName: nil,
       conversationIdentifier: conversationId,
-      serviceName: "Hark",
+      serviceName: "SHark",
       sender: sender,
       attachments: nil
     )
@@ -152,7 +152,7 @@ final class NotificationService: UNNotificationServiceExtension {
       }
       do {
         let updated = try content.updating(from: intent)
-        // Intent styling can replace the category, which would remove Hark's actions.
+        // Intent styling can replace the category, which would remove SHark's actions.
         let actionable =
           (updated.mutableCopy() as? UNMutableNotificationContent)
           ?? content

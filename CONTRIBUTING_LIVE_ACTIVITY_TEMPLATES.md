@@ -1,12 +1,12 @@
 # Contributing a Live Activity template
 
 This guide is written so it can be handed directly to a coding agent. A template contribution adds
-a genuinely new Hark Live Activity layout that users select through the public `style` field. It is
+a genuinely new SHark Live Activity layout that users select through the public `style` field. It is
 not a color preset or an alias for one of the existing layouts.
 
 You can implement and semantically test a template without Xcode, an Apple account, an iOS
 simulator, or a physical device. Browser and unit tests cannot reproduce SwiftUI pixel layout, so a
-Hark maintainer performs the final on-device visual check before release.
+SHark maintainer performs the final on-device visual check before release.
 
 ## Before editing
 
@@ -22,7 +22,7 @@ Read these files:
 - `apps/expo/app/la-lab.tsx` — optional simulator/device test screen.
 
 Choose a short, permanent, lower-case style ID such as `orbit` or `scoreboard`. A merged ID becomes
-part of Hark's public API and must not be renamed later.
+part of SHark's public API and must not be renamed later.
 
 ## Critical widget constraint
 
@@ -186,17 +186,21 @@ pnpm --filter @hark/website exec vitest run src/shared/docs/docs.test.ts
 
 Contributors do not need this step. Maintainers use it before release.
 
-Temporarily set `style: "orbit"` in the props returned by `apps/expo/app/la-lab.tsx`, then run:
+With the operator-owned `EAS_PROJECT_ID` and `APPLE_TEAM_ID` available in the environment,
+temporarily set `style: "orbit"` in the props returned by `apps/expo/app/la-lab.tsx`, then run:
 
 ```bash
-pnpm --filter @hark/expo ios
-xcrun simctl openurl booted "hark://la-lab"
+pnpm --filter @hark/expo exec expo prebuild --platform ios --clean
+(cd apps/expo/ios && pod install)
+sqim upload --simulator apps/expo/ios --build --workspace SHark.xcworkspace --scheme SHark
+xcrun simctl openurl booted "shark://la-lab"
 ```
 
-Start the activity and inspect the Lock Screen plus compact, minimal, and expanded Dynamic Island
-presentations. Test long text, private mode, no progress, 0%, 100%, and several accents. Remove any
-temporary hardcoded lab selection before committing unless the PR intentionally adds a reusable
-style picker.
+Open the final `sqim://` URI printed by the successful upload, then start the activity and inspect
+the Lock Screen plus compact, minimal, and expanded Dynamic Island presentations. Test long text,
+private mode, no progress, 0%, 100%, and several accents. Remove any temporary hardcoded lab
+selection before committing unless the PR intentionally adds a reusable style picker. Sqim must
+produce every test binary; do not substitute Expo or Xcode build commands.
 
 ## 7. Run the complete verification
 
@@ -231,7 +235,7 @@ Include this checklist in the PR description:
 
 ## Review expectations
 
-Hark maintainers may adjust spacing, typography, naming, or slot reuse before accepting a template.
+SHark maintainers may adjust spacing, typography, naming, or slot reuse before accepting a template.
 Acceptance also depends on clarity at a glance, accessibility, privacy, bundle complexity, and
 whether the design adds a meaningfully different presentation. Passing unit tests does not
 guarantee that Apple will render every size exactly like a browser or mocked node tree.

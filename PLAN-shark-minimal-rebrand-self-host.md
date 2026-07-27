@@ -6,9 +6,9 @@ Fork the current Hark codebase into a personally operated, noncommercial SHark
 deployment with:
 
 - SHark as the user-facing product name.
-- The canonical red Devil Phone artwork from
-  `/home/shuv/repos/codex-quota/web/icons/devil-phone.svg`.
-- A new iOS app, Apple identifiers, Expo project, OAuth clients, and push
+- The canonical red Devil Phone artwork, after its current source and ownership
+  record are located and verified on this Mac.
+- A new iOS app, Apple identifiers, Expo project, Apple OAuth client, and push
   credentials owned by the SHark operator.
 - A single-host Docker Compose deployment behind HTTPS.
 - All Hark capabilities enabled for the self-hosted operator without depending
@@ -17,16 +17,18 @@ deployment with:
 - The smallest practical patch surface so upstream Hark changes remain easy to
   merge.
 
-This plan is based on local commit
-`0c0d4e3de0752ee91d2a17dee83a313f6863d6a8`, which matched both
-`origin/main` and `upstream/main` on 2026-07-26.
+The reviewed upstream code baseline is
+`0c0d4e3de0752ee91d2a17dee83a313f6863d6a8`. The current SHark repository HEAD
+is `e72dbd6a5ff81adb3964bb6390c6a181d2eeea5c`; the only changes since the
+upstream baseline are this plan and its handoff.
 
 ## Executive Recommendation
 
 Use `https://shark.shuv.dev` as the working production origin and
 `dev.shuv.shark` as the working iOS bundle identifier. Start with private
-TestFlight distribution, prove every push and Live Activity path on a physical
-iPhone, and only then decide whether a public App Store listing is useful.
+internal-TestFlight distribution and prove every push and Live Activity path on
+two physical iPhones. Public TestFlight and App Store distribution are excluded
+from v1 and require a separate future scope decision.
 
 Keep these internal compatibility names unchanged:
 
@@ -46,17 +48,19 @@ The two intentional functional additions are:
 
 1. An explicit self-hosted entitlement mode so the deployment does not lose
    interactions, device routing, or Live Activities when Autumn is absent.
-2. A fail-closed email allowlist so exposing the OAuth endpoints does not
+2. A fail-closed email allowlist so exposing the Apple OAuth endpoints does not
    create a public signup service.
 
 ## Verified Current State
 
 ### Repository and upstream
 
-- The working tree was clean before this plan was added.
-- `origin` is `git@github.com:shuv1337/hark.git`.
+- This plan and its handoff are tracked; the current working tree contains only
+  their requested follow-up revisions.
+- `origin` is `git@github.com:shuv1337/shark.git`.
 - `upstream` is `git@github.com:R44VC0RP/hark.git`.
-- Both remotes and the local branch pointed to `0c0d4e3`.
+- `origin/main` and local `main` point to `e72dbd6`; `upstream/main` remains at
+  the reviewed code baseline `0c0d4e3`.
 - The fork is public and inherits PolyForm Noncommercial 1.0.0.
 - The repository contains 183 tracked files across a React/Hono website,
   Expo iOS app, shared contracts, CLI, and agent skill.
@@ -102,13 +106,14 @@ Results:
   `activity-hooks.ts` disable device routing, interactive replies, and/or Live
   Activities. An empty Autumn key is therefore not a complete self-host mode.
 - `apps/website/src/server/auth.ts` currently allows any valid Google or Apple
-  account to create a user.
+  account to create a user; SHark will remove Google and admit only allowlisted
+  Apple identities.
 - An email allowlist applied only when a user or session is created would not
   revoke existing browser sessions, API tokens, webhook URLs, interaction
   credentials, or Live Activity credentials.
-- Sign in with Apple may return a private relay address rather than the Google
-  address. Exact-email admission therefore needs an explicit Apple identity
-  policy before accounts are created.
+- Sign in with Apple may return a real or private relay address. SHark admits
+  the exact verified Apple email returned for the account, normalized only for
+  comparison, and accepts either form when that literal address is allowlisted.
 - The app still contains the upstream Apple Team ID, EAS project ID, bundle
   identifiers, App Store Connect ID, production domain, and TestFlight link.
   None may be reused for SHark.
@@ -126,10 +131,10 @@ Results:
 - User-facing SHark name and Devil Phone imagery.
 - Website, metadata, documentation, iOS display name, splash/app icon, and
   native notification service name.
-- New domain, Apple/Expo/Google identities, signing, push, and TestFlight.
+- New domain, Apple/Expo identities, signing, push, and TestFlight.
 - Explicit self-host entitlements and account allowlisting.
 - Docker Compose deployment, proxy/TLS, secrets, backup, restore, deployment,
-  monitoring, and rollback.
+  manual operational checks, and rollback.
 - Locally consumable CLI and SHark agent-skill documentation.
 - Automated and physical-device acceptance testing.
 
@@ -146,29 +151,32 @@ Results:
 - Recutting the existing product demo video in the first milestone. Hide it or
   mark it as upstream material until a genuine SHark capture exists.
 
-## Decisions to Confirm Before Implementation
+## Frozen Decision Record
 
-The plan can proceed with the recommended defaults, but these values should be
-frozen in one short decision record before credentials are created:
+The user confirmed this decision record after grilling. These values are frozen
+for v1 and must be changed consistently before any affected external resource
+is created:
 
-| Decision | Recommended default | Why |
+| Decision | Frozen value | Why |
 | --- | --- | --- |
 | Production origin | `https://shark.shuv.dev` | Short, branded, and under an existing operator domain |
 | iOS bundle ID | `dev.shuv.shark` | Stable reverse-DNS identifier owned by the operator |
 | Widget bundle ID | `dev.shuv.shark.widgets` | Must be unique and derived from the app ID |
+| Notification-service bundle ID | `dev.shuv.shark.notification-service` | Freezes the extension identity instead of deriving it from a rebranded target name |
 | App Group | `group.dev.shuv.shark` | Keeps app/widget sharing under the same namespace |
 | URL scheme | `shark` | Makes native auth and development deep links branded |
-| Distribution | Private TestFlight first | Fastest trustworthy path to a real-device proof |
-| Authentication | Google and Apple | Preserves current UX and avoids store-policy surprises |
+| Distribution | Internal TestFlight only | Frozen first-release distribution boundary |
+| Authentication | Apple only | Frozen first-release provider boundary |
 | Account admission | Exact email allowlist, enforced at every credential-bearing entry point | Prevents both new signup and continued use after removal |
-| Apple identity policy | Require “Share My Email” and an exact match for the first release | Preserves one Google/Apple user without adding a broader different-email linking mechanism |
+| Apple identity policy | Accept the exact verified Apple email, including relay addresses | Honors the identity Apple returns without cross-provider linking |
+| Self-host rate limits | 300/service/min and 1,500/account/min | Reuses current Pro defaults and minimizes code/test churn |
 | Paid tiers | Disabled; self-host gets full capability | Removes Autumn without breaking core features |
 | UI palette | Preserve existing Hark UI colors | Limits scope; Devil Phone becomes the identifying mark |
 | CLI name | Keep `harkctl` initially | Avoids package/config/token churn while still supporting SHark |
 
 If a different domain or bundle ID is selected, substitute it everywhere in
-Phases 1–5 before creating any external identifiers. Bundle IDs cannot be
-casually renamed after app distribution begins.
+Phases 1–5 before creating any external identifiers. App and extension bundle
+IDs cannot be casually renamed after distribution begins.
 
 ## Phase 0 — Legal and Ownership Gate
 
@@ -182,11 +190,10 @@ casually renamed after app distribution begins.
 - [ ] Record the upstream repository URL and pinned baseline commit in the
   README.
 - [ ] Record a positive ownership and provenance statement for the Devil Phone
-  artwork. The source repository's
-  `/home/shuv/repos/codex-quota/web/icons/THIRD_PARTY_NOTICES.md` explicitly
-  says that the Devil Phone artwork is not covered by its third-party notices;
-  do not treat that file as a license grant or copy a nonexistent applicable
-  notice.
+  artwork. The prior Linux paths under `/home/shuv/repos/codex-quota/web/icons`
+  do not exist in the current Mac checkout. Locate the authoritative source,
+  re-verify its hash, and record an affirmative license/ownership basis before
+  copying it. Do not treat an unrelated third-party notice as a license grant.
 - [ ] Replace the upstream operator-specific privacy policy and terms in
   `apps/website/src/client/pages/Legal.tsx` with accurate SHark operator,
   hosting, retention, subprocessors, contact, and account-deletion language.
@@ -197,8 +204,9 @@ Validation:
 - [ ] `rg -n "Ryan Vogel|R44VC0RP|hark\\.ryan\\.ceo|Hark Pro|\\$8|mandarin3d|Stripe|Autumn"`
   returns only deliberate attribution, historical, test-fixture, or
   compatibility references.
-- [ ] The deployed privacy URL and support URL are ready before TestFlight
-  external testing or App Store submission.
+- [ ] Do not publish privacy or support pages anonymously in v1. If Apple makes
+  an anonymous URL mandatory for the internal-TestFlight artifact, stop and
+  return for a scope decision.
 
 ## Phase 1 — Introduce the Minimal SHark Brand Layer
 
@@ -206,17 +214,14 @@ Validation:
 
 - [ ] Add a small website brand module, for example
   `apps/website/src/shared/brand.ts`, containing the user-facing product name,
-  public site URL, source repository URL, operator name, and support URL.
-- [ ] Make `apps/website/src/shared/seo.ts`,
-  `apps/website/src/shared/docs/content.ts`,
-  `apps/website/src/shared/docs/markdown.ts`, and
-  `apps/website/scripts/prerender-docs.tsx` consume the shared values where
-  practical.
+  service origin, source repository URL, operator name, and support reference.
+- [ ] Remove public SEO structured data, public docs prerendering, sitemap
+  publication, and public Open Graph assumptions. Retain only metadata useful
+  after an allowlisted user authenticates.
 - [ ] Keep one fixed production origin for this personal deployment rather than
   building a general white-label system.
-- [ ] Update `apps/website/public/robots.txt` and
-  `apps/website/public/sitemap.xml`, or generate them during the existing
-  prerender step so the canonical origin cannot drift.
+- [ ] Remove or auth-gate `robots.txt`, `sitemap.xml`, and static brand/media
+  assets so `/api/health` is the only anonymous content response.
 - [ ] Change `/oss` in `apps/website/src/server/app.ts` to the SHark fork URL.
 
 ### 1.2 Product-facing copy
@@ -225,7 +230,6 @@ Validation:
   - `apps/website/index.html`
   - `apps/website/src/client/pages/Landing.tsx`
   - `apps/website/src/client/pages/Docs.tsx`
-  - `apps/website/src/client/pages/Pricing.tsx`
   - `apps/website/src/client/pages/Dashboard.tsx`
   - `apps/website/src/client/pages/CliAuthorize.tsx`
   - `apps/website/src/client/components/AppDownloadBanner.tsx`
@@ -239,12 +243,12 @@ Validation:
   `apps/website/src/server/auth.ts` to `SHark`.
 - [ ] Change user-facing server log names and default notification titles to
   `SHark` without changing stable token/payload namespaces.
-- [ ] Update SEO structured data in `apps/website/src/shared/seo.ts` with SHark
-  ownership, URLs, name, and repository.
+- [ ] Delete the pricing page and remove public SEO structured data.
 - [ ] Remove the upstream TestFlight URL and original demo/store identifiers
   until SHark replacements exist.
-- [ ] Replace Free/Pro marketing with a single “Self-hosted” capability
-  explanation, or remove `/pricing` from public navigation and sitemap.
+- [ ] Remove `/pricing` and all public marketing/docs navigation. In v1 only
+  health-check endpoints are anonymously readable; every human-facing page
+  requires Apple authentication.
 
 ### 1.3 Preserve compatibility identifiers
 
@@ -260,8 +264,9 @@ Validation:
 
 Validation:
 
-- [ ] Add/adjust SEO and docs tests so every canonical URL uses the SHark
-  origin.
+- [ ] Add authentication-boundary tests proving `/api/health` is anonymous while
+  every human-facing page and static content path requires an allowlisted Apple
+  session.
 - [ ] Run the exhaustive branding audit:
 
   ```bash
@@ -274,20 +279,24 @@ Validation:
 
 ## Phase 2 — Build the Devil Phone Asset Pipeline
 
-Use the canonical source:
+Phase 2 is blocked until the operator recovers the exact historical source
+assets from an operator-controlled backup or checkout and confirms their
+ownership/provenance. The required inputs are:
 
 ```text
 /home/shuv/repos/codex-quota/web/icons/devil-phone.svg
-SHA-256: 3489212420a5c2cbaa56cec28933b1e1284739b11e3388650ea3fb8a4a7e9f69
+historical SHA-256: 3489212420a5c2cbaa56cec28933b1e1284739b11e3388650ea3fb8a4a7e9f69
 ```
 
-The existing safe-area raster reference is:
+and:
 
 ```text
 /home/shuv/repos/codex-quota/web/icons/icon-maskable-512.png
-SHA-256: 5d3fa36bb3865110761752c978b811d0b44755e44a99376acf6c9f453af9af1e
+historical SHA-256: 5d3fa36bb3865110761752c978b811d0b44755e44a99376acf6c9f453af9af1e
 ```
 
+- [ ] Recover both canonical files and require the recorded hashes to match
+  before use. A mismatch is a hard stop requiring a new provenance decision.
 - [ ] Copy the canonical SVG into a tracked SHark source-asset location, such
   as `assets/brand/devil-phone.svg`.
 - [ ] Add a deterministic asset-generation script under `scripts/` rather than
@@ -298,6 +307,9 @@ SHA-256: 5d3fa36bb3865110761752c978b811d0b44755e44a99376acf6c9f453af9af1e
 - [ ] Generate an opaque 1024×1024 RGB iOS icon using the safe-area composition
   from `icon-maskable-512.png`: charcoal/near-black field, centered red Devil
   Phone, no alpha channel.
+- [ ] Deliberately choose either one opaque icon that safely degrades across
+  appearances or explicit `ios.icon` light/dark/tinted variants; do not leave
+  the tinted Home Screen appearance unreviewed.
 - [ ] Generate:
   - `apps/expo/assets/icon.png` at 1024×1024, opaque RGB.
   - `apps/website/public/favicon.png`.
@@ -322,55 +334,55 @@ Validation:
 - [ ] `file apps/expo/assets/icon.png` reports 1024×1024 RGB with no alpha.
 - [ ] The iOS icon has sufficient safe-area padding and no clipped horns,
   handset, tail, or arrow at all mask shapes.
-- [ ] Favicon, header, Open Graph image, splash screen, Expo development build,
+- [ ] Favicon, header, Open Graph image, splash screen, Sqim development build,
   and TestFlight build all display the same canonical mark.
-- [ ] Inspect the app icon on a physical iPhone in both light and dark Home
+- [ ] Inspect the app icon on a physical iPhone in light, dark, and tinted Home
   Screen contexts.
 
 ## Phase 3 — Add Explicit Self-Hosted Product Semantics
 
 ### 3.1 Self-host entitlement mode
 
-- [ ] Add an explicit environment setting in
-  `apps/website/src/server/env.ts`, preferably
-  `DEPLOYMENT_MODE=hosted|self_hosted`, defaulting to `hosted`.
+- [ ] Make `DEPLOYMENT_MODE=self_hosted` the only supported SHark production
+  mode. Development and test may use documented local defaults, but SHark does
+  not preserve the upstream hosted/commercial product mode.
 - [ ] Normalize optional string environment values centrally before validation:
   trim whitespace, convert empty strings to `undefined`, split and deduplicate
   comma-separated emails, and lowercase email comparisons. This is required
   because Compose currently supplies absent optional values as empty strings.
-- [ ] In production, reject contradictory configuration such as
-  `DEPLOYMENT_MODE=self_hosted` plus `AUTUMN_API_KEY`.
-- [ ] Define and test a per-mode startup credential matrix:
-  - hosted development/test may use documented local defaults,
-  - hosted production retains its existing Autumn behavior,
-  - self-hosted production requires a non-empty allowlist plus complete Google,
-    Apple, Expo, and APNs credential groups,
-  - a partially configured credential group is always an error,
-  - self-hosted production with Autumn configured is always an error.
-- [ ] Refactor `apps/website/src/server/lib/billing.ts` so self-hosted mode
-  returns:
+- [ ] Remove Autumn runtime/configuration dependencies, `autumn.config.ts`,
+  checkout/portal routes and controls, paid-plan copy, notification metering,
+  and tracking calls from the SHark fork.
+- [ ] Reject a non-empty legacy `AUTUMN_API_KEY` at startup so stale deployment
+  configuration cannot imply that billing is active.
+- [ ] Define and test the startup credential matrix:
+  - development/test may use documented local defaults,
+  - production requires `DEPLOYMENT_MODE=self_hosted`,
+  - production requires a non-empty allowlist plus complete Apple, Expo, and
+    APNs credential groups,
+  - a partially configured credential group is always an error.
+- [ ] Refactor `apps/website/src/server/lib/billing.ts` into a compatibility
+  entitlement adapter that always returns:
   - `plan: "pro"` for compatibility with existing capability checks.
   - `features.deviceRouting: true`.
   - Unlimited devices.
   - The existing numeric `limits.notificationsPerMonth` compatibility value so
     `BillingDto` does not change, but `usage.notificationsRemaining: null`.
-  - Unconditional notification allowance and no Autumn notification tracking;
+  - Unconditional notification allowance and no notification tracking;
     the numeric compatibility value is never enforced as a monthly meter.
   - Explicit, configurable per-minute abuse limits.
   - `configured: false` so no checkout or portal button appears.
-- [ ] Keep hosted/free/Autumn behavior unchanged when
-  `DEPLOYMENT_MODE=hosted`.
+- [ ] Set self-host limits to 300 requests/minute per service and 1,500
+  requests/minute per account.
 - [ ] Rename user-facing “Pro” errors and labels to capability-oriented wording
   in self-hosted mode where the API contract permits it.
-- [ ] Remove or hide checkout, portal, and upgrade controls for self-hosted
-  deployments.
-- [ ] Keep the API routes returning deliberate `503 Billing is not configured`
-  if called directly, unless removing the routes is cleaner.
+- [ ] Remove checkout, portal, upgrade, and paid-plan controls rather than
+  hiding them.
 
 Tests:
 
-- [ ] Add unit tests for hosted-without-Autumn, hosted-with-Autumn, and
-  self-hosted entitlement results.
+- [ ] Add unit tests for the fixed self-hosted entitlement result and for
+  rejection of a non-empty legacy `AUTUMN_API_KEY`.
 - [ ] Add client tests proving the self-hosted billing state renders as
   unmetered/self-hosted rather than as a numeric paid-plan allowance.
 - [ ] Add route tests proving self-hosted accounts can:
@@ -378,9 +390,8 @@ Tests:
   - target devices,
   - create approval/text interactions,
   - start/update/end Live Activities.
-- [ ] Add startup tests for the full credential matrix, contradictory
-  deployment/billing settings, empty and whitespace-only values, duplicate
-  emails, and case-variant emails.
+- [ ] Add startup tests for the full credential matrix, empty and
+  whitespace-only values, duplicate emails, and case-variant emails.
 
 ### 3.2 Fail-closed account admission
 
@@ -406,21 +417,27 @@ Tests:
   immediately revokes the removed user's sessions and API tokens, disables
   devices, and rotates or deletes service/webhook credentials. Per-request
   admission checks remain the fail-closed backstop if cleanup is incomplete.
-- [ ] For the first release, require Apple “Share My Email” and require its
-  normalized address to equal the allowed Google address. Reject Apple private
-  relay addresses generically without persisting a user. Do not enable
-  `allowDifferentEmails` or implicit provider-subject mapping until a deliberate
-  account-linking design replaces this policy.
+- [ ] Treat offboarding and deletion as separate operations. Allowlist removal
+  disables access and revokes all credential classes but preserves user data;
+  permanent deletion requires a separate explicit account-deletion operation.
+- [ ] Use the verified email in Apple's identity token as the admission key.
+  Accept either a real address or an Apple relay address when that exact
+  normalized address appears in the allowlist. Do not infer a hidden real
+  address, map relay domains, or introduce cross-provider account linking.
+- [ ] Persist the verified Apple provider subject as the stable identity key;
+  treat the allowlisted email as the current admission policy rather than as a
+  substitute for the provider subject.
 - [ ] Return a generic denial message that does not reveal the allowlist.
 - [ ] Log only the provider and denial outcome; do not log emails or tokens.
 
 Tests:
 
-- [ ] An allowed Google identity can create the account, and Apple with “Share
-  My Email” links/signs into that same user without creating a duplicate.
-- [ ] An Apple private relay address is denied without creating a user, account,
-  or session, and the UI explains the operator action without revealing the
-  allowlist.
+- [ ] An allowed Apple identity using its real address can create and revisit
+  the same account without duplication.
+- [ ] An allowed Apple relay address can create and revisit the same account
+  without exposing or requiring the underlying real address.
+- [ ] An Apple identity whose returned email is not allowlisted is denied
+  without creating a user, account, or session.
 - [ ] An unlisted identity cannot create a user or session.
 - [ ] Removing an existing user's email immediately blocks its browser session,
   API tokens, webhook URLs, interaction callbacks, and Live Activity
@@ -429,7 +446,7 @@ Tests:
 - [ ] Email matching is trimmed and case-insensitive.
 - [ ] A production self-host starts only with a non-empty allowlist.
 
-## Phase 4 — Create Operator-Owned Apple, Expo, Google, and Native Identity
+## Phase 4 — Create Operator-Owned Apple, Expo, and Native Identity
 
 Complete this phase before building any installable SHark binary.
 
@@ -446,6 +463,10 @@ Complete this phase before building any installable SHark binary.
     Apple capability availability.
   - Live Activities/frequent updates as generated by the Expo widget target.
 - [ ] Register `dev.shuv.shark.widgets`.
+- [ ] Register `dev.shuv.shark.notification-service` and set it explicitly as
+  `bundleIdentifier` in
+  `apps/expo/targets/notification-service/expo-target.config.js`. Do not derive
+  the extension identity from its user-facing target name.
 - [ ] Register `group.dev.shuv.shark` and associate the app and widget targets.
   This is mandatory: the current `expo-widgets` configuration declares an App
   Group unconditionally.
@@ -460,16 +481,7 @@ Complete this phase before building any installable SHark binary.
   secret-store location. One APNs key works in both sandbox and production.
 - [ ] Never commit `.p8` key material.
 
-### 4.2 Google OAuth
-
-- [ ] Create a dedicated Google OAuth Web Application client for SHark.
-- [ ] Add:
-  `https://shark.shuv.dev/api/auth/callback/google`.
-- [ ] Add only the HTTPS development callback actually used; do not add broad
-  wildcard origins.
-- [ ] Store the client ID and secret in the deployment secret store.
-
-### 4.3 New Expo/EAS project
+### 4.2 New Expo/EAS project
 
 - [ ] Create an Expo/EAS project owned by the operator.
 - [ ] Replace the upstream fallback project ID in
@@ -492,20 +504,49 @@ Complete this phase before building any installable SHark binary.
   review the credential mapping before the first build.
 - [ ] Update `apps/website/src/server/auth.ts` trusted origins from `hark://` to
   `shark://` while retaining `hark://` only if a compatibility build needs it.
+- [ ] Update `apps/expo/src/lib/auth.ts` so the Better Auth Expo client uses
+  `scheme: "shark"`. Keep its secure-storage prefix as `hark` for compatibility
+  unless a deliberate credential-migration design says otherwise.
 - [ ] Update native auth and deep-link tests for the new scheme.
 - [ ] Update the development-only `apps/expo/app/la-lab.tsx` scheme reference
   and visible Hark sample copy so native source and generated builds contain no
   accidental upstream branding.
 
+### 4.3 Build and inspection artifact boundary
+
+The frozen boundary is:
+
+- Sqim produces every simulator and development-device test build.
+- XcodeBuildMCP may configure the session, install/launch an existing compatible
+  artifact, describe the UI, capture screenshots, interact semantically, and
+  capture focused logs, but it never compiles a test binary.
+- EAS produces only the final store-signed artifact submitted to internal
+  TestFlight.
+- Signed entitlements are inspected on the Sqim development-device artifact and
+  independently on the final EAS/TestFlight artifact.
+- Sqim artifacts are deleted when superseded where supported and never retained
+  longer than 30 days. Preserve only hashes and verification records after
+  deletion.
+
+Before the first XcodeBuildMCP runtime or inspection call:
+
+1. Call `session_show_defaults`.
+2. Discover/select the generated workspace, scheme, and simulator only if the
+   defaults are missing or wrong.
+3. Stop if the requested action would violate the frozen Sqim boundary.
+4. After launch, verify the app through UI description or a screenshot before
+   interaction.
+5. Prefer semantic accessibility targets and capture focused app logs around
+   failures.
+
 ### 4.4 App Store Connect and TestFlight
 
 - [ ] Create the SHark app record in App Store Connect with bundle ID
   `dev.shuv.shark`.
-- [ ] Supply the SHark icon, privacy URL, support URL, category, age rating,
-  export-compliance answer, and account-deletion instructions.
+- [ ] Supply the SHark icon and any metadata required for internal TestFlight.
+  Do not invent anonymous privacy/support URLs; stop if Apple requires them.
 - [ ] Keep the first release in internal TestFlight.
-- [ ] Do not publish a public TestFlight link in the website until the app is
-  stable and the operator intends to support external testers.
+- [ ] Do not create or publish a public TestFlight link in v1.
 
 Validation:
 
@@ -521,9 +562,13 @@ Validation:
   assuming the source literal is authoritative.
 - [ ] `pnpm --filter @hark/expo exec expo install --check` passes.
 - [ ] `npx expo-doctor` passes at the pinned reviewed version.
-- [ ] An EAS development build installs on the physical iPhone.
+- [ ] A Sqim development build installs on the physical iPhone and its hosted
+  install page is verified.
 - [ ] A production build uploads to the new App Store Connect record and
   appears in internal TestFlight.
+- [ ] Run physical-device acceptance with one allowlisted operator account on
+  two iPhones, including multi-device routing, token refresh, sign-out, and
+  Live Activity isolation.
 
 ## Phase 5 — Configure and Deploy the Web/API Service
 
@@ -542,8 +587,6 @@ Validation:
   DEPLOYMENT_MODE=self_hosted
   ALLOWED_EMAILS=<operator email>
   BETTER_AUTH_SECRET=<generated high-entropy secret>
-  GOOGLE_CLIENT_ID=<secret>
-  GOOGLE_CLIENT_SECRET=<secret>
   APPLE_SIGN_IN_SERVICE_ID=dev.shuv.shark.web
   APPLE_SIGN_IN_BUNDLE_ID=dev.shuv.shark
   APPLE_SIGN_IN_KEY_ID=<secret metadata>
@@ -554,7 +597,9 @@ Validation:
   APNS_PRIVATE_KEY=<secret>
   APNS_BUNDLE_ID=dev.shuv.shark
   APNS_ENVIRONMENT=production
-  TRUSTED_CLIENT_IP_HEADER=<only if overwritten by the proxy>
+  SERVICE_RATE_LIMIT_PER_MINUTE=300
+  ACCOUNT_RATE_LIMIT_PER_MINUTE=1500
+  # TRUSTED_CLIENT_IP_HEADER intentionally unset for exe.dev v1
   ```
 
 - [ ] Generate a unique `BETTER_AUTH_SECRET` and store it in the backup/restore
@@ -563,21 +608,29 @@ Validation:
 - [ ] Remove upstream default IDs from `compose.yaml`; required operator-owned
   IDs should fail fast rather than fall back.
 - [ ] Apply the Phase 3 credential matrix at startup. Production self-host mode
-  must refuse to start when the allowlist or any Google, Apple, Expo, or APNs
+  must refuse to start when the allowlist or any Apple, Expo, or APNs
   credential group is missing or partial; empty Compose values count as absent.
 
-### 5.2 Reverse proxy, TLS, and network boundary
+### 5.2 exe.dev VM, proxy, TLS, and network boundary
 
+- [ ] Create a new isolated exe.dev VM in the account's existing PDX region
+  policy with 2 vCPU, 4 GB RAM, and 25 GB disk:
+  - VM name: `shark-prod`.
+  - Deploy directory: `/home/exedev/shark`.
 - [ ] Bind Compose to loopback:
   `127.0.0.1:8787:8787`.
-- [ ] Terminate TLS at the operator's trusted reverse proxy.
-- [ ] Route `shark.shuv.dev` to `http://127.0.0.1:8787`.
+- [ ] Use the exe.dev managed proxy for HTTPS and select the loopback-bound
+  SHark port as the public HTTP share.
+- [ ] Make the exe.dev HTTP share public so Apple OAuth callbacks, webhooks,
+  and the app API are reachable before SHark authentication.
+- [ ] In Cloudflare, create a DNS-only CNAME from `shark.shuv.dev` to the VM's
+  `*.exe.xyz` hostname.
+- [ ] Register the custom domain explicitly with
+  `ssh exe.dev domain add <vm> shark.shuv.dev`.
 - [ ] Forward the original scheme and host required by Better Auth.
-- [ ] If client-IP-aware rate limiting is needed, configure one header that the
-  edge always overwrites, then set exactly that name in
-  `TRUSTED_CLIENT_IP_HEADER`.
-- [ ] Otherwise leave `TRUSTED_CLIENT_IP_HEADER` unset; never trust arbitrary
-  client-supplied `X-Forwarded-For`.
+- [ ] Leave `TRUSTED_CLIENT_IP_HEADER` unset for the first release. exe.dev
+  appends rather than overwrites `X-Forwarded-For`, while Hark currently reads
+  the first value; trusting it would permit spoofing.
 - [ ] Configure DNS and HTTPS before OAuth callback registration is tested.
 - [ ] Restrict SSH and Docker host access through the operator's existing
   infrastructure controls.
@@ -595,15 +648,21 @@ Validation:
 
   ```bash
   curl --fail --silent https://shark.shuv.dev/api/health
-  curl --fail --silent https://shark.shuv.dev/
-  curl --fail --silent https://shark.shuv.dev/docs
+  case "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    https://shark.shuv.dev/)" in 302|303|307|401) ;; *) exit 1 ;; esac
+  case "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    https://shark.shuv.dev/docs)" in 302|303|307|401) ;; *) exit 1 ;; esac
   ```
 
-- [ ] Confirm missing website paths return a real `404`, while API and webhook
-  misses return JSON `404`.
+- [ ] Confirm authenticated missing website paths return a real `404`, while API
+  and webhook misses return JSON `404`.
 - [ ] Confirm secret webhook URLs are redacted in access logs.
+- [ ] Retain only seven days of capped, rotating logs on `shark-prod`; do not add
+  centralized logging in v1. Redact emails, tokens, webhook URLs, push
+  identifiers, authorization codes, callback credentials, and private-key
+  material.
 
-### 5.4 Backup and restore
+### 5.4 Restic backup and restore to rsync.net
 
 - [ ] Adapt the safe WAL checkpoint and `integrity_check` logic from
   `.github/workflows/production-update.yml`.
@@ -616,18 +675,37 @@ Validation:
   - require `integrity_check = ok`,
   - require the exact expected migration version and required table set rather
     than the current weak `c < 5` table-count guard.
-- [ ] Encrypt backups off-host.
-- [ ] Use a documented retention policy, recommended:
+- [ ] Create a dedicated rsync.net Restic repository reachable over SFTP.
+- [ ] Use the account-relative repository suffix `repos/shark-prod`; keep the
+  rsync.net account and host values in Bitwarden.
+- [ ] Use Restic encryption for every off-host snapshot; do not upload the
+  plaintext checkpoint copy.
+- [ ] Run a verified snapshot nightly at 2:00 AM `America/Los_Angeles` and an
+  additional verified snapshot before every deployment.
+- [ ] Use this retention policy:
   7 daily, 4 weekly, and 6 monthly verified backups.
-- [ ] Back up the production env/secret references separately; never place
-  plaintext secrets in the repository or database archive.
-- [ ] Perform a restore drill into a disposable Compose project and verify
-  account, services, devices, events, and schema.
+- [ ] Store the only copy of the Restic repository password in Bitwarden
+  Secrets Manager. There is intentionally no offline or second-vault copy;
+  Bitwarden recovery is therefore a documented disaster-recovery dependency.
+- [ ] Back up production secret references separately; never place plaintext
+  secrets in the repository or database archive.
+- [ ] Perform a quarterly restore drill into a disposable Compose project and
+  verify account, services, devices, events, and schema. Do not add separate
+  weekly or monthly repository-check jobs in v1.
 - [ ] Document recovery behavior when push tokens have expired: reopening the
   app should re-register the device.
 
 ### 5.5 Deployment automation and rollback
 
+- [ ] Keep Bitwarden as the secret source of truth. Use scoped Bitwarden Secrets
+  Manager projects and machine accounts, not a personal-vault CLI session.
+- [ ] Make `shark-prod` fetch its own scoped application secrets directly from
+  Bitwarden during deployment. GitHub receives no Apple, APNs, Expo, database,
+  Restic, or application secrets.
+- [ ] Use a manual-dispatch GitHub Actions workflow over SSH with a dedicated
+  key installed only for `shark-prod`. Restrict it to the deployment wrapper,
+  disable shell/PTY/agent forwarding/port forwarding, and rotate it every 90
+  days. GitHub stores only this key and pinned host-verification material.
 - [ ] Replace upstream-specific values in
   `.github/workflows/production-update.yml`:
   host, deploy path, environment name, compose project/volume names, domain,
@@ -642,11 +720,8 @@ Validation:
 - [ ] Deploy an immutable image selected through an explicit Compose image
   reference, for example `image: shark:${DEPLOY_GIT_SHA}` in an operator
   override or generated deployment file.
-- [ ] Choose and document one image-retention mechanism:
-  - push `shark:<full-git-sha>` to an operator-controlled registry and pin its
-    digest at deploy time, or
-  - retain the same immutable SHA tags on the production host with a pruning
-    policy that preserves every rollback candidate.
+- [ ] Retain immutable `shark:<full-git-sha>` image tags on the production host
+  with a pruning policy that preserves every recorded rollback candidate.
 - [ ] Record the reviewed source SHA, image tag, and image digest together.
   Verify that the built image came from that source and that Compose is running
   the recorded digest before declaring deployment successful.
@@ -699,9 +774,9 @@ Validation:
 - [ ] Update `README.md`, website docs, generated `docs.md`, and `llms.txt`.
 - [ ] Document the self-host architecture, account allowlist, backup/restore,
   credentials, and TestFlight installation.
-- [ ] Document the “Share My Email” first-release policy, how a denied Apple
-  private relay login is corrected, and the operator offboarding procedure for
-  revoking every credential class.
+- [ ] Document Apple-only authentication, exact-email admission for either a
+  real or relay address, and the operator offboarding procedure for revoking
+  every credential class.
 - [ ] Clearly distinguish:
   - Expo Push Service for ordinary notifications.
   - Direct APNs credentials for Live Activities.
@@ -721,14 +796,16 @@ Validation:
 
 ### Web and auth
 
-- [ ] Landing, docs, privacy, terms, dashboard, and CLI authorization display
-  SHark and the Devil Phone with correct canonical metadata.
-- [ ] Google sign-in works on web and iOS.
+- [ ] Health-check endpoints are the only anonymously readable content in v1.
+- [ ] Landing, docs, privacy, terms, dashboard, and CLI authorization require an
+  allowlisted Apple session and display SHark with correct canonical metadata.
+- [ ] OAuth callbacks, webhooks, interaction callbacks, and Live Activity
+  endpoints remain network-reachable but authenticate through signed state or
+  their scoped credentials; they are not anonymous content surfaces.
 - [ ] Sign in with Apple works on web and iOS.
-- [ ] Google plus Apple “Share My Email” resolve to the same allowed user and do
-  not create duplicate accounts.
-- [ ] Apple Hide My Email/private relay is denied without persisting a user,
-  account, or session, and the operator-facing recovery instructions work.
+- [ ] An allowlisted real Apple email signs into the same account on repeat.
+- [ ] An allowlisted Apple relay email signs into the same account on repeat
+  without requiring or exposing the underlying real address.
 - [ ] A non-allowlisted account is denied without being persisted.
 - [ ] Removing an existing allowed email blocks its current browser session,
   API tokens, webhook URLs, interaction callbacks, and Live Activity
@@ -736,6 +813,23 @@ Validation:
   rotates, or deletes all persisted access.
 - [ ] Sign-out unregisters the device.
 - [ ] Account deletion removes services, devices, sessions, and Apple grants.
+- [ ] Apple-only UI contains no Google button, provider configuration, startup
+  requirement, documentation, or test expectation.
+- [ ] If App Store Connect requires an anonymously reachable privacy/support URL
+  for this internal-only build, stop and return for a scope decision rather than
+  publishing another SHark page implicitly.
+
+### iOS presentation and state
+
+- [ ] Verify signed-out, authentication-busy, authentication-error,
+  notification-denied, registration-error, offline/stale, and ready states.
+- [ ] Verify primary controls through semantic accessibility labels/roles and
+  VoiceOver, including sign in, notification permission, device registration,
+  refresh, sign out, and account deletion.
+- [ ] Verify large Dynamic Type does not truncate required actions or identity
+  text, and capture screenshots for the primary light appearance.
+- [ ] Keep the React Native view tree stable and localize loading/error state;
+  do not introduce SwiftUI view-model/refactor work into the main Expo client.
 
 ### Ordinary push
 
@@ -797,14 +891,11 @@ Validation:
   number, deployed Git SHA, migration number, and backup identifier.
 - [ ] Keep the first external boundary at internal TestFlight plus the private
   production origin.
-- [ ] Add uptime monitoring for `/api/health` and a synthetic landing-page
-  check that verifies the SHark canonical URL. Alert separately when the
-  database-backed readiness check fails.
-- [ ] Alert on repeated push-provider failures, authentication failures, disk
-  pressure, container restart loops, and backup verification failures without
-  logging secrets.
+- [ ] Do not add proactive monitoring or alerts in v1. Document a manual
+  operator check for `/api/health`, deployment status, backup completion, disk
+  pressure, and container restarts.
 - [ ] Review Expo push receipts and deactivate `DeviceNotRegistered` tokens.
-- [ ] Schedule a restore drill at least quarterly.
+- [ ] Schedule the confirmed quarterly restore drill.
 - [ ] Before merging upstream changes:
 
   ```bash
@@ -837,8 +928,8 @@ Exit criteria:
 - Production self-host mode requires an account allowlist.
 - Removing an address blocks every existing credential path and the offboarding
   operation clears its persisted access.
-- Google and Apple “Share My Email” resolve to one user; private relay is denied
-  without persistence under the frozen first-release policy.
+- Apple-only authentication admits the exact allowlisted verified email,
+  including a relay address, without duplicate accounts.
 - Full automated baseline passes.
 
 ### Milestone B — Operator-owned mobile identity
@@ -849,7 +940,8 @@ Exit criteria:
 
 - No upstream Apple, Expo, OAuth, TestFlight, or App Store identifier remains
   active in configuration.
-- A SHark development build installs and authenticates on the physical iPhone.
+- A SHark development build installs and authenticates on both physical
+  iPhones for the one allowlisted operator account.
 - Normal push and Live Activity credentials belong to the operator.
 
 ### Milestone C — Recoverable production service
@@ -883,24 +975,24 @@ Exit criteria:
 
 - A tagged SHark release is installed through internal TestFlight.
 - Production version/build/database/backup provenance is recorded.
-- Monitoring and upstream-sync procedures are operational.
+- Manual operational checks and upstream-sync procedures are documented.
 
 ## Risks and Mitigations
 
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
 | PolyForm noncommercial scope is exceeded | License violation | Keep the service personal/noncommercial or obtain a commercial license first |
-| Empty Autumn key is mistaken for full self-hosting | Core features return 402 | Add explicit, tested `self_hosted` entitlement mode |
+| Residual Autumn or paid-plan code survives the fork | Core features remain coupled to removed commercial behavior | Remove Autumn runtime/configuration and test one fixed self-hosted entitlement mode |
 | Public OAuth creates unwanted accounts | Abuse and unexpected push costs | Require an exact email allowlist and fail production startup when absent |
 | Removing an email leaves issued credentials valid | Formerly allowed access persists | Check admission on every credential path and run transactional offboarding |
-| Apple Hide My Email conflicts with exact-email admission | Apple lockout or duplicate user | Require Share My Email for the first release and reject relay addresses without persistence |
+| Apple relay identity is mistaken for an invalid or temporary address | Apple lockout or duplicate user | Accept the exact verified relay address when allowlisted and persist the Apple provider subject |
 | Upstream EAS/Apple IDs remain | Builds or pushes target the wrong owner | Remove all fallback IDs and make operator-owned IDs required |
 | Expo project and push token mismatch | Ordinary pushes fail | Create a new EAS project and obtain tokens with its exact project ID |
 | APNs environment mismatch | Live Activities silently fail | Use sandbox for development, production for TestFlight/store, and test both |
 | SQLite backup ignores WAL | Backup appears valid but loses data | Checkpoint, copy, open read-only, run integrity and schema checks |
 | Mutable or unretained images make rollback fictional | Previous code cannot be restored reliably | Record and retain immutable SHA tags and verify image digests |
 | Rebranding cryptographic/internal namespaces | Credentials and migrations break | Preserve token domains, tables, package names, and routes |
-| App Store review discovers stale claims/assets | Rejection or misleading listing | Remove upstream TestFlight/demo/paid claims and use accurate SHark legal pages |
+| Internal-TestFlight metadata retains stale claims/assets | Misleading operator-facing release metadata | Remove upstream TestFlight/demo/paid claims and use accurate SHark metadata |
 | Devil Phone provenance is assumed from an unrelated notice file | Unclear right to reuse the artwork | Record positive operator ownership and source provenance |
 | Devil Phone app icon has alpha or unsafe crop | Build/store rejection or bad mask | Generate an opaque 1024px icon from the safe-area composition and inspect on device |
 | Fork drifts far from upstream | Expensive future updates | Keep a narrow brand/config layer and document intentional deltas |
@@ -910,7 +1002,7 @@ Exit criteria:
 - Upstream source:
   https://github.com/R44VC0RP/hark
 - Operator fork:
-  https://github.com/shuv1337/hark
+  https://github.com/shuv1337/shark
 - PolyForm Noncommercial 1.0.0:
   https://polyformproject.org/licenses/noncommercial/1.0.0/
 - Apple — Register an App ID:
@@ -927,6 +1019,8 @@ Exit criteria:
   https://docs.expo.dev/push-notifications/sending-notifications/
 - Expo — EAS Submit for iOS:
   https://docs.expo.dev/submit/ios/
+- Expo — app icon appearance variants:
+  https://docs.expo.dev/develop/user-interface/splash-screen-and-app-icon/
 - Better Auth — Database hooks:
   https://better-auth.com/docs/concepts/database
 - Better Auth — Account linking options:

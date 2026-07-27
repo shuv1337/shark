@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Reference forced-command wrapper for the dedicated shark-prod SSH key.
+# Install this outside the release tree and set authorized_keys command= to it.
+
+original_command="${SSH_ORIGINAL_COMMAND:-${*:-}}"
+read -r action deploy_sha extra <<<"$original_command"
+if [[ "$action" != "deploy" || ! "$deploy_sha" =~ ^[0-9a-f]{40}$ || -n "${extra:-}" ]]; then
+  echo "Rejected deployment command." >&2
+  exit 64
+fi
+
+deploy_root="/home/exedev/shark"
+releases_root="$deploy_root/releases"
+release_dir="$releases_root/$deploy_sha"
+runtime_env="$deploy_root/.env"
+provenance_root="$deploy_root/provenance"
+lock_file="$deploy_root/deploy.lock"
+
+install -d -m 700 "$deploy_root" "$releases_root" "$provenance_root"
+exec 9>"$lock_file"
+flock -n 9 || {
+  echo "Another SHark deployment is active." >&2
+  exit 75
+}
+
+incoming="$(mktemp -d "$deploy_root/incoming.XXXXXXXX")"
+backup_stage="$(mktemp -d "$deploy_root/backup.XXXXXXXX")"
+volume_backup=""
+cleanup() {
+  if [[ -n "$volume_backup" ]]; then
+    docker run --rm --volume shark-data:/data "shark:$deploy_sha" \
+      rm -f "$volume_backup" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$incoming" "$backup_stage"
+}
+trap cleanup EXIT
+
+archive="$incoming/source.tar.gz"
+source_dir="$incoming/source"
+install -d -m 700 "$source_dir"
+umask 077
+dd of="$archive" status=none
+
+while IFS= read -r member; do
+  if [[ "$member" == /* || "$member" == ".." || "$member" == ../* || "$member" == */../* ]]; then
+    echo "Source archive contains an unsafe path." >&2
+    exit 65
+  fi
+done < <(tar -tzf "$archive")
+
+tar -xzf "$archive" -C "$source_dir"
+if [[ -e "$release_dir" ]]; then
+  echo "Release already exists: $deploy_sha" >&2
+  exit 65
+fi
+mv "$source_dir" "$release_dir"
+
+# This root-owned helper fetches the scoped application secrets directly from
+# Bitwarden Secrets Manager and atomically writes the requested file.
+/usr/local/sbin/shark-materialize-secrets "$runtime_env.new"
+chmod 600 "$runtime_env.new"
+mv "$runtime_env.new" "$runtime_env"
+
+compose=(docker compose --project-name shark --env-file "$runtime_env" --file "$release_dir/compose.yaml")
+DEPLOY_GIT_SHA="$deploy_sha" "${compose[@]}" build
+
+previous_release=""
+previous_sha=""
+if [[ -L "$deploy_root/current" ]]; then
+  previous_release="$(readlink "$deploy_root/current")"
+  previous_sha="$(basename "$previous_release")"
+fi
+
+rollback_previous() {
+  if [[ -n "$previous_release" && -f "$previous_release/compose.yaml" ]]; then
+    DEPLOY_GIT_SHA="$previous_sha" docker compose \
+      --project-name shark \
+      --env-file "$runtime_env" \
+      --file "$previous_release/compose.yaml" \
+      up --detach
+  fi
+}
+
+if [[ -n "$previous_release" ]]; then
+  DEPLOY_GIT_SHA="$previous_sha" docker compose \
+    --project-name shark \
+    --env-file "$runtime_env" \
+    --file "$previous_release/compose.yaml" \
+    stop
+fi
+trap 'rollback_previous; cleanup' ERR
+
+backup_id="none-first-deploy"
+if docker run --rm --volume shark-data:/data "shark:$deploy_sha" \
+  sh -c 'test -f /data/hark.sqlite'
+then
+  backup_name="hark.sqlite.pre-$deploy_sha"
+  volume_backup="/data/backups/$backup_name"
+  docker run --rm \
+    --volume shark-data:/data \
+    --env DATABASE_URL=/data/hark.sqlite \
+    --env "BACKUP_DATABASE_URL=$volume_backup" \
+    "shark:$deploy_sha" \
+    node dist/operator/backup-database.js >/dev/null
+
+  copy_container="$(docker create --volume shark-data:/data "shark:$deploy_sha")"
+  docker cp "$copy_container:/data/backups/$backup_name" "$backup_stage/$backup_name"
+  docker rm "$copy_container" >/dev/null
+
+  # This root-owned helper fetches the Restic repository credentials from
+  # Bitwarden, writes the encrypted snapshot, verifies it, applies retention,
+  # deletes the plaintext staging copy, and prints only the snapshot ID.
+  backup_id="$(/usr/local/sbin/shark-restic-backup "$backup_stage/$backup_name")"
+  rm -f "$backup_stage/$backup_name"
+  docker run --rm --volume shark-data:/data "shark:$deploy_sha" \
+    rm -f "$volume_backup" >/dev/null
+  volume_backup=""
+fi
+
+DEPLOY_GIT_SHA="$deploy_sha" "${compose[@]}" up --detach
+for _attempt in $(seq 1 30); do
+  if curl --fail --silent http://127.0.0.1:8787/api/health >/dev/null; then
+    break
+  fi
+  sleep 2
+done
+curl --fail --silent http://127.0.0.1:8787/api/health >/dev/null
+
+container_id="$(DEPLOY_GIT_SHA="$deploy_sha" "${compose[@]}" ps --quiet shark)"
+running_image_id="$(docker inspect --format '{{.Image}}' "$container_id")"
+expected_image_id="$(docker image inspect --format '{{.Id}}' "shark:$deploy_sha")"
+if [[ "$running_image_id" != "$expected_image_id" ]]; then
+  echo "Running container image does not match reviewed SHA image." >&2
+  exit 70
+fi
+
+curl --fail --silent https://shark.shuv.dev/api/health >/dev/null
+for path in / /docs; do
+  status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    "https://shark.shuv.dev${path}")"
+  case "$status" in
+    302|303|307|401) ;;
+    *) echo "Unexpected anonymous status $status for $path" >&2; exit 70 ;;
+  esac
+done
+
+ln -sfn "$release_dir" "$deploy_root/current"
+printf '%s\n' \
+  "git_sha=$deploy_sha" \
+  "image_id=$running_image_id" \
+  "backup_id=$backup_id" \
+  "deployed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  >"$provenance_root/$deploy_sha.txt"
+chmod 600 "$provenance_root/$deploy_sha.txt"
+
+trap cleanup EXIT
+echo "Deployed SHark $deploy_sha"

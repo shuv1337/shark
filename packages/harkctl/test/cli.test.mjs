@@ -522,7 +522,7 @@ test("notify ask --text maps to a reply interaction and defaults the title", asy
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (_url, init) => {
     assert.deepEqual(JSON.parse(init.body), {
-      title: "Hark",
+      title: "SHark",
       prompt: "What should the release note say?",
       kind: "reply",
       expiresInSeconds: 900,

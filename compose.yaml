@@ -1,38 +1,40 @@
 services:
-  hark:
+  shark:
+    image: shark:${DEPLOY_GIT_SHA:?set DEPLOY_GIT_SHA to the reviewed full Git SHA}
     build: .
     ports:
       # Bind publicly only behind a trusted proxy; auth rate limits use its client-IP headers.
-      - "8787:8787"
+      - "127.0.0.1:8787:8787"
     environment:
       NODE_ENV: production
+      DEPLOYMENT_MODE: self_hosted
       PORT: "8787"
       DATABASE_URL: /data/hark.sqlite
       # Public origin of this deployment (used for OAuth redirects + webhook URLs).
-      APP_URL: ${APP_URL:-http://localhost:8787}
+      APP_URL: ${APP_URL:?set APP_URL in .env}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      APPLE_SIGN_IN_SERVICE_ID: ${APPLE_SIGN_IN_SERVICE_ID:-}
-      APPLE_SIGN_IN_BUNDLE_ID: ${APPLE_SIGN_IN_BUNDLE_ID:-ceo.ryan.hark}
-      APPLE_SIGN_IN_KEY_ID: ${APPLE_SIGN_IN_KEY_ID:-}
-      APPLE_SIGN_IN_PRIVATE_KEY: ${APPLE_SIGN_IN_PRIVATE_KEY:-}
-      EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
-      APNS_KEY_ID: ${APNS_KEY_ID:-}
-      APPLE_TEAM_ID: ${APPLE_TEAM_ID:-}
-      APNS_PRIVATE_KEY: ${APNS_PRIVATE_KEY:-}
-      APNS_BUNDLE_ID: ${APNS_BUNDLE_ID:-ceo.ryan.hark}
-      APNS_ENVIRONMENT: ${APNS_ENVIRONMENT:-sandbox}
-      AUTUMN_API_KEY: ${AUTUMN_API_KEY:-}
-      # Only set this to a header the edge overwrites; see env.ts for why.
-      TRUSTED_CLIENT_IP_HEADER: ${TRUSTED_CLIENT_IP_HEADER:-}
-      SERVICE_RATE_LIMIT_PER_MINUTE: ${SERVICE_RATE_LIMIT_PER_MINUTE:-60}
-      ACCOUNT_RATE_LIMIT_PER_MINUTE: ${ACCOUNT_RATE_LIMIT_PER_MINUTE:-300}
-      PRO_SERVICE_RATE_LIMIT_PER_MINUTE: ${PRO_SERVICE_RATE_LIMIT_PER_MINUTE:-300}
-      PRO_ACCOUNT_RATE_LIMIT_PER_MINUTE: ${PRO_ACCOUNT_RATE_LIMIT_PER_MINUTE:-1500}
+      ALLOWED_EMAILS: ${ALLOWED_EMAILS:?set ALLOWED_EMAILS in .env}
+      APPLE_SIGN_IN_SERVICE_ID: ${APPLE_SIGN_IN_SERVICE_ID:?set APPLE_SIGN_IN_SERVICE_ID in .env}
+      APPLE_SIGN_IN_BUNDLE_ID: dev.shuv.shark
+      APPLE_SIGN_IN_KEY_ID: ${APPLE_SIGN_IN_KEY_ID:?set APPLE_SIGN_IN_KEY_ID in .env}
+      APPLE_SIGN_IN_PRIVATE_KEY: ${APPLE_SIGN_IN_PRIVATE_KEY:?set APPLE_SIGN_IN_PRIVATE_KEY in .env}
+      EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:?set EXPO_ACCESS_TOKEN in .env}
+      APNS_KEY_ID: ${APNS_KEY_ID:?set APNS_KEY_ID in .env}
+      APPLE_TEAM_ID: ${APPLE_TEAM_ID:?set APPLE_TEAM_ID in .env}
+      APNS_PRIVATE_KEY: ${APNS_PRIVATE_KEY:?set APNS_PRIVATE_KEY in .env}
+      APNS_BUNDLE_ID: dev.shuv.shark
+      APNS_ENVIRONMENT: production
+      SERVICE_RATE_LIMIT_PER_MINUTE: ${SERVICE_RATE_LIMIT_PER_MINUTE:-300}
+      ACCOUNT_RATE_LIMIT_PER_MINUTE: ${ACCOUNT_RATE_LIMIT_PER_MINUTE:-1500}
     volumes:
-      - hark-data:/data
+      - shark-data:/data
     restart: unless-stopped
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "7"
 
 volumes:
-  hark-data:
+  shark-data:
+    name: shark-data

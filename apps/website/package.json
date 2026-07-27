@@ -11,13 +11,14 @@
     "start": "node dist/server/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "offboard": "node --import tsx scripts/offboard-user.ts",
+    "backup:database": "node --import tsx scripts/backup-database.ts"
   },
   "dependencies": {
     "@better-auth/expo": "^1.6.25",
     "@hark/contracts": "workspace:*",
     "@hono/node-server": "^1.19.9",
-    "autumn-js": "1.2.44",
     "better-auth": "^1.6.25",
     "better-sqlite3": "^13.0.1",
     "drizzle-orm": "^0.45.2",

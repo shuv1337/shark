@@ -389,6 +389,60 @@ describe("agent services", () => {
 });
 
 describe("interactions", () => {
+  it("blocks browser, agent, and interaction credentials after allowlist removal", async () => {
+    const { env } = await import("../env");
+    const { hashInteractionResponseToken } = await import("../lib/token");
+    const now = new Date();
+    const responseToken = "r".repeat(43);
+    await db.insert(schema.interaction).values({
+      id: "int_admission_boundary",
+      userId: "user_1",
+      requesterTokenId: "tok_full",
+      title: "Admission",
+      prompt: "Still admitted?",
+      kind: "approval",
+      choices: ["approve", "deny"],
+      actionDigest: "a".repeat(64),
+      responseTokenHash: hashInteractionResponseToken(responseToken),
+      expiresAt: new Date(now.getTime() + 60_000),
+      createdAt: now,
+    });
+
+    const previous = [...env.ALLOWED_EMAILS];
+    env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length, "somebody-else@example.com");
+    try {
+      expect((await agent("/interactions")).status).toBe(401);
+      expect(
+        (
+          await app.request("/api/interactions/int_admission_boundary/respond", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              action: "approve",
+              deviceId: "dev_1",
+              actionDigest: "a".repeat(64),
+            }),
+          })
+        ).status,
+      ).toBe(401);
+      expect(
+        (
+          await app.request("/api/interaction-responses/int_admission_boundary/respond", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              action: "approve",
+              deviceId: "dev_1",
+              responseToken,
+            }),
+          })
+        ).status,
+      ).toBe(404);
+    } finally {
+      env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length, ...previous);
+    }
+  });
+
   it("cascades interactions if an account and its token rows are deleted", async () => {
     const now = new Date();
     await db.insert(schema.user).values({
@@ -863,9 +917,9 @@ describe("agent notifications", () => {
     expect(tracked).toHaveLength(1);
   });
 
-  it("defaults the title to Hark and requires the notifications:send scope", async () => {
+  it("defaults the title to SHark and requires the notifications:send scope", async () => {
     const defaulted = await createNotification({ body: "Ping" });
-    expect(await defaulted.json()).toMatchObject({ notification: { title: "Hark" } });
+    expect(await defaulted.json()).toMatchObject({ notification: { title: "SHark" } });
 
     const scoped = await createNotification({ body: "Ping" }, undefined, READ_SECRET);
     expect(scoped.status).toBe(403);
@@ -946,7 +1000,7 @@ describe("agent notifications", () => {
   it("creates yes/no prompts with the matching choices and push kind", async () => {
     sent.length = 0;
     const response = await createInteraction({
-      title: "Hark",
+      title: "SHark",
       prompt: "Keep the current color?",
       kind: "yes_no",
     });

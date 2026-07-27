@@ -16,8 +16,6 @@ import {
 } from "./content";
 import { docLabel } from "./nav";
 
-const PRO_LINE = "**Hark Pro** — requires a paid plan.";
-
 /** Pipe tables cannot contain a raw `|` or a newline. */
 function cell(text: string): string {
   return text.replace(/\s*\n\s*/g, " ").replaceAll("|", "\\|");
@@ -51,8 +49,8 @@ function tableBlock(block: DocTableBlock): string {
       );
     case "plan":
       return table(
-        ["Limit", "Free", "Pro"],
-        block.rows.map((row) => [row.limit, row.free, row.pro]),
+        ["Limit", "Self-hosted"],
+        block.rows.map((row) => [row.limit, row.value]),
       );
   }
 }
@@ -81,18 +79,16 @@ function blockToMarkdown(block: DocBlock): string {
 /** The full documentation as markdown, mirroring the `/docs` page exactly. */
 export function docsMarkdown(): string {
   const parts: string[] = [
-    `# Hark — ${DOCS_TITLE}`,
-    `Hark documentation. HTML version: ${DOCS_URL}`,
+    `# SHark — ${DOCS_TITLE}`,
+    `SHark documentation. HTML version: ${DOCS_URL}`,
   ];
 
   for (const section of DOC_CONTENT) {
     parts.push(`## ${docLabel(section.id)}`);
-    if (section.pro) parts.push(PRO_LINE);
     parts.push(section.lead);
 
     for (const subsection of section.subsections) {
       parts.push(`### ${docLabel(subsection.id)}`);
-      if (subsection.pro) parts.push(PRO_LINE);
       for (const block of subsection.blocks) parts.push(blockToMarkdown(block));
     }
   }
@@ -100,11 +96,11 @@ export function docsMarkdown(): string {
   return `${parts.join("\n\n")}\n`;
 }
 
-/** The /llms.txt pointer file: what Hark is, and where the docs live. */
+/** The /llms.txt pointer file: what SHark is, and where the docs live. */
 export function llmsTxt(): string {
-  return `# Hark
+  return `# SHark
 
-> Hark turns an HTTP request into a source-branded iPhone notification. Create a service in the
+> SHark turns an HTTP request into a source-branded iPhone notification. Create a service in the
 > dashboard, then POST JSON to its secret webhook URL. A Notification API sends one-shot pushes and
 > optional approval prompts; an Activity API drives a stateful Live Activity on the Lock Screen and
 > in the Dynamic Island.
@@ -114,20 +110,19 @@ export function llmsTxt(): string {
 - [Documentation](${DOCS_URL}): ${DOCS_TITLE} — quickstart, Notification API, Activity API.
 - [Documentation as markdown](${DOCS_MARKDOWN_URL}): the same content as plain markdown.
 
-## Product
+## Private product
 
-- [Home](https://hark.ryan.ceo/): product overview and webhook example.
-- [Pricing](https://hark.ryan.ceo/pricing): current Free and Pro capabilities.
-- [Source](https://github.com/R44VC0RP/hark): Hark website, iOS app, CLI, and agent skill.
+- [Home](https://shark.shuv.dev/): authenticated private application.
+- [Source](https://github.com/shuv1337/shark): SHark website, iOS app, compatibility CLI, and agent skill.
 
 ## Agent tools
 
-- [Hark agent skill](https://skills.sh/r44vc0rp/hark/hark): install Hark for compatible coding agents.
-- [harkctl](https://www.npmjs.com/package/harkctl): CLI for notifications, approvals, replies, Live Activities, and webhook services.
+- SHark agent skill: install directly from the reviewed operator checkout.
+- \`harkctl\`: compatibility CLI for notifications, approvals, replies, Live Activities, and webhook services.
 
 ## Notes
 
 - Every request is authenticated by the webhook token in the URL; treat it as a credential.
-- Device routing, interactive responses, and Live Activities require a paid Hark Pro plan.
+- Device routing, interactive responses, and Live Activities are enabled in self-hosted mode.
 `;
 }

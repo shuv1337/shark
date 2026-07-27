@@ -18,7 +18,7 @@ describe("Apple client secrets", () => {
   it("generates a short-lived ES256 assertion for the exact client", async () => {
     const now = 1_800_000_000;
     const token = await apple.generateAppleClientSecret(
-      "ceo.ryan.hark.web",
+      "dev.shuv.shark.web",
       { teamId: "TEAM123", keyId: "KEY123", privateKey },
       now,
     );
@@ -26,7 +26,7 @@ describe("Apple client secrets", () => {
     expect(decodeProtectedHeader(token)).toEqual({ alg: "ES256", kid: "KEY123" });
     expect(decodeJwt(token)).toMatchObject({
       iss: "TEAM123",
-      sub: "ceo.ryan.hark.web",
+      sub: "dev.shuv.shark.web",
       aud: "https://appleid.apple.com",
       iat: now,
       exp: now + 300,
@@ -46,14 +46,14 @@ describe("Apple client secrets", () => {
     const now = 1_800_000_000;
     const config = { teamId: "TEAM123", keyId: "KEY123", privateKey };
     const token = await apple.generateAppleClientSecret(
-      "ceo.ryan.hark.web",
+      "dev.shuv.shark.web",
       config,
       now,
       180 * 24 * 60 * 60,
     );
     expect(decodeJwt(token).exp).toBe(now + 180 * 24 * 60 * 60);
     await expect(
-      apple.generateAppleClientSecret("ceo.ryan.hark.web", config, now, 180 * 24 * 60 * 60 + 1),
+      apple.generateAppleClientSecret("dev.shuv.shark.web", config, now, 180 * 24 * 60 * 60 + 1),
     ).rejects.toThrow("180 days");
   });
 

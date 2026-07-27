@@ -3,13 +3,10 @@ import type {
   ApiTokenCreatedResponse,
   ApiTokenCreateInput,
   ApiTokenDto,
-  BillingDto,
-  BillingRedirectResponse,
   DeviceAuthorizationRequestDto,
   DeviceDto,
   EventDto,
   LiveActivityDto,
-  PricingPlansDto,
   ServiceCreatedResponse,
   ServiceCreateInput,
   ServiceDto,
@@ -78,12 +75,6 @@ export const api = {
   deleteService: (id: string) => request<{ ok: true }>(`/api/services/${id}`, { method: "DELETE" }),
   listDevices: () => request<{ devices: DeviceDto[] }>("/api/devices"),
   removeDevice: (id: string) => request<{ ok: true }>(`/api/devices/${id}`, { method: "DELETE" }),
-  getBilling: () => request<BillingDto>("/api/billing"),
-  getPricingPlans: () => request<PricingPlansDto>("/api/billing/plans"),
-  startCheckout: () =>
-    request<BillingRedirectResponse>("/api/billing/checkout", { method: "POST" }),
-  openBillingPortal: () =>
-    request<BillingRedirectResponse>("/api/billing/portal", { method: "POST" }),
   listEvents: (limit = 50) => request<{ events: EventDto[] }>(`/api/events?limit=${limit}`),
   listLiveActivities: () => request<{ activities: LiveActivityDto[] }>("/api/activities"),
 };

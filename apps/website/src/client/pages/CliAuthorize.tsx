@@ -2,9 +2,9 @@ import type { DeviceAuthorizationRequestDto } from "@hark/contracts";
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { AppleButton } from "../components/AppleButton";
-import { GoogleButton } from "../components/GoogleButton";
+import { BrandWordmark } from "../components/BrandWordmark";
 import { api } from "../lib/api";
-import { signInWithApple, signInWithGoogle, useSession } from "../lib/auth";
+import { signInWithApple, useSession } from "../lib/auth";
 
 export function CliAuthorize() {
   const initialCode = new URLSearchParams(window.location.search).get("code") ?? "";
@@ -68,7 +68,7 @@ export function CliAuthorize() {
     <div className="flex min-h-dvh flex-col">
       <header className="mx-auto flex h-20 w-full max-w-3xl items-center justify-between px-6">
         <Link className="text-lg font-semibold" to="/">
-          Hark
+          <BrandWordmark />
         </Link>
         <div className="flex items-center gap-3">
           {session ? (
@@ -113,13 +113,10 @@ export function CliAuthorize() {
           ) : !session ? (
             <div className="mt-6">
               <p className="mb-5 text-sm leading-6 text-ink-subtle">
-                Sign in to choose whether this client may access your Hark account. Signing in does
+                Sign in to choose whether this client may access your SHark account. Signing in does
                 not authorize it.
               </p>
-              <div className="flex flex-wrap gap-3">
-                <AppleButton onClick={() => void signInWithApple(callbackURL)} />
-                <GoogleButton onClick={() => void signInWithGoogle(callbackURL)} />
-              </div>
+              <AppleButton onClick={() => void signInWithApple(callbackURL)} />
             </div>
           ) : loading ? (
             <p className="mt-6 text-sm text-ink-faint">Loading authorization request…</p>

@@ -1,11 +1,10 @@
 import { Link } from "react-router";
-import { AppDownloadBanner } from "../components/AppDownloadBanner";
 import { AppleButton } from "../components/AppleButton";
+import { BrandWordmark } from "../components/BrandWordmark";
 import { CodeBlock } from "../components/CodeBlock";
-import { GoogleButton } from "../components/GoogleButton";
-import { signInWithApple, signInWithGoogle, useSession } from "../lib/auth";
+import { signInWithApple, useSession } from "../lib/auth";
 
-const requestExample = `curl -X POST https://hark.ryan.ceo/hooks/whk_your_token \\
+const requestExample = `curl -X POST https://shark.shuv.dev/hooks/whk_your_token \\
   -H 'Content-Type: application/json' \\
   -d '{
     "body": "Production deployed successfully.",
@@ -26,14 +25,11 @@ export function Landing() {
     <div className="flex min-h-dvh flex-col">
       <header className="mx-auto flex h-20 w-full max-w-3xl items-center justify-between px-6">
         <Link to="/" className="text-lg font-semibold">
-          Hark
+          <BrandWordmark />
         </Link>
         <nav className="flex items-center gap-4" aria-label="Primary">
           <Link className="text-ink-subtle hover:text-ink text-sm transition" to="/docs">
             Docs
-          </Link>
-          <Link className="text-ink-subtle hover:text-ink text-sm transition" to="/pricing">
-            Pricing
           </Link>
           {session ? (
             <Link
@@ -46,10 +42,6 @@ export function Landing() {
         </nav>
       </header>
 
-      <div className="mx-auto w-full max-w-3xl px-6">
-        <AppDownloadBanner />
-      </div>
-
       <main className="mx-auto w-full max-w-3xl flex-1 px-6 pb-24 text-left">
         <section>
           <h1 className="max-w-2xl text-4xl font-semibold text-balance sm:text-5xl">
@@ -59,21 +51,6 @@ export function Landing() {
             Create a service, copy its secret webhook URL, and every POST becomes a source-branded
             communication notification on your iPhone — with your service's name and avatar.
           </p>
-          <div className="border-media-line mt-8 w-full overflow-hidden rounded-2xl border bg-black">
-            <video
-              aria-label="A demonstration of Hark delivering project notifications to an iPhone"
-              autoPlay
-              className="pointer-events-none aspect-video w-full"
-              disablePictureInPicture
-              loop
-              muted
-              playsInline
-              poster="/notifications-demo-poster.jpg"
-              preload="metadata"
-            >
-              <source src="/notifications-demo.mp4" type="video/mp4" />
-            </video>
-          </div>
           <div className="mt-8">
             {session ? (
               <Link
@@ -83,10 +60,7 @@ export function Landing() {
                 Go to your services
               </Link>
             ) : (
-              <div className="flex flex-wrap gap-3">
-                <AppleButton onClick={() => void signInWithApple()} disabled={isPending} />
-                <GoogleButton onClick={() => void signInWithGoogle()} disabled={isPending} />
-              </div>
+              <AppleButton onClick={() => void signInWithApple()} disabled={isPending} />
             )}
           </div>
         </section>
@@ -128,7 +102,7 @@ export function Landing() {
       </main>
 
       <footer className="text-ink-faint mx-auto flex w-full max-w-3xl items-center justify-between px-6 py-6 text-xs">
-        <span>Hark · webhook → iPhone, nothing else in between.</span>
+        <span>SHark · webhook → iPhone, nothing else in between.</span>
         <nav className="flex items-center gap-3" aria-label="Legal">
           <Link className="hover:text-ink-muted transition" to="/privacy">
             Privacy

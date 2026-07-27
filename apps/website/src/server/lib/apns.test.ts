@@ -8,7 +8,7 @@ const transport = vi.hoisted(() => ({
     APNS_KEY_ID: "KEY123",
     APPLE_TEAM_ID: "TEAM123",
     APNS_PRIVATE_KEY: "",
-    APNS_BUNDLE_ID: "ceo.ryan.hark",
+    APNS_BUNDLE_ID: "dev.shuv.shark",
     APNS_ENVIRONMENT: "sandbox" as const,
   },
 }));
@@ -71,10 +71,10 @@ describe("APNs provider authentication", () => {
   it("selects the correct host, topic, push type, and priority", () => {
     expect(apnsHost("sandbox")).toBe("https://api.sandbox.push.apple.com");
     expect(apnsHost("production")).toBe("https://api.push.apple.com");
-    expect(liveActivityHeaders({ bundleId: "ceo.ryan.hark" }, "abc", "jwt", 5)).toMatchObject({
+    expect(liveActivityHeaders({ bundleId: "dev.shuv.shark" }, "abc", "jwt", 5)).toMatchObject({
       ":path": "/3/device/abc",
       "apns-push-type": "liveactivity",
-      "apns-topic": "ceo.ryan.hark.push-type.liveactivity",
+      "apns-topic": "dev.shuv.shark.push-type.liveactivity",
       "apns-priority": "5",
     });
   });

@@ -1,34 +1,33 @@
-name: Production Update
+name: SHark Production Update
 
 on:
   workflow_dispatch:
     inputs:
       reason:
-        description: Reason for this website update
-        required: false
+        description: Reason for this private production update
+        required: true
         type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: hark-production-update
+  group: shark-production-update
   cancel-in-progress: false
 
 jobs:
-  update:
-    name: Verify and update website
+  verify-and-deploy:
+    name: Verify and deploy reviewed SHA
     runs-on: ubuntu-latest
-    environment: production
-    timeout-minutes: 30
+    environment: shark-production
+    timeout-minutes: 45
     env:
-      DEPLOY_HOST: raven-cobra.exe.xyz
-      DEPLOY_PATH: /home/exedev/hark
-      SSH_PRIVATE_KEY: ${{ secrets.EXE_DEV_SSH_PRIVATE_KEY }}
-      SSH_KNOWN_HOSTS: ${{ secrets.EXE_DEV_KNOWN_HOSTS }}
+      DEPLOY_HOST: ${{ secrets.SHARK_DEPLOY_HOST }}
+      SSH_PRIVATE_KEY: ${{ secrets.SHARK_DEPLOY_SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.SHARK_DEPLOY_SSH_KNOWN_HOSTS }}
 
     steps:
-      - name: Check out source
+      - name: Check out exact source
         uses: actions/checkout@v5
 
       - name: Set up pnpm
@@ -43,7 +42,7 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: Install dependencies
+      - name: Install reviewed dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Verify monorepo
@@ -52,104 +51,44 @@ jobs:
           pnpm test
           pnpm lint
           pnpm build
+          docker build --tag "shark:${GITHUB_SHA}" .
 
-      - name: Configure SSH
+      - name: Create exact-source archive
+        run: git archive --format=tar.gz --output=shark-source.tar.gz "$GITHUB_SHA"
+
+      - name: Configure restricted SSH transport
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/hark_deploy
-          chmod 600 ~/.ssh/hark_deploy
+          install -m 600 /dev/null ~/.ssh/shark_deploy
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/shark_deploy
+          install -m 600 /dev/null ~/.ssh/known_hosts
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
 
-      - name: Sync deployment source
+      - name: Deploy through the host wrapper
         run: |
-          rsync -az --delete \
-            -e "ssh -i ~/.ssh/hark_deploy -o IdentitiesOnly=yes" \
-            --exclude node_modules \
-            --exclude dist \
-            --exclude .git \
-            --exclude '.env*' \
-            --exclude data \
-            --exclude apps/expo/ios \
-            --exclude apps/expo/android \
-            ./ "$DEPLOY_HOST:$DEPLOY_PATH/"
+          ssh -i ~/.ssh/shark_deploy \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o RequestTTY=no \
+            "$DEPLOY_HOST" "deploy ${GITHUB_SHA}" < shark-source.tar.gz
 
-      - name: Build, back up, and restart production
-        run: |
-          ssh -i ~/.ssh/hark_deploy -o IdentitiesOnly=yes "$DEPLOY_HOST" 'bash -s' <<'REMOTE'
-          set -euo pipefail
-          cd /home/exedev/hark
-
-          # Build while the current container remains available.
-          docker compose build
-
-          docker compose stop
-          trap 'docker compose up -d' EXIT
-
-          # SQLite runs in WAL mode, so the main file is incomplete until the log is
-          # checkpointed into it. Copying it without this yields an empty backup.
-          # `< /dev/null` is required: this script arrives on stdin via `bash -s`, and
-          # `docker compose run` attaches stdin, which would consume the rest of it.
-          docker compose run --rm --no-deps -T hark node -e "
-            const Database = require('better-sqlite3');
-            const db = new Database('/data/hark.sqlite');
-            db.pragma('wal_checkpoint(TRUNCATE)');
-            db.close();
-          " < /dev/null
-
-          docker run --rm -v hark_hark-data:/data busybox sh -c '
-            if [ -f /data/hark.sqlite ]; then
-              cp /data/hark.sqlite "/data/hark.sqlite.backup-$(date +%Y%m%d-%H%M%S)"
-            fi
-          '
-
-          # A backup that cannot be opened, or that lost the schema, must fail the deploy.
-          docker compose run --rm --no-deps -T hark node -e "
-            const fs = require('node:fs');
-            const Database = require('better-sqlite3');
-            const isBackup = (f) =>
-              f.startsWith('hark.sqlite.backup-') && !f.endsWith('-wal') && !f.endsWith('-shm');
-            const backups = fs.readdirSync('/data').filter(isBackup).sort();
-            const latest = backups[backups.length - 1];
-            if (!latest) throw new Error('No backup was written');
-            const db = new Database('/data/' + latest, { readonly: true });
-            const integrity = db.pragma('integrity_check', { simple: true });
-            if (integrity !== 'ok') throw new Error('Backup failed integrity_check: ' + integrity);
-            const { c } = db.prepare(\"select count(*) c from sqlite_master where type='table'\").get();
-            db.close();
-            if (c < 5) throw new Error('Backup only contains ' + c + ' tables');
-            // Opening a WAL database leaves sidecar files behind; they are not backups.
-            for (const suffix of ['-wal', '-shm']) {
-              fs.rmSync('/data/' + latest + suffix, { force: true });
-            }
-            console.log('Backup verified:', latest, c, 'tables');
-          " < /dev/null
-
-          docker compose up -d
-          trap - EXIT
-
-          for attempt in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then
-              docker compose ps
-              exit 0
-            fi
-            sleep 2
-          done
-
-          docker compose logs --tail=100
-          exit 1
-          REMOTE
-
-      - name: Verify public deployment
+      - name: Verify private production boundary
         run: |
           curl --fail --show-error --silent --retry 12 --retry-all-errors \
-            https://hark.ryan.ceo/api/health >/dev/null
-          curl --fail --show-error --silent https://hark.ryan.ceo/ \
-            | grep --fixed-strings 'https://hark.ryan.ceo/ogimage.png' >/dev/null
-          curl --fail --show-error --silent https://hark.ryan.ceo/pricing \
-            | grep --fixed-strings '100,000 notifications per month' >/dev/null
-          curl --fail --show-error --silent https://hark.ryan.ceo/robots.txt \
-            | grep --fixed-strings 'Sitemap: https://hark.ryan.ceo/sitemap.xml' >/dev/null
-          curl --fail --show-error --silent https://hark.ryan.ceo/sitemap.xml \
-            | grep --fixed-strings '<urlset' >/dev/null
-          test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
-            https://hark.ryan.ceo/seo-smoke-test-missing)" = "404"
+            https://shark.shuv.dev/api/health >/dev/null
+          for path in / /docs /privacy /terms /dashboard /cli/authorize; do
+            status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              "https://shark.shuv.dev${path}")"
+            case "$status" in
+              302|303|307|401) ;;
+              *) echo "Unexpected anonymous status ${status} for ${path}" >&2; exit 1 ;;
+            esac
+          done
+          for path in /robots.txt /sitemap.xml; do
+            status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              "https://shark.shuv.dev${path}")"
+            [[ "$status" == "404" ]] || {
+              echo "Unexpected removed-surface status ${status} for ${path}" >&2
+              exit 1
+            }
+          done

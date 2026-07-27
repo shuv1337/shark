@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly SHark backup at 02:00 America/Los_Angeles
+
+[Timer]
+OnCalendar=*-*-* 02:00:00 America/Los_Angeles
+Persistent=true
+Unit=shark-backup.service
+
+[Install]
+WantedBy=timers.target

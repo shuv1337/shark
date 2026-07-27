@@ -13,7 +13,9 @@
       "!**/ios",
       "!**/android",
       "!**/data",
-      "!**/*.d.ts"
+      "!**/*.d.ts",
+      "!assets/brand/*.svg",
+      "!apps/expo/assets/*.svg"
     ]
   },
   "formatter": {
