@@ -1,0 +1,53 @@
+name: SHark CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shark-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify source
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v5
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.10.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install reviewed dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify source and operator helpers
+        run: |
+          pnpm typecheck
+          pnpm test
+          pnpm lint
+          pnpm build
+          pnpm brand:check
+          bash -n deploy/shark-deploy deploy/shark-backup \
+            deploy/shark-materialize-secrets deploy/shark-restic-backup deploy/test-helpers
+          deploy/test-helpers
+
+      - name: Build production image
+        run: docker build --tag "shark:${GITHUB_SHA}" .

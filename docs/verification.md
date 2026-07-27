@@ -44,6 +44,12 @@ logs. Unchecked release evidence keeps the goal active.
   back from the newly created encrypted snapshot before deleting plaintext.
 - 2026-07-27: checksum-verified official `bws` 2.1.0 and Restic 0.19.1 binaries were installed
   root-owned on `shark-prod`.
+- 2026-07-27: the four production/operator wrappers and inactive backup systemd units from reviewed
+  commit `220ad59b0fde4cc57f421cc23f6ceca668370389` were installed root-owned on `shark-prod`.
+  `/etc/shark` exists with the documented boundary; no credentials were installed and the backup
+  timer remains disabled.
+- 2026-07-27: GitHub environment `shark-production` exists and accepts deployments only from
+  `main`; it contains no production credentials.
 
 ## Blocked release evidence
 
@@ -57,6 +63,9 @@ logs. Unchecked release evidence keeps the goal active.
   the Cloudflare dashboard. `shark.shuv.dev` still does not resolve.
 - Bitwarden production projects and scoped machine accounts: the authenticated organization is at
   its three-project plan limit. No unrelated project was reused or removed.
+- Restricted deployment transport: exe.dev terminates SSH at its account gateway and does not
+  expose a per-key VM `authorized_keys` boundary. A VM-tagged key would retain shell access, so no
+  GitHub deployment key was created while the operator chooses a safer replacement.
 - Sqim development artifact, HTTPS install page, signed entitlements, and two-iPhone acceptance:
   pending operator-owned identities and assets.
 - `shark-prod` DNS/TLS, immutable running image, verified off-host snapshot, restore, no-op deploy,
