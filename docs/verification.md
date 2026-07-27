@@ -22,6 +22,9 @@ logs. Unchecked release evidence keeps the goal active.
 - 2026-07-27: pinned Resvg generation produced byte-identical second-pass assets; the 1024px app
   icon is opaque 8-bit RGB and all generated hashes are recorded in
   `assets/brand/generated-assets.json`.
+- 2026-07-27: PNG compression moved from platform-native Node zlib to pinned pure-JavaScript
+  `fflate` 0.8.3. Regeneration changed only compressed bytes: the decoded scanline SHA-256 values
+  for the app icon, favicon, App Store icon, and Open Graph image were identical before and after.
 - 2026-07-27: clean native prebuild resolved only SHark external identifiers under proven operator
   Team `7H54B326YZ`; generated source entitlements contain the expected App Group, development APNs,
   Sign in with Apple, Siri, communication notification, and Live Activity configuration.
@@ -86,9 +89,8 @@ logs. Unchecked release evidence keeps the goal active.
 - GHCR publication/promotion: pending merge to `main`, a green manual publisher run, explicit
   public package visibility, anonymous pull/attestation verification on `shark-prod`, and
   installation of the revised helpers and Compose definition. No GitHub deployment key exists.
-- Exact-head CI: all tests, typecheck, lint, and the production build pass on Ubuntu. The brand
-  check found platform-dependent PNG compression bytes; decoded raster bytes are identical on
-  macOS and Ubuntu. The focused pure-JavaScript compression fix awaits operator approval.
+- Exact-head CI: the approved platform-independent PNG compression fix passes locally and awaits
+  the new exact-head Ubuntu run.
 - Sqim development artifact, HTTPS install page, signed entitlements, and two-iPhone acceptance:
   pending operator-owned identities and assets.
 - `shark-prod` DNS/TLS, immutable running image, verified off-host snapshot, restore, no-op deploy,

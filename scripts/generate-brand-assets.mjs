@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { deflateSync } from "node:zlib";
 import { Resvg } from "@resvg/resvg-js";
+import { zlibSync } from "fflate";
 
 const root = resolve(import.meta.dirname, "..");
 const sourceSvgPath = resolve(root, "assets/brand/devil-phone.svg");
@@ -105,7 +105,7 @@ function opaquePng(image) {
   return Buffer.concat([
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
     pngChunk("IHDR", ihdr),
-    pngChunk("IDAT", deflateSync(raw, { level: 9 })),
+    pngChunk("IDAT", zlibSync(raw, { level: 9 })),
     pngChunk("IEND", Buffer.alloc(0)),
   ]);
 }
@@ -175,7 +175,7 @@ const generated = new Map([
 
 const manifest = {
   renderer: "@resvg/resvg-js@2.6.2",
-  pngEncoding: "Node.js zlib level 9; PNG 8-bit truecolor; filter none; no ancillary metadata",
+  pngEncoding: "fflate@0.8.3 zlib level 9; PNG 8-bit truecolor; filter none; no ancillary metadata",
   background,
   sources: Object.fromEntries(
     Object.entries(expectedSources).map(([path, hash]) => [path.slice(root.length + 1), hash]),
