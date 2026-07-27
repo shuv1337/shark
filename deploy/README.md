@@ -9,33 +9,33 @@ source; public visibility lets `shark-prod` pull by digest without a registry to
 
 Install `shark-deploy`, `shark-backup`, `shark-materialize-secrets`, and
 `shark-restic-backup` at `/usr/local/sbin`, owned by root and not writable by `exedev`. Install the
-reviewed `compose.yaml` as `/etc/shark/compose.yaml`. Install checksum-verified official Infisical
-CLI, GitHub CLI, and Restic binaries. Enable the provided systemd backup timer only after a real
-backup and restore drill succeeds.
+reviewed `compose.yaml` as `/etc/shark/compose.yaml`. Install checksum-verified official Bitwarden
+Secrets Manager CLI, GitHub CLI, and Restic binaries. Enable the provided systemd backup timer only
+after a real backup and restore drill succeeds.
 
 Provision `/etc/shark` with owner `root`, group `exedev`, and mode `0750`, then install these
 bootstrap credential files with owner `root`, group `exedev`, mode `0440`, and no trailing
 whitespace:
 
-- `infisical-app-client-id` and `infisical-app-client-secret`: Universal Auth credentials for a
-  project-level Viewer identity that can read only the SHark application project.
-- `infisical-app-project-id`: the application project ID. Its `prod` environment must contain
-  exactly `ALLOWED_EMAILS`, `BETTER_AUTH_SECRET`, `APPLE_SIGN_IN_KEY_ID`, `APPLE_TEAM_ID`,
+- `bws-project-id`: the shared `SHark Production` project UUID.
+- `bws-app-access-token`: a read-only machine token granted directly to exactly
+  `ALLOWED_EMAILS`, `BETTER_AUTH_SECRET`, `APPLE_SIGN_IN_KEY_ID`, `APPLE_TEAM_ID`,
   `APPLE_SIGN_IN_PRIVATE_KEY_BASE64`, `EXPO_ACCESS_TOKEN`, `APNS_KEY_ID`, and
   `APNS_PRIVATE_KEY_BASE64`. Store both Apple `.p8` files as single-line base64.
-- `infisical-backup-client-id` and `infisical-backup-client-secret`: Universal Auth credentials
-  for a different project-level Viewer identity that can read only the backup project.
-- `infisical-backup-project-id`: the backup project ID. Its `prod` environment must contain exactly
+- `bws-backup-access-token`: a different read-only machine token granted directly to exactly
   `RESTIC_REPOSITORY` and `RESTIC_PASSWORD`.
+
+Do not grant either machine account whole-project access. Both helpers query the same project UUID,
+but Bitwarden returns only secrets directly granted to the calling machine account.
 
 The executable helpers enforce these contracts:
 
-- `/usr/local/sbin/shark-materialize-secrets <destination>` exchanges the application identity's
-  bootstrap credential for a short-lived token, reads only the application project, validates the
-  required values, writes the complete environment with mode `0600`, and prints no values.
-- `/usr/local/sbin/shark-restic-backup <database-copy>` uses the separate backup identity, writes
-  the encrypted snapshot to `repos/shark-prod`, verifies it by restoring and byte-comparing it,
-  applies `--keep-daily 7 --keep-weekly 4 --keep-monthly 6`, removes the plaintext input, and
+- `/usr/local/sbin/shark-materialize-secrets <destination>` uses the application machine token,
+  rejects missing or additional keys, writes the complete environment with mode `0600`, and
+  prints no values.
+- `/usr/local/sbin/shark-restic-backup <database-copy>` uses the separate backup machine token,
+  writes the encrypted snapshot to `repos/shark-prod`, verifies it by restoring and byte-comparing
+  it, applies `--keep-daily 7 --keep-weekly 4 --keep-monthly 6`, removes the plaintext input, and
   prints only the verified snapshot ID.
 
 Install a dedicated passwordless rsync.net SSH private key as
@@ -60,7 +60,7 @@ The helper:
 2. verifies the public OCI attestation against `shuv1337/shark`, the publisher workflow,
    `refs/heads/main`, the selected SHA, and a GitHub-hosted runner;
 3. anonymously pulls and confirms the exact digest;
-4. refreshes application secrets through the scoped Infisical identity;
+4. refreshes application secrets through the scoped Bitwarden machine account;
 5. stops the current container and verifies an exact-schema SQLite checkpoint copy;
 6. requires a verified encrypted Restic snapshot before replacing an existing deployment;
 7. starts Compose with the exact digest, verifies readiness and the private HTTP boundary; and

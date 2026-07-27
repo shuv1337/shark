@@ -677,16 +677,17 @@ Validation:
     than the current weak `c < 5` table-count guard.
 - [ ] Create a dedicated rsync.net Restic repository reachable over SFTP.
 - [ ] Use the account-relative repository suffix `repos/shark-prod`; keep the
-  rsync.net account and host values in the backup Infisical project.
+  rsync.net account and host values in the SHark Bitwarden project, readable
+  only by the backup machine account.
 - [ ] Use Restic encryption for every off-host snapshot; do not upload the
   plaintext checkpoint copy.
 - [ ] Run a verified snapshot nightly at 2:00 AM `America/Los_Angeles` and an
   additional verified snapshot before every deployment.
 - [ ] Use this retention policy:
   7 daily, 4 weekly, and 6 monthly verified backups.
-- [ ] Store the only copy of the Restic repository password in managed
-  Infisical Cloud. There is intentionally no offline or second-vault copy;
-  Infisical recovery is therefore a documented disaster-recovery dependency.
+- [ ] Store the only copy of the Restic repository password in Bitwarden
+  Secrets Manager. There is intentionally no offline or second-vault copy;
+  Bitwarden recovery is therefore a documented disaster-recovery dependency.
 - [ ] Back up production secret references separately; never place plaintext
   secrets in the repository or database archive.
 - [ ] Perform a quarterly restore drill into a disposable Compose project and
@@ -697,11 +698,13 @@ Validation:
 
 ### 5.5 Deployment automation and rollback
 
-- [ ] Keep managed Infisical Cloud as the secret source of truth. Use separate
-  application and backup projects with separate project-level Viewer machine
-  identities, not a personal CLI session.
+- [ ] Keep Bitwarden Secrets Manager as the secret source of truth. Use one
+  dedicated SHark project and two read-only machine accounts with direct,
+  disjoint secret grants: application credentials for the app account and
+  Restic credentials for the backup account. Grant neither account whole-project
+  access and do not use a personal-vault CLI session.
 - [ ] Make `shark-prod` fetch its own scoped application secrets directly from
-  Infisical during deployment. GitHub receives no Apple, APNs, Expo, database,
+  Bitwarden during deployment. GitHub receives no Apple, APNs, Expo, database,
   Restic, or application secrets.
 - [ ] Use a manual-dispatch GitHub Actions workflow only to verify, build,
   publish, and attest the exact `main` image in GHCR. GitHub stores no

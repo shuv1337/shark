@@ -85,7 +85,7 @@ export function Privacy() {
         <p>
           Apple provides authentication, push delivery, and internal TestFlight distribution. Expo
           carries ordinary push notifications. exe.dev hosts the service, Cloudflare provides DNS,
-          Infisical stores scoped secrets, rsync.net stores encrypted Restic backups, and GitHub
+          Bitwarden stores scoped secrets, rsync.net stores encrypted Restic backups, and GitHub
           publishes reviewed deployment images. Each provider applies its own terms.
         </p>
       </Section>
@@ -142,7 +142,7 @@ export function Terms() {
 
       <Section title="Availability">
         <p>
-          SHark is provided “as is” and “as available.” Apple, Expo, exe.dev, Cloudflare, Infisical,
+          SHark is provided “as is” and “as available.” Apple, Expo, exe.dev, Cloudflare, Bitwarden,
           rsync.net, and GitHub availability or policy changes may affect operation. The operator
           may suspend, restore, change, or discontinue the deployment at any time.
         </p>

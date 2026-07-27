@@ -10,7 +10,7 @@ if [[ "$#" -ne 1 ]]; then
   exit 64
 fi
 
-for command in cmp infisical jq realpath restic; do
+for command in bws cmp jq realpath restic; do
   command -v "$command" >/dev/null || {
     echo "Required command is unavailable: $command" >&2
     exit 69
@@ -34,25 +34,20 @@ if [[ "$(dirname "$stage_dir")" != "$resolved_root" ]] ||
   exit 66
 fi
 
-client_id_file="$credential_root/infisical-backup-client-id"
-client_secret_file="$credential_root/infisical-backup-client-secret"
-project_file="$credential_root/infisical-backup-project-id"
-if [[ ! -f "$client_id_file" || ! -f "$client_secret_file" || ! -f "$project_file" ]]; then
+token_file="$credential_root/bws-backup-access-token"
+project_file="$credential_root/bws-project-id"
+if [[ ! -f "$token_file" || ! -f "$project_file" ]]; then
   echo "SHark backup credential files are unavailable." >&2
   exit 78
 fi
 
-INFISICAL_UNIVERSAL_AUTH_CLIENT_ID="$(<"$client_id_file")"
-INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET="$(<"$client_secret_file")"
+BWS_ACCESS_TOKEN="$(<"$token_file")"
 project_id="$(<"$project_file")"
-if [[ -z "$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" ||
-  -z "$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" ||
-  ! "$project_id" =~ ^[A-Za-z0-9_-]{8,128}$ ]]; then
+if [[ -z "$BWS_ACCESS_TOKEN" || ! "$project_id" =~ ^[0-9a-fA-F-]{36}$ ]]; then
   echo "SHark backup credential files are invalid." >&2
   exit 78
 fi
-export INFISICAL_UNIVERSAL_AUTH_CLIENT_ID INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET
-export INFISICAL_DISABLE_UPDATE_CHECK=true
+export BWS_ACCESS_TOKEN
 
 secrets_json="$(mktemp "$deploy_root/backup-secrets.XXXXXXXX.json")"
 backup_log="$(mktemp "$deploy_root/restic-backup.XXXXXXXX.json")"
@@ -63,30 +58,20 @@ cleanup() {
 trap cleanup EXIT
 chmod 600 "$secrets_json" "$backup_log" "$restored_copy"
 
-if ! INFISICAL_TOKEN="$(
-  infisical login --method=universal-auth --plain --silent
-)" || [[ -z "$INFISICAL_TOKEN" ]]; then
-  echo "Unable to authenticate the SHark backup identity." >&2
-  exit 78
-fi
-export INFISICAL_TOKEN
-if ! infisical export \
-  --projectId="$project_id" \
-  --env=prod \
-  --path=/ \
-  --expand=false \
-  --include-imports=false \
-  --secret-overriding=false \
-  --format=json >"$secrets_json"; then
+if ! bws secret list --output json >"$secrets_json"; then
   echo "Unable to read the SHark backup secret project." >&2
   exit 78
 fi
-unset INFISICAL_TOKEN INFISICAL_UNIVERSAL_AUTH_CLIENT_ID INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET
+unset BWS_ACCESS_TOKEN
 
-if ! jq -e '
-  type == "object"
-  and all(to_entries[]; (.key | type == "string") and (.value | type == "string"))
-  and (keys | sort) == (["RESTIC_PASSWORD", "RESTIC_REPOSITORY"] | sort)
+if ! jq -e --arg project_id "$project_id" '
+  type == "array"
+  and all(.[];
+    (.key | type == "string")
+    and (.value | type == "string")
+    and .projectId == $project_id
+  )
+  and ([.[].key] | sort) == (["RESTIC_PASSWORD", "RESTIC_REPOSITORY"] | sort)
 ' "$secrets_json" >/dev/null; then
   echo "The SHark backup secret project is malformed." >&2
   exit 78
@@ -96,7 +81,8 @@ secret_value() {
   local key="$1"
   local value
   if ! value="$(jq -er --arg key "$key" '
-    if has($key) and (.[$key] | type == "string") then .[$key] else error("missing") end
+    [.[] | select(.key == $key)]
+    | if length == 1 then .[0].value else error("missing") end
   ' "$secrets_json")"; then
     echo "Required SHark backup secret is missing: $key" >&2
     exit 78

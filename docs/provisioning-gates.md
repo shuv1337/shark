@@ -36,7 +36,7 @@ Complete these actions in Certificates, Identifiers & Profiles:
    `https://shark.shuv.dev/api/auth/callback/apple`.
 5. Create or select a Sign in with Apple key for this service and an APNs authentication key for
    SHark delivery. Record only their key IDs outside the portal; encode each downloaded `.p8` as
-   single-line base64 directly into its eventual Infisical project. Never commit or paste key
+   single-line base64 directly into the SHark Bitwarden project. Never commit or paste key
    material into an issue, PR, log, or chat.
 
 Apple's immutable default In-App Purchase capability on the primary ID is tolerated. Do not create
@@ -63,8 +63,8 @@ After completing the one-time `eas login` browser authorization:
 2. Record its UUID as `EAS_PROJECT_ID`; the repository must never fall back to an upstream UUID.
 3. Enable enhanced push security.
 4. Create a server access token for Expo Push Service and store it as `EXPO_ACCESS_TOKEN` in the
-   SHark application Infisical project. Do not use an interactive EAS session token as the server
-   credential.
+   SHark Bitwarden project with a direct grant to the app machine account. Do not use an
+   interactive EAS session token as the server credential.
 5. Import or create only operator-owned distribution, provisioning, and APNs credentials.
 
 EAS is reserved for the final store-signed internal-TestFlight artifact. Every development or
@@ -90,16 +90,14 @@ Do not make the exe.dev HTTP share public or change its selected port until the 
 container is ready on loopback port `8787`. At cutover, select port `8787`, make the share public,
 and verify that `/api/health` is the only anonymous content response.
 
-## Infisical
+## Bitwarden Secrets Manager
 
-Create an operator-owned managed Infisical Cloud organization. The current Free tier allows up to
-five identities and three projects, which fits the operator plus these two projects and two
-project-level machine identities. Do not self-host the secret control plane on `shark-prod`.
+The authenticated machine account lists two unrelated projects, but the Bitwarden API still reports
+the Free-tier maximum of three. Resolve the inaccessible or not-yet-removed third project without
+reusing or deleting unrelated state, then create one dedicated project named `SHark Production`
+and two different read-only machine accounts:
 
-Create two projects with a `prod` environment and two different project-level Viewer machine
-identities using Universal Auth:
-
-- Application project:
+- Application machine account, granted direct access only to:
   - `ALLOWED_EMAILS`
   - `BETTER_AUTH_SECRET`
   - `APPLE_SIGN_IN_KEY_ID`
@@ -108,19 +106,21 @@ identities using Universal Auth:
   - `EXPO_ACCESS_TOKEN`
   - `APNS_KEY_ID`
   - `APNS_PRIVATE_KEY_BASE64`
-- Backup project:
+- Backup machine account, granted direct access only to:
   - `RESTIC_REPOSITORY`
   - `RESTIC_PASSWORD`
 
-Provision their project IDs, client IDs, and client secrets into the six root-owned `/etc/shark`
-bootstrap files documented in `../deploy/README.md`. Configure short-lived access tokens. The
-application and backup identities must not be able to read each other's projects.
+Do not grant either machine account access to the whole project. Bitwarden supports direct
+machine-account grants to selected secrets; the helpers also fail closed unless each token returns
+exactly its expected key set. Provision the shared project ID and the two access tokens into the
+three root-owned `/etc/shark` bootstrap files documented in `../deploy/README.md`.
 
 ## rsync.net/Restic
 
 Create a dedicated passwordless SSH key and an account-relative repository at
 `repos/shark-prod`. Pin the rsync.net host key and initialize the exact SFTP repository once. The
-only Restic repository-password copy lives in the backup Infisical project.
+only Restic repository-password copy lives in the SHark Bitwarden project and is readable only by
+the backup machine account.
 
 Before enabling the nightly timer, require a real encrypted snapshot, exact byte-for-byte streamed
 restore verification, `restic check`, and a disposable database restore with schema and data

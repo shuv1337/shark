@@ -7,8 +7,11 @@ infrastructure changes.
 ## Recommendation
 
 Use **GitHub Actions only as a builder and publisher**, then make production release an
-**operator-initiated pull of an exact, attested GHCR digest**. Use **managed Infisical Cloud**
-with two projects and two project-level machine identities for secrets.
+**operator-initiated pull of an exact, attested GHCR digest**. The original capacity snapshot
+favored managed Infisical Cloud. After the operator reported a Bitwarden project slot was
+available, they selected one dedicated Bitwarden project with two read-only machine accounts and
+disjoint direct secret grants. The Bitwarden API still reports the three-project maximum, so this
+selection remains capacity-gated.
 
 This combination preserves the required boundaries:
 
@@ -87,7 +90,7 @@ backup system; the existing encrypted off-host Restic design remains the recover
 
 ## Secret manager
 
-### Recommended: managed Infisical Cloud
+### Capacity fallback evaluated: managed Infisical Cloud
 
 Infisical's current Secrets Manager free tier allows **up to five identities and three projects**.
 SHark needs one operator identity, two machine identities, and two projects, so it fits without
@@ -141,7 +144,8 @@ Adopt:
 
 1. public GHCR image publication from exact `main`, with GitHub build provenance;
 2. operator-triggered, digest-pinned deployment through the existing exe.dev identity;
-3. managed Infisical Cloud with two projects and two project-level Viewer identities;
+3. one dedicated Bitwarden Secrets Manager project with separate read-only application and backup
+   machine accounts, each granted directly to only its required secrets;
 4. the existing off-host Restic gate, provenance record, and rollback requirements.
 
 This removes both current blockers without expanding SHark's anonymous v1 surface or placing a

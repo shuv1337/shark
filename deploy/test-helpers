@@ -12,37 +12,32 @@ deploy_root="$test_root/shark"
 credential_root="$test_root/credentials"
 fake_bin="$test_root/bin"
 install -d -m 700 "$deploy_root" "$credential_root" "$fake_bin"
-printf '%s\n' "app-client-id" >"$credential_root/infisical-app-client-id"
-printf '%s\n' "app-client-secret" >"$credential_root/infisical-app-client-secret"
-printf '%s\n' "app-project-0001" >"$credential_root/infisical-app-project-id"
-printf '%s\n' "backup-client-id" >"$credential_root/infisical-backup-client-id"
-printf '%s\n' "backup-client-secret" >"$credential_root/infisical-backup-client-secret"
-printf '%s\n' "backup-project-0002" >"$credential_root/infisical-backup-project-id"
+printf '%s\n' "app-test-token" >"$credential_root/bws-app-access-token"
+printf '%s\n' "backup-test-token" >"$credential_root/bws-backup-access-token"
+printf '%s\n' "00000000-0000-0000-0000-000000000001" >"$credential_root/bws-project-id"
 
-cat >"$fake_bin/infisical" <<'EOF'
+cat >"$fake_bin/bws" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "${INFISICAL_FAIL:-0}" == "1" ]]; then
+if [[ "${BWS_FAIL:-0}" == "1" ]]; then
   exit 1
 fi
-if [[ "$1" == "login" ]]; then
-  printf '%s\n' "short-lived-test-token"
-elif [[ " $* " == *" --projectId=app-project-0001 "* ]]; then
-  jq -n --arg extra "${INFISICAL_EXTRA:-}" '{
-    ALLOWED_EMAILS:"operator@example.com",
-    BETTER_AUTH_SECRET:"0123456789abcdefghijklmnopqrstuvwxyz",
-    APPLE_SIGN_IN_KEY_ID:"APPLEKEY01",
-    APPLE_TEAM_ID:"7H54B326YZ",
-    APPLE_SIGN_IN_PRIVATE_KEY_BASE64:"QUJDRA==",
-    EXPO_ACCESS_TOKEN:"expo-token_123",
-    APNS_KEY_ID:"APNSKEY001",
-    APNS_PRIVATE_KEY_BASE64:"RUZHSA=="
-  } + if $extra == "1" then {UNEXPECTED_SECRET:"must fail"} else {} end'
+if [[ "$BWS_ACCESS_TOKEN" == "app-test-token" ]]; then
+  jq -n --arg extra "${BWS_EXTRA:-}" '[
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"ALLOWED_EMAILS",value:"operator@example.com"},
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"BETTER_AUTH_SECRET",value:"0123456789abcdefghijklmnopqrstuvwxyz"},
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"APPLE_SIGN_IN_KEY_ID",value:"APPLEKEY01"},
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"APPLE_TEAM_ID",value:"7H54B326YZ"},
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"APPLE_SIGN_IN_PRIVATE_KEY_BASE64",value:"QUJDRA=="},
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"EXPO_ACCESS_TOKEN",value:"expo-token_123"},
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"APNS_KEY_ID",value:"APNSKEY001"},
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"APNS_PRIVATE_KEY_BASE64",value:"RUZHSA=="}
+  ] + if $extra == "1" then [{projectId:"00000000-0000-0000-0000-000000000001",key:"UNEXPECTED_SECRET",value:"must fail"}] else [] end'
 else
-  jq -n '{
-    RESTIC_REPOSITORY:"sftp:user@example.com:repos/shark-prod",
-    RESTIC_PASSWORD:"backup password"
-  }'
+  jq -n '[
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"RESTIC_REPOSITORY",value:"sftp:user@example.com:repos/shark-prod"},
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"RESTIC_PASSWORD",value:"backup password"}
+  ]'
 fi
 EOF
 
@@ -69,7 +64,7 @@ case "$1" in
   *) exit 64 ;;
 esac
 EOF
-chmod 700 "$fake_bin/infisical" "$fake_bin/restic"
+chmod 700 "$fake_bin/bws" "$fake_bin/restic"
 
 export PATH="$fake_bin:$PATH"
 export SHARK_DEPLOY_ROOT="$deploy_root"
@@ -95,21 +90,21 @@ sha256_file() {
 [[ "$(file_mode "$deploy_root/.env.new")" == "600" ]]
 grep -qx 'APP_URL=https://shark.shuv.dev' "$deploy_root/.env.new"
 grep -qx 'APPLE_SIGN_IN_PRIVATE_KEY=QUJDRA==' "$deploy_root/.env.new"
-if grep -Eq 'client-secret|short-lived-test-token' "$deploy_root/.env.new"; then
-  echo "Infisical machine credential leaked into the runtime environment." >&2
+if grep -Eq 'app-test-token|backup-test-token' "$deploy_root/.env.new"; then
+  echo "Bitwarden machine credential leaked into the runtime environment." >&2
   exit 1
 fi
 environment_before="$(sha256_file "$deploy_root/.env.new")"
-if INFISICAL_FAIL=1 "$repo_root/deploy/shark-materialize-secrets" "$deploy_root/.env.new" \
+if BWS_FAIL=1 "$repo_root/deploy/shark-materialize-secrets" "$deploy_root/.env.new" \
   >/dev/null 2>&1; then
-  echo "Secret materializer accepted a failed Infisical read." >&2
+  echo "Secret materializer accepted a failed Bitwarden read." >&2
   exit 1
 fi
 environment_after="$(sha256_file "$deploy_root/.env.new")"
 [[ "$environment_before" == "$environment_after" ]]
-if INFISICAL_EXTRA=1 "$repo_root/deploy/shark-materialize-secrets" "$deploy_root/.env.new" \
+if BWS_EXTRA=1 "$repo_root/deploy/shark-materialize-secrets" "$deploy_root/.env.new" \
   >/dev/null 2>&1; then
-  echo "Secret materializer accepted an unexpected Infisical key." >&2
+  echo "Secret materializer accepted an unexpected Bitwarden key." >&2
   exit 1
 fi
 [[ "$environment_before" == "$(sha256_file "$deploy_root/.env.new")" ]]

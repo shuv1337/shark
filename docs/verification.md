@@ -53,9 +53,9 @@ logs. Unchecked release evidence keeps the goal active.
   timer remains disabled.
 - 2026-07-27: after exe.dev proved the forced-command boundary impossible, the reviewed plan and
   helpers were revised to publish an attested public GHCR digest, require operator promotion, and
-  use separate Infisical application/backup identities. The new local helper fixtures pass and a
-  failed Infisical read preserves the last good runtime environment. The older `bws` binary and
-  wrappers installed on `shark-prod` are inactive and superseded, not production-ready evidence.
+  use separate Bitwarden application/backup machine accounts. The new local helper fixtures pass
+  and a failed Bitwarden read preserves the last good runtime environment. The older wrappers
+  installed on `shark-prod` are inactive and superseded, not production-ready evidence.
 - 2026-07-27: GitHub environment `shark-production` exists and accepts deployments only from
   `main`; it contains no production credentials.
 - 2026-07-27: `main` branch protection requires the strict, up-to-date GitHub Actions
@@ -84,8 +84,10 @@ logs. Unchecked release evidence keeps the goal active.
   portal steps.
 - Production DNS: the active Cloudflare token is read-only and the managed browser cannot reach
   the Cloudflare dashboard. `shark.shuv.dev` still does not resolve.
-- Infisical production organization, two projects, and two scoped Viewer machine identities:
-  pending operator-owned account setup and non-secret project IDs.
+- Bitwarden `SHark Production` project, two read-only machine accounts, and disjoint direct secret
+  grants: the current machine account lists only two unrelated projects, but Bitwarden rejected
+  creation with its three-project plan limit. A third inaccessible or not-yet-removed project still
+  counts against the organization; no unrelated project was reused or changed.
 - GHCR publication/promotion: pending merge to `main`, a green manual publisher run, explicit
   public package visibility, anonymous pull/attestation verification on `shark-prod`, and
   installation of the revised helpers and Compose definition. No GitHub deployment key exists.

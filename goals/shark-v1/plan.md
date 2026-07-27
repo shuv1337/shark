@@ -16,7 +16,7 @@ Verification: audit generated native configuration and signed entitlements, veri
 
 ## 3. Recoverable production service
 
-Complete Phase 5: provision `shark-prod`, configure exe.dev and Cloudflare DNS, implement the safe health/readiness boundary, create Infisical-backed secret delivery with separate application and backup identities, implement WAL-safe Restic backups, publish attested immutable images from GitHub without VM credentials, and promote an exact digest through the operator's existing exe.dev identity.
+Complete Phase 5: provision `shark-prod`, configure exe.dev and Cloudflare DNS, implement the safe health/readiness boundary, create Bitwarden-backed secret delivery with disjoint application and backup machine-account grants, implement WAL-safe Restic backups, publish attested immutable images from GitHub without VM credentials, and promote an exact digest through the operator's existing exe.dev identity.
 
 Verification: prove TLS and auth boundaries, exact running digest, persistence, backup integrity, disposable restore, no-op deployment, and rollback.
 

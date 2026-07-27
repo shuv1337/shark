@@ -20,7 +20,7 @@ changes.
 - Only `/api/health` is anonymously readable. Human-facing pages, docs exports, assets, and source
   links require an admitted session.
 - Production uses the `shark-prod` deployment, attested immutable GHCR digests,
-  Infisical-fed secrets, exact-schema SQLite checkpoint validation, encrypted Restic snapshots,
+  Bitwarden-fed secrets, exact-schema SQLite checkpoint validation, encrypted Restic snapshots,
   and operator promotion with no GitHub VM credential.
 
 ## Compatibility names kept intentionally
