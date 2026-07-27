@@ -89,8 +89,9 @@ logs. Unchecked release evidence keeps the goal active.
 - GHCR publication/promotion: pending merge to `main`, a green manual publisher run, explicit
   public package visibility, anonymous pull/attestation verification on `shark-prod`, and
   installation of the revised helpers and Compose definition. No GitHub deployment key exists.
-- Exact-head CI: the approved platform-independent PNG compression fix passes locally and awaits
-  the new exact-head Ubuntu run.
+- 2026-07-27: exact-head Ubuntu CI run `30303069003` passed source verification, all 247 tests,
+  deterministic brand generation, helper fixtures, and the production Docker image build for
+  commit `74b4b21ae39dfa1a9d6ba1948465340458ff468c`.
 - Sqim development artifact, HTTPS install page, signed entitlements, and two-iPhone acceptance:
   pending operator-owned identities and assets.
 - `shark-prod` DNS/TLS, immutable running image, verified off-host snapshot, restore, no-op deploy,
