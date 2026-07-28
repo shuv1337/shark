@@ -108,30 +108,22 @@ describe("POST /api/devices onboarding", () => {
     await vi.advanceTimersByTimeAsync(4_000);
     const first = await firstRequest;
     expect(first.status).toBe(201);
-    expect(sent).toHaveLength(3);
+    expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({
       to: "ExponentPushToken[welcome-a]",
-      title: "Ryan",
-      body: "hey! my name is ryan and I made hark!",
+      title: "SHark",
+      body: "SHark is ready to receive your private webhooks.",
       data: {
-        sourceName: "Ryan",
-        url: "https://x.com/ryanvogel",
+        sourceName: "SHark",
+        url: "https://shark.shuv.dev",
       },
-    });
-    expect(sent[1]).toMatchObject({
-      body: "easily send notifications via a webhook",
-      data: { url: "https://hark.ryan.ceo" },
-    });
-    expect(sent[2]).toMatchObject({
-      body: "get started here (click me)",
-      data: { url: "https://hark.ryan.ceo" },
     });
 
     const refresh = await register("ExponentPushToken[welcome-a]");
     const secondPhone = await register("ExponentPushToken[welcome-b]");
     expect(refresh.status).toBe(201);
     expect(secondPhone.status).toBe(201);
-    expect(sent).toHaveLength(3);
+    expect(sent).toHaveLength(1);
 
     const [account] = await db.select().from(schema.user);
     expect(account?.welcomeNotificationSentAt).toBeInstanceOf(Date);

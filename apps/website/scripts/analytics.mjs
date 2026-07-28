@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /**
- * Read-only product analytics reader for the Hark SQLite database.
+ * Read-only product analytics reader for the SHark SQLite database.
  *
  * Usage (local):      node scripts/analytics.mjs summary
- * Usage (container):  docker compose exec hark node scripts/analytics.mjs summary
+ * Usage (container):  docker compose exec shark node dist/operator/analytics.js summary
  *
  * Every subcommand prints JSON to stdout. The database is opened read-only, so
  * this script can never mutate product data.
  */
 import Database from "better-sqlite3";
 
-const USAGE = `hark analytics (read-only)
+const USAGE = `SHark analytics (read-only)
 
 Usage: node scripts/analytics.mjs <command> [flags]
 
@@ -394,7 +394,7 @@ function commandPlans(database, flags) {
   const days = intFlag(flags, "days", 30);
   return {
     windowDays: days,
-    note: "Plan is the last value observed on an analytics event; billing state lives in Autumn.",
+    note: "Plan is a retained compatibility field on historical analytics events; SHark has no billing runtime.",
     lastObservedPlan: all(
       database,
       `SELECT plan, COUNT(*) AS users FROM (

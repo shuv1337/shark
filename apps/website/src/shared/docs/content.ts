@@ -19,7 +19,7 @@
 import type { DocItemId, DocSectionId } from "./nav";
 
 /** Placeholder webhook URL used throughout the docs samples. */
-export const EXAMPLE_ENDPOINT = "https://hark.ryan.ceo/hooks/whk_your_token";
+export const EXAMPLE_ENDPOINT = "https://shark.shuv.dev/hooks/whk_your_token";
 
 export interface DocFieldRow {
   name: string;
@@ -35,8 +35,7 @@ export interface DocRouteRow {
 
 export interface DocPlanRow {
   limit: string;
-  free: string;
-  pro: string;
+  value: string;
 }
 
 export type DocTableBlock =
@@ -66,14 +65,11 @@ export interface DocStylePreview {
 
 export interface DocSubsection {
   id: DocItemId;
-  /** Marks a capability that requires a paid Hark Pro plan. */
-  pro?: true;
   blocks: DocBlock[];
 }
 
 export interface DocSection {
   id: DocSectionId;
-  pro?: true;
   /** Intro paragraph shown above the first subsection. */
   lead: string;
   subsections: DocSubsection[];
@@ -82,20 +78,20 @@ export interface DocSection {
 /** Page title, reused by the HTML `<h1>`, the prerendered `<title>`, and the markdown. */
 export const DOCS_TITLE = "Webhooks to iPhone notifications";
 export const DOCS_EYEBROW = "Documentation";
-export const DOCS_URL = "https://hark.ryan.ceo/docs";
-export const DOCS_MARKDOWN_URL = "https://hark.ryan.ceo/docs.md";
+export const DOCS_URL = "https://shark.shuv.dev/docs";
+export const DOCS_MARKDOWN_URL = "https://shark.shuv.dev/docs.md";
 
 export const DOC_CONTENT: DocSection[] = [
   {
     id: "quickstart",
-    lead: "Hark turns an HTTP request into a source-branded iPhone notification. Create a service, then POST JSON to its secret webhook URL.",
+    lead: "SHark turns an HTTP request into a source-branded iPhone notification. Create a service, then POST JSON to its secret webhook URL.",
     subsections: [
       {
         id: "what-hark-is",
         blocks: [
           {
             kind: "p",
-            text: "Anything that can send an HTTP request can notify your phone: CI jobs, coding agents, cron scripts, monitors. Each service carries its own name, avatar, and tap destination, and Hark fills in any field you omit from those service defaults.",
+            text: "Anything that can send an HTTP request can notify your phone: CI jobs, coding agents, cron scripts, monitors. Each service carries its own name, avatar, and tap destination, and SHark fills in any field you omit from those service defaults.",
           },
           {
             kind: "p",
@@ -109,8 +105,8 @@ export const DOC_CONTENT: DocSection[] = [
           {
             kind: "steps",
             items: [
-              "Sign in at [hark.ryan.ceo](https://hark.ryan.ceo).",
-              "Register your iPhone with the Hark app.",
+              "Sign in at [shark.shuv.dev](https://shark.shuv.dev).",
+              "Register your iPhone with the SHark app.",
               "Create a service in the dashboard and give it a title, avatar, and tap URL.",
               "Copy the secret webhook URL it returns.",
             ],
@@ -240,13 +236,13 @@ export const DOC_CONTENT: DocSection[] = [
               },
               {
                 name: "deviceIds",
-                type: "string[], Pro",
+                type: "string[]",
                 detail:
                   "1 to 50 device IDs from the dashboard. Omit to notify every active device.",
               },
               {
                 name: "response",
-                type: "object, Pro",
+                type: "object",
                 detail: "Turns the notification into an approval, yes/no, or text prompt.",
               },
             ],
@@ -273,15 +269,14 @@ export const DOC_CONTENT: DocSection[] = [
       },
       {
         id: "device-routing",
-        pro: true,
         blocks: [
           {
             kind: "p",
-            text: "By default a request fans out to every active iOS device on the account, most recently seen first. Free accounts are capped at one device, so extra phones are ignored until you upgrade.",
+            text: "By default a request fans out to every active iOS device on the account, most recently seen first. The private self-host accepts every active device.",
           },
           {
             kind: "p",
-            text: "Hark Pro can pass a non-empty `deviceIds` array to target specific iPhones. Copy the stable device IDs from the dashboard. IDs that do not belong to the account return `400 Invalid device selection`; owned but inactive or non-iOS devices in the list are skipped silently.",
+            text: "Pass a non-empty `deviceIds` array to target specific iPhones. Copy the stable device IDs from the dashboard. IDs that do not belong to the account return `400 Invalid device selection`; owned but inactive or non-iOS devices in the list are skipped silently.",
           },
           {
             kind: "code",
@@ -291,10 +286,6 @@ export const DOC_CONTENT: DocSection[] = [
   "deviceIds": ["dev_your_iphone_id"]
 }`,
           },
-          {
-            kind: "p",
-            text: "Sending `deviceIds` without device routing on your plan returns `402`.",
-          },
         ],
       },
       {
@@ -303,17 +294,17 @@ export const DOC_CONTENT: DocSection[] = [
           {
             kind: "table",
             variant: "plan",
-            caption: "Plan limits",
+            caption: "Self-hosted limits",
             rows: [
-              { limit: "Requests per minute, per service", free: "60", pro: "300" },
-              { limit: "Requests per minute, per account", free: "300", pro: "1,500" },
-              { limit: "Notifications per month", free: "10,000", pro: "100,000" },
-              { limit: "Active devices", free: "1", pro: "Unlimited" },
+              { limit: "Requests per minute, per service", value: "300" },
+              { limit: "Requests per minute, per account", value: "1,500" },
+              { limit: "Notifications per month", value: "Unmetered" },
+              { limit: "Active devices", value: "Unlimited" },
             ],
           },
           {
             kind: "p",
-            text: "The per-minute counters use a rolling 60-second window and are shared across notifications, interactive responses, and Live Activity operations. A limited request returns `429` with a `Retry-After: 60` header and `retryAfterSeconds` in the body. Exhausting the monthly allowance also returns `429`, without a retry hint.",
+            text: "The per-minute counters use a rolling 60-second window and are shared across notifications, interactive responses, and Live Activity operations. A limited request returns `429` with a `Retry-After: 60` header and `retryAfterSeconds` in the body. Notifications are not metered monthly.",
           },
         ],
       },
@@ -337,10 +328,9 @@ export const DOC_CONTENT: DocSection[] = [
               { name: "200", type: "ok", detail: "Accepted, or an idempotent replay." },
               { name: "202", type: "ok", detail: "An identical request is still processing." },
               { name: "400", type: "error", detail: "Invalid payload, key, or device selection." },
-              { name: "402", type: "error", detail: "The payload uses a Hark Pro feature." },
               { name: "404", type: "error", detail: "Unknown webhook token." },
               { name: "409", type: "error", detail: "Idempotency key reused with a new payload." },
-              { name: "429", type: "error", detail: "Rate limit or monthly allowance exhausted." },
+              { name: "429", type: "error", detail: "Per-minute rate limit exhausted." },
               { name: "502", type: "error", detail: "Every push target was rejected by Expo." },
             ],
           },
@@ -352,11 +342,10 @@ export const DOC_CONTENT: DocSection[] = [
       },
       {
         id: "interactive-responses",
-        pro: true,
         blocks: [
           {
             kind: "p",
-            text: "Hark Pro can attach a fixed response type to any notification. Supported types are `approval` (Approve or Deny), `yes_no` (Yes or No), and `text` (a short free-form reply).",
+            text: "SHark can attach a fixed response type to any notification. Supported types are `approval` (Approve or Deny), `yes_no` (Yes or No), and `text` (a short free-form reply).",
           },
           {
             kind: "code",
@@ -403,7 +392,8 @@ export const DOC_CONTENT: DocSection[] = [
               {
                 name: "callback.token",
                 type: "string",
-                detail: "16 to 512 characters, sent back as a bearer token so you can verify Hark.",
+                detail:
+                  "16 to 512 characters, sent back as a bearer token so you can verify SHark.",
               },
             ],
           },
@@ -425,7 +415,6 @@ export const DOC_CONTENT: DocSection[] = [
       },
       {
         id: "response-status",
-        pro: true,
         blocks: [
           {
             kind: "p",
@@ -469,11 +458,10 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
       },
       {
         id: "response-callbacks",
-        pro: true,
         blocks: [
           {
             kind: "p",
-            text: "When a callback is configured, Hark POSTs the answer to your URL with `Authorization: Bearer <callback.token>`, `Content-Type: application/json`, and a `Hark-Callbacks/1` user agent. Redirects are not followed and the request times out after 10 seconds.",
+            text: "When a callback is configured, SHark POSTs the answer to your URL with `Authorization: Bearer <callback.token>`, `Content-Type: application/json`, and a compatibility `Hark-Callbacks/1` user agent. Redirects are not followed and the request times out after 10 seconds.",
           },
           {
             kind: "code",
@@ -495,7 +483,7 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
           },
           {
             kind: "p",
-            text: "Any response outside the 2xx range is a failure. Hark makes up to five attempts: once immediately, then after 30 seconds, 2 minutes, 10 minutes, and 1 hour. After the last attempt the callback is marked failed and is not retried, so treat the callback as at-least-once and key your handler on `eventId`.",
+            text: "Any response outside the 2xx range is a failure. SHark makes up to five attempts: once immediately, then after 30 seconds, 2 minutes, 10 minutes, and 1 hour. After the last attempt the callback is marked failed and is not retried, so treat the callback as at-least-once and key your handler on `eventId`.",
           },
           {
             kind: "note",
@@ -507,7 +495,6 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
   },
   {
     id: "activity-api",
-    pro: true,
     lead: "A Live Activity is a stateful card on the Lock Screen and in the Dynamic Island. Start one, push partial updates as work progresses, then end it. Same webhook token, nested routes.",
     subsections: [
       {
@@ -577,7 +564,7 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
           },
           {
             kind: "note",
-            text: "Live Activities need a device running a Hark build that has registered a push-to-start token. If no device qualifies, the start still returns `201` with `accepted: 0` and an explanatory `message`.",
+            text: "Live Activities need a device running a SHark build that has registered a push-to-start token. If no device qualifies, the start still returns `201` with `accepted: 0` and an explanatory `message`.",
           },
         ],
       },
@@ -678,7 +665,7 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
               },
               {
                 name: "deviceIds",
-                type: "string[], Pro",
+                type: "string[]",
                 detail: "1 to 50 device IDs. Omit to target every capable device.",
               },
             ],
@@ -736,7 +723,7 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
         blocks: [
           {
             kind: "p",
-            text: "A device can host one Hark Live Activity at a time. Starting another while one is still live on a target device returns `409`:",
+            text: "A device can host one SHark Live Activity at a time. Starting another while one is still live on a target device returns `409`:",
           },
           {
             kind: "code",
@@ -754,7 +741,7 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
           },
           {
             kind: "p",
-            text: "To take the slot instead, pass `replace: true` in the start payload. Hark silently ends whatever occupies each target device — the old card is dismissed immediately, showing its last state — and then starts your activity. The success response reports how many activities were displaced as `replaced`; with nothing to displace the start behaves normally and `replaced` is `0`.",
+            text: "To take the slot instead, pass `replace: true` in the start payload. SHark silently ends whatever occupies each target device — the old card is dismissed immediately, showing its last state — and then starts your activity. The success response reports how many activities were displaced as `replaced`; with nothing to displace the start behaves normally and `replaced` is `0`.",
           },
           {
             kind: "p",
@@ -767,7 +754,7 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
         blocks: [
           {
             kind: "p",
-            text: "A start carries an alert, so it may notify the user like a normal notification. Updates and ends carry no alert and are silent. Hark sends every Live Activity push at high APNs priority, which affects delivery speed only, not sound or haptics.",
+            text: "A start carries an alert, so it may notify the user like a normal notification. Updates and ends carry no alert and are silent. SHark sends every Live Activity push at high APNs priority, which affects delivery speed only, not sound or haptics.",
           },
           {
             kind: "p",
@@ -800,7 +787,7 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
           {
             kind: "steps",
             items: [
-              "The CLI prints a short code and opens [hark.ryan.ceo](https://hark.ryan.ceo) in your browser.",
+              "The CLI prints a short code and opens [shark.shuv.dev](https://shark.shuv.dev) in your browser.",
               "Sign in and approve the requested scopes; every scope is shown before you approve.",
               "Credentials are written to an OS config file with mode `0600`, and the CLI polls until the approval lands.",
             ],
@@ -839,7 +826,7 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
     "title": "Release bot",
     "imageUrl": "https://example.com/bot.png"
   },
-  "webhookUrl": "https://hark.ryan.ceo/hooks/hook_..."
+  "webhookUrl": "https://shark.shuv.dev/hooks/hook_..."
 }`,
           },
           {
@@ -872,7 +859,7 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
             variant: "flag",
             caption: "notify flags",
             rows: [
-              { name: "--title", type: "string", detail: "Sender name. Defaults to `Hark`." },
+              { name: "--title", type: "string", detail: "Sender name. Defaults to `SHark`." },
               {
                 name: "--image",
                 type: "url",
@@ -882,7 +869,7 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
               {
                 name: "--device",
                 type: "id, repeatable",
-                detail: "Target specific iPhones. Requires Hark Pro.",
+                detail: "Target specific iPhones.",
               },
               {
                 name: "--idempotency-key",

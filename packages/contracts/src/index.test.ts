@@ -157,7 +157,7 @@ describe("agentNotificationCreateSchema", () => {
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.title).toBe("Hark");
+      expect(result.data.title).toBe("SHark");
       expect(result.data.deviceIds).toEqual(["dev_a", "dev_b"]);
     }
   });
@@ -245,7 +245,7 @@ describe("interaction schemas", () => {
 });
 
 describe("Live Activity schemas", () => {
-  it("accepts the fixed Hark schema and bounds progress", () => {
+  it("accepts the fixed compatibility schema and bounds progress", () => {
     const props = {
       schemaVersion: LIVE_ACTIVITY_SCHEMA_VERSION,
       activityId: "act_1",

@@ -1,0 +1,18 @@
+{
+  "renderer": "@resvg/resvg-js@2.6.2",
+  "pngEncoding": "fflate@0.8.3 zlib level 9; PNG 8-bit truecolor; filter none; no ancillary metadata",
+  "background": "#090d10",
+  "sources": {
+    "assets/brand/devil-phone.svg": "3489212420a5c2cbaa56cec28933b1e1284739b11e3388650ea3fb8a4a7e9f69",
+    "assets/brand/icon-maskable-512.png": "5d3fa36bb3865110761752c978b811d0b44755e44a99376acf6c9f453af9af1e"
+  },
+  "generated": {
+    "apps/expo/assets/icon.png": "23347086f0b64817579a89abaad739a7332e9a757c36f856c4a52f0256860a25",
+    "apps/expo/assets/icon.svg": "3489212420a5c2cbaa56cec28933b1e1284739b11e3388650ea3fb8a4a7e9f69",
+    "apps/expo/assets/splash-icon.png": "c87fc8fc7d1fdafb0217e7616d5caad0d0d1a607cbca95bfc2f3a7a6d95becb8",
+    "apps/website/public/favicon.png": "9568ad7000722891d779b2efb0449078eaac38a0592038cedaecf8a99a8885bb",
+    "apps/website/public/app-store-icon.png": "23347086f0b64817579a89abaad739a7332e9a757c36f856c4a52f0256860a25",
+    "apps/website/public/ogimage.png": "9bac2d047f21d2b614bcd1c40ce2505725dd6a874dcf2e6e2922b54617823c67",
+    "apps/website/src/client/assets/devil-phone-mark.png": "e0919a65d65e3c6d71d4535e9faf8ac6b96c28427a55486caaeb946c30aeb9b7"
+  }
+}

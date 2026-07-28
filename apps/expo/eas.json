@@ -4,25 +4,6 @@
     "appVersionSource": "remote"
   },
   "build": {
-    "development": {
-      "developmentClient": true,
-      "distribution": "internal",
-      "env": {
-        "EXPO_PUBLIC_API_URL": "https://hark.ryan.ceo",
-        "EXPO_PUBLIC_APNS_ENVIRONMENT": "sandbox"
-      }
-    },
-    "development-simulator": {
-      "developmentClient": true,
-      "distribution": "internal",
-      "ios": {
-        "simulator": true
-      },
-      "env": {
-        "EXPO_PUBLIC_API_URL": "https://hark.ryan.ceo",
-        "EXPO_PUBLIC_APNS_ENVIRONMENT": "sandbox"
-      }
-    },
     "production": {
       "autoIncrement": true,
       "distribution": "store",
@@ -30,7 +11,7 @@
         "buildConfiguration": "Release"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://hark.ryan.ceo",
+        "EXPO_PUBLIC_API_URL": "https://shark.shuv.dev",
         "EXPO_PUBLIC_APNS_ENVIRONMENT": "production"
       }
     }
@@ -38,12 +19,9 @@
   "submit": {
     "production": {
       "ios": {
-        "appleTeamId": "9G68SMNHEU",
-        "appName": "Hark",
-        "ascAppId": "6794121509",
-        "bundleIdentifier": "ceo.ryan.hark",
+        "bundleIdentifier": "dev.shuv.shark",
         "language": "en-US",
-        "sku": "hark-ios"
+        "sku": "shark-ios"
       }
     }
   }

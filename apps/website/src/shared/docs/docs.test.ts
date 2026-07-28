@@ -83,9 +83,9 @@ describe("parseInline", () => {
       { kind: "code", text: "body" },
       { kind: "text", text: " is required." },
     ]);
-    expect(parseInline("Sign in at [hark.ryan.ceo](https://hark.ryan.ceo).")).toEqual([
+    expect(parseInline("Sign in at [shark.shuv.dev](https://shark.shuv.dev).")).toEqual([
       { kind: "text", text: "Sign in at " },
-      { kind: "link", text: "hark.ryan.ceo", href: "https://hark.ryan.ceo" },
+      { kind: "link", text: "shark.shuv.dev", href: "https://shark.shuv.dev" },
       { kind: "text", text: "." },
     ]);
   });
@@ -106,11 +106,11 @@ describe("docsMarkdown", () => {
   });
 
   it("emits fenced code with a language and pipe tables", () => {
-    expect(markdown).toContain("```bash\ncurl -X POST https://hark.ryan.ceo/hooks/whk_your_token");
+    expect(markdown).toContain("```bash\ncurl -X POST https://shark.shuv.dev/hooks/whk_your_token");
     expect(markdown).toContain('```json\n{\n  "ok": true,');
     expect(markdown).toContain("| Field | Type | Description |");
     expect(markdown).toContain("| Route | Purpose |");
-    expect(markdown).toContain("| Limit | Free | Pro |");
+    expect(markdown).toContain("| Limit | Self-hosted |");
   });
 
   it("keeps table cells on one line", () => {
@@ -120,19 +120,20 @@ describe("docsMarkdown", () => {
     }
   });
 
-  it("flags Hark Pro sections", () => {
-    expect(markdown).toContain("**Hark Pro**");
+  it("describes fixed self-hosted capabilities without paid-plan claims", () => {
+    expect(markdown).toContain("| Notifications per month | Unmetered |");
+    expect(markdown).not.toContain("Hark Pro");
   });
 });
 
 describe("llmsTxt", () => {
-  it("describes Hark and links its canonical machine-readable resources", () => {
+  it("describes SHark and links its private machine-readable resources", () => {
     const text = llmsTxt();
-    expect(text.startsWith("# Hark")).toBe(true);
-    expect(text).toContain("https://hark.ryan.ceo/docs");
-    expect(text).toContain("https://hark.ryan.ceo/docs.md");
-    expect(text).toContain("https://hark.ryan.ceo/pricing");
-    expect(text).toContain("https://skills.sh/r44vc0rp/hark/hark");
-    expect(text).toContain("https://www.npmjs.com/package/harkctl");
+    expect(text.startsWith("# SHark")).toBe(true);
+    expect(text).toContain("https://shark.shuv.dev/docs");
+    expect(text).toContain("https://shark.shuv.dev/docs.md");
+    expect(text).not.toContain("pricing");
+    expect(text).toContain("https://github.com/shuv1337/shark");
+    expect(text).toContain("install directly from the reviewed operator checkout");
   });
 });

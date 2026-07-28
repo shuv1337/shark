@@ -4,13 +4,6 @@ export const authClient = createAuthClient();
 
 export const { useSession, signOut } = authClient;
 
-export function signInWithGoogle(callbackURL = "/dashboard"): Promise<unknown> {
-  return authClient.signIn.social({
-    provider: "google",
-    callbackURL,
-  });
-}
-
 export function signInWithApple(callbackURL = "/dashboard"): Promise<unknown> {
   return authClient.signIn.social({
     provider: "apple",

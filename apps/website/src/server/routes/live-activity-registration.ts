@@ -2,7 +2,8 @@ import { liveActivityBackgroundTokenSchema } from "@hark/contracts";
 import { and, eq, gt, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
-import { liveActivity, liveActivityDelivery } from "../db/schema";
+import { liveActivity, liveActivityDelivery, user } from "../db/schema";
+import { isEmailAllowed } from "../lib/admission";
 import { verifyLiveActivityRegistrationToken } from "../lib/live-activity-registration";
 import { encryptLiveActivityToken } from "../lib/token";
 
@@ -19,9 +20,11 @@ export const liveActivityRegistrationRoute = new Hono().post("/update-token", as
         deliveryId: liveActivityDelivery.id,
         activityId: liveActivity.id,
         expiresAt: liveActivity.expiresAt,
+        ownerEmail: user.email,
       })
       .from(liveActivityDelivery)
       .innerJoin(liveActivity, eq(liveActivity.id, liveActivityDelivery.activityId))
+      .innerJoin(user, eq(liveActivity.userId, user.id))
       .where(
         and(
           eq(liveActivityDelivery.id, parsed.data.deliveryId),
@@ -33,6 +36,7 @@ export const liveActivityRegistrationRoute = new Hono().post("/update-token", as
       .get();
     if (
       !candidate ||
+      !isEmailAllowed(candidate.ownerEmail) ||
       !verifyLiveActivityRegistrationToken(
         parsed.data.registrationToken,
         candidate.deliveryId,

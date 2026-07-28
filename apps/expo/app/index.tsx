@@ -2,33 +2,20 @@ import * as AppleAuthentication from "expo-apple-authentication";
 import { Redirect } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Image, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { signInWithApple } from "../src/lib/apple-auth";
-import { authClient, useSession } from "../src/lib/auth";
+import { useSession } from "../src/lib/auth";
 import { colors, fonts, tightTracking } from "../src/lib/theme";
 
 export default function SignInScreen() {
   const { data: session, isPending } = useSession();
-  const [busy, setBusy] = useState<"apple" | "google" | null>(null);
+  const [busy, setBusy] = useState<"apple" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Keep the sign-in screen mounted until the native authorization code is
   // exchanged and its revocation token is safely stored server-side.
   if (session && busy !== "apple") return <Redirect href="/home" />;
-
-  const signInWithGoogle = async () => {
-    setBusy("google");
-    setError(null);
-    try {
-      const result = await authClient.signIn.social({ provider: "google", callbackURL: "/home" });
-      if (result.error) throw new Error(result.error.message ?? "Google sign-in failed");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Sign-in failed");
-    } finally {
-      setBusy(null);
-    }
-  };
 
   const continueWithApple = async () => {
     setBusy("apple");
@@ -46,8 +33,12 @@ export default function SignInScreen() {
     <SafeAreaView style={styles.container}>
       <StatusBar style="dark" />
       <View style={styles.header}>
-        <View style={styles.brandMark} />
-        <Text style={styles.brand}>Hark</Text>
+        <Image
+          accessible={false}
+          source={require("../assets/splash-icon.png")}
+          style={styles.brandMark}
+        />
+        <Text style={styles.brand}>SHark</Text>
       </View>
 
       <View style={styles.hero}>
@@ -75,21 +66,6 @@ export default function SignInScreen() {
             {busy === "apple" ? (
               <ActivityIndicator color={colors.ink} style={styles.appleSpinner} />
             ) : null}
-            <Pressable
-              accessibilityRole="button"
-              onPress={signInWithGoogle}
-              disabled={busy !== null}
-              style={({ pressed }) => [
-                styles.googleButton,
-                (pressed || busy !== null) && styles.googleButtonPressed,
-              ]}
-            >
-              {busy === "google" ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <Text style={styles.googleButtonText}>Continue with Google</Text>
-              )}
-            </Pressable>
           </>
         )}
         {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -111,10 +87,8 @@ const styles = StyleSheet.create({
     gap: 9,
   },
   brandMark: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: colors.accent,
+    width: 32,
+    height: 32,
   },
   brand: {
     color: colors.ink,
@@ -156,15 +130,6 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     gap: 10,
   },
-  googleButton: {
-    minHeight: 52,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    borderRadius: 26,
-    backgroundColor: colors.accent,
-  },
   appleButton: {
     width: "100%",
     height: 52,
@@ -176,16 +141,6 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.55,
-  },
-  googleButtonPressed: {
-    backgroundColor: colors.accentPressed,
-    transform: [{ scale: 0.98 }],
-  },
-  googleButtonText: {
-    color: "#FFFFFF",
-    fontFamily: fonts.medium,
-    fontSize: 16,
-    letterSpacing: tightTracking(16),
   },
   error: {
     color: colors.danger,

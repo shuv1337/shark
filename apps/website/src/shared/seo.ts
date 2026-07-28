@@ -1,80 +1,63 @@
-import { PRO_PRICE_MONTHLY } from "./pricing";
+import { BRAND } from "./brand";
 
-export const SITE_URL = "https://hark.ryan.ceo";
-export const SOCIAL_IMAGE_URL = `${SITE_URL}/ogimage.png`;
-export const DEMO_POSTER_URL = `${SITE_URL}/notifications-demo-poster.jpg`;
-export const DEMO_VIDEO_URL = `${SITE_URL}/notifications-demo.mp4`;
+export const SITE_URL = BRAND.origin;
 
-export type SeoPage =
-  | "home"
-  | "docs"
-  | "pricing"
-  | "privacy"
-  | "terms"
-  | "dashboard"
-  | "cliAuthorize";
+export type SeoPage = "home" | "docs" | "privacy" | "terms" | "dashboard" | "cliAuthorize";
 
 export interface PageSeo {
   path: string;
   title: string;
   description: string;
-  index: boolean;
-  markdownAlternate?: string;
+  index: false;
 }
 
 export const PAGE_SEO: Record<SeoPage, PageSeo> = {
   home: {
     path: "/",
-    title: "Hark — Webhooks to iPhone Notifications",
-    description:
-      "Turn webhooks from CI, coding agents, scripts, and monitors into source-branded iPhone notifications, approvals, replies, and Live Activities.",
-    index: true,
+    title: "SHark — Private Webhooks to iPhone",
+    description: "Private operator dashboard for SHark notifications and Live Activities.",
+    index: false,
   },
   docs: {
     path: "/docs",
-    title: "Hark API Docs — Notifications, Approvals, and Live Activities",
-    description:
-      "Use the Hark webhook API and CLI to send iPhone notifications, request approvals or replies, and update Live Activities from agents and automation.",
-    index: true,
-    markdownAlternate: `${SITE_URL}/docs.md`,
-  },
-  pricing: {
-    path: "/pricing",
-    title: "Hark Pricing — Free and Pro iPhone Notifications",
-    description:
-      "Compare Hark Free and Pro plans for webhook notifications, multiple iPhones, device routing, interactive responses, and Live Activities.",
-    index: true,
+    title: "SHark API Documentation",
+    description: "Private SHark API and operator documentation.",
+    index: false,
   },
   privacy: {
     path: "/privacy",
-    title: "Privacy Policy — Hark",
-    description:
-      "How Hark processes account, webhook, notification, device, interaction, Live Activity, and billing information.",
-    index: true,
+    title: "Privacy — SHark",
+    description: "How this private SHark deployment handles operator data.",
+    index: false,
   },
   terms: {
     path: "/terms",
-    title: "Terms of Service — Hark",
-    description:
-      "The terms governing Hark webhook notifications, agent interactions, and paid plans.",
-    index: true,
+    title: "Terms — SHark",
+    description: "Terms for this private, noncommercial SHark deployment.",
+    index: false,
   },
   dashboard: {
     path: "/dashboard",
-    title: "Dashboard — Hark",
-    description: "Manage your private Hark services, devices, activity, and agent connections.",
+    title: "Dashboard — SHark",
+    description: "Manage private SHark services, devices, activity, and agent connections.",
     index: false,
   },
   cliAuthorize: {
     path: "/cli/authorize",
-    title: "Authorize Hark CLI",
-    description: "Review and authorize a Hark CLI connection.",
+    title: "Authorize SHark CLI",
+    description: "Review and authorize a SHark CLI connection.",
     index: false,
   },
 };
 
-export const PUBLIC_SEO_PAGES = ["home", "docs", "pricing", "privacy", "terms"] as const;
-export const PRIVATE_SEO_PAGES = ["dashboard", "cliAuthorize"] as const;
+export const PRIVATE_PAGES = [
+  "home",
+  "docs",
+  "privacy",
+  "terms",
+  "dashboard",
+  "cliAuthorize",
+] as const satisfies readonly SeoPage[];
 
 export function absoluteUrl(path: string): string {
   return path === "/" ? `${SITE_URL}/` : `${SITE_URL}${path}`;
@@ -82,134 +65,8 @@ export function absoluteUrl(path: string): string {
 
 export function seoPageForPath(pathname: string): SeoPage | null {
   const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
-  for (const [page, seo] of Object.entries(PAGE_SEO) as [SeoPage, PageSeo][]) {
-    if (seo.path === normalized) return page;
+  for (const [page, metadata] of Object.entries(PAGE_SEO) as [SeoPage, PageSeo][]) {
+    if (metadata.path === normalized) return page;
   }
   return null;
-}
-
-const provider = {
-  "@type": "Person",
-  "@id": `${SITE_URL}/#provider`,
-  name: "Ryan Vogel",
-  url: "https://github.com/R44VC0RP",
-};
-
-/** Factual entities visible on the home page. Avoids ratings, reviews, and unsupported claims. */
-export function homeStructuredData(): Record<string, unknown> {
-  return {
-    "@context": "https://schema.org",
-    "@graph": [
-      provider,
-      {
-        "@type": "WebSite",
-        "@id": `${SITE_URL}/#website`,
-        url: `${SITE_URL}/`,
-        name: "Hark",
-        description: PAGE_SEO.home.description,
-        inLanguage: "en-US",
-        publisher: { "@id": `${SITE_URL}/#provider` },
-      },
-      {
-        "@type": ["SoftwareApplication", "MobileApplication"],
-        "@id": `${SITE_URL}/#app`,
-        name: "Hark",
-        alternateName: "Hark for iPhone",
-        url: `${SITE_URL}/`,
-        description: PAGE_SEO.home.description,
-        applicationCategory: "CommunicationApplication",
-        operatingSystem: "iOS",
-        image: SOCIAL_IMAGE_URL,
-        screenshot: DEMO_POSTER_URL,
-        downloadUrl: "https://testflight.apple.com/join/PjCnKETB",
-        softwareHelp: `${SITE_URL}/docs`,
-        provider: { "@id": `${SITE_URL}/#provider` },
-        sameAs: ["https://github.com/R44VC0RP/hark", "https://skills.sh/r44vc0rp/hark/hark"],
-        featureList: [
-          "Webhook to iPhone notifications",
-          "Agent approval and text reply requests",
-          "Live Activities on the Lock Screen and Dynamic Island",
-          "Scoped CLI access tokens",
-        ],
-        offers: [
-          {
-            "@type": "Offer",
-            name: "Hark Free",
-            price: "0",
-            priceCurrency: "USD",
-            url: `${SITE_URL}/pricing`,
-          },
-          {
-            "@type": "Offer",
-            name: "Hark Pro",
-            price: String(PRO_PRICE_MONTHLY),
-            priceCurrency: "USD",
-            url: `${SITE_URL}/pricing`,
-          },
-        ],
-      },
-      {
-        "@type": "VideoObject",
-        "@id": `${SITE_URL}/#demo-video`,
-        name: "Hark iPhone notification demo",
-        description: "A demonstration of Hark delivering project notifications to an iPhone.",
-        thumbnailUrl: DEMO_POSTER_URL,
-        uploadDate: "2026-07-23T19:23:02-04:00",
-        duration: "PT7.466S",
-        contentUrl: DEMO_VIDEO_URL,
-      },
-      {
-        "@type": "WebPage",
-        "@id": `${SITE_URL}/#webpage`,
-        url: `${SITE_URL}/`,
-        name: PAGE_SEO.home.title,
-        description: PAGE_SEO.home.description,
-        isPartOf: { "@id": `${SITE_URL}/#website` },
-        mainEntity: { "@id": `${SITE_URL}/#app` },
-        video: { "@id": `${SITE_URL}/#demo-video` },
-        inLanguage: "en-US",
-      },
-    ],
-  };
-}
-
-export function structuredDataForPage(page: SeoPage): Record<string, unknown> | null {
-  if (page === "home") return homeStructuredData();
-
-  const seo = PAGE_SEO[page];
-  if (!seo.index) return null;
-  const url = absoluteUrl(seo.path);
-  return {
-    "@context": "https://schema.org",
-    "@graph": [
-      {
-        "@type": "WebPage",
-        "@id": `${url}#webpage`,
-        url,
-        name: seo.title,
-        description: seo.description,
-        isPartOf: { "@id": `${SITE_URL}/#website` },
-        breadcrumb: { "@id": `${url}#breadcrumb` },
-        inLanguage: "en-US",
-      },
-      {
-        "@type": "BreadcrumbList",
-        "@id": `${url}#breadcrumb`,
-        itemListElement: [
-          {
-            "@type": "ListItem",
-            position: 1,
-            name: "Hark",
-            item: `${SITE_URL}/`,
-          },
-          {
-            "@type": "ListItem",
-            position: 2,
-            name: seo.title.replace(/\s+[—-]\s+Hark$/, ""),
-            item: url,
-          },
-        ],
-      },
-    ],
-  };
 }

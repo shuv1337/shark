@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+deploy_root="${SHARK_DEPLOY_ROOT:-/home/exedev/shark}"
+credential_root="${SHARK_CREDENTIAL_ROOT:-/etc/shark}"
+source_path="${1:-}"
+
+if [[ "$#" -ne 1 ]]; then
+  echo "Usage: shark-restic-backup <SHark database staging copy>" >&2
+  exit 64
+fi
+
+for command in bws cmp jq realpath restic; do
+  command -v "$command" >/dev/null || {
+    echo "Required command is unavailable: $command" >&2
+    exit 69
+  }
+done
+
+if [[ ! -f "$source_path" || -L "$source_path" ]]; then
+  echo "The SHark database staging copy is not a regular file." >&2
+  exit 66
+fi
+
+resolved_source="$(realpath "$source_path")"
+resolved_root="$(realpath "$deploy_root")"
+stage_dir="$(dirname "$resolved_source")"
+stage_name="$(basename "$stage_dir")"
+source_name="$(basename "$resolved_source")"
+if [[ "$(dirname "$stage_dir")" != "$resolved_root" ]] ||
+  [[ ! "$stage_name" =~ ^(backup|nightly-backup)\.[A-Za-z0-9]+$ ]] ||
+  [[ ! "$source_name" =~ ^hark\.sqlite\.(pre-[0-9a-f]{40}|nightly-[0-9]{8}T[0-9]{6}Z)$ ]]; then
+  echo "The SHark database staging path is outside the allowed boundary." >&2
+  exit 66
+fi
+
+token_file="$credential_root/bws-backup-access-token"
+project_file="$credential_root/bws-project-id"
+if [[ ! -f "$token_file" || ! -f "$project_file" ]]; then
+  echo "SHark backup credential files are unavailable." >&2
+  exit 78
+fi
+
+BWS_ACCESS_TOKEN="$(<"$token_file")"
+project_id="$(<"$project_file")"
+if [[ -z "$BWS_ACCESS_TOKEN" || ! "$project_id" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+  echo "SHark backup credential files are invalid." >&2
+  exit 78
+fi
+export BWS_ACCESS_TOKEN
+
+secrets_json="$(mktemp "$deploy_root/backup-secrets.XXXXXXXX.json")"
+backup_log="$(mktemp "$deploy_root/restic-backup.XXXXXXXX.json")"
+restored_copy="$(mktemp "$deploy_root/restic-restore.XXXXXXXX.sqlite")"
+cleanup() {
+  rm -f -- "$secrets_json" "$backup_log" "$restored_copy"
+}
+trap cleanup EXIT
+chmod 600 "$secrets_json" "$backup_log" "$restored_copy"
+
+if ! bws secret list --output json >"$secrets_json"; then
+  echo "Unable to read the SHark backup secret project." >&2
+  exit 78
+fi
+unset BWS_ACCESS_TOKEN
+
+if ! jq -e --arg project_id "$project_id" '
+  type == "array"
+  and all(.[];
+    (.key | type == "string")
+    and (.value | type == "string")
+    and .projectId == $project_id
+  )
+  and ([.[].key] | sort) == (["RESTIC_PASSWORD", "RESTIC_REPOSITORY"] | sort)
+' "$secrets_json" >/dev/null; then
+  echo "The SHark backup secret project is malformed." >&2
+  exit 78
+fi
+
+secret_value() {
+  local key="$1"
+  local value
+  if ! value="$(jq -er --arg key "$key" '
+    [.[] | select(.key == $key)]
+    | if length == 1 then .[0].value else error("missing") end
+  ' "$secrets_json")"; then
+    echo "Required SHark backup secret is missing: $key" >&2
+    exit 78
+  fi
+  printf '%s' "$value"
+}
+
+RESTIC_REPOSITORY="$(secret_value RESTIC_REPOSITORY)"
+RESTIC_PASSWORD="$(secret_value RESTIC_PASSWORD)"
+if [[ ! "$RESTIC_REPOSITORY" =~ ^sftp:[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:repos/shark-prod$ ]] ||
+  [[ -z "$RESTIC_PASSWORD" || "$RESTIC_PASSWORD" == *$'\n'* || "$RESTIC_PASSWORD" == *$'\r'* ]]; then
+  echo "The SHark Restic configuration is invalid." >&2
+  exit 78
+fi
+export RESTIC_REPOSITORY RESTIC_PASSWORD
+export RESTIC_CACHE_DIR="$deploy_root/restic-cache"
+install -d -m 700 "$RESTIC_CACHE_DIR"
+
+# A typo must never initialize a new repository. Operators initialize and test the
+# dedicated repos/shark-prod target explicitly during provisioning.
+if ! restic cat config >/dev/null; then
+  echo "The SHark Restic repository is unavailable or not initialized." >&2
+  exit 69
+fi
+
+if ! restic backup "$resolved_source" \
+  --host shark-prod \
+  --tag shark-prod \
+  --json >"$backup_log"; then
+  echo "The SHark Restic backup failed." >&2
+  exit 70
+fi
+
+snapshot_id="$(jq -er '
+  select(.message_type == "summary" and (.snapshot_id | type == "string"))
+  | .snapshot_id
+' "$backup_log" | tail -n 1)"
+if [[ ! "$snapshot_id" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "Restic did not return a valid SHark snapshot ID." >&2
+  exit 70
+fi
+
+if ! restic snapshots --json --host shark-prod --tag shark-prod |
+  jq -e --arg snapshot_id "$snapshot_id" '
+    any(.[]; .id == $snapshot_id and .hostname == "shark-prod" and (.tags | index("shark-prod")))
+  ' >/dev/null; then
+  echo "The new SHark Restic snapshot could not be verified." >&2
+  exit 70
+fi
+
+if ! restic dump "$snapshot_id" "$resolved_source" >"$restored_copy" ||
+  ! cmp -s "$resolved_source" "$restored_copy"; then
+  echo "The new SHark Restic snapshot failed byte-for-byte restore verification." >&2
+  exit 70
+fi
+
+restic check >/dev/null
+restic forget \
+  --host shark-prod \
+  --tag shark-prod \
+  --keep-daily 7 \
+  --keep-weekly 4 \
+  --keep-monthly 6 \
+  --prune >/dev/null
+restic check >/dev/null
+
+rm -f -- "$resolved_source"
+printf '%s\n' "$snapshot_id"

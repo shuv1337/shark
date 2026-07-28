@@ -7,8 +7,9 @@ import {
 import { and, count, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
-import { apiToken, deviceAuthorizationRequest } from "../db/schema";
+import { apiToken, deviceAuthorizationRequest, user } from "../db/schema";
 import { env } from "../env";
+import { isEmailAllowed } from "../lib/admission";
 import { track } from "../lib/analytics";
 import { newId } from "../lib/id";
 import {
@@ -243,6 +244,18 @@ export const deviceAuthorizationRoute = new Hono<AuthedEnv>()
       if (row.status === "expired") return { kind: "expired" } as const;
       if (row.status === "consumed") return { kind: "consumed" } as const;
       if (row.status !== "approved" || !row.approvedUserId) return { kind: "invalid" } as const;
+      const owner = tx
+        .select({ email: user.email })
+        .from(user)
+        .where(eq(user.id, row.approvedUserId))
+        .get();
+      if (!owner || !isEmailAllowed(owner.email)) {
+        tx.update(deviceAuthorizationRequest)
+          .set({ status: "denied", resolvedAt: now })
+          .where(eq(deviceAuthorizationRequest.id, row.id))
+          .run();
+        return { kind: "denied" } as const;
+      }
 
       const active = tx
         .select({ value: count() })

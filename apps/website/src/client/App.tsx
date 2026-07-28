@@ -5,7 +5,6 @@ import { Dashboard } from "./pages/Dashboard";
 import { Docs } from "./pages/Docs";
 import { Landing } from "./pages/Landing";
 import { Privacy, Terms } from "./pages/Legal";
-import { Pricing } from "./pages/Pricing";
 
 export function App() {
   return (
@@ -16,7 +15,6 @@ export function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/cli/authorize" element={<CliAuthorize />} />
         <Route path="/docs" element={<Docs />} />
-        <Route path="/pricing" element={<Pricing />} />
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/terms" element={<Terms />} />
       </Routes>

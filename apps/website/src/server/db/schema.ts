@@ -80,7 +80,7 @@ export const appleNativeGrant = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// Hark domain tables
+// Stable compatibility-domain tables
 // ---------------------------------------------------------------------------
 
 export const service = sqliteTable(

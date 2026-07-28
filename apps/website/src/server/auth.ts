@@ -1,13 +1,15 @@
 import { expo } from "@better-auth/expo";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { APIError } from "better-auth/api";
 import { db } from "./db";
 import * as schema from "./db/schema";
 import { env } from "./env";
+import { ADMISSION_DENIED_MESSAGE, isEmailAllowed } from "./lib/admission";
 import { appleAuthConfig, generateAppleClientSecret, revokeAppleGrantsForUser } from "./lib/apple";
 
 export const auth = betterAuth({
-  appName: "Hark",
+  appName: "SHark",
   baseURL: env.APP_URL,
   secret: env.BETTER_AUTH_SECRET,
   database: drizzleAdapter(db, {
@@ -23,13 +25,49 @@ export const auth = betterAuth({
       beforeDelete: async (user) => revokeAppleGrantsForUser(user.id),
     },
   },
-  socialProviders: {
-    google: {
-      clientId: env.GOOGLE_CLIENT_ID ?? "",
-      clientSecret: env.GOOGLE_CLIENT_SECRET ?? "",
-      disableDefaultScope: true,
-      scope: ["openid", "email", "profile"],
+  databaseHooks: {
+    user: {
+      create: {
+        before: async (user) => {
+          if (!isEmailAllowed(user.email)) {
+            console.warn("[auth] provider=apple outcome=admission_denied");
+            throw APIError.from("FORBIDDEN", {
+              message: ADMISSION_DENIED_MESSAGE,
+              code: "ACCOUNT_NOT_AUTHORIZED",
+            });
+          }
+          return { data: user };
+        },
+      },
+      update: {
+        before: async (user) => {
+          if (user.email && !isEmailAllowed(user.email)) {
+            console.warn("[auth] provider=apple outcome=admission_denied");
+            throw APIError.from("FORBIDDEN", {
+              message: ADMISSION_DENIED_MESSAGE,
+              code: "ACCOUNT_NOT_AUTHORIZED",
+            });
+          }
+          return { data: user };
+        },
+      },
     },
+    session: {
+      create: {
+        before: async (session, context) => {
+          const user = await context?.context.internalAdapter.findUserById(session.userId);
+          if (!user || !isEmailAllowed(user.email)) {
+            console.warn("[auth] provider=apple outcome=session_denied");
+            throw APIError.from("FORBIDDEN", {
+              message: ADMISSION_DENIED_MESSAGE,
+              code: "ACCOUNT_NOT_AUTHORIZED",
+            });
+          }
+        },
+      },
+    },
+  },
+  socialProviders: {
     apple: async () => {
       const clientId = env.APPLE_SIGN_IN_SERVICE_ID ?? "";
       const configured =
@@ -52,7 +90,7 @@ export const auth = betterAuth({
     },
   },
   plugins: [expo()],
-  trustedOrigins: [env.APP_URL, "https://appleid.apple.com", "hark://", "hark://*"],
+  trustedOrigins: [env.APP_URL, "https://appleid.apple.com", "shark://", "shark://*"],
   advanced: env.APP_URL.startsWith("https://")
     ? {
         // Apple returns OAuth callbacks with a cross-site form POST. Better Auth

@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+test_root="$(mktemp -d)"
+cleanup() {
+  rm -rf -- "$test_root"
+}
+trap cleanup EXIT
+
+deploy_root="$test_root/shark"
+credential_root="$test_root/credentials"
+fake_bin="$test_root/bin"
+install -d -m 700 "$deploy_root" "$credential_root" "$fake_bin"
+printf '%s\n' "app-test-token" >"$credential_root/bws-app-access-token"
+printf '%s\n' "backup-test-token" >"$credential_root/bws-backup-access-token"
+printf '%s\n' "00000000-0000-0000-0000-000000000001" >"$credential_root/bws-project-id"
+
+cat >"$fake_bin/bws" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${BWS_FAIL:-0}" == "1" ]]; then
+  exit 1
+fi
+if [[ "$BWS_ACCESS_TOKEN" == "app-test-token" ]]; then
+  jq -n --arg extra "${BWS_EXTRA:-}" '[
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"ALLOWED_EMAILS",value:"operator@example.com"},
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"BETTER_AUTH_SECRET",value:"0123456789abcdefghijklmnopqrstuvwxyz"},
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"APPLE_SIGN_IN_KEY_ID",value:"APPLEKEY01"},
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"APPLE_TEAM_ID",value:"7H54B326YZ"},
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"APPLE_SIGN_IN_PRIVATE_KEY_BASE64",value:"QUJDRA=="},
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"EXPO_ACCESS_TOKEN",value:"expo-token_123"},
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"APNS_KEY_ID",value:"APNSKEY001"},
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"APNS_PRIVATE_KEY_BASE64",value:"RUZHSA=="}
+  ] + if $extra == "1" then [{projectId:"00000000-0000-0000-0000-000000000001",key:"UNEXPECTED_SECRET",value:"must fail"}] else [] end'
+else
+  jq -n '[
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"RESTIC_REPOSITORY",value:"sftp:user@example.com:repos/shark-prod"},
+    {projectId:"00000000-0000-0000-0000-000000000001",key:"RESTIC_PASSWORD",value:"backup password"}
+  ]'
+fi
+EOF
+
+cat >"$fake_bin/restic" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+snapshot="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+case "$1" in
+  cat|forget) exit 0 ;;
+  check)
+    [[ "${RESTIC_FAIL_CHECK:-0}" != "1" ]]
+    ;;
+  backup)
+    printf '%s\n' "$2" >"$SHARK_DEPLOY_ROOT/fake-source-path"
+    printf '{"message_type":"summary","snapshot_id":"%s"}\n' "$snapshot"
+    ;;
+  dump)
+    source_path="$(<"$SHARK_DEPLOY_ROOT/fake-source-path")"
+    cat "$source_path"
+    ;;
+  snapshots)
+    printf '[{"id":"%s","hostname":"shark-prod","tags":["shark-prod"]}]\n' "$snapshot"
+    ;;
+  *) exit 64 ;;
+esac
+EOF
+chmod 700 "$fake_bin/bws" "$fake_bin/restic"
+
+export PATH="$fake_bin:$PATH"
+export SHARK_DEPLOY_ROOT="$deploy_root"
+export SHARK_CREDENTIAL_ROOT="$credential_root"
+
+file_mode() {
+  if stat -c '%a' "$1" >/dev/null 2>&1; then
+    stat -c '%a' "$1"
+  else
+    stat -f '%Lp' "$1"
+  fi
+}
+
+sha256_file() {
+  if command -v sha256sum >/dev/null; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+"$repo_root/deploy/shark-materialize-secrets" "$deploy_root/.env.new"
+[[ "$(file_mode "$deploy_root/.env.new")" == "600" ]]
+grep -qx 'APP_URL=https://shark.shuv.dev' "$deploy_root/.env.new"
+grep -qx 'APPLE_SIGN_IN_PRIVATE_KEY=QUJDRA==' "$deploy_root/.env.new"
+if grep -Eq 'app-test-token|backup-test-token' "$deploy_root/.env.new"; then
+  echo "Bitwarden machine credential leaked into the runtime environment." >&2
+  exit 1
+fi
+environment_before="$(sha256_file "$deploy_root/.env.new")"
+if BWS_FAIL=1 "$repo_root/deploy/shark-materialize-secrets" "$deploy_root/.env.new" \
+  >/dev/null 2>&1; then
+  echo "Secret materializer accepted a failed Bitwarden read." >&2
+  exit 1
+fi
+environment_after="$(sha256_file "$deploy_root/.env.new")"
+[[ "$environment_before" == "$environment_after" ]]
+if BWS_EXTRA=1 "$repo_root/deploy/shark-materialize-secrets" "$deploy_root/.env.new" \
+  >/dev/null 2>&1; then
+  echo "Secret materializer accepted an unexpected Bitwarden key." >&2
+  exit 1
+fi
+[[ "$environment_before" == "$(sha256_file "$deploy_root/.env.new")" ]]
+
+backup_dir="$deploy_root/backup.ABC123"
+install -d -m 700 "$backup_dir"
+backup_file="$backup_dir/hark.sqlite.pre-0123456789abcdef0123456789abcdef01234567"
+printf 'sqlite fixture\n' >"$backup_file"
+snapshot_id="$("$repo_root/deploy/shark-restic-backup" "$backup_file")"
+[[ "$snapshot_id" == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ]]
+[[ ! -e "$backup_file" ]]
+
+failed_backup_dir="$deploy_root/nightly-backup.FAIL01"
+install -d -m 700 "$failed_backup_dir"
+failed_backup_file="$failed_backup_dir/hark.sqlite.nightly-20260727T120000Z"
+printf 'sqlite fixture retained on failure\n' >"$failed_backup_file"
+if RESTIC_FAIL_CHECK=1 "$repo_root/deploy/shark-restic-backup" "$failed_backup_file" \
+  >/dev/null 2>&1; then
+  echo "Restic helper accepted a failed repository check." >&2
+  exit 1
+fi
+[[ -f "$failed_backup_file" ]]
+
+outside_file="$test_root/hark.sqlite.pre-0123456789abcdef0123456789abcdef01234567"
+printf 'must remain\n' >"$outside_file"
+if "$repo_root/deploy/shark-restic-backup" "$outside_file" >/dev/null 2>&1; then
+  echo "Restic helper accepted a database outside the staging boundary." >&2
+  exit 1
+fi
+[[ -f "$outside_file" ]]
+
+echo "SHark deployment helper tests passed."

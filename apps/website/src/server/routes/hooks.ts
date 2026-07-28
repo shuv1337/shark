@@ -12,6 +12,7 @@ import {
   service as serviceTable,
   user as userTable,
 } from "../db/schema";
+import { isEmailAllowed } from "../lib/admission";
 import { failureBucket, track } from "../lib/analytics";
 import { checkNotificationAllowance, getBilling, trackNotification } from "../lib/billing";
 import { newId } from "../lib/id";
@@ -82,7 +83,7 @@ export const hooksRoute = new Hono()
       .innerJoin(userTable, eq(serviceTable.userId, userTable.id))
       .where(eq(serviceTable.tokenHash, hashWebhookToken(token)))
       .limit(1);
-    if (!match) {
+    if (!match || !isEmailAllowed(match.owner.email)) {
       return c.json<WebhookResponse>({ ok: false, error: "Unknown webhook" }, 404);
     }
     const svc = match.service;
@@ -133,11 +134,11 @@ export const hooksRoute = new Hono()
       plan: billing.plan,
     });
     if (parsed.data.deviceIds && !billing.features.deviceRouting) {
-      return c.json<WebhookResponse>({ ok: false, error: "Device routing requires Hark Pro" }, 402);
+      return c.json<WebhookResponse>({ ok: false, error: "Device routing is unavailable" }, 402);
     }
     if (parsed.data.response && billing.plan !== "pro") {
       return c.json<WebhookResponse>(
-        { ok: false, error: "Interactive responses require Hark Pro" },
+        { ok: false, error: "Interactive responses are unavailable" },
         402,
       );
     }

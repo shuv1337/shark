@@ -1,6 +1,7 @@
 import { Link } from "react-router";
+import { BrandWordmark } from "../components/BrandWordmark";
 
-const updated = "July 26, 2026";
+const updated = "July 27, 2026";
 
 function LegalLayout({
   eyebrow,
@@ -16,7 +17,7 @@ function LegalLayout({
       <header>
         <div className="mx-auto flex h-20 w-full max-w-3xl items-center justify-between px-6">
           <Link to="/" className="text-lg font-semibold">
-            Hark
+            <BrandWordmark />
           </Link>
           <nav className="flex items-center gap-4 text-sm text-ink-subtle" aria-label="Primary">
             <Link className="transition hover:text-ink" to="/docs">
@@ -51,121 +52,60 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 export function Privacy() {
   return (
-    <LegalLayout eyebrow="Legal" title="Privacy Policy">
-      <Section title="Overview">
+    <LegalLayout eyebrow="Operator policy" title="Privacy">
+      <Section title="Private deployment">
         <p>
-          Hark is operated by Ryan Vogel. This policy explains the information Hark processes to
-          deliver webhook notifications through the website and iOS app. Hark does not sell personal
-          information or use it for targeted advertising.
+          SHark is a personal, noncommercial, single-operator deployment. Access is limited to exact
+          Apple email addresses selected by the operator. SHark does not sell personal information,
+          advertise, offer public signup, or operate a paid plan.
         </p>
       </Section>
 
-      <Section title="Information we process">
-        <ul className="list-disc space-y-2 pl-5">
-          <li>
-            Your Google or Apple account identifier, name, email address, and profile image when
-            provided by the sign-in service. Apple may provide a private relay email address.
-          </li>
-          <li>
-            Encrypted Apple refresh tokens used only to revoke Sign in with Apple authorization when
-            you delete your account.
-          </li>
-          <li>
-            Service settings you create, including titles, image URLs, destination URLs, secret
-            webhook-token hashes, and encrypted webhook tokens.
-          </li>
-          <li>
-            Webhook content such as notification titles, bodies, images, destinations, idempotency
-            keys, timestamps, and delivery results.
-          </li>
-          <li>
-            Device information needed for delivery, including Expo and APNs push tokens, device
-            name, platform, and last registration time.
-          </li>
-          <li>
-            Agent access-token names, scopes, identifying prefixes, hashes, expiry and usage times.
-            Plaintext agent tokens are shown once and are not stored by Hark.
-          </li>
-          <li>
-            Approval and reply prompts, choices, expiry, response text or decision, requesting token
-            identity, responding device, and response timestamps.
-          </li>
-          <li>
-            Live Activity task titles, status text, optional detail and progress, expiry and update
-            history, requesting token identity, and encrypted ActivityKit delivery tokens. Private
-            mode replaces task content with generic text on the Lock Screen but does not remove the
-            task content from Hark's encrypted network and account-scoped processing.
-          </li>
-          <li>
-            Subscription status and billing identifiers when you choose a paid plan. Payment-card
-            details are collected and handled by Stripe, not stored by Hark.
-          </li>
-          <li>Limited technical logs used to secure, operate, and troubleshoot the service.</li>
-          <li>
-            Aggregate usage counts for product analytics, such as event names, coarse outcome
-            buckets, counters, and the related account, service, or device identifiers — never
-            notification content, prompts, replies, tokens, or addresses.
-          </li>
-        </ul>
-      </Section>
-
-      <Section title="How we use information">
+      <Section title="Information processed">
         <p>
-          We use this information to authenticate your account, create and secure webhook endpoints,
-          deliver notifications, show delivery activity, prevent duplicate or abusive requests,
-          deliver requested interactions and return your response to the authorized agent, start and
-          update Live Activities you authorize, provide support, and maintain the reliability and
-          security of Hark.
+          SHark processes the verified Apple identity and provider subject, encrypted Apple
+          revocation credentials, service and device settings, webhook and interaction content,
+          delivery results, scoped agent-token metadata, and encrypted push and Live Activity
+          credentials needed to provide the service. Plaintext agent tokens are returned only at
+          creation. Secret webhook URLs and push credentials must be treated as passwords.
         </p>
       </Section>
 
-      <Section title="Service providers">
+      <Section title="Purpose and access">
         <p>
-          Hark relies on Google and Apple for authentication, Expo and Apple for push delivery and
-          app distribution, Autumn and Stripe for optional web billing, and hosting infrastructure
-          for the website, API, and database. These providers process information only as needed to
-          provide their services and under their own privacy terms.
+          Information is used only to authenticate the operator, deliver notifications and Live
+          Activities, return authorized interaction responses, prevent abuse and duplicates, display
+          private history, support deletion, and recover the service. Removing an address from the
+          allowlist immediately blocks its sessions and credential paths; offboarding revokes access
+          but preserves account data until a separate deletion request.
+        </p>
+      </Section>
+
+      <Section title="Providers">
+        <p>
+          Apple provides authentication, push delivery, and internal TestFlight distribution. Expo
+          carries ordinary push notifications. exe.dev hosts the service, Cloudflare provides DNS,
+          Bitwarden stores scoped secrets, rsync.net stores encrypted Restic backups, and GitHub
+          publishes reviewed deployment images. Each provider applies its own terms.
         </p>
       </Section>
 
       <Section title="Retention and deletion">
         <p>
-          We retain account and service data while your account is active and retain recent webhook
-          activity for product operation and troubleshooting. You can permanently delete your
-          account inside the Hark app. Deletion removes your services, devices, and activity from
-          the active database. For accounts using Apple, Hark first asks Apple to revoke stored
-          authorization grants; deletion stops and reports an error if that revocation cannot be
-          confirmed. Limited backup copies may remain temporarily until rotated.
+          Production keeps capped, redacted local logs for seven days. Encrypted database backups
+          follow a 7 daily, 4 weekly, and 6 monthly schedule. Account data remains until the
+          operator performs explicit deletion. Deletion revokes Apple grants and removes sessions,
+          services, devices, credentials, interactions, and activity from the active database;
+          encrypted backup copies expire under the backup schedule.
         </p>
       </Section>
 
-      <Section title="Security and your choices">
+      <Section title="Security">
         <p>
-          Webhook URLs contain secret tokens and should be treated like passwords. You can rotate a
-          webhook token or revoke a scoped agent token from the dashboard if it is exposed. Device
-          responses require the signed-in account and a registered device identity. Hark uses access
-          controls and encrypted network connections, but no online service can guarantee absolute
-          security.
-        </p>
-      </Section>
-
-      <Section title="Children">
-        <p>
-          Hark is not directed to children under 13, and we do not knowingly collect personal
-          information from children under 13.
-        </p>
-      </Section>
-
-      <Section title="Contact">
-        <p>
-          Questions or privacy requests can be sent to{" "}
-          <a
-            className="text-accent-text underline underline-offset-2"
-            href="mailto:ryan@mandarin3d.com"
-          >
-            ryan@mandarin3d.com
-          </a>
-          .
+          SHark uses encrypted transport, scoped credentials, exact-email admission, restricted
+          deployment access, redacted logs, and encrypted off-host backups. No online system can
+          guarantee absolute security. Exposed webhook or agent credentials should be revoked or
+          rotated immediately.
         </p>
       </Section>
     </LegalLayout>
@@ -174,102 +114,45 @@ export function Privacy() {
 
 export function Terms() {
   return (
-    <LegalLayout eyebrow="Legal" title="Terms of Service">
-      <Section title="Agreement">
+    <LegalLayout eyebrow="Operator policy" title="Terms">
+      <Section title="Personal use">
         <p>
-          By using Hark, you agree to these terms. If you do not agree, do not use the service. You
-          must be legally able to form a binding agreement and provide accurate account information.
+          SHark is a personal, noncommercial system for the operator's own devices and workflows. It
+          is not offered as a public service, subscription, or commercial product.
         </p>
       </Section>
 
-      <Section title="The service">
+      <Section title="Service behavior">
         <p>
-          Hark provides private webhook endpoints that convert submitted data into push
-          notifications on registered devices. Features may change as the service develops, and beta
-          or preview features may be modified or removed without notice.
+          SHark converts authorized webhook and agent requests into notifications, interactions, and
+          Live Activities. Push delivery can be delayed, duplicated, rejected, or disabled by device
+          settings and third-party services. Callers must use idempotency keys and handle canceled,
+          expired, denied, missing, or retried responses safely.
         </p>
       </Section>
 
-      <Section title="Agent interactions">
+      <Section title="Credentials and content">
         <p>
-          Scoped agent tokens may create approval or reply requests for your own registered devices.
-          You are responsible for deciding what authority an agent receives and for reviewing
-          prompts before responding. Hark does not guarantee that a push is delivered, seen, or
-          answered, and callers must treat canceled, expired, denied, and missing responses safely.
+          The operator is responsible for protecting Apple access, webhook URLs, agent tokens,
+          deployment credentials, and submitted content. Content and destination URLs must be lawful
+          and appropriately licensed. External notification and reply content must be treated as
+          untrusted data.
         </p>
       </Section>
 
-      <Section title="Your account and webhook secrets">
+      <Section title="Availability">
         <p>
-          You are responsible for activity under your account and for keeping webhook URLs and
-          account access secure. Agent API tokens are also credentials; grant only needed scopes,
-          configure an expiry where practical, and revoke affected tokens if exposed.
+          SHark is provided “as is” and “as available.” Apple, Expo, exe.dev, Cloudflare, Bitwarden,
+          rsync.net, and GitHub availability or policy changes may affect operation. The operator
+          may suspend, restore, change, or discontinue the deployment at any time.
         </p>
       </Section>
 
-      <Section title="Acceptable use">
+      <Section title="License">
         <p>
-          Do not use Hark to violate law, infringe rights, distribute malware, harass others,
-          attempt unauthorized access, overload the service, evade rate limits, or send content you
-          do not have permission to process. We may suspend abusive or harmful activity.
-        </p>
-      </Section>
-
-      <Section title="Your content">
-        <p>
-          You retain ownership of content you submit. You grant Hark permission to process that
-          content only as needed to operate the service. You are responsible for ensuring your
-          webhook content, images, and destination links are lawful and appropriately licensed.
-        </p>
-      </Section>
-
-      <Section title="Paid plans">
-        <p>
-          Hark Pro is an optional subscription purchased on the Hark website and billed in advance
-          through Autumn and Stripe. The current price and billing interval are shown before
-          checkout. Subscriptions renew automatically until canceled. You can manage or cancel a
-          subscription from the web dashboard; cancellation takes effect at the end of the current
-          paid period unless stated otherwise. Fees are non-refundable except where required by law.
-          We may change future pricing with advance notice, but changes do not apply retroactively
-          to an already-paid period.
-        </p>
-      </Section>
-
-      <Section title="Third-party services">
-        <p>
-          Hark depends on services provided by Google, Expo, Apple, Autumn, Stripe, and hosting
-          providers. Their availability and terms are outside Hark's control, and integrations may
-          stop working if those services change.
-        </p>
-      </Section>
-
-      <Section title="Availability and warranties">
-        <p>
-          Hark is provided “as is” and “as available.” Push delivery is not guaranteed, may be
-          delayed or duplicated, and can be affected by device settings and third-party services. To
-          the extent permitted by law, Hark disclaims implied warranties and is not liable for
-          indirect, incidental, special, or consequential damages.
-        </p>
-      </Section>
-
-      <Section title="Termination and changes">
-        <p>
-          You may stop using Hark or delete your account at any time. We may suspend access for
-          violations, security risks, or service discontinuation. We may update these terms and will
-          post the updated date on this page.
-        </p>
-      </Section>
-
-      <Section title="Contact">
-        <p>
-          Questions about these terms can be sent to{" "}
-          <a
-            className="text-accent-text underline underline-offset-2"
-            href="mailto:ryan@mandarin3d.com"
-          >
-            ryan@mandarin3d.com
-          </a>
-          .
+          SHark remains subject to the repository's PolyForm Noncommercial License 1.0.0 and
+          preserved upstream attribution. Commercial use requires a separate license from the
+          upstream licensor.
         </p>
       </Section>
     </LegalLayout>

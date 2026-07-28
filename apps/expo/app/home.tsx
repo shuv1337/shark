@@ -228,8 +228,12 @@ export default function HomeScreen() {
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.header}>
           <View style={styles.brandGroup}>
-            <View style={styles.brandMark} />
-            <Text style={styles.brand}>Hark</Text>
+            <Image
+              accessible={false}
+              source={require("../assets/splash-icon.png")}
+              style={styles.brandMark}
+            />
+            <Text style={styles.brand}>SHark</Text>
           </View>
           <Pressable accessibilityRole="button" onPress={signOut} hitSlop={8}>
             <Text style={styles.signOut}>Sign out</Text>
@@ -255,8 +259,8 @@ export default function HomeScreen() {
               done={permission === "granted"}
               body={
                 permission === "denied"
-                  ? "Notifications are turned off. Enable them for Hark in the iOS Settings app."
-                  : "Hark shows each webhook as a communication notification with your service's name and avatar."
+                  ? "Notifications are turned off. Enable them for SHark in the iOS Settings app."
+                  : "SHark shows each webhook as a communication notification with your service's name and avatar."
               }
               actionLabel={permission === "granted" ? undefined : "Allow notifications"}
               onAction={permission === "denied" ? undefined : requestPermission}
@@ -438,7 +442,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   brandGroup: { flexDirection: "row", alignItems: "center", gap: 9 },
-  brandMark: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.accent },
+  brandMark: { width: 32, height: 32 },
   brand: {
     color: colors.ink,
     fontFamily: fonts.semibold,

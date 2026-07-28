@@ -662,7 +662,7 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
     if (!owner) return c.json({ error: "Account not found" }, 404);
     const billing = await getBilling(owner, true);
     if (parsed.data.deviceIds && !billing.features.deviceRouting) {
-      return c.json({ error: "Device routing requires Hark Pro" }, 402);
+      return c.json({ error: "Device routing is unavailable" }, 402);
     }
     const limited = await enforceAgentRateLimit(token, owner);
     if (limited) {

@@ -1,13 +1,13 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { serve } from "@hono/node-server";
-import { serveStatic } from "@hono/node-server/serve-static";
 import { app } from "./app";
 import { sqlite } from "./db";
 import { runMigrations } from "./db/migrate";
 import { assertRuntimeEnv, env } from "./env";
 import { pruneAnalytics } from "./lib/analytics";
 import { startInteractionCallbackWorker } from "./lib/interaction-callbacks";
+import { mountPrivateStaticRoutes } from "./static";
 
 assertRuntimeEnv();
 runMigrations();
@@ -15,26 +15,13 @@ runMigrations();
 pruneAnalytics();
 startInteractionCallbackWorker();
 
-// In production the same process serves prerendered public pages and explicit
-// noindex shells for private application routes. Unknown paths remain real 404s
-// instead of becoming indexable soft-404 copies of the home page.
+// In production the same process serves authenticated noindex application
+// shells. Unknown paths remain real 404s.
 const clientDir = resolve(process.cwd(), "dist/client");
-if (existsSync(clientDir)) {
-  const documentRoutes = ["/", "/docs", "/pricing", "/privacy", "/terms", "/dashboard"];
-  for (const path of documentRoutes) {
-    const file = path === "/" ? "index.html" : `${path.slice(1)}/index.html`;
-    if (existsSync(resolve(clientDir, file))) {
-      app.get(path, serveStatic({ path: `./dist/client/${file}` }));
-    }
-  }
-  if (existsSync(resolve(clientDir, "cli/authorize/index.html"))) {
-    app.get("/cli/authorize", serveStatic({ path: "./dist/client/cli/authorize/index.html" }));
-  }
-  app.use("*", serveStatic({ root: "./dist/client" }));
-}
+mountPrivateStaticRoutes(app, clientDir);
 
 const server = serve({ fetch: app.fetch, port: env.PORT }, (info) => {
-  console.log(`Hark API listening on http://localhost:${info.port} (${env.NODE_ENV})`);
+  console.log(`SHark API listening on http://localhost:${info.port} (${env.NODE_ENV})`);
   if (!existsSync(clientDir)) {
     console.log("No dist/client build found — expecting the Vite dev server to proxy /api.");
   }

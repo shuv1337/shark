@@ -10,7 +10,7 @@ export const DOC_NAV = [
     id: "quickstart",
     label: "Quickstart",
     items: [
-      { id: "what-hark-is", label: "What Hark is" },
+      { id: "what-hark-is", label: "What SHark is" },
       { id: "create-a-service", label: "Create a service" },
       { id: "webhook-url", label: "Copy the webhook URL" },
       { id: "first-notification", label: "Send a notification" },

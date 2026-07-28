@@ -2,6 +2,10 @@ import { type Context, Hono, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { auth } from "./auth";
+import { env } from "./env";
+import { databaseIsReady } from "./lib/readiness";
+import { beginAppleWebSignIn } from "./lib/web-sign-in";
+import { requireAuth } from "./middleware";
 import { activitiesAgentRoute, activitiesSessionRoute } from "./routes/activities";
 import { activityHooksRoute } from "./routes/activity-hooks";
 import { apiTokensRoute } from "./routes/api-tokens";
@@ -40,8 +44,11 @@ if (process.env.NODE_ENV !== "test") {
   app.use("*", accessLog);
 }
 
-app.get("/api/health", (c) => c.json({ ok: true }));
-app.get("/oss", (c) => c.redirect("https://github.com/R44VC0RP/hark/"));
+app.get("/api/health", (c) =>
+  databaseIsReady() ? c.json({ ok: true }) : c.json({ ok: false }, 503),
+);
+app.get("/login", () => beginAppleWebSignIn(auth.handler, env.APP_URL));
+app.get("/oss", requireAuth, (c) => c.redirect("https://github.com/shuv1337/shark/"));
 
 // Mounted before the static handler in index.ts so the generated markdown wins
 // over anything with the same name in dist/client.

@@ -1,0 +1,32 @@
+# SHark v1 Facts
+
+- SHark v1 is a personal, noncommercial, minimally rebranded self-hosted fork of Hark.
+- The authoritative scope and detailed acceptance criteria are in `PLAN-shark-minimal-rebrand-self-host.md`; the confirmed decision record is in `HANDOFF-shark-grilling-mac-ios.md`.
+- The product name is SHark and the canonical production origin is `https://shark.shuv.dev`.
+- Internal protocol and compatibility names such as `harkctl`, `HARK_*`, `@hark/*`, database names, token domains, and route/DTO names remain stable unless the plan explicitly changes them.
+- Authentication is Apple-only and production admission uses the normalized exact verified Apple email, including an Apple relay address when that is the returned identity.
+- `ALLOWED_EMAILS` is enforced on every browser session and every durable credential path, not only at account creation.
+- Removing an address revokes access while preserving user data; permanent deletion is a separate explicit operation.
+- SHark production has one fixed self-hosted entitlement mode with complete capabilities, no Autumn runtime, no paid-plan UI, and rate limits of 300 requests per service per minute and 1,500 requests per account per minute.
+- `/api/health` is the only anonymous content surface; human-facing pages require an admitted Apple session.
+- Protocol endpoints that must be reachable before session authentication remain network-reachable but require their signed state or scoped credentials.
+- The canonical Devil Phone SVG and safe-area raster must be recovered from an operator-controlled source and match the hashes recorded in the plan before they are used.
+- The app bundle ID is `dev.shuv.shark`.
+- The widget bundle ID is `dev.shuv.shark.widgets`.
+- The notification-service bundle ID is `dev.shuv.shark.notification-service`.
+- The App Group is `group.dev.shuv.shark`.
+- The native URL scheme is `shark`.
+- Expo Push Service carries ordinary notifications; direct APNs carries Live Activity start, update, and end traffic.
+- Sqim produces every simulator and development-device test binary.
+- XcodeBuildMCP may inspect, launch, automate, screenshot, and collect logs from Sqim artifacts but must not compile a test binary.
+- EAS produces only the final store-signed build submitted to internal TestFlight.
+- Internal TestFlight acceptance uses one allowlisted operator account on two physical iPhones; no public TestFlight or public App Store release is in v1.
+- Production runs on a new `shark-prod` exe.dev VM in PDX with 2 vCPU, 4 GB RAM, 25 GB disk, and deploy root `/home/exedev/shark`.
+- `shark.shuv.dev` uses a Cloudflare DNS-only CNAME and exe.dev managed HTTPS; `TRUSTED_CLIENT_IP_HEADER` remains unset in v1.
+- The dedicated Bitwarden Secrets Manager project is `shark` (`cda1aac8-67e1-498a-9d5c-b49401517ca8`). The VM fetches scoped secrets through separate read-only app and backup runtime machine accounts with disjoint direct secret grants; neither runtime account has whole-project access.
+- Manual-dispatch GitHub Actions on `main` only verifies, publishes, and attests an immutable public GHCR image; it has no production VM credential and cannot deploy.
+- The operator promotes an exact GHCR digest through the existing exe.dev identity, and the VM verifies its repository, workflow, `main` source SHA, and hosted-runner attestation before cutover.
+- Restic backs up to rsync.net at 2:00 AM America/Los_Angeles and before deploys with 7 daily, 4 weekly, and 6 monthly retention.
+- The Restic password exists only in Bitwarden; repository verification is a quarterly restore drill with no additional weekly or monthly check job.
+- Production retains only seven days of capped, redacted local logs and has no centralized logging or proactive alerts in v1.
+- Completion requires the full automated baseline, signed-artifact inspection, two-device acceptance, production deploy, backup/restore proof, rollback proof, internal TestFlight installation, and recorded release provenance.

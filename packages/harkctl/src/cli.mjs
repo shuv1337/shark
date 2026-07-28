@@ -4,7 +4,7 @@ import { chmod, mkdir, open, readFile, rename, rm, stat } from "node:fs/promises
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 
-const DEFAULT_API_URL = "https://hark.ryan.ceo";
+const DEFAULT_API_URL = "https://shark.shuv.dev";
 const DEFAULT_SCOPES = [
   "notifications:send",
   "interactions:create",
@@ -159,7 +159,7 @@ export async function loadConfig(env = process.env) {
     throw new RequestError(`Invalid JSON in ${path}.`, 401);
   }
   if (typeof parsed.token !== "string" || !parsed.token.startsWith("hark_")) {
-    throw new RequestError(`Missing Hark token in ${path}.`, 401);
+    throw new RequestError(`Missing SHark token in ${path}.`, 401);
   }
   return {
     token: parsed.token,
@@ -643,7 +643,7 @@ export async function execute(argv, env = process.env, overrides = {}) {
       const expiresInSeconds = parseDuration(options["expires-in"] ?? stdin.expiresIn ?? "15m");
       const payload = {
         ...stdin,
-        title: options.title ?? stdin.title ?? "Hark",
+        title: options.title ?? stdin.title ?? "SHark",
         prompt,
         kind: selectors[0],
         expiresInSeconds,

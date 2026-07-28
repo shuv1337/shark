@@ -102,6 +102,19 @@ async function post(token: string, body: unknown, idempotencyKey?: string) {
 }
 
 describe("POST /hooks/:token", () => {
+  it("makes an existing webhook indistinguishable from unknown after allowlist removal", async () => {
+    const { env } = await import("../env");
+    const previous = [...env.ALLOWED_EMAILS];
+    env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length, "somebody-else@example.com");
+    try {
+      const response = await post(TOKEN, { body: "must not deliver" });
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ ok: false, error: "Unknown webhook" });
+    } finally {
+      env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length, ...previous);
+    }
+  });
+
   it("404s on an unknown token without leaking details", async () => {
     const res = await post("whk_wrong", { body: "hi" });
     expect(res.status).toBe(404);
@@ -278,7 +291,7 @@ describe("POST /hooks/:token", () => {
     expect(response.status).toBe(402);
     expect(await response.json()).toMatchObject({
       ok: false,
-      error: "Interactive responses require Hark Pro",
+      error: "Interactive responses are unavailable",
     });
   });
 
@@ -315,7 +328,7 @@ describe("POST /hooks/:token", () => {
     expect(res.status).toBe(402);
     expect(await res.json()).toMatchObject({
       ok: false,
-      error: "Device routing requires Hark Pro",
+      error: "Device routing is unavailable",
     });
   });
 

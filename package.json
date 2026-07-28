@@ -14,10 +14,12 @@
     "test": "pnpm -r test",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "teaser:send": "node scripts/send-teaser.mjs"
+    "brand:generate": "node scripts/generate-brand-assets.mjs",
+    "brand:check": "node scripts/generate-brand-assets.mjs --check"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.5",
-    "atmn": "1.1.15"
+    "@resvg/resvg-js": "2.6.2",
+    "fflate": "0.8.3"
   }
 }

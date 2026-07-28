@@ -9,6 +9,11 @@ allowBuilds:
 
 minimumReleaseAge: 0
 
+packageExtensions:
+  "@bacons/apple-targets@5.0.0":
+    dependencies:
+      chalk: "4.1.2"
+
 patchedDependencies:
   '@better-auth/core@1.6.25': patches/@better-auth__core@1.6.25.patch
   expo-widgets@57.0.6: patches/expo-widgets@57.0.6.patch

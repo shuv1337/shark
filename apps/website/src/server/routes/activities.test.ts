@@ -446,7 +446,7 @@ describe("Live Activity agent routes", () => {
     expect(decryptLiveActivityToken(delivery?.token ?? "")).toBe("34".repeat(32));
   });
 
-  it("rejects a second active Hark activity on the same device", async () => {
+  it("rejects a second active SHark activity on the same device", async () => {
     const first = await start({
       title: "Associated",
       status: "Starting",

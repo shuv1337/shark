@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 import { DOC_CONTENT, DOCS_EYEBROW, DOCS_TITLE } from "../../shared/docs/content";
+import { BrandWordmark } from "../components/BrandWordmark";
 import { DocsSidebar } from "../components/DocsSidebar";
 import { DocSectionView } from "./docs/blocks";
 
@@ -10,7 +11,7 @@ export function Docs() {
       <header className="sticky top-0 z-30 border-b border-line bg-paper/90 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between px-6">
           <Link className="text-lg font-semibold" to="/">
-            Hark
+            <BrandWordmark />
           </Link>
           <nav aria-label="Primary" className="text-sm text-ink-subtle">
             <Link className="transition hover:text-ink" to="/dashboard">

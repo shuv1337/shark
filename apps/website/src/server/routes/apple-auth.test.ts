@@ -3,7 +3,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 process.env.NODE_ENV = "test";
 process.env.DATABASE_URL = ":memory:";
-process.env.APPLE_SIGN_IN_BUNDLE_ID = "ceo.ryan.hark";
+process.env.APPLE_SIGN_IN_BUNDLE_ID = "dev.shuv.shark";
 
 const appleMocks = vi.hoisted(() => ({
   subject: "apple-subject",
@@ -86,7 +86,7 @@ describe("POST /native-token", () => {
     expect(response.status).toBe(200);
     expect(appleMocks.exchange).toHaveBeenCalledWith(
       "single-use-code",
-      "ceo.ryan.hark",
+      "dev.shuv.shark",
       "apple-subject",
       {},
     );
@@ -106,6 +106,17 @@ describe("POST /native-token", () => {
     const replay = await exchange("replayed-code");
     expect(replay.status).toBe(409);
     expect(appleMocks.exchange).not.toHaveBeenCalled();
+  });
+
+  it("updates one native grant across repeated Apple exchanges without duplicating it", async () => {
+    expect((await exchange("first-code")).status).toBe(200);
+    expect((await exchange("second-code")).status).toBe(200);
+    expect(
+      await db
+        .select()
+        .from(schema.appleNativeGrant)
+        .where(eq(schema.appleNativeGrant.userId, "apple_user")),
+    ).toHaveLength(1);
   });
 
   it("rejects a valid Apple identity not linked to the authenticated user", async () => {

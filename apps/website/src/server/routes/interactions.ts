@@ -24,6 +24,7 @@ import {
   service,
   user as userTable,
 } from "../db/schema";
+import { isEmailAllowed } from "../lib/admission";
 import { failureBucket, track } from "../lib/analytics";
 import { checkNotificationAllowance, getBilling, trackNotification } from "../lib/billing";
 import { newId } from "../lib/id";
@@ -305,7 +306,7 @@ export const agentRoute = new Hono<AgentEnv>()
     if (!owner) return c.json({ error: "Account not found" }, 404);
     const billing = await getBilling(owner, true);
     if (parsed.data.deviceIds && !billing.features.deviceRouting) {
-      return c.json({ error: "Device routing requires Hark Pro" }, 402);
+      return c.json({ error: "Device routing is unavailable" }, 402);
     }
 
     let selectedDevices: (typeof device.$inferSelect)[];
@@ -496,7 +497,7 @@ export const agentRoute = new Hono<AgentEnv>()
     if (!owner) return c.json({ error: "Account not found" }, 404);
     const billing = await getBilling(owner, true);
     if (parsed.data.deviceIds && !billing.features.deviceRouting) {
-      return c.json({ error: "Device routing requires Hark Pro" }, 402);
+      return c.json({ error: "Device routing is unavailable" }, 402);
     }
 
     let selectedDevices: (typeof device.$inferSelect)[];
@@ -872,9 +873,10 @@ export const interactionCredentialResponseRoute = new Hono().post("/:id/respond"
     await c.req.json().catch(() => null),
   );
   if (!parsed.success) return c.json({ error: "Invalid interaction response" }, 400);
-  const [current] = await db
-    .select()
+  const [match] = await db
+    .select({ interaction, ownerEmail: userTable.email })
     .from(interaction)
+    .innerJoin(userTable, eq(interaction.userId, userTable.id))
     .where(
       and(
         eq(interaction.id, c.req.param("id")),
@@ -882,7 +884,10 @@ export const interactionCredentialResponseRoute = new Hono().post("/:id/respond"
       ),
     )
     .limit(1);
-  if (!current) return c.json({ error: "Interaction not found" }, 404);
+  const current = match?.interaction;
+  if (!current || !isEmailAllowed(match.ownerEmail)) {
+    return c.json({ error: "Interaction not found" }, 404);
+  }
   const [registeredDevice] = await db
     .select({ id: device.id })
     .from(device)

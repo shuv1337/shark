@@ -13,34 +13,22 @@ const service = {
 };
 
 describe("buildWelcomePushMessages", () => {
-  it("builds Ryan's three-message onboarding sequence", () => {
+  it("builds one private SHark onboarding notification", () => {
     const messages = buildWelcomePushMessages("ExponentPushToken[a]");
-    expect(messages).toHaveLength(3);
+    expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({
       to: "ExponentPushToken[a]",
-      title: "Ryan",
-      body: "hey! my name is ryan and I made hark!",
+      title: "SHark",
+      body: "SHark is ready to receive your private webhooks.",
       priority: "high",
       mutableContent: true,
-      richContent: {
-        image: "https://pbs.twimg.com/profile_images/2070959207273082880/HZoVBuA2_400x400.jpg",
-      },
       data: {
         v: 1,
-        sourceId: "ryan",
-        sourceName: "Ryan",
-        avatarUrl: "https://pbs.twimg.com/profile_images/2070959207273082880/HZoVBuA2_400x400.jpg",
-        url: "https://x.com/ryanvogel",
-        conversationId: "hark-welcome-ryan",
+        sourceId: "shark",
+        sourceName: "SHark",
+        url: "https://shark.shuv.dev",
+        conversationId: "hark-welcome",
       },
-    });
-    expect(messages[1]).toMatchObject({
-      body: "easily send notifications via a webhook",
-      data: { url: "https://hark.ryan.ceo" },
-    });
-    expect(messages[2]).toMatchObject({
-      body: "get started here (click me)",
-      data: { url: "https://hark.ryan.ceo" },
     });
   });
 });

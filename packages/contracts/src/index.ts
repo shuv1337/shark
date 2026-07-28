@@ -454,7 +454,7 @@ export interface ApiTokenDto {
 
 export interface ApiTokenCreatedResponse {
   token: ApiTokenDto;
-  /** Plaintext secret. It is returned once and is never persisted by Hark. */
+  /** Plaintext secret. It is returned once and is never persisted by SHark. */
   secret: string;
 }
 
@@ -604,7 +604,7 @@ export interface InteractionCreateResponse {
 
 export const agentNotificationCreateSchema = z.object({
   body: z.string().trim().min(1, "body is required").max(2000),
-  title: z.string().trim().min(1).max(80).default("Hark"),
+  title: z.string().trim().min(1).max(80).default("SHark"),
   imageUrl: publicHttpsUrlSchema.optional(),
   url: webUrlSchema.optional(),
   deviceIds: z

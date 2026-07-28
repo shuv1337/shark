@@ -13,7 +13,7 @@ export const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:8787
 // better-auth's BetterAuthClientPlugin (see better-auth #2031); the plugin is
 // correct at runtime.
 const expoPlugin = expoClient({
-  scheme: "hark",
+  scheme: "shark",
   storagePrefix: "hark",
   storage: SecureStore,
 }) as unknown as BetterAuthClientPlugin;
