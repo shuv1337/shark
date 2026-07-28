@@ -49,6 +49,10 @@ if [[ -z "$OP_SERVICE_ACCOUNT_TOKEN" ||
 fi
 export OP_SERVICE_ACCOUNT_TOKEN
 
+op_without_deploy_lock() {
+  op "$@" 9>&-
+}
+
 items_json="$(mktemp "$deploy_root/backup-items.XXXXXXXX.json")"
 secrets_json="$(mktemp "$deploy_root/backup-secrets.XXXXXXXX.json")"
 backup_log="$(mktemp "$deploy_root/restic-backup.XXXXXXXX.json")"
@@ -59,7 +63,7 @@ cleanup() {
 trap cleanup EXIT
 chmod 600 "$items_json" "$secrets_json" "$backup_log" "$restored_copy"
 
-if ! op item list --vault "SHark Production Backup" --format json >"$items_json"; then
+if ! op_without_deploy_lock item list --vault "SHark Production Backup" --format json >"$items_json"; then
   echo "Unable to list the SHark backup secret vault." >&2
   exit 78
 fi
@@ -77,7 +81,7 @@ item_id="$(jq -er '
   exit 78
 }
 
-if ! op item get "$item_id" --vault "SHark Production Backup" --format json >"$secrets_json"; then
+if ! op_without_deploy_lock item get "$item_id" --vault "SHark Production Backup" --format json >"$secrets_json"; then
   echo "Unable to read the SHark backup secret item." >&2
   exit 78
 fi
