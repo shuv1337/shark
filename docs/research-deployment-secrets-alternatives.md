@@ -10,8 +10,9 @@ Use **GitHub Actions only as a builder and publisher**, then make production rel
 **operator-initiated pull of an exact, attested GHCR digest**. The original capacity snapshot
 favored managed Infisical Cloud. After the operator reported a Bitwarden project slot was
 available, they selected one dedicated Bitwarden project with two read-only machine accounts and
-disjoint direct secret grants. The Bitwarden API still reports the three-project maximum, so this
-selection remains capacity-gated.
+disjoint direct secret grants. Project `shark` was created on 2026-07-27 and became visible to the
+provisioning identity; the remaining gate is populating it and creating the two narrowly scoped
+runtime identities.
 
 This combination preserves the required boundaries:
 

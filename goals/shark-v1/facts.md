@@ -23,7 +23,7 @@
 - Internal TestFlight acceptance uses one allowlisted operator account on two physical iPhones; no public TestFlight or public App Store release is in v1.
 - Production runs on a new `shark-prod` exe.dev VM in PDX with 2 vCPU, 4 GB RAM, 25 GB disk, and deploy root `/home/exedev/shark`.
 - `shark.shuv.dev` uses a Cloudflare DNS-only CNAME and exe.dev managed HTTPS; `TRUSTED_CLIENT_IP_HEADER` remains unset in v1.
-- The VM fetches scoped secrets from one dedicated Bitwarden Secrets Manager project using separate read-only app and backup machine accounts with disjoint direct secret grants; neither account has whole-project access.
+- The dedicated Bitwarden Secrets Manager project is `shark` (`cda1aac8-67e1-498a-9d5c-b49401517ca8`). The VM fetches scoped secrets through separate read-only app and backup runtime machine accounts with disjoint direct secret grants; neither runtime account has whole-project access.
 - Manual-dispatch GitHub Actions on `main` only verifies, publishes, and attests an immutable public GHCR image; it has no production VM credential and cannot deploy.
 - The operator promotes an exact GHCR digest through the existing exe.dev identity, and the VM verifies its repository, workflow, `main` source SHA, and hosted-runner attestation before cutover.
 - Restic backs up to rsync.net at 2:00 AM America/Los_Angeles and before deploys with 7 daily, 4 weekly, and 6 monthly retention.

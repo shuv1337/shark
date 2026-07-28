@@ -103,7 +103,8 @@ The plan and this handoff now serve as the implementation contract.
 - Restic provides encryption, repository checks, snapshots, retention, and
   restore support.
 - Secret source of truth: **Bitwarden Secrets Manager**.
-- Machine access: **one dedicated SHark project with two read-only machine
+- Machine access: **the dedicated `shark` project
+  (`cda1aac8-67e1-498a-9d5c-b49401517ca8`) with two read-only runtime machine
   accounts and direct, disjoint secret grants**, one for application secrets
   and one for backup secrets. Neither account receives whole-project access.
 - GitHub and the production VM receive only the values they need.

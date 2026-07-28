@@ -17,7 +17,8 @@ Provision `/etc/shark` with owner `root`, group `exedev`, and mode `0750`, then 
 bootstrap credential files with owner `root`, group `exedev`, mode `0440`, and no trailing
 whitespace:
 
-- `bws-project-id`: the shared `SHark Production` project UUID.
+- `bws-project-id`: the shared `shark` project UUID
+  (`cda1aac8-67e1-498a-9d5c-b49401517ca8`).
 - `bws-app-access-token`: a read-only machine token granted directly to exactly
   `ALLOWED_EMAILS`, `BETTER_AUTH_SECRET`, `APPLE_SIGN_IN_KEY_ID`, `APPLE_TEAM_ID`,
   `APPLE_SIGN_IN_PRIVATE_KEY_BASE64`, `EXPO_ACCESS_TOKEN`, `APNS_KEY_ID`, and

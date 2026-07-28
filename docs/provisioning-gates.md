@@ -92,10 +92,12 @@ and verify that `/api/health` is the only anonymous content response.
 
 ## Bitwarden Secrets Manager
 
-The authenticated machine account lists two unrelated projects, but the Bitwarden API still reports
-the Free-tier maximum of three. Resolve the inaccessible or not-yet-removed third project without
-reusing or deleting unrelated state, then create one dedicated project named `SHark Production`
-and two different read-only machine accounts:
+The dedicated project `shark` exists with UUID
+`cda1aac8-67e1-498a-9d5c-b49401517ca8` and is visible to the authenticated provisioning machine
+account. That identity can also see unrelated projects, so it is an administrative provisioning
+identity and must not be installed on `shark-prod`. The project currently contains no secrets.
+
+Create two different read-only runtime machine accounts:
 
 - Application machine account, granted direct access only to:
   - `ALLOWED_EMAILS`

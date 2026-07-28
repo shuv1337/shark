@@ -56,6 +56,15 @@ logs. Unchecked release evidence keeps the goal active.
   use separate Bitwarden application/backup machine accounts. The new local helper fixtures pass
   and a failed Bitwarden read preserves the last good runtime environment. The older wrappers
   installed on `shark-prod` are inactive and superseded, not production-ready evidence.
+- 2026-07-28: Bitwarden project `shark` is visible to the provisioning identity as UUID
+  `cda1aac8-67e1-498a-9d5c-b49401517ca8`; a value-redacted query found zero project secrets. The
+  exact UUID plus newline was installed on `shark-prod` as `/etc/shark/bws-project-id`, owned by
+  `root:exedev`, mode `0440`, with SHA-256
+  `f39b5c9394f503c719a0962837282f6fb1324e7857e271a1a7eae672b580cda0`.
+- 2026-07-28: the four operator/backup helpers and Compose definition from CI-green commit
+  `79af51016820afecf6599d205e137de983ecd71e` were installed root-owned on `shark-prod` and
+  hash-matched the committed files. The backup timer remains disabled and inactive; no runtime
+  token, secret, image, or production service was installed or started.
 - 2026-07-27: GitHub environment `shark-production` exists and accepts deployments only from
   `main`; it contains no production credentials.
 - 2026-07-27: `main` branch protection requires the strict, up-to-date GitHub Actions
@@ -84,10 +93,12 @@ logs. Unchecked release evidence keeps the goal active.
   portal steps.
 - Production DNS: the active Cloudflare token is read-only and the managed browser cannot reach
   the Cloudflare dashboard. `shark.shuv.dev` still does not resolve.
-- Bitwarden `SHark Production` project, two read-only machine accounts, and disjoint direct secret
-  grants: the current machine account lists only two unrelated projects, but Bitwarden rejected
-  creation with its three-project plan limit. A third inaccessible or not-yet-removed project still
-  counts against the organization; no unrelated project was reused or changed.
+- Bitwarden runtime identities and secrets: project `shark`
+  (`cda1aac8-67e1-498a-9d5c-b49401517ca8`) now exists and is visible to the authenticated
+  provisioning machine account. A value-redacted CLI query on 2026-07-28 found zero secrets in the
+  project. The current identity can also see unrelated projects, so its token must not be installed
+  on production. Separate app and backup runtime accounts, their disjoint direct grants, and all ten
+  production secret values remain pending.
 - GHCR publication/promotion: pending merge to `main`, a green manual publisher run, explicit
   public package visibility, anonymous pull/attestation verification on `shark-prod`, and
   installation of the revised helpers and Compose definition. No GitHub deployment key exists.

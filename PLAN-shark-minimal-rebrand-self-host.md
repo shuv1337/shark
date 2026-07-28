@@ -698,11 +698,14 @@ Validation:
 
 ### 5.5 Deployment automation and rollback
 
-- [ ] Keep Bitwarden Secrets Manager as the secret source of truth. Use one
-  dedicated SHark project and two read-only machine accounts with direct,
-  disjoint secret grants: application credentials for the app account and
-  Restic credentials for the backup account. Grant neither account whole-project
-  access and do not use a personal-vault CLI session.
+- [x] Create one dedicated Bitwarden Secrets Manager project named `shark`
+  (`cda1aac8-67e1-498a-9d5c-b49401517ca8`) as the production secret source of
+  truth.
+- [ ] Create two read-only runtime machine accounts with direct, disjoint secret
+  grants: application credentials for the app account and Restic credentials
+  for the backup account. Grant neither account whole-project access, do not
+  install the broader provisioning identity on production, and do not use a
+  personal-vault CLI session.
 - [ ] Make `shark-prod` fetch its own scoped application secrets directly from
   Bitwarden during deployment. GitHub receives no Apple, APNs, Expo, database,
   Restic, or application secrets.
