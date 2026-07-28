@@ -39,7 +39,10 @@ flock -n 9 || {
 
 # Fetch the attestation from the public OCI package so the VM needs neither a
 # GitHub shell credential nor a registry credential.
-gh attestation verify "oci://$image" \
+# gh requires a non-empty token variable before command dispatch even when the
+# public bundle, image, and Sigstore roots are fetched without GitHub API auth.
+# The sentinel is deliberately not a credential and is not persisted.
+GH_TOKEN=anonymous gh attestation verify "oci://$image" \
   --repo shuv1337/shark \
   --bundle-from-oci \
   --deny-self-hosted-runners \
