@@ -10,7 +10,7 @@ if [[ "$#" -ne 1 ]]; then
   exit 64
 fi
 
-for command in op cmp jq realpath restic; do
+for command in op cmp jq realpath restic ssh; do
   command -v "$command" >/dev/null || {
     echo "Required command is unavailable: $command" >&2
     exit 69
@@ -127,6 +127,15 @@ if [[ ! "$RESTIC_REPOSITORY" =~ ^sftp:[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:repos/shark
 fi
 export RESTIC_REPOSITORY RESTIC_PASSWORD
 export RESTIC_CACHE_DIR="$deploy_root/restic-cache"
+backup_ssh_root="${SHARK_BACKUP_SSH_ROOT:-/home/exedev/.ssh}"
+backup_ssh_config="$backup_ssh_root/config"
+backup_known_hosts="$backup_ssh_root/known_hosts"
+if [[ ! -f "$backup_ssh_config" || -L "$backup_ssh_config" ||
+  ! -f "$backup_known_hosts" || -L "$backup_known_hosts" ]]; then
+  echo "The SHark backup SSH configuration is unavailable." >&2
+  exit 78
+fi
+export RESTIC_SFTP_COMMAND="ssh -F $backup_ssh_config -o UserKnownHostsFile=$backup_known_hosts"
 install -d -m 700 "$RESTIC_CACHE_DIR"
 
 # A typo must never initialize a new repository. Operators initialize and test the
