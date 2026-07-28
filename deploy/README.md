@@ -29,6 +29,12 @@ whitespace:
 Do not grant either machine account whole-project access. Both helpers query the same project UUID,
 but Bitwarden returns only secrets directly granted to the calling machine account.
 
+See `examples/` for deliberately invalid samples of the three bootstrap files. Each real file
+contains only the copied value: no variable name, quotes, `export`, comments, or surrounding
+whitespace. A real Bitwarden machine access token has the same general
+`0.<identifier>.<token-material>:<token-secret>` shape shown by the examples, but the
+examples decode to obvious fake text and cannot authenticate.
+
 The executable helpers enforce these contracts:
 
 - `/usr/local/sbin/shark-materialize-secrets <destination>` uses the application machine token,
