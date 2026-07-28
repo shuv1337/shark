@@ -675,7 +675,9 @@ Validation:
   - require `integrity_check = ok`,
   - require the exact expected migration version and required table set rather
     than the current weak `c < 5` table-count guard.
-- [ ] Create a dedicated rsync.net Restic repository reachable over SFTP.
+- [x] Create and initialize a dedicated rsync.net Restic repository reachable
+  over SFTP from `shark-prod`; pin the previously trusted host keys and verify
+  the dedicated production SSH key plus `restic check`.
 - [ ] Use the account-relative repository suffix `repos/shark-prod`; keep the
   rsync.net account and host values in the SHark Bitwarden project, readable
   only by the backup machine account.

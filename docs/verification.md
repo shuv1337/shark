@@ -70,6 +70,17 @@ logs. Unchecked release evidence keeps the goal active.
   queries authenticated both tokens and showed that each can list exactly the `shark` project and
   no unrelated project. The project still contains zero secrets, no runtime environment was
   materialized, and the backup timer remains disabled and inactive.
+- 2026-07-28: real production values were created in Bitwarden for `APPLE_TEAM_ID`,
+  `BETTER_AUTH_SECRET`, `RESTIC_REPOSITORY`, and `RESTIC_PASSWORD`; no value was printed or written
+  to Git. A dedicated passwordless ED25519 key for `shark-prod` was authorized on the existing
+  rsync.net account, all three observed rsync.net host-key fingerprints matched the operator Mac's
+  previously trusted entries, and the key authenticated with `IdentitiesOnly` and strict host-key
+  checking. The dedicated `repos/shark-prod` Restic repository was initialized and `restic check`
+  passed.
+- 2026-07-28: both runtime machine accounts still have whole-project read access and therefore
+  return all four current keys. The application materializer rejected that mixed key set with exit
+  78 and preserved the absent runtime environment. Direct disjoint grants remain mandatory before
+  deployment.
 - 2026-07-27: GitHub environment `shark-production` exists and accepts deployments only from
   `main`; it contains no production credentials.
 - 2026-07-27: `main` branch protection requires the strict, up-to-date GitHub Actions
@@ -101,10 +112,12 @@ logs. Unchecked release evidence keeps the goal active.
 - Bitwarden runtime identities and secrets: project `shark`
   (`cda1aac8-67e1-498a-9d5c-b49401517ca8`) now exists and is visible to the authenticated
   provisioning machine account. Separate app and backup runtime tokens are installed and each is
-  limited to listing this project, but a value-redacted CLI query on 2026-07-28 found zero secrets.
-  Populate all ten values, remove whole-project access from both runtime accounts, and grant each
-  account direct access only to its eight application or two backup secrets before either helper
-  can pass its fail-closed key-set check.
+  limited to listing this project. Four of ten values now exist: `APPLE_TEAM_ID`,
+  `BETTER_AUTH_SECRET`, `RESTIC_REPOSITORY`, and `RESTIC_PASSWORD`. Populate `ALLOWED_EMAILS`,
+  `APPLE_SIGN_IN_KEY_ID`, `APPLE_SIGN_IN_PRIVATE_KEY_BASE64`, `EXPO_ACCESS_TOKEN`, `APNS_KEY_ID`,
+  and `APNS_PRIVATE_KEY_BASE64`; remove whole-project access from both runtime accounts; and grant
+  each account direct access only to its eight application or two backup secrets before either
+  helper can pass its fail-closed key-set check.
 - GHCR publication/promotion: pending merge to `main`, a green manual publisher run, explicit
   public package visibility, anonymous pull/attestation verification on `shark-prod`, and
   installation of the revised helpers and Compose definition. No GitHub deployment key exists.

@@ -95,7 +95,9 @@ and verify that `/api/health` is the only anonymous content response.
 The dedicated project `shark` exists with UUID
 `cda1aac8-67e1-498a-9d5c-b49401517ca8` and is visible to the authenticated provisioning machine
 account. That identity can also see unrelated projects, so it is an administrative provisioning
-identity and must not be installed on `shark-prod`. The project currently contains no secrets.
+identity and must not be installed on `shark-prod`. `APPLE_TEAM_ID`, `BETTER_AUTH_SECRET`,
+`RESTIC_REPOSITORY`, and `RESTIC_PASSWORD` now contain real production values. The other six
+required secrets remain unissued.
 
 Create two different read-only runtime machine accounts:
 
@@ -116,6 +118,10 @@ Do not grant either machine account access to the whole project. Bitwarden suppo
 machine-account grants to selected secrets; the helpers also fail closed unless each token returns
 exactly its expected key set. Provision the shared project ID and the two access tokens into the
 three root-owned `/etc/shark` bootstrap files documented in `../deploy/README.md`.
+
+Both runtime accounts currently have whole-project read access and return all four existing
+secrets. After all ten secrets exist, remove that project-level assignment and make the direct
+eight-key and two-key grants above. The helpers deliberately reject the current mixed view.
 
 ## rsync.net/Restic
 
