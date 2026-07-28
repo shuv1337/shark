@@ -101,6 +101,25 @@ logs. Unchecked release evidence keeps the goal active.
   files were removed from `shark-prod`. A live Bitwarden API query returned zero secrets for the
   deleted project UUID, the organization retained only its two unrelated projects and machine
   accounts, and 1Password-backed application materialization still passed afterward.
+- 2026-07-28: Cloudflare serves DNS-only CNAME `shark.shuv.dev` to `shark-prod.exe.xyz`; exe.dev
+  publicly proxies the custom domain to port 8787. Independent HTTPS probes returned 200 with
+  successful TLS verification for `/api/health`, 401 for the six protected application routes,
+  and 404 for removed `/robots.txt` and `/sitemap.xml` surfaces.
+- 2026-07-28: protected production publisher run `30406075373` verified merge
+  `f56d7cd24b3f480c9e74f2226bfadcfed2c61d00`, published immutable image digest
+  `sha256:f168e1cc93d6b8ea030bd07d590e51063479c7a06352d02daaf77b0964730a98`, and attached
+  GitHub provenance. The VM verified that public OCI attestation without a GitHub credential,
+  pulled the exact digest, and promoted it successfully.
+- 2026-07-28: the production promotion created encrypted Restic snapshot
+  `209a66a44bc390dece5238b239be3317fd15c2cf2af208d14b5707f29c1e8bf3`, confirmed it in the
+  off-host repository, restored the staged database byte-for-byte, checked and pruned the
+  repository, and recorded the snapshot in `/home/exedev/shark/current`. The recorded Git SHA,
+  image digest, and running container image ID all match; the deployment lock is available and no
+  1Password daemon holds it.
+- 2026-07-28: production deployment helpers now close the deploy-lock descriptor before invoking
+  1Password, force Restic through its supported `sftp.args` option with the provisioned SSH config
+  and pinned rsync.net host keys, and atomically finalize the current provenance record. Regression
+  fixtures cover all three failure modes.
 - 2026-07-27: GitHub environment `shark-production` exists and accepts deployments only from
   `main`; it contains no production credentials.
 - 2026-07-27: `main` branch protection requires the strict, up-to-date GitHub Actions
@@ -127,17 +146,12 @@ logs. Unchecked release evidence keeps the goal active.
 - Apple App Group/Services ID associations and the App Store Connect record: the managed browser
   cannot reach the Apple developer portal, so the operator must complete the recorded manual
   portal steps.
-- Production DNS: the active Cloudflare token is read-only and the managed browser cannot reach
-  the Cloudflare dashboard. `shark.shuv.dev` still does not resolve.
-- GHCR publication/promotion: pending merge to `main`, a green manual publisher run, explicit
-  public package visibility, anonymous pull/attestation verification on `shark-prod`, and
-  installation of the revised helpers and Compose definition. No GitHub deployment key exists.
 - 2026-07-27: exact-head Ubuntu CI run `30303069003` passed source verification, all 247 tests,
   deterministic brand generation, helper fixtures, and the production Docker image build for
   commit `74b4b21ae39dfa1a9d6ba1948465340458ff468c`.
 - Sqim development artifact, HTTPS install page, signed entitlements, and two-iPhone acceptance:
   pending operator-owned identities and assets.
-- `shark-prod` DNS/TLS, immutable running image, verified off-host snapshot, restore, no-op deploy,
-  and rollback: not yet proven.
+- `shark-prod` no-op deployment and rollback rehearsal: not yet proven. DNS/TLS, immutable running
+  image, verified off-host snapshot, and byte-for-byte restore are proven above.
 - EAS/App Store Connect build, internal TestFlight installation, release tag, and final provenance:
   not yet proven.
