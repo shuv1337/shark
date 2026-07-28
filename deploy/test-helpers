@@ -18,6 +18,10 @@ printf '%s\n' "backup-test-token" >"$credential_root/op-backup-service-account-t
 cat >"$fake_bin/op" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if { true >&9; } 2>/dev/null; then
+  echo "1Password inherited the deployment lock descriptor." >&2
+  exit 1
+fi
 if [[ "${OP_FAIL:-0}" == "1" ]]; then
   exit 1
 fi
@@ -102,6 +106,7 @@ chmod 700 "$fake_bin/op" "$fake_bin/restic"
 export PATH="$fake_bin:$PATH"
 export SHARK_DEPLOY_ROOT="$deploy_root"
 export SHARK_CREDENTIAL_ROOT="$credential_root"
+exec 9>"$test_root/inherited-deploy.lock"
 
 file_mode() {
   if stat -c '%a' "$1" >/dev/null 2>&1; then
