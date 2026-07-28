@@ -36,7 +36,7 @@ Complete these actions in Certificates, Identifiers & Profiles:
    `https://shark.shuv.dev/api/auth/callback/apple`.
 5. Create or select a Sign in with Apple key for this service and an APNs authentication key for
    SHark delivery. Record only their key IDs outside the portal; encode each downloaded `.p8` as
-   single-line base64 directly into the SHark Bitwarden project. Never commit or paste key
+   single-line base64 directly into the `SHark Production App` 1Password item. Never commit or paste key
    material into an issue, PR, log, or chat.
 
 Apple's immutable default In-App Purchase capability on the primary ID is tolerated. Do not create
@@ -63,7 +63,7 @@ After completing the one-time `eas login` browser authorization:
 2. Record its UUID as `EAS_PROJECT_ID`; the repository must never fall back to an upstream UUID.
 3. Enable enhanced push security.
 4. Create a server access token for Expo Push Service and store it as `EXPO_ACCESS_TOKEN` in the
-   SHark Bitwarden project with a direct grant to the app machine account. Do not use an
+   `SHark Production App` 1Password item. Do not use an
    interactive EAS session token as the server credential.
 5. Import or create only operator-owned distribution, provisioning, and APNs credentials.
 
@@ -90,18 +90,13 @@ Do not make the exe.dev HTTP share public or change its selected port until the 
 container is ready on loopback port `8787`. At cutover, select port `8787`, make the share public,
 and verify that `/api/health` is the only anonymous content response.
 
-## Bitwarden Secrets Manager
+## 1Password
 
-The dedicated project `shark` exists with UUID
-`cda1aac8-67e1-498a-9d5c-b49401517ca8` and is visible to the authenticated provisioning machine
-account. That identity can also see unrelated projects, so it is an administrative provisioning
-identity and must not be installed on `shark-prod`. `APPLE_TEAM_ID`, `BETTER_AUTH_SECRET`,
-`RESTIC_REPOSITORY`, and `RESTIC_PASSWORD` now contain real production values. The other six
-required secrets remain unissued.
+Use two vaults so an Individual account can provide disjoint runtime access without depending on
+item-level grants:
 
-Create two different read-only runtime machine accounts:
-
-- Application machine account, granted direct access only to:
+- Vault `SHark Production App`, containing exactly one Secure Note with the same title and these
+  concealed fields:
   - `ALLOWED_EMAILS`
   - `BETTER_AUTH_SECRET`
   - `APPLE_SIGN_IN_KEY_ID`
@@ -110,25 +105,28 @@ Create two different read-only runtime machine accounts:
   - `EXPO_ACCESS_TOKEN`
   - `APNS_KEY_ID`
   - `APNS_PRIVATE_KEY_BASE64`
-- Backup machine account, granted direct access only to:
+- Vault `SHark Production Backup`, containing exactly one Secure Note with the same title and these
+  concealed fields:
   - `RESTIC_REPOSITORY`
   - `RESTIC_PASSWORD`
 
-Do not grant either machine account access to the whole project. Bitwarden supports direct
-machine-account grants to selected secrets; the helpers also fail closed unless each token returns
-exactly its expected key set. Provision the shared project ID and the two access tokens into the
-three root-owned `/etc/shark` bootstrap files documented in `../deploy/README.md`.
+Create two different read-only service accounts. Grant each account access only to its corresponding
+vault, and provision its one-time token into the matching root-owned `/etc/shark` bootstrap file
+documented in `../deploy/README.md`. Service-account vault access cannot be changed after creation,
+so delete and recreate an incorrectly scoped account rather than widening its access. The helpers
+fail closed unless each account sees exactly one correctly titled item with exactly its expected
+field set.
 
-Both runtime accounts currently have whole-project read access and return all four existing
-secrets. After all ten secrets exist, remove that project-level assignment and make the direct
-eight-key and two-key grants above. The helpers deliberately reject the current mixed view.
+The legacy Bitwarden `shark` machine account, its two access tokens, the `shark` project, and all
+ten migrated secrets were permanently deleted after the 1Password path passed live production
+verification. The three `/etc/shark/bws-*` bootstrap files were also removed.
 
 ## rsync.net/Restic
 
 Create a dedicated passwordless SSH key and an account-relative repository at
 `repos/shark-prod`. Pin the rsync.net host key and initialize the exact SFTP repository once. The
-only Restic repository-password copy lives in the SHark Bitwarden project and is readable only by
-the backup machine account.
+only Restic repository-password copy lives in the `SHark Production Backup` 1Password vault and is
+readable only by the backup service account.
 
 Before enabling the nightly timer, require a real encrypted snapshot, exact byte-for-byte streamed
 restore verification, `restic check`, and a disposable database restore with schema and data

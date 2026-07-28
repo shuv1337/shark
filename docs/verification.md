@@ -81,6 +81,26 @@ logs. Unchecked release evidence keeps the goal active.
   return all four current keys. The application materializer rejected that mixed key set with exit
   78 and preserved the absent runtime environment. Direct disjoint grants remain mandatory before
   deployment.
+- 2026-07-28: the Bitwarden Free organization limit prevented the required pair of isolated SHark
+  runtime identities, so the reviewed design migrated to 1Password. Separate
+  `SHark Production App` and `SHark Production Backup` vaults contain exactly one Secure Note each
+  with the expected eight-field and two-field schemas. Two non-expiring read-only service accounts
+  were created with access only to their corresponding vault. Operator recovery copies of both
+  one-time tokens are stored in the Personal vault, which neither runtime account can access.
+- 2026-07-28: official 1Password CLI 2.35.0 was installed on `shark-prod`. The application and
+  backup service-account tokens were installed as `/etc/shark/op-app-service-account-token` and
+  `/etc/shark/op-backup-service-account-token`, owned by `root:exedev` with mode `0440`. Live
+  value-redacted checks proved each token lists exactly its one expected vault and one item. The
+  application helper materialized exactly its 12-key environment at mode `0600`; the disposable
+  environment and all verification JSON were then removed. The backup identity returned exactly
+  `RESTIC_PASSWORD` and `RESTIC_REPOSITORY`. Local migration copies of both tokens and the temporary
+  Bitwarden binary were removed.
+- 2026-07-28: after explicit destructive-action confirmation, the legacy Bitwarden `shark`
+  machine account was permanently deleted, revoking both access tokens; the `shark` project and
+  its ten migrated secrets were permanently deleted; and the three `/etc/shark/bws-*` bootstrap
+  files were removed from `shark-prod`. A live Bitwarden API query returned zero secrets for the
+  deleted project UUID, the organization retained only its two unrelated projects and machine
+  accounts, and 1Password-backed application materialization still passed afterward.
 - 2026-07-27: GitHub environment `shark-production` exists and accepts deployments only from
   `main`; it contains no production credentials.
 - 2026-07-27: `main` branch protection requires the strict, up-to-date GitHub Actions
@@ -109,15 +129,6 @@ logs. Unchecked release evidence keeps the goal active.
   portal steps.
 - Production DNS: the active Cloudflare token is read-only and the managed browser cannot reach
   the Cloudflare dashboard. `shark.shuv.dev` still does not resolve.
-- Bitwarden runtime identities and secrets: project `shark`
-  (`cda1aac8-67e1-498a-9d5c-b49401517ca8`) now exists and is visible to the authenticated
-  provisioning machine account. Separate app and backup runtime tokens are installed and each is
-  limited to listing this project. Four of ten values now exist: `APPLE_TEAM_ID`,
-  `BETTER_AUTH_SECRET`, `RESTIC_REPOSITORY`, and `RESTIC_PASSWORD`. Populate `ALLOWED_EMAILS`,
-  `APPLE_SIGN_IN_KEY_ID`, `APPLE_SIGN_IN_PRIVATE_KEY_BASE64`, `EXPO_ACCESS_TOKEN`, `APNS_KEY_ID`,
-  and `APNS_PRIVATE_KEY_BASE64`; remove whole-project access from both runtime accounts; and grant
-  each account direct access only to its eight application or two backup secrets before either
-  helper can pass its fail-closed key-set check.
 - GHCR publication/promotion: pending merge to `main`, a green manual publisher run, explicit
   public package visibility, anonymous pull/attestation verification on `shark-prod`, and
   installation of the revised helpers and Compose definition. No GitHub deployment key exists.
