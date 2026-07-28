@@ -82,7 +82,7 @@ cat >"$fake_bin/restic" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "$1" == "-o" ]]
-[[ "$2" == "sftp.command=ssh -F $SHARK_BACKUP_SSH_ROOT/config -o UserKnownHostsFile=$SHARK_BACKUP_SSH_ROOT/known_hosts" ]]
+[[ "$2" == "sftp.args=-F $SHARK_BACKUP_SSH_ROOT/config -o UserKnownHostsFile=$SHARK_BACKUP_SSH_ROOT/known_hosts" ]]
 shift 2
 snapshot="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 case "$1" in
