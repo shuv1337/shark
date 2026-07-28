@@ -65,6 +65,11 @@ logs. Unchecked release evidence keeps the goal active.
   `79af51016820afecf6599d205e137de983ecd71e` were installed root-owned on `shark-prod` and
   hash-matched the committed files. The backup timer remains disabled and inactive; no runtime
   token, secret, image, or production service was installed or started.
+- 2026-07-28: separate app and backup Bitwarden machine access tokens were installed on
+  `shark-prod` as root-owned, `root:exedev`, mode `0440` bootstrap files. Value-redacted live
+  queries authenticated both tokens and showed that each can list exactly the `shark` project and
+  no unrelated project. The project still contains zero secrets, no runtime environment was
+  materialized, and the backup timer remains disabled and inactive.
 - 2026-07-27: GitHub environment `shark-production` exists and accepts deployments only from
   `main`; it contains no production credentials.
 - 2026-07-27: `main` branch protection requires the strict, up-to-date GitHub Actions
@@ -95,10 +100,11 @@ logs. Unchecked release evidence keeps the goal active.
   the Cloudflare dashboard. `shark.shuv.dev` still does not resolve.
 - Bitwarden runtime identities and secrets: project `shark`
   (`cda1aac8-67e1-498a-9d5c-b49401517ca8`) now exists and is visible to the authenticated
-  provisioning machine account. A value-redacted CLI query on 2026-07-28 found zero secrets in the
-  project. The current identity can also see unrelated projects, so its token must not be installed
-  on production. Separate app and backup runtime accounts, their disjoint direct grants, and all ten
-  production secret values remain pending.
+  provisioning machine account. Separate app and backup runtime tokens are installed and each is
+  limited to listing this project, but a value-redacted CLI query on 2026-07-28 found zero secrets.
+  Populate all ten values, remove whole-project access from both runtime accounts, and grant each
+  account direct access only to its eight application or two backup secrets before either helper
+  can pass its fail-closed key-set check.
 - GHCR publication/promotion: pending merge to `main`, a green manual publisher run, explicit
   public package visibility, anonymous pull/attestation verification on `shark-prod`, and
   installation of the revised helpers and Compose definition. No GitHub deployment key exists.
