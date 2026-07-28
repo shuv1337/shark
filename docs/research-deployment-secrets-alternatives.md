@@ -136,17 +136,18 @@ disaster recovery, not routine runtime access.
 
 | Option | Strengths | Costs / gaps | Fit |
 | --- | --- | --- | --- |
-| 1Password service accounts | No extra service to deploy; each service account can be limited to chosen vaults with immutable `read_items` permissions; tokens can be rotated or immediately revoked; CLI can inject or read referenced secrets. ([service-account setup](https://www.1password.dev/service-accounts/get-started), [security model](https://www.1password.dev/service-accounts/security), [token management](https://www.1password.dev/service-accounts/manage-service-accounts), [CLI scripts](https://developer.1password.com/docs/cli/secrets-scripts)) | Requires an appropriate 1Password Teams/Business account. The VM retains a service-account token rather than exchanging a bootstrap credential for a short-lived access token. | Strong second choice if the operator already has the required 1Password account. Use two vaults and two read-only accounts; never one account spanning both. |
+| 1Password service accounts | No extra service to deploy; each service account can be limited to chosen vaults with immutable `read_items` permissions; tokens can be rotated or immediately revoked; CLI can inject or read referenced secrets. ([service-account setup](https://www.1password.dev/service-accounts/get-started), [security model](https://www.1password.dev/service-accounts/security), [token management](https://www.1password.dev/service-accounts/manage-service-accounts), [CLI scripts](https://developer.1password.com/docs/cli/secrets-scripts)) | The VM retains a service-account token rather than exchanging a bootstrap credential for a short-lived access token. | Selected after the Bitwarden Free organization limit prevented two isolated SHark runtime identities. Use two vaults and two read-only accounts; never one account spanning both. |
 | SOPS + age | No hosted service, no runtime network dependency, and encrypted files can live in the public repository. Separate age recipients can cryptographically isolate application and backup files; SOPS supports fully encrypted binary files as well as structured dotenv/YAML. ([SOPS](https://getsops.io/), [age](https://github.com/FiloSottile/age)) | The VM holds long-lived decryption identities. There is no central access log, short-lived machine session, or server-side revocation; removal requires recipient/key rotation, and old Git history remains decryptable to a compromised old identity. Operational recovery depends entirely on offline identity custody. | Good break-glass or tiny offline design, but weaker than managed Infisical for routine production access. If used, require different age identities for app and backup and never commit either identity. |
 
 ## Decision
 
-Adopt:
+Revised 2026-07-28 after the Bitwarden Free organization machine-account limit blocked the
+required isolation. Adopt:
 
 1. public GHCR image publication from exact `main`, with GitHub build provenance;
 2. operator-triggered, digest-pinned deployment through the existing exe.dev identity;
-3. one dedicated Bitwarden Secrets Manager project with separate read-only application and backup
-   machine accounts, each granted directly to only its required secrets;
+3. separate 1Password application and backup vaults with separate read-only service accounts,
+   each scoped only to its required vault;
 4. the existing off-host Restic gate, provenance record, and rollback requirements.
 
 This removes both current blockers without expanding SHark's anonymous v1 surface or placing a

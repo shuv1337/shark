@@ -47,7 +47,7 @@ snapshot before starting the new image.
 
 The rsync.net repository suffix is `repos/shark-prod`. Nightly snapshots run at 02:00
 `America/Los_Angeles`; retention is 7 daily, 4 weekly, and 6 monthly. The Restic password exists
-only in Bitwarden, so Bitwarden recovery is an explicit disaster-recovery
+only in the isolated 1Password backup vault, so 1Password recovery is an explicit disaster-recovery
 dependency.
 
 Quarterly, restore a selected snapshot into a disposable Compose project. Verify migration state,
@@ -62,8 +62,8 @@ The manual GitHub workflow on `main` verifies the monorepo, publishes
 does not deploy. The operator invokes the production helper through their existing exe.dev
 identity with the reviewed SHA and digest. The host anonymously pulls the public image, verifies
 its repository, signer workflow, `main` ref, source SHA, hosted runner, and digest, then fetches
-application and backup secrets through separate Bitwarden machine accounts with disjoint direct
-secret grants. It records the image
+application and backup secrets through separate 1Password service accounts with disjoint vault
+access. It records the image
 ID and digest, pre-deploy snapshot ID, source SHA, and timestamp.
 
 For rollback, stop the current container, select the previous recorded full SHA and image ID,

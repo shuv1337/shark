@@ -29,7 +29,7 @@ now been written into the plan:
   Apple relay address when that is the account's address. The plan now reflects
   this rather than the earlier “Share My Email required / relay denied” policy.
 - The deployment section is specialized for exe.dev, Cloudflare DNS-only,
-  GHCR, rsync.net, Restic, and Bitwarden Secrets Manager.
+  GHCR, rsync.net, Restic, and 1Password service accounts.
 - All test builds must use Sqim.
 
 Grilling is complete and the user confirmed the resulting shared understanding.
@@ -92,7 +92,7 @@ The plan and this handoff now serve as the implementation contract.
 - GitHub publishes and attests a public GHCR image for the exact `main` SHA;
   `shark-prod` pulls it anonymously by digest and verifies repository,
   workflow, ref, source SHA, and hosted-runner provenance.
-- `shark-prod` fetches its own scoped application secrets from Bitwarden.
+- `shark-prod` fetches its own scoped application secrets from 1Password.
 - Immutable images: deploy only full `ghcr.io/shuv1337/shark@sha256:...`
   references and retain every recorded rollback digest.
 
@@ -102,17 +102,17 @@ The plan and this handoff now serve as the implementation contract.
 - Backup tool: **Restic over SFTP**.
 - Restic provides encryption, repository checks, snapshots, retention, and
   restore support.
-- Secret source of truth: **Bitwarden Secrets Manager**.
-- Machine access: **the dedicated `shark` project
-  (`cda1aac8-67e1-498a-9d5c-b49401517ca8`) with two read-only runtime machine
-  accounts and direct, disjoint secret grants**, one for application secrets
-  and one for backup secrets. Neither account receives whole-project access.
+- Secret source of truth: **1Password**.
+- Machine access: **separate `SHark Production App` and
+  `SHark Production Backup` vaults with separate read-only runtime service
+  accounts**, one for application secrets and one for backup secrets. Neither
+  account can access the other vault.
 - GitHub and the production VM receive only the values they need.
 - Restic repository suffix: **`repos/shark-prod`**.
 - Backup cadence: nightly at **2:00 AM America/Los_Angeles** plus one verified
   pre-deploy snapshot.
 - Retention: **7 daily / 4 weekly / 6 monthly**.
-- The only Restic repository password copy is in Bitwarden; there is no offline
+- The only Restic repository password copy is in the isolated 1Password backup vault; there is no offline
   or second-vault copy.
 - Repository verification is a **quarterly restore drill only**. Do not add
   weekly or monthly check jobs in v1.

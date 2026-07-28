@@ -679,17 +679,18 @@ Validation:
   over SFTP from `shark-prod`; pin the previously trusted host keys and verify
   the dedicated production SSH key plus `restic check`.
 - [ ] Use the account-relative repository suffix `repos/shark-prod`; keep the
-  rsync.net account and host values in the SHark Bitwarden project, readable
-  only by the backup machine account.
+  rsync.net account and host values in the `SHark Production Backup` 1Password
+  vault, readable only by the backup service account.
 - [ ] Use Restic encryption for every off-host snapshot; do not upload the
   plaintext checkpoint copy.
 - [ ] Run a verified snapshot nightly at 2:00 AM `America/Los_Angeles` and an
   additional verified snapshot before every deployment.
 - [ ] Use this retention policy:
   7 daily, 4 weekly, and 6 monthly verified backups.
-- [ ] Store the only copy of the Restic repository password in Bitwarden
-  Secrets Manager. There is intentionally no offline or second-vault copy;
-  Bitwarden recovery is therefore a documented disaster-recovery dependency.
+- [ ] Store the only copy of the Restic repository password in the isolated
+  `SHark Production Backup` 1Password vault. There is intentionally no offline
+  or second-vault copy; 1Password recovery is therefore a documented
+  disaster-recovery dependency.
 - [ ] Back up production secret references separately; never place plaintext
   secrets in the repository or database archive.
 - [ ] Perform a quarterly restore drill into a disposable Compose project and
@@ -700,16 +701,15 @@ Validation:
 
 ### 5.5 Deployment automation and rollback
 
-- [x] Create one dedicated Bitwarden Secrets Manager project named `shark`
-  (`cda1aac8-67e1-498a-9d5c-b49401517ca8`) as the production secret source of
-  truth.
-- [ ] Create two read-only runtime machine accounts with direct, disjoint secret
-  grants: application credentials for the app account and Restic credentials
-  for the backup account. Grant neither account whole-project access, do not
-  install the broader provisioning identity on production, and do not use a
-  personal-vault CLI session.
+- [ ] Create separate `SHark Production App` and `SHark Production Backup`
+  1Password vaults as the production secret source of truth.
+- [ ] Create two read-only runtime service accounts with disjoint vault access:
+  application credentials for the app account and Restic credentials for the
+  backup account. Grant neither account access to the other vault, do not
+  install an interactive personal-account session on production, and recreate
+  any account that is created with incorrect immutable vault access.
 - [ ] Make `shark-prod` fetch its own scoped application secrets directly from
-  Bitwarden during deployment. GitHub receives no Apple, APNs, Expo, database,
+  1Password during deployment. GitHub receives no Apple, APNs, Expo, database,
   Restic, or application secrets.
 - [ ] Use a manual-dispatch GitHub Actions workflow only to verify, build,
   publish, and attest the exact `main` image in GHCR. GitHub stores no
