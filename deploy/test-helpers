@@ -81,6 +81,7 @@ EOF
 cat >"$fake_bin/restic" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+[[ "$RESTIC_SFTP_COMMAND" == "ssh -F $SHARK_BACKUP_SSH_ROOT/config -o UserKnownHostsFile=$SHARK_BACKUP_SSH_ROOT/known_hosts" ]]
 snapshot="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 case "$1" in
   cat|forget) exit 0 ;;
@@ -106,6 +107,9 @@ chmod 700 "$fake_bin/op" "$fake_bin/restic"
 export PATH="$fake_bin:$PATH"
 export SHARK_DEPLOY_ROOT="$deploy_root"
 export SHARK_CREDENTIAL_ROOT="$credential_root"
+export SHARK_BACKUP_SSH_ROOT="$test_root/ssh"
+mkdir -p "$SHARK_BACKUP_SSH_ROOT"
+touch "$SHARK_BACKUP_SSH_ROOT/config" "$SHARK_BACKUP_SSH_ROOT/known_hosts"
 exec 9>"$test_root/inherited-deploy.lock"
 
 file_mode() {
