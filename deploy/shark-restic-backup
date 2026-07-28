@@ -137,7 +137,7 @@ if [[ ! -f "$backup_ssh_config" || -L "$backup_ssh_config" ||
 fi
 restic_with_pinned_ssh() {
   restic -o \
-    "sftp.command=ssh -F $backup_ssh_config -o UserKnownHostsFile=$backup_known_hosts" \
+    "sftp.args=-F $backup_ssh_config -o UserKnownHostsFile=$backup_known_hosts" \
     "$@"
 }
 install -d -m 700 "$RESTIC_CACHE_DIR"
