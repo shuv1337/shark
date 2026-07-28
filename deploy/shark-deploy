@@ -149,6 +149,7 @@ for path in /robots.txt /sitemap.xml; do
 done
 
 provenance_file="$provenance_root/$deploy_sha.json"
+current_new="$current_file.new"
 jq -n \
   --arg git_sha "$deploy_sha" \
   --arg image "$image" \
@@ -158,8 +159,8 @@ jq -n \
   '{git_sha:$git_sha,image:$image,image_id:$image_id,backup_id:$backup_id,deployed_at:$deployed_at}' \
   >"$provenance_file"
 chmod 600 "$provenance_file"
-cp "$provenance_file" "$current.new"
-mv "$current.new" "$current_file"
+cp "$provenance_file" "$current_new"
+mv "$current_new" "$current_file"
 
 trap - ERR
 trap cleanup EXIT

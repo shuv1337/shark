@@ -114,6 +114,10 @@ mkdir -p "$SHARK_BACKUP_SSH_ROOT"
 touch "$SHARK_BACKUP_SSH_ROOT/config" "$SHARK_BACKUP_SSH_ROOT/known_hosts"
 exec 9>"$test_root/inherited-deploy.lock"
 
+grep -Fqx 'current_new="$current_file.new"' "$repo_root/deploy/shark-deploy"
+grep -Fqx 'cp "$provenance_file" "$current_new"' "$repo_root/deploy/shark-deploy"
+grep -Fqx 'mv "$current_new" "$current_file"' "$repo_root/deploy/shark-deploy"
+
 file_mode() {
   if stat -c '%a' "$1" >/dev/null 2>&1; then
     stat -c '%a' "$1"
