@@ -135,17 +135,21 @@ if [[ ! -f "$backup_ssh_config" || -L "$backup_ssh_config" ||
   echo "The SHark backup SSH configuration is unavailable." >&2
   exit 78
 fi
-export RESTIC_SFTP_COMMAND="ssh -F $backup_ssh_config -o UserKnownHostsFile=$backup_known_hosts"
+restic_with_pinned_ssh() {
+  restic -o \
+    "sftp.command=ssh -F $backup_ssh_config -o UserKnownHostsFile=$backup_known_hosts" \
+    "$@"
+}
 install -d -m 700 "$RESTIC_CACHE_DIR"
 
 # A typo must never initialize a new repository. Operators initialize and test the
 # dedicated repos/shark-prod target explicitly during provisioning.
-if ! restic cat config >/dev/null; then
+if ! restic_with_pinned_ssh cat config >/dev/null; then
   echo "The SHark Restic repository is unavailable or not initialized." >&2
   exit 69
 fi
 
-if ! restic backup "$resolved_source" \
+if ! restic_with_pinned_ssh backup "$resolved_source" \
   --host shark-prod \
   --tag shark-prod \
   --json >"$backup_log"; then
@@ -162,7 +166,7 @@ if [[ ! "$snapshot_id" =~ ^[0-9a-f]{64}$ ]]; then
   exit 70
 fi
 
-if ! restic snapshots --json --host shark-prod --tag shark-prod |
+if ! restic_with_pinned_ssh snapshots --json --host shark-prod --tag shark-prod |
   jq -e --arg snapshot_id "$snapshot_id" '
     any(.[]; .id == $snapshot_id and .hostname == "shark-prod" and (.tags | index("shark-prod")))
   ' >/dev/null; then
@@ -170,21 +174,21 @@ if ! restic snapshots --json --host shark-prod --tag shark-prod |
   exit 70
 fi
 
-if ! restic dump "$snapshot_id" "$resolved_source" >"$restored_copy" ||
+if ! restic_with_pinned_ssh dump "$snapshot_id" "$resolved_source" >"$restored_copy" ||
   ! cmp -s "$resolved_source" "$restored_copy"; then
   echo "The new SHark Restic snapshot failed byte-for-byte restore verification." >&2
   exit 70
 fi
 
-restic check >/dev/null
-restic forget \
+restic_with_pinned_ssh check >/dev/null
+restic_with_pinned_ssh forget \
   --host shark-prod \
   --tag shark-prod \
   --keep-daily 7 \
   --keep-weekly 4 \
   --keep-monthly 6 \
   --prune >/dev/null
-restic check >/dev/null
+restic_with_pinned_ssh check >/dev/null
 
 rm -f -- "$resolved_source"
 printf '%s\n' "$snapshot_id"
