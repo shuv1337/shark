@@ -10,7 +10,10 @@ source; public visibility lets `shark-prod` pull by digest without a registry to
 Install `shark-deploy`, `shark-backup`, `shark-materialize-secrets`, and
 `shark-restic-backup` at `/usr/local/sbin`, owned by root and not writable by `exedev`. Install the
 reviewed `compose.yaml` as `/etc/shark/compose.yaml`. Install checksum-verified official 1Password
-CLI, GitHub CLI, and Restic binaries. Enable the provided systemd backup timer only
+CLI, GitHub CLI 2.96.0 or newer, and Restic binaries. The deploy helper supplies a non-secret
+`GH_TOKEN=anonymous` sentinel because GitHub CLI requires a non-empty token variable before
+dispatch even when it reads the public OCI bundle and Sigstore roots without GitHub API access.
+Do not install a GitHub credential on the VM. Enable the provided systemd backup timer only
 after a real backup and restore drill succeeds.
 
 Provision `/etc/shark` with owner `root`, group `exedev`, and mode `0750`, then install these
