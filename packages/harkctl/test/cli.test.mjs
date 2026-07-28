@@ -518,6 +518,69 @@ test("notify ask sends the normalized approval request body with an image", asyn
   }
 });
 
+test("notify ask sends an interactive Live Activity with cosmetic labels", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    assert.deepEqual(JSON.parse(init.body), {
+      title: "Release",
+      prompt: "Send the prepared release email?",
+      kind: "approval",
+      expiresInSeconds: 900,
+      presentation: "live_activity",
+      primaryLabel: "Send",
+      secondaryLabel: "Deny",
+    });
+    return Response.json({
+      accepted: 1,
+      liveActivityId: "act_1",
+      interaction: { id: "int_live", status: "pending" },
+    });
+  };
+  try {
+    const result = await execute(
+      [
+        "notify",
+        "ask",
+        "Send the prepared release email?",
+        "--approval",
+        "--title",
+        "Release",
+        "--live-activity",
+        "--primary-label",
+        "Send",
+        "--secondary-label",
+        "Deny",
+      ],
+      { HARK_TOKEN: "hark_test" },
+    );
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.body.liveActivityId, "act_1");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("notify ask rejects unsupported Live Activity response shapes", async () => {
+  await assert.rejects(
+    execute(["notify", "ask", "Write a reply", "--text", "--live-activity"], {
+      HARK_TOKEN: "hark_test",
+    }),
+    /supports --approval or --yes-no/,
+  );
+  await assert.rejects(
+    execute(["notify", "ask", "Deploy?", "--approval", "--primary-label", "Deploy"], {
+      HARK_TOKEN: "hark_test",
+    }),
+    /labels require --live-activity/,
+  );
+  await assert.rejects(
+    execute(["notify", "ask", "Deploy?", "--approval", "--live-activity", "--expires-in", "9h"], {
+      HARK_TOKEN: "hark_test",
+    }),
+    /expire within 8 hours/,
+  );
+});
+
 test("notify ask --text maps to a reply interaction and defaults the title", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (_url, init) => {

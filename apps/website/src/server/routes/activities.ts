@@ -11,7 +11,7 @@ import {
   liveActivityStartSchema,
   liveActivityUpdateSchema,
 } from "@hark/contracts";
-import { and, count, desc, eq, gte, inArray, lte, or } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
 import {
@@ -35,6 +35,7 @@ import {
 } from "../lib/apns";
 import { checkNotificationAllowance, getBilling, trackNotification } from "../lib/billing";
 import { newId } from "../lib/id";
+import { createLiveActivityInteractionCredential } from "../lib/live-activity-interaction";
 import { createLiveActivityRegistrationToken } from "../lib/live-activity-registration";
 import { decryptLiveActivityToken } from "../lib/token";
 import {
@@ -110,6 +111,7 @@ async function ownedActivity(
       and(
         eq(liveActivity.requesterTokenId, tokenId),
         or(eq(liveActivity.id, identifier), eq(liveActivity.key, identifier)),
+        isNull(liveActivity.interactionId),
       ),
     )
     .orderBy(
@@ -144,10 +146,12 @@ export async function enforceAgentRateLimit(
     db
       .select({ value: count() })
       .from(liveActivityOperation)
+      .innerJoin(liveActivity, eq(liveActivity.id, liveActivityOperation.activityId))
       .where(
         and(
           eq(liveActivityOperation.requesterTokenId, token.id),
           gte(liveActivityOperation.createdAt, since),
+          isNull(liveActivity.interactionId),
         ),
       ),
     db
@@ -168,7 +172,11 @@ export async function enforceAgentRateLimit(
       .from(liveActivityOperation)
       .innerJoin(liveActivity, eq(liveActivity.id, liveActivityOperation.activityId))
       .where(
-        and(eq(liveActivity.userId, token.userId), gte(liveActivityOperation.createdAt, since)),
+        and(
+          eq(liveActivity.userId, token.userId),
+          gte(liveActivityOperation.createdAt, since),
+          isNull(liveActivity.interactionId),
+        ),
       ),
     db
       .select({ value: count() })
@@ -275,6 +283,26 @@ async function sendDeliveryEvent(
   eventName: LiveActivityApnsEvent,
 ): Promise<Awaited<ReturnType<typeof sendLiveActivityPush>>> {
   const props = liveActivityPropsSchema.parse(row.props);
+  const linkedInteraction = props.interaction
+    ? await db
+        .select()
+        .from(interaction)
+        .where(eq(interaction.id, props.interaction.id))
+        .limit(1)
+        .then((rows) => rows[0])
+    : undefined;
+  if (
+    eventName === "start" &&
+    linkedInteraction &&
+    (linkedInteraction.status !== "pending" || linkedInteraction.expiresAt <= new Date())
+  ) {
+    return {
+      status: 0,
+      apnsId: null,
+      reason: "InteractionTerminal",
+      accepted: false,
+    };
+  }
   let encryptedToken: string | null;
   if (eventName === "start") {
     const [target] = await db
@@ -312,6 +340,19 @@ async function sendDeliveryEvent(
                   row.expiresAt,
                 ),
                 deliveryId: delivery.id,
+                ...(linkedInteraction
+                  ? {
+                      harkInteractionId: linkedInteraction.id,
+                      harkInteractionCredential: createLiveActivityInteractionCredential({
+                        interactionId: linkedInteraction.id,
+                        deliveryId: delivery.id,
+                        deviceId: delivery.deviceId,
+                        actionDigest: linkedInteraction.actionDigest,
+                        expiresAt: linkedInteraction.expiresAt,
+                      }),
+                      harkInteractionDeviceId: delivery.deviceId,
+                    }
+                  : {}),
               },
             }
           : {}),
@@ -359,6 +400,222 @@ export async function dispatchLiveActivity(
   };
 }
 
+type InteractionRow = typeof interaction.$inferSelect;
+type DeviceRow = typeof device.$inferSelect;
+
+export async function startInteractionLiveActivity(
+  interactionRow: InteractionRow,
+  targets: DeviceRow[],
+): Promise<{ activityId: string | null; accepted: number; failed: number; errors: string[] }> {
+  const capableTargets = targets.filter(
+    (target) =>
+      target.liveActivityInteractionVersion === 1 &&
+      target.liveActivityPushToStartTokenCiphertext &&
+      target.liveActivitySchemaVersion === LIVE_ACTIVITY_SCHEMA_VERSION &&
+      (target.liveActivityTokenEnvironment === "sandbox" ||
+        target.liveActivityTokenEnvironment === "production"),
+  );
+  if (capableTargets.length === 0) {
+    return { activityId: null, accepted: 0, failed: 0, errors: [] };
+  }
+
+  const now = new Date();
+  const activityId = newId("act");
+  const operationId = newId("lao");
+  const approval = interactionRow.kind === "approval";
+  const interactionKind = approval ? "approval" : "yes_no";
+  const props = liveActivityPropsSchema.parse({
+    schemaVersion: LIVE_ACTIVITY_SCHEMA_VERSION,
+    activityId,
+    title: interactionRow.title,
+    status: "Approval needed",
+    detail: interactionRow.prompt,
+    updatedAt: now.toISOString(),
+    symbol: "warning",
+    privacyMode: "standard",
+    accentColor: "#5ED8B7",
+    style: "approval",
+    interaction: {
+      id: interactionRow.id,
+      kind: interactionKind,
+      prompt: interactionRow.prompt,
+      primaryLabel: interactionRow.primaryLabel ?? (approval ? "Approve" : "Yes"),
+      secondaryLabel: interactionRow.secondaryLabel ?? (approval ? "Deny" : "No"),
+      primaryAction: approval ? "approve" : "yes",
+      secondaryAction: approval ? "deny" : "no",
+      state: "pending",
+    },
+  } satisfies LiveActivityProps);
+
+  const created = db.transaction((tx) => {
+    const activityRow = tx
+      .insert(liveActivity)
+      .values({
+        id: activityId,
+        userId: interactionRow.userId,
+        requesterTokenId: interactionRow.requesterTokenId,
+        requesterServiceId: interactionRow.requesterServiceId,
+        interactionId: interactionRow.id,
+        schemaVersion: LIVE_ACTIVITY_SCHEMA_VERSION,
+        props,
+        status: "starting",
+        sequence: 0,
+        apnsTimestamp: Math.floor(now.getTime() / 1000),
+        expiresAt: interactionRow.expiresAt,
+        staleAt: interactionRow.expiresAt,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+      .get();
+    tx.insert(liveActivityOperation)
+      .values({
+        id: operationId,
+        activityId,
+        requesterTokenId: interactionRow.requesterTokenId,
+        requesterServiceId: interactionRow.requesterServiceId,
+        event: "start",
+        sequence: 0,
+        createdAt: now,
+      })
+      .run();
+    const deliveries = capableTargets.map((target) =>
+      tx
+        .insert(liveActivityDelivery)
+        .values({
+          id: newId("lad"),
+          activityId,
+          deviceId: target.id,
+          purpose: "interaction",
+          status: "pending",
+          environment: target.liveActivityTokenEnvironment as "sandbox" | "production",
+          schemaVersion: LIVE_ACTIVITY_SCHEMA_VERSION,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning()
+        .get(),
+    );
+    return { activityRow, deliveries };
+  });
+
+  const requester: ActivityRequester = interactionRow.requesterTokenId
+    ? { requesterTokenId: interactionRow.requesterTokenId }
+    : { requesterServiceId: interactionRow.requesterServiceId as string };
+  const result = await dispatchLiveActivity(
+    created.activityRow,
+    created.deliveries,
+    operationId,
+    "start",
+    requester,
+  );
+  const status = result.accepted === 0 ? "failed" : result.failed > 0 ? "partial" : "active";
+  await Promise.all([
+    db
+      .update(liveActivity)
+      .set({ status, acceptedCount: result.accepted, failedCount: result.failed })
+      .where(eq(liveActivity.id, activityId)),
+    db
+      .update(liveActivityOperation)
+      .set({ acceptedCount: result.accepted, failedCount: result.failed })
+      .where(eq(liveActivityOperation.id, operationId)),
+  ]);
+  return { activityId, ...result };
+}
+
+function interactionOutcome(status: string): { title: string; detail: string } {
+  if (status === "approved" || status === "yes") {
+    return { title: status === "approved" ? "Approved" : "Yes", detail: "Sent to the agent." };
+  }
+  if (status === "denied" || status === "no") {
+    return { title: status === "denied" ? "Denied" : "No", detail: "Sent to the agent." };
+  }
+  if (status === "expired") return { title: "Expired", detail: "No response was sent." };
+  return { title: "Canceled", detail: "This request was canceled." };
+}
+
+export async function resolveInteractionLiveActivity(
+  interactionRow: InteractionRow,
+): Promise<void> {
+  const [current] = await db
+    .select()
+    .from(liveActivity)
+    .where(eq(liveActivity.interactionId, interactionRow.id))
+    .limit(1);
+  if (!current || !["starting", "active", "partial"].includes(current.status)) return;
+
+  const now = new Date();
+  const currentProps = liveActivityPropsSchema.parse(current.props);
+  if (!currentProps.interaction) return;
+  const outcome = interactionOutcome(interactionRow.status);
+  const props = liveActivityPropsSchema.parse({
+    ...currentProps,
+    status: outcome.title,
+    detail: outcome.detail,
+    symbol:
+      interactionRow.status === "approved" || interactionRow.status === "yes"
+        ? "success"
+        : "warning",
+    updatedAt: now.toISOString(),
+    interaction: { ...currentProps.interaction, state: interactionRow.status },
+  });
+  const operationId = newId("lao");
+  const updated = db.transaction((tx) => {
+    const row = tx
+      .update(liveActivity)
+      .set({
+        props,
+        status: "ended",
+        sequence: current.sequence + 1,
+        apnsTimestamp: Math.max(Math.floor(now.getTime() / 1000), current.apnsTimestamp + 1),
+        dismissalAt: new Date(now.getTime() + 30_000),
+        updatedAt: now,
+        endedAt: now,
+      })
+      .where(
+        and(
+          eq(liveActivity.id, current.id),
+          eq(liveActivity.sequence, current.sequence),
+          inArray(liveActivity.status, ["starting", "active", "partial"]),
+        ),
+      )
+      .returning()
+      .get();
+    if (!row) return undefined;
+    tx.insert(liveActivityOperation)
+      .values({
+        id: operationId,
+        activityId: row.id,
+        requesterTokenId: row.requesterTokenId,
+        requesterServiceId: row.requesterServiceId,
+        event: "end",
+        sequence: row.sequence,
+        createdAt: now,
+      })
+      .run();
+    return row;
+  });
+  if (!updated) return;
+
+  const deliveries = await db
+    .select()
+    .from(liveActivityDelivery)
+    .where(
+      and(
+        eq(liveActivityDelivery.activityId, updated.id),
+        inArray(liveActivityDelivery.status, ["pending", "accepted", "active"]),
+      ),
+    );
+  const requester: ActivityRequester = updated.requesterTokenId
+    ? { requesterTokenId: updated.requesterTokenId }
+    : { requesterServiceId: updated.requesterServiceId as string };
+  const result = await dispatchLiveActivity(updated, deliveries, operationId, "end", requester);
+  await db
+    .update(liveActivityOperation)
+    .set({ acceptedCount: result.accepted, failedCount: result.failed })
+    .where(eq(liveActivityOperation.id, operationId));
+}
+
 export type BlockingDelivery = { activity: ActivityRow; delivery: DeliveryRow };
 
 /**
@@ -379,6 +636,7 @@ export async function findBlockingDeliveries(
       and(
         inArray(liveActivityDelivery.deviceId, deviceIds),
         inArray(liveActivityDelivery.status, ["pending", "accepted", "active"]),
+        isNull(liveActivity.interactionId),
       ),
     );
   const live = (item: BlockingDelivery) =>
@@ -610,7 +868,12 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
     const rows = await db
       .select()
       .from(liveActivity)
-      .where(eq(liveActivity.requesterTokenId, c.get("apiToken").id))
+      .where(
+        and(
+          eq(liveActivity.requesterTokenId, c.get("apiToken").id),
+          isNull(liveActivity.interactionId),
+        ),
+      )
       .orderBy(desc(liveActivity.createdAt))
       .limit(limit);
     return c.json({
@@ -1218,6 +1481,7 @@ export const activitiesSessionRoute = new Hono<AuthedEnv>()
         and(
           eq(liveActivity.userId, c.get("user").id),
           inArray(liveActivity.status, ["starting", "active", "partial"]),
+          isNull(liveActivity.interactionId),
         ),
       )
       .orderBy(desc(liveActivity.updatedAt))

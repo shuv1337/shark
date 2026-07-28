@@ -20,6 +20,7 @@ vi.mock("expo-widgets", () => ({
   createLiveActivity: (name: string, layout: unknown) => ({ name, layout }),
 }));
 vi.mock("@expo/ui/swift-ui", () => ({
+  Button: component("Button"),
   Capsule: component("Capsule"),
   Circle: component("Circle"),
   Gauge: component("Gauge"),
@@ -35,6 +36,9 @@ vi.mock("@expo/ui/swift-ui/modifiers", () => ({
   accessibilityElement: modifier("accessibilityElement"),
   accessibilityLabel: modifier("accessibilityLabel"),
   activityBackgroundTint: modifier("activityBackgroundTint"),
+  buttonBorderShape: modifier("buttonBorderShape"),
+  buttonStyle: modifier("buttonStyle"),
+  controlSize: modifier("controlSize"),
   font: modifier("font"),
   foregroundStyle: modifier("foregroundStyle"),
   frame: modifier("frame"),
@@ -55,7 +59,10 @@ type Node = { type: string; props: Record<string, unknown> };
 
 const { layout } = HarkAgentActivity as unknown as {
   name: string;
-  layout: (props: LiveActivityProps, environment: Record<string, never>) => Record<string, unknown>;
+  layout: (
+    props: LiveActivityProps,
+    environment: Record<string, unknown>,
+  ) => Record<string, unknown>;
 };
 
 /**
@@ -76,8 +83,11 @@ function materialize(value: unknown): unknown {
   return { type: produced.type, props };
 }
 
-function render(props: LiveActivityProps): Record<string, unknown> {
-  const slots = layout(props, {});
+function render(
+  props: LiveActivityProps,
+  environment: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const slots = layout(props, environment);
   const rendered: Record<string, unknown> = {};
   for (const key of Object.keys(slots)) rendered[key] = materialize(slots[key]);
   return rendered;
@@ -150,6 +160,71 @@ describe("HarkAgentActivity layout styles", () => {
         expect(slots[slot], `${style}.${slot}`).toBeDefined();
       }
     }
+  });
+
+  it("renders canonical interactive approval targets with custom labels", () => {
+    const interaction = {
+      id: "int_1",
+      kind: "approval",
+      prompt: "Send the prepared release email?",
+      primaryLabel: "Send",
+      secondaryLabel: "Deny",
+      primaryAction: "approve",
+      secondaryAction: "deny",
+      state: "pending",
+    } as const;
+    const props: LiveActivityProps = {
+      ...baseProps,
+      style: "approval",
+      status: "Approval needed",
+      progress: undefined,
+      interaction,
+    };
+    const slots = render(props, {
+      harkInteractionId: "int_1",
+      harkInteractionCredential: "c".repeat(43),
+      harkInteractionDeviceId: "dev_1",
+      harkInteractionDeliveryId: "lad_1",
+    });
+    const buttons = findAll(slots.banner, "Button");
+    expect(buttons).toHaveLength(2);
+    expect(buttons.map((button) => [button.props.label, button.props.target])).toEqual([
+      ["Send", "approve"],
+      ["Deny", "deny"],
+    ]);
+    expect(buttons[0]?.props).toMatchObject({
+      harkInteractionId: "int_1",
+      harkInteractionCredential: "c".repeat(43),
+      harkInteractionDeviceId: "dev_1",
+      harkInteractionDeliveryId: "lad_1",
+    });
+    for (const button of buttons) {
+      expect(button.props.modifiers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            $modifier: "buttonBorderShape",
+            args: ["roundedRectangle", 6],
+          }),
+          expect.objectContaining({
+            $modifier: "controlSize",
+            args: ["regular"],
+          }),
+          expect.objectContaining({
+            $modifier: "frame",
+            args: [{ height: 36, maxWidth: Infinity }],
+          }),
+        ]),
+      );
+    }
+    expect(findAll(slots.expandedBottom, "Button")).toHaveLength(2);
+
+    const resolved = render({
+      ...props,
+      status: "Approved",
+      detail: "Sent to the agent.",
+      interaction: { ...interaction, state: "approved" },
+    });
+    expect(findAll(resolved.banner, "Button")).toHaveLength(0);
   });
 
   it("ring leads with a determinate circular gauge and the percent overlaid", () => {

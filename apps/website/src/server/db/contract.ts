@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 
-export const EXPECTED_MIGRATION_COUNT = 15;
-export const EXPECTED_MIGRATION_CREATED_AT = 1_785_085_877_317;
+export const EXPECTED_MIGRATION_COUNT = 16;
+export const EXPECTED_MIGRATION_CREATED_AT = 1_785_282_742_299;
 
 export const REQUIRED_TABLES = [
   "user",

@@ -197,6 +197,56 @@ describe("interaction schemas", () => {
     if (result.success) {
       expect(result.data.deviceIds).toEqual(["dev_a", "dev_b"]);
       expect(result.data.expiresInSeconds).toBe(900);
+      expect(result.data.presentation).toBeUndefined();
+    }
+  });
+
+  it("validates interactive Live Activity requests and cosmetic labels", () => {
+    const valid = interactionCreateSchema.safeParse({
+      title: "Release",
+      prompt: "Send the prepared release email?",
+      kind: "approval",
+      presentation: "live_activity",
+      primaryLabel: "Send",
+      secondaryLabel: "Deny",
+      expiresInSeconds: 900,
+    });
+    expect(valid.success).toBe(true);
+    for (const invalid of [
+      {
+        title: "Reply",
+        prompt: "Type a response",
+        kind: "reply",
+        presentation: "live_activity",
+      },
+      {
+        title: "Release",
+        prompt: "Deploy?",
+        kind: "approval",
+        primaryLabel: "Deploy",
+      },
+      {
+        title: "Release",
+        prompt: "Deploy?",
+        kind: "approval",
+        presentation: "live_activity",
+        expiresInSeconds: 28_801,
+      },
+      {
+        title: "Release",
+        prompt: "x".repeat(241),
+        kind: "approval",
+        presentation: "live_activity",
+      },
+      {
+        title: "Release",
+        prompt: "Deploy?",
+        kind: "approval",
+        presentation: "live_activity",
+        primaryLabel: "Deploy\nnow",
+      },
+    ]) {
+      expect(interactionCreateSchema.safeParse(invalid).success).toBe(false);
     }
   });
 
@@ -276,6 +326,39 @@ describe("Live Activity schemas", () => {
     expect(liveActivityPropsSchema.safeParse(props).success).toBe(true);
     expect(liveActivityPropsSchema.safeParse({ ...props, style: "ring" }).success).toBe(true);
     expect(liveActivityPropsSchema.safeParse({ ...props, style: "neon" }).success).toBe(false);
+    expect(liveActivityPropsSchema.safeParse({ ...props, style: "approval" }).success).toBe(false);
+    expect(
+      liveActivityPropsSchema.safeParse({
+        ...props,
+        style: "approval",
+        interaction: {
+          id: "int_1",
+          kind: "approval",
+          prompt: "Deploy?",
+          primaryLabel: "Deploy",
+          secondaryLabel: "Deny",
+          primaryAction: "approve",
+          secondaryAction: "deny",
+          state: "pending",
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      liveActivityPropsSchema.safeParse({
+        ...props,
+        style: "approval",
+        interaction: {
+          id: "int_1",
+          kind: "approval",
+          prompt: "Deploy?",
+          primaryLabel: "Deploy",
+          secondaryLabel: "Deny",
+          primaryAction: "yes",
+          secondaryAction: "no",
+          state: "pending",
+        },
+      }).success,
+    ).toBe(false);
 
     expect(liveActivityStartSchema.parse({ title: "Task", status: "Starting" }).style).toBe(
       "standard",
@@ -290,6 +373,7 @@ describe("Live Activity schemas", () => {
 
     // Updates accept a style change and it counts as a meaningful field.
     expect(liveActivityUpdateSchema.safeParse({ style: "steps" }).success).toBe(true);
+    expect(liveActivityUpdateSchema.safeParse({ style: "approval" }).success).toBe(false);
     expect(liveActivityUpdateSchema.safeParse({ style: "neon" }).success).toBe(false);
     expect(liveActivityUpdateSchema.parse({ style: "terminal" }).style).toBe("terminal");
   });

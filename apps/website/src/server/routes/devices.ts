@@ -30,6 +30,7 @@ function toDto(row: typeof device.$inferSelect): DeviceDto {
         ? row.liveActivityTokenEnvironment
         : null,
     liveActivityTokenUpdatedAt: row.liveActivityTokenUpdatedAt?.toISOString() ?? null,
+    interactiveLiveActivitiesCapable: row.liveActivityInteractionVersion === 1,
     createdAt: row.createdAt.toISOString(),
     lastSeenAt: row.lastSeenAt.toISOString(),
   };
@@ -226,6 +227,7 @@ export const devicesRoute = new Hono<AuthedEnv>()
           platform: "ios",
           deviceName: parsed.data.deviceName ?? null,
           interactionSchemaVersion: parsed.data.interactionSchemaVersion ?? null,
+          liveActivityInteractionVersion: parsed.data.liveActivityInteractionVersion ?? null,
           active: true,
           createdAt: now,
           lastSeenAt: now,
@@ -237,6 +239,7 @@ export const devicesRoute = new Hono<AuthedEnv>()
             apnsToken: parsed.data.apnsToken ?? null,
             deviceName: parsed.data.deviceName ?? null,
             interactionSchemaVersion: parsed.data.interactionSchemaVersion ?? null,
+            liveActivityInteractionVersion: parsed.data.liveActivityInteractionVersion ?? null,
             active: true,
             lastSeenAt: now,
             ...(ownerChanged

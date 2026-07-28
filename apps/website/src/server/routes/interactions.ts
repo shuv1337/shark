@@ -8,6 +8,7 @@ import {
   interactionCreateSchema,
   interactionCredentialResponseSchema,
   interactionResponseSchema,
+  liveActivityInteractionResponseSchema,
   serviceCreateSchema,
 } from "@hark/contracts";
 import { and, count, desc, eq, gt, gte, inArray, isNull, lte } from "drizzle-orm";
@@ -20,6 +21,7 @@ import {
   event,
   interaction,
   liveActivity,
+  liveActivityDelivery,
   liveActivityOperation,
   service,
   user as userTable,
@@ -29,6 +31,7 @@ import { failureBucket, track } from "../lib/analytics";
 import { checkNotificationAllowance, getBilling, trackNotification } from "../lib/billing";
 import { newId } from "../lib/id";
 import { deliverInteractionCallbacks } from "../lib/interaction-callbacks";
+import { verifyLiveActivityInteractionCredential } from "../lib/live-activity-interaction";
 import { buildInteractionPushMessages, buildPushMessages, sendPushMessages } from "../lib/push";
 import { hashInteractionResponseToken } from "../lib/token";
 import {
@@ -38,7 +41,11 @@ import {
   requireAuth,
   requireScopes,
 } from "../middleware";
-import { enforceAgentRateLimit } from "./activities";
+import {
+  enforceAgentRateLimit,
+  resolveInteractionLiveActivity,
+  startInteractionLiveActivity,
+} from "./activities";
 import { createServiceForUser } from "./services";
 
 type InteractionRow = typeof interaction.$inferSelect;
@@ -53,12 +60,15 @@ function toDto(row: InteractionRow): InteractionDto {
     title: row.title,
     prompt: row.prompt,
     kind: row.kind as InteractionKind,
+    presentation: row.presentation === "live_activity" ? "live_activity" : "notification",
     status: row.status as InteractionStatus,
     choices: row.choices,
     response: row.response,
     imageUrl: row.imageUrl,
     url: row.url,
     actionDigest: row.actionDigest,
+    primaryLabel: row.primaryLabel,
+    secondaryLabel: row.secondaryLabel,
     accepted: row.acceptedCount,
     respondingDeviceId: row.respondingDeviceId,
     expiresAt: row.expiresAt.toISOString(),
@@ -81,7 +91,10 @@ async function expireIfNeeded(row: InteractionRow): Promise<InteractionRow> {
       ),
     )
     .returning();
-  if (expired) return expired;
+  if (expired) {
+    void resolveInteractionLiveActivity(expired);
+    return expired;
+  }
   const [current] = await db.select().from(interaction).where(eq(interaction.id, row.id)).limit(1);
   return current ?? row;
 }
@@ -93,6 +106,15 @@ async function ownedInteraction(tokenId: string, id: string): Promise<Interactio
     .where(and(eq(interaction.id, id), eq(interaction.requesterTokenId, tokenId)))
     .limit(1);
   return row ? expireIfNeeded(row) : undefined;
+}
+
+async function linkedLiveActivityId(interactionId: string): Promise<string | undefined> {
+  const [linked] = await db
+    .select({ id: liveActivity.id })
+    .from(liveActivity)
+    .where(eq(liveActivity.interactionId, interactionId))
+    .limit(1);
+  return linked?.id;
 }
 
 function idempotencyKeyFrom(value: string | undefined): string | undefined | null {
@@ -457,6 +479,7 @@ export const agentRoute = new Hono<AgentEnv>()
     if (!parsed.success) {
       return c.json({ error: "Invalid interaction", issues: parsed.error.issues }, 400);
     }
+    const presentation = parsed.data.presentation ?? "notification";
     const idempotencyKey = idempotencyKeyFrom(c.req.header("Idempotency-Key"));
     if (idempotencyKey === null) {
       return c.json({ error: "Idempotency-Key must contain between 1 and 200 characters" }, 400);
@@ -481,10 +504,12 @@ export const agentRoute = new Hono<AgentEnv>()
           );
         }
         const current = await expireIfNeeded(existing);
+        const liveActivityId = await linkedLiveActivityId(current.id);
         return c.json({
           interaction: toDto(current),
           accepted: current.acceptedCount,
           idempotent: true,
+          ...(liveActivityId ? { liveActivityId } : {}),
         });
       }
     }
@@ -534,10 +559,12 @@ export const agentRoute = new Hono<AgentEnv>()
       db
         .select({ value: count() })
         .from(liveActivityOperation)
+        .innerJoin(liveActivity, eq(liveActivity.id, liveActivityOperation.activityId))
         .where(
           and(
             eq(liveActivityOperation.requesterTokenId, token.id),
             gte(liveActivityOperation.createdAt, since),
+            isNull(liveActivity.interactionId),
           ),
         ),
       db
@@ -558,7 +585,11 @@ export const agentRoute = new Hono<AgentEnv>()
         .from(liveActivityOperation)
         .innerJoin(liveActivity, eq(liveActivity.id, liveActivityOperation.activityId))
         .where(
-          and(eq(liveActivity.userId, token.userId), gte(liveActivityOperation.createdAt, since)),
+          and(
+            eq(liveActivity.userId, token.userId),
+            gte(liveActivityOperation.createdAt, since),
+            isNull(liveActivity.interactionId),
+          ),
         ),
     ]);
     if (
@@ -592,6 +623,10 @@ export const agentRoute = new Hono<AgentEnv>()
         : parsed.data.kind === "yes_no"
           ? ["yes", "no"]
           : ["reply"];
+    const primaryLabel =
+      parsed.data.primaryLabel ?? (parsed.data.kind === "approval" ? "Approve" : "Yes");
+    const secondaryLabel =
+      parsed.data.secondaryLabel ?? (parsed.data.kind === "approval" ? "Deny" : "No");
     const actionDigest = digest({
       interactionId,
       title: parsed.data.title,
@@ -599,6 +634,8 @@ export const agentRoute = new Hono<AgentEnv>()
       kind: parsed.data.kind,
       choices,
       url: parsed.data.url ?? null,
+      presentation,
+      ...(presentation === "live_activity" ? { primaryLabel, secondaryLabel } : {}),
     });
     const values: typeof interaction.$inferInsert = {
       id: interactionId,
@@ -607,11 +644,14 @@ export const agentRoute = new Hono<AgentEnv>()
       title: parsed.data.title,
       prompt: parsed.data.prompt,
       kind: parsed.data.kind,
+      presentation,
       status: "pending",
       choices,
       imageUrl: parsed.data.imageUrl ?? null,
       url: parsed.data.url ?? null,
       actionDigest,
+      primaryLabel: presentation === "live_activity" ? primaryLabel : null,
+      secondaryLabel: presentation === "live_activity" ? secondaryLabel : null,
       idempotencyKey: idempotencyKey ?? null,
       requestHash: idempotencyKey ? requestHash : null,
       expiresAt: new Date(now.getTime() + parsed.data.expiresInSeconds * 1000),
@@ -635,10 +675,12 @@ export const agentRoute = new Hono<AgentEnv>()
           )
           .limit(1);
         if (existing?.requestHash === requestHash) {
+          const liveActivityId = await linkedLiveActivityId(existing.id);
           return c.json({
             interaction: toDto(await expireIfNeeded(existing)),
             accepted: existing.acceptedCount,
             idempotent: true,
+            ...(liveActivityId ? { liveActivityId } : {}),
           });
         }
         if (existing) {
@@ -663,6 +705,44 @@ export const agentRoute = new Hono<AgentEnv>()
           interaction: toDto(row),
           accepted: 0,
           message: "No active iOS devices are registered for this account.",
+        },
+        201,
+      );
+    }
+    if (presentation === "live_activity") {
+      const liveResult = await startInteractionLiveActivity(row, selectedDevices);
+      const [updated] = await db
+        .update(interaction)
+        .set({ acceptedCount: liveResult.accepted })
+        .where(eq(interaction.id, row.id))
+        .returning();
+      row = updated ?? row;
+      track({
+        name: "interaction_created",
+        userId: token.userId,
+        plan: billing.plan,
+        outcome: liveResult.accepted > 0 ? "accepted" : failureBucket(liveResult.errors[0]),
+        value: liveResult.accepted,
+        metadata: { kind: parsed.data.kind, presentation: "live_activity" },
+      });
+      if (liveResult.accepted > 0) {
+        track({
+          name: "notification_sent",
+          userId: token.userId,
+          plan: billing.plan,
+          outcome: "interaction_live_activity",
+          value: liveResult.accepted,
+        });
+        await trackNotification(token.userId, row.id);
+      }
+      return c.json(
+        {
+          interaction: toDto(row),
+          accepted: liveResult.accepted,
+          ...(liveResult.activityId ? { liveActivityId: liveResult.activityId } : {}),
+          ...(liveResult.accepted === 0
+            ? { message: "No interactive Live Activities were accepted by APNs." }
+            : {}),
         },
         201,
       );
@@ -771,7 +851,10 @@ export const agentRoute = new Hono<AgentEnv>()
         ),
       )
       .returning();
-    if (row) return c.json({ interaction: toDto(row) });
+    if (row) {
+      void resolveInteractionLiveActivity(row);
+      return c.json({ interaction: toDto(row) });
+    }
     const current = await ownedInteraction(token.id, c.req.param("id"));
     if (!current) return c.json({ error: "Interaction not found" }, 404);
     return c.json({ error: "Interaction is already terminal", interaction: toDto(current) }, 409);
@@ -853,6 +936,7 @@ export const interactionResponseRoute = new Hono<AuthedEnv>()
         metadata: { kind: current.kind },
       });
       void deliverInteractionCallbacks();
+      void resolveInteractionLiveActivity(row);
       return c.json({ interaction: toDto(row) });
     }
 
@@ -936,5 +1020,116 @@ export const interactionCredentialResponseRoute = new Hono().post("/:id/respond"
     .returning();
   if (!row) return c.json({ error: "Interaction is already terminal" }, 409);
   void deliverInteractionCallbacks();
+  void resolveInteractionLiveActivity(row);
+  return c.json({ ok: true, status: row.status });
+});
+
+export const liveActivityInteractionResponseRoute = new Hono().post("/:id/respond", async (c) => {
+  const parsed = liveActivityInteractionResponseSchema.safeParse(
+    await c.req.json().catch(() => null),
+  );
+  if (!parsed.success) return c.json({ error: "Invalid Live Activity response" }, 400);
+
+  const [current] = await db
+    .select({ row: interaction })
+    .from(interaction)
+    .innerJoin(liveActivity, eq(liveActivity.interactionId, interaction.id))
+    .innerJoin(
+      liveActivityDelivery,
+      and(
+        eq(liveActivityDelivery.activityId, liveActivity.id),
+        eq(liveActivityDelivery.id, parsed.data.deliveryId),
+        eq(liveActivityDelivery.deviceId, parsed.data.deviceId),
+        eq(liveActivityDelivery.purpose, "interaction"),
+      ),
+    )
+    .where(eq(interaction.id, c.req.param("id")))
+    .limit(1);
+  if (!current) return c.json({ error: "Interaction not found" }, 404);
+  if (
+    !verifyLiveActivityInteractionCredential(parsed.data.credential, {
+      interactionId: current.row.id,
+      deliveryId: parsed.data.deliveryId,
+      deviceId: parsed.data.deviceId,
+      actionDigest: current.row.actionDigest,
+      expiresAt: current.row.expiresAt,
+    })
+  ) {
+    return c.json({ error: "Interaction not found" }, 404);
+  }
+
+  const [registeredDevice] = await db
+    .select({ id: device.id })
+    .from(device)
+    .where(
+      and(
+        eq(device.id, parsed.data.deviceId),
+        eq(device.userId, current.row.userId),
+        eq(device.active, true),
+        eq(device.liveActivityInteractionVersion, 1),
+      ),
+    )
+    .limit(1);
+  if (!registeredDevice) return c.json({ error: "Device not found" }, 404);
+  if (
+    (current.row.kind === "approval" && !["approve", "deny"].includes(parsed.data.action)) ||
+    (current.row.kind === "yes_no" && !["yes", "no"].includes(parsed.data.action)) ||
+    current.row.kind === "reply"
+  ) {
+    return c.json({ error: "Invalid response type" }, 400);
+  }
+
+  const status =
+    parsed.data.action === "approve"
+      ? "approved"
+      : parsed.data.action === "deny"
+        ? "denied"
+        : parsed.data.action;
+  if (current.row.status !== "pending") {
+    if (current.row.status === status && current.row.respondingDeviceId === registeredDevice.id) {
+      return c.json({ ok: true, status: current.row.status, idempotent: true });
+    }
+    return c.json({ error: "Interaction is already terminal", status: current.row.status }, 409);
+  }
+
+  const now = new Date();
+  const [row] = await db
+    .update(interaction)
+    .set({
+      status,
+      response: parsed.data.action,
+      respondingDeviceId: registeredDevice.id,
+      respondedAt: now,
+      callbackNextAttemptAt: now,
+    })
+    .where(
+      and(
+        eq(interaction.id, current.row.id),
+        eq(interaction.status, "pending"),
+        gt(interaction.expiresAt, now),
+      ),
+    )
+    .returning();
+  if (!row) {
+    const terminal = await expireIfNeeded(current.row);
+    const [latest] = await db
+      .select()
+      .from(interaction)
+      .where(eq(interaction.id, current.row.id))
+      .limit(1);
+    return c.json(
+      { error: "Interaction is already terminal", status: latest?.status ?? terminal.status },
+      409,
+    );
+  }
+  track({
+    name: "interaction_responded",
+    userId: row.userId,
+    deviceId: registeredDevice.id,
+    outcome: parsed.data.action,
+    metadata: { kind: row.kind, presentation: "live_activity" },
+  });
+  void deliverInteractionCallbacks();
+  void resolveInteractionLiveActivity(row);
   return c.json({ ok: true, status: row.status });
 });

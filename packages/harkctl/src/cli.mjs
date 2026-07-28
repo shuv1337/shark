@@ -51,6 +51,21 @@ function parseStyle(value) {
   return String(value);
 }
 
+function parseActionLabel(value, flag) {
+  const label = String(value).trim();
+  if (
+    label.length === 0 ||
+    Array.from(label).length > 24 ||
+    Array.from(label).some((character) => {
+      const code = character.charCodeAt(0);
+      return code < 32 || code === 127;
+    })
+  ) {
+    throw new UsageError(`--${flag} must be a single line of 1 to 24 characters`);
+  }
+  return label;
+}
+
 export function parseArgs(argv) {
   const positionals = [];
   const options = { device: [], scope: [] };
@@ -78,6 +93,8 @@ export function parseArgs(argv) {
     "dismiss-after",
     "if-sequence",
     "limit",
+    "primary-label",
+    "secondary-label",
   ]);
   const booleanFlags = new Set([
     "approval",
@@ -91,6 +108,7 @@ export function parseArgs(argv) {
     "help",
     "open",
     "no-open",
+    "live-activity",
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -368,8 +386,9 @@ function help() {
   harkctl notify <body> [--title <name>] [--image <url>] [--url <url>] [--device <id>]
                  [--idempotency-key <key>] [--stdin]
   harkctl notify ask <prompt> (--approval|--yes-no|--text) [--title <name>] [--image <url>]
-                 [--url <url>] [--device <id>] [--expires-in <duration>]
-                 [--idempotency-key <key>] [--stdin] [--wait [--timeout <duration>] | --poll]
+                  [--url <url>] [--device <id>] [--expires-in <duration>]
+                  [--live-activity [--primary-label <label>] [--secondary-label <label>]]
+                  [--idempotency-key <key>] [--stdin] [--wait [--timeout <duration>] | --poll]
   harkctl interaction get <id>
   harkctl interaction wait <id> [--timeout <duration>]
   harkctl activity start --title <title> --status <status> [--progress <0..1>] [--key <key>]
@@ -641,12 +660,29 @@ export async function execute(argv, env = process.env, overrides = {}) {
       const prompt = positionals.slice(2).join(" ") || stdin.prompt;
       if (!prompt) throw new UsageError("notify ask requires a prompt");
       const expiresInSeconds = parseDuration(options["expires-in"] ?? stdin.expiresIn ?? "15m");
+      const liveActivity = options["live-activity"] || stdin.presentation === "live_activity";
+      if (liveActivity && selectors[0] === "reply") {
+        throw new UsageError("--live-activity supports --approval or --yes-no, not --text");
+      }
+      if (!liveActivity && (options["primary-label"] || options["secondary-label"])) {
+        throw new UsageError("custom action labels require --live-activity");
+      }
+      if (liveActivity && expiresInSeconds > 28_800) {
+        throw new UsageError("--live-activity requests must expire within 8 hours");
+      }
       const payload = {
         ...stdin,
         title: options.title ?? stdin.title ?? "SHark",
         prompt,
         kind: selectors[0],
         expiresInSeconds,
+        ...(liveActivity ? { presentation: "live_activity" } : {}),
+        ...(options["primary-label"]
+          ? { primaryLabel: parseActionLabel(options["primary-label"], "primary-label") }
+          : {}),
+        ...(options["secondary-label"]
+          ? { secondaryLabel: parseActionLabel(options["secondary-label"], "secondary-label") }
+          : {}),
         ...(options.image ? { imageUrl: options.image } : {}),
         ...(options.url ? { url: options.url } : {}),
         ...(options.device.length > 0 ? { deviceIds: options.device } : {}),
