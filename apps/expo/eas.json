@@ -11,6 +11,8 @@
         "buildConfiguration": "Release"
       },
       "env": {
+        "APPLE_TEAM_ID": "7H54B326YZ",
+        "EAS_PROJECT_ID": "af59c084-62af-40bd-b679-2d05bafa4746",
         "EXPO_PUBLIC_API_URL": "https://shark.shuv.dev",
         "EXPO_PUBLIC_APNS_ENVIRONMENT": "production"
       }
