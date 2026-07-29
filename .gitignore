@@ -15,4 +15,5 @@ data/
 .expo/
 apps/expo/ios/
 apps/expo/android/
+apps/expo/credentials.json
 expo-env.d.ts

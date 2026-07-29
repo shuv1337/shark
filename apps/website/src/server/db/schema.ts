@@ -118,6 +118,7 @@ export const device = sqliteTable("device", {
   liveActivitySchemaVersion: integer("live_activity_schema_version"),
   liveActivityTokenUpdatedAt: integer("live_activity_token_updated_at", { mode: "timestamp_ms" }),
   interactionSchemaVersion: integer("interaction_schema_version"),
+  liveActivityInteractionVersion: integer("live_activity_interaction_version"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }).notNull(),
 });
@@ -243,6 +244,9 @@ export const interaction = sqliteTable(
     title: text("title").notNull(),
     prompt: text("prompt").notNull(),
     kind: text("kind").notNull(),
+    presentation: text("presentation").notNull().default("notification"),
+    primaryLabel: text("primary_label"),
+    secondaryLabel: text("secondary_label"),
     status: text("status").notNull().default("pending"),
     choices: text("choices", { mode: "json" }).$type<string[]>().notNull(),
     response: text("response"),
@@ -304,6 +308,9 @@ export const liveActivity = sqliteTable(
     requesterServiceId: text("requester_service_id").references(() => service.id, {
       onDelete: "cascade",
     }),
+    interactionId: text("interaction_id")
+      .unique()
+      .references(() => interaction.id, { onDelete: "cascade" }),
     key: text("key"),
     schemaVersion: integer("schema_version").notNull(),
     props: text("props", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
@@ -358,6 +365,7 @@ export const liveActivityDelivery = sqliteTable(
     deviceId: text("device_id")
       .notNull()
       .references(() => device.id, { onDelete: "cascade" }),
+    purpose: text("purpose").notNull().default("task"),
     status: text("status").notNull().default("pending"),
     environment: text("environment").notNull(),
     schemaVersion: integer("schema_version").notNull(),
@@ -380,9 +388,11 @@ export const liveActivityDelivery = sqliteTable(
       table.deviceId,
     ),
     index("live_activity_delivery_device_status_idx").on(table.deviceId, table.status),
-    uniqueIndex("live_activity_delivery_one_active_per_device_unique")
+    uniqueIndex("live_activity_delivery_one_active_task_per_device_unique")
       .on(table.deviceId)
-      .where(sql`${table.status} in ('pending', 'accepted', 'active')`),
+      .where(
+        sql`${table.purpose} = 'task' and ${table.status} in ('pending', 'accepted', 'active')`,
+      ),
     index("live_activity_delivery_native_id_idx").on(table.nativeActivityId),
   ],
 );

@@ -27,6 +27,9 @@ export interface LiveActivityPayloadInput {
     tokenRegistrationURL: string;
     tokenRegistrationToken: string;
     deliveryId: string;
+    harkInteractionId?: string;
+    harkInteractionCredential?: string;
+    harkInteractionDeviceId?: string;
   };
 }
 

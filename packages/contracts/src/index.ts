@@ -194,6 +194,7 @@ export const deviceRegisterSchema = z.object({
   platform: z.literal("ios"),
   deviceName: z.string().trim().max(80).optional(),
   interactionSchemaVersion: z.literal(1).optional(),
+  liveActivityInteractionVersion: z.literal(1).optional(),
 });
 export type DeviceRegisterInput = z.infer<typeof deviceRegisterSchema>;
 
@@ -216,6 +217,7 @@ export interface DeviceDto {
   liveActivitiesCapable: boolean;
   liveActivityTokenEnvironment: "sandbox" | "production" | null;
   liveActivityTokenUpdatedAt: string | null;
+  interactiveLiveActivitiesCapable: boolean;
   createdAt: string;
   lastSeenAt: string;
 }
@@ -237,7 +239,14 @@ export type LiveActivityPrivacyMode = z.infer<typeof liveActivityPrivacyModeSche
  * payloads written before the field existed keep validating, and app builds
  * that predate a value render their standard layout.
  */
-export const LIVE_ACTIVITY_STYLES = ["standard", "ring", "hero", "terminal", "steps"] as const;
+export const LIVE_ACTIVITY_STYLES = [
+  "standard",
+  "ring",
+  "hero",
+  "terminal",
+  "steps",
+  "approval",
+] as const;
 export const liveActivityStyleSchema = z.enum(LIVE_ACTIVITY_STYLES);
 export type LiveActivityStyle = z.infer<typeof liveActivityStyleSchema>;
 export const LIVE_ACTIVITY_DEFAULT_ACCENT_COLOR = "#5ED8B7" as const;
@@ -247,19 +256,57 @@ export const liveActivityAccentColorSchema = z
   .string()
   .regex(/^#[0-9a-fA-F]{6}$/, "Accent color must use #RRGGBB format");
 
-export const liveActivityPropsSchema = z.object({
-  schemaVersion: z.literal(LIVE_ACTIVITY_SCHEMA_VERSION),
-  activityId: z.string().trim().min(1).max(100),
-  title: z.string().trim().min(1).max(80),
-  status: z.string().trim().min(1).max(60),
-  detail: z.string().trim().min(1).max(240).optional(),
-  progress: z.number().min(0).max(1).optional(),
-  updatedAt: z.iso.datetime(),
-  symbol: liveActivitySymbolSchema,
-  privacyMode: liveActivityPrivacyModeSchema,
-  accentColor: liveActivityAccentColorSchema.optional(),
-  style: liveActivityStyleSchema.optional(),
-});
+export const liveActivityInteractionSchema = z
+  .object({
+    id: z.string().trim().min(1).max(100),
+    kind: z.enum(["approval", "yes_no"]),
+    prompt: z.string().trim().min(1).max(2000),
+    primaryLabel: z.string().trim().min(1).max(24),
+    secondaryLabel: z.string().trim().min(1).max(24),
+    primaryAction: z.enum(["approve", "yes"]),
+    secondaryAction: z.enum(["deny", "no"]),
+    state: z.enum(["pending", "approved", "denied", "yes", "no", "expired", "canceled"]),
+  })
+  .superRefine((value, context) => {
+    const valid =
+      (value.kind === "approval" &&
+        value.primaryAction === "approve" &&
+        value.secondaryAction === "deny") ||
+      (value.kind === "yes_no" && value.primaryAction === "yes" && value.secondaryAction === "no");
+    if (!valid) {
+      context.addIssue({
+        code: "custom",
+        path: ["primaryAction"],
+        message: "Interaction actions must match the interaction kind",
+      });
+    }
+  });
+export type LiveActivityInteraction = z.infer<typeof liveActivityInteractionSchema>;
+
+export const liveActivityPropsSchema = z
+  .object({
+    schemaVersion: z.literal(LIVE_ACTIVITY_SCHEMA_VERSION),
+    activityId: z.string().trim().min(1).max(100),
+    title: z.string().trim().min(1).max(80),
+    status: z.string().trim().min(1).max(60),
+    detail: z.string().trim().min(1).max(240).optional(),
+    progress: z.number().min(0).max(1).optional(),
+    updatedAt: z.iso.datetime(),
+    symbol: liveActivitySymbolSchema,
+    privacyMode: liveActivityPrivacyModeSchema,
+    accentColor: liveActivityAccentColorSchema.optional(),
+    style: liveActivityStyleSchema.optional(),
+    interaction: liveActivityInteractionSchema.optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.style === "approval" && !value.interaction) {
+      context.addIssue({
+        code: "custom",
+        path: ["interaction"],
+        message: "Approval Live Activities require an interaction",
+      });
+    }
+  });
 export type LiveActivityProps = z.infer<typeof liveActivityPropsSchema>;
 
 const deviceIdsSchema = z
@@ -269,32 +316,42 @@ const deviceIdsSchema = z
   .transform((ids) => [...new Set(ids)].sort())
   .optional();
 
-export const liveActivityStartSchema = z.object({
-  key: z.string().trim().min(1).max(100).optional(),
-  /** End any Live Activity currently occupying a target device before starting. */
-  replace: z.boolean().default(false),
-  title: z.string().trim().min(1, "Title is required").max(80),
-  status: z.string().trim().min(1, "Status is required").max(60),
-  detail: z.string().trim().min(1).max(240).optional(),
-  progress: z.number().min(0).max(1).optional(),
-  symbol: liveActivitySymbolSchema.default("terminal"),
-  privacyMode: liveActivityPrivacyModeSchema.default("standard"),
-  accentColor: liveActivityAccentColorSchema.default(LIVE_ACTIVITY_DEFAULT_ACCENT_COLOR),
-  style: liveActivityStyleSchema.default("standard"),
-  deviceIds: deviceIdsSchema,
-  expiresInSeconds: z
-    .number()
-    .int()
-    .min(60)
-    .max(28_800)
-    .default(LIVE_ACTIVITY_DEFAULT_EXPIRES_IN_SECONDS),
-  staleAfterSeconds: z
-    .number()
-    .int()
-    .min(0)
-    .max(28_800)
-    .default(LIVE_ACTIVITY_DEFAULT_STALE_AFTER_SECONDS),
-});
+export const liveActivityStartSchema = z
+  .object({
+    key: z.string().trim().min(1).max(100).optional(),
+    /** End any Live Activity currently occupying a target device before starting. */
+    replace: z.boolean().default(false),
+    title: z.string().trim().min(1, "Title is required").max(80),
+    status: z.string().trim().min(1, "Status is required").max(60),
+    detail: z.string().trim().min(1).max(240).optional(),
+    progress: z.number().min(0).max(1).optional(),
+    symbol: liveActivitySymbolSchema.default("terminal"),
+    privacyMode: liveActivityPrivacyModeSchema.default("standard"),
+    accentColor: liveActivityAccentColorSchema.default(LIVE_ACTIVITY_DEFAULT_ACCENT_COLOR),
+    style: liveActivityStyleSchema.default("standard"),
+    deviceIds: deviceIdsSchema,
+    expiresInSeconds: z
+      .number()
+      .int()
+      .min(60)
+      .max(28_800)
+      .default(LIVE_ACTIVITY_DEFAULT_EXPIRES_IN_SECONDS),
+    staleAfterSeconds: z
+      .number()
+      .int()
+      .min(0)
+      .max(28_800)
+      .default(LIVE_ACTIVITY_DEFAULT_STALE_AFTER_SECONDS),
+  })
+  .superRefine((value, context) => {
+    if (value.style === "approval") {
+      context.addIssue({
+        code: "custom",
+        path: ["style"],
+        message: "Use an interaction with live_activity presentation for approval Live Activities",
+      });
+    }
+  });
 export type LiveActivityStartInput = z.infer<typeof liveActivityStartSchema>;
 
 export const liveActivityUpdateSchema = z
@@ -313,7 +370,16 @@ export const liveActivityUpdateSchema = z
   .refine(
     (input) => Object.keys(input).some((key) => key !== "ifSequence"),
     "At least one activity field is required",
-  );
+  )
+  .superRefine((value, context) => {
+    if (value.style === "approval") {
+      context.addIssue({
+        code: "custom",
+        path: ["style"],
+        message: "Approval style is managed by interactive Live Activity requests",
+      });
+    }
+  });
 export type LiveActivityUpdateInput = z.infer<typeof liveActivityUpdateSchema>;
 
 export const liveActivityEndSchema = z.object({
@@ -508,6 +574,9 @@ export const INTERACTION_STATUSES = [
 ] as const;
 export const interactionStatusSchema = z.enum(INTERACTION_STATUSES);
 export type InteractionStatus = z.infer<typeof interactionStatusSchema>;
+export const INTERACTION_PRESENTATIONS = ["notification", "live_activity"] as const;
+export const interactionPresentationSchema = z.enum(INTERACTION_PRESENTATIONS);
+export type InteractionPresentation = z.infer<typeof interactionPresentationSchema>;
 
 export const HARK_APPROVAL_CATEGORY_ID = "HARK_APPROVAL_V1" as const;
 export const HARK_REPLY_CATEGORY_ID = "HARK_REPLY_V1" as const;
@@ -518,20 +587,82 @@ export const HARK_REPLY_ACTION_ID = "HARK_REPLY" as const;
 export const HARK_YES_ACTION_ID = "HARK_YES" as const;
 export const HARK_NO_ACTION_ID = "HARK_NO" as const;
 
-export const interactionCreateSchema = z.object({
-  title: z.string().trim().min(1, "Title is required").max(80),
-  prompt: z.string().trim().min(1, "Prompt is required").max(2000),
-  kind: interactionKindSchema,
-  imageUrl: publicHttpsUrlSchema.optional(),
-  url: webUrlSchema.optional(),
-  deviceIds: z
-    .array(z.string().trim().min(1).max(100))
-    .min(1)
-    .max(50)
-    .transform((ids) => [...new Set(ids)].sort())
-    .optional(),
-  expiresInSeconds: z.number().int().min(30).max(86_400).default(900),
-});
+const interactionActionLabelSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(24)
+  .refine(
+    (value) =>
+      Array.from(value).every((character) => {
+        const code = character.charCodeAt(0);
+        return code >= 32 && code !== 127;
+      }),
+    "Action labels must be a single line",
+  );
+
+export const interactionCreateSchema = z
+  .object({
+    title: z.string().trim().min(1, "Title is required").max(80),
+    prompt: z.string().trim().min(1, "Prompt is required").max(2000),
+    kind: interactionKindSchema,
+    imageUrl: publicHttpsUrlSchema.optional(),
+    url: webUrlSchema.optional(),
+    deviceIds: z
+      .array(z.string().trim().min(1).max(100))
+      .min(1)
+      .max(50)
+      .transform((ids) => [...new Set(ids)].sort())
+      .optional(),
+    expiresInSeconds: z.number().int().min(30).max(86_400).default(900),
+    presentation: interactionPresentationSchema.optional(),
+    primaryLabel: interactionActionLabelSchema.optional(),
+    secondaryLabel: interactionActionLabelSchema.optional(),
+  })
+  .superRefine((value, context) => {
+    const presentation = value.presentation ?? "notification";
+    if (presentation === "live_activity" && value.kind === "reply") {
+      context.addIssue({
+        code: "custom",
+        path: ["kind"],
+        message: "Live Activity interactions support approval or yes_no responses",
+      });
+    }
+    if (presentation === "live_activity" && value.expiresInSeconds > 28_800) {
+      context.addIssue({
+        code: "custom",
+        path: ["expiresInSeconds"],
+        message: "Live Activity interactions expire within 8 hours",
+      });
+    }
+    if (presentation === "live_activity" && value.prompt.length > 240) {
+      context.addIssue({
+        code: "custom",
+        path: ["prompt"],
+        message: "Live Activity interaction prompts are limited to 240 characters",
+      });
+    }
+    if (
+      presentation === "live_activity" &&
+      (value.imageUrl !== undefined || value.url !== undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: [value.imageUrl !== undefined ? "imageUrl" : "url"],
+        message: "Live Activity interactions do not support imageUrl or url",
+      });
+    }
+    if (
+      presentation !== "live_activity" &&
+      (value.primaryLabel !== undefined || value.secondaryLabel !== undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["presentation"],
+        message: "Custom action labels require live_activity presentation",
+      });
+    }
+  });
 export type InteractionCreateInput = z.infer<typeof interactionCreateSchema>;
 
 export const interactionResponseSchema = z.discriminatedUnion("action", [
@@ -571,17 +702,30 @@ export type InteractionCredentialResponseInput = z.infer<
   typeof interactionCredentialResponseSchema
 >;
 
+export const liveActivityInteractionResponseSchema = z.object({
+  action: z.enum(["approve", "deny", "yes", "no"]),
+  deviceId: z.string().trim().min(1).max(100),
+  deliveryId: z.string().trim().min(1).max(100),
+  credential: z.string().regex(/^[a-zA-Z0-9_-]{43}$/),
+});
+export type LiveActivityInteractionResponseInput = z.infer<
+  typeof liveActivityInteractionResponseSchema
+>;
+
 export interface InteractionDto {
   id: string;
   title: string;
   prompt: string;
   kind: InteractionKind;
+  presentation: InteractionPresentation;
   status: InteractionStatus;
   choices: string[];
   response: string | null;
   imageUrl: string | null;
   url: string | null;
   actionDigest: string;
+  primaryLabel: string | null;
+  secondaryLabel: string | null;
   accepted: number;
   respondingDeviceId: string | null;
   expiresAt: string;
@@ -592,9 +736,10 @@ export interface InteractionDto {
 
 export interface InteractionCreateResponse {
   interaction: InteractionDto;
-  /** Number of notification requests accepted by Expo, not proof of device delivery. */
+  /** Requests accepted by Expo or APNs, depending on presentation; not proof of device display. */
   accepted: number;
   idempotent?: boolean;
+  liveActivityId?: string;
   message?: string;
 }
 

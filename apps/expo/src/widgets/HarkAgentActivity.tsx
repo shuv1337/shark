@@ -1,4 +1,5 @@
 import {
+  Button,
   Capsule,
   Circle,
   Gauge,
@@ -14,6 +15,9 @@ import {
   accessibilityElement,
   accessibilityLabel,
   activityBackgroundTint,
+  buttonBorderShape,
+  buttonStyle,
+  controlSize,
   font,
   foregroundStyle,
   frame,
@@ -50,6 +54,13 @@ function HarkAgentActivityLayout(props: LiveActivityProps, _environment: LiveAct
   const status = props.privacyMode === "private" ? "In progress" : props.status;
   const detail = props.privacyMode === "private" ? undefined : props.detail;
   const style = props.style ?? "standard";
+  const interaction = props.interaction;
+  const interactionEnvironment = _environment as LiveActivityEnvironment & {
+    harkInteractionId?: string;
+    harkInteractionCredential?: string;
+    harkInteractionDeviceId?: string;
+    harkInteractionDeliveryId?: string;
+  };
   const symbol =
     props.symbol === "code"
       ? "chevron.left.forwardslash.chevron.right"
@@ -83,6 +94,147 @@ function HarkAgentActivityLayout(props: LiveActivityProps, _environment: LiveAct
         modifiers={[progressViewStyle("linear"), tint(accent), frame({ maxWidth: Infinity })]}
       />
     ) : null;
+
+  const canRespond =
+    interaction?.state === "pending" &&
+    interactionEnvironment.harkInteractionId !== undefined &&
+    interactionEnvironment.harkInteractionCredential !== undefined &&
+    interactionEnvironment.harkInteractionDeviceId !== undefined &&
+    interactionEnvironment.harkInteractionDeliveryId !== undefined;
+  const primaryButtonProps = interaction
+    ? ({
+        label: interaction.primaryLabel,
+        target: interaction.primaryAction,
+        harkInteractionId: interactionEnvironment.harkInteractionId,
+        harkInteractionCredential: interactionEnvironment.harkInteractionCredential,
+        harkInteractionDeviceId: interactionEnvironment.harkInteractionDeviceId,
+        harkInteractionDeliveryId: interactionEnvironment.harkInteractionDeliveryId,
+        modifiers: [
+          buttonStyle("borderedProminent"),
+          buttonBorderShape("roundedRectangle", 6),
+          controlSize("regular"),
+          tint(accent),
+          frame({ height: 36, maxWidth: Infinity }),
+        ],
+      } as Parameters<typeof Button>[0] & Record<string, unknown>)
+    : undefined;
+  const secondaryButtonProps = interaction
+    ? ({
+        label: interaction.secondaryLabel,
+        target: interaction.secondaryAction,
+        role: "cancel",
+        harkInteractionId: interactionEnvironment.harkInteractionId,
+        harkInteractionCredential: interactionEnvironment.harkInteractionCredential,
+        harkInteractionDeviceId: interactionEnvironment.harkInteractionDeviceId,
+        harkInteractionDeliveryId: interactionEnvironment.harkInteractionDeliveryId,
+        modifiers: [
+          buttonStyle("bordered"),
+          buttonBorderShape("roundedRectangle", 6),
+          controlSize("regular"),
+          tint(accent),
+          frame({ height: 36, maxWidth: Infinity }),
+        ],
+      } as Parameters<typeof Button>[0] & Record<string, unknown>)
+    : undefined;
+
+  const approvalActions =
+    canRespond && primaryButtonProps && secondaryButtonProps ? (
+      <HStack spacing={9} modifiers={[frame({ maxWidth: Infinity })]}>
+        <Button {...primaryButtonProps} />
+        <Button {...secondaryButtonProps} />
+      </HStack>
+    ) : null;
+
+  const approvalBanner = interaction ? (
+    <VStack
+      alignment="leading"
+      spacing={9}
+      modifiers={[padding({ horizontal: 16, vertical: 14 }), activityBackgroundTint("#0B1512")]}
+    >
+      <HStack spacing={8}>
+        <Image
+          systemName={interaction.state === "pending" ? "sparkles" : symbol}
+          color={accent}
+          size={18}
+        />
+        <Text
+          modifiers={[
+            font({ textStyle: "headline", weight: "semibold" }),
+            foregroundStyle(primary),
+            lineLimit(1),
+          ]}
+        >
+          {status}
+        </Text>
+        <Spacer />
+        <Text
+          modifiers={[
+            font({ textStyle: "caption", weight: "semibold" }),
+            foregroundStyle(accent),
+            lineLimit(1),
+          ]}
+        >
+          {title}
+        </Text>
+      </HStack>
+      <Text
+        modifiers={[font({ textStyle: "subheadline" }), foregroundStyle(secondary), lineLimit(2)]}
+      >
+        {interaction.state === "pending" ? interaction.prompt : (detail ?? status)}
+      </Text>
+      {approvalActions}
+    </VStack>
+  ) : null;
+
+  const approvalBannerSmall = interaction ? (
+    <VStack
+      alignment="leading"
+      spacing={5}
+      modifiers={[padding({ all: 10 }), activityBackgroundTint("#0B1512")]}
+    >
+      <HStack spacing={7}>
+        <Image systemName="sparkles" color={accent} size={15} />
+        <Text
+          modifiers={[
+            font({ textStyle: "subheadline", weight: "semibold" }),
+            foregroundStyle(primary),
+            lineLimit(1),
+          ]}
+        >
+          {status}
+        </Text>
+      </HStack>
+      <Text modifiers={[font({ textStyle: "caption" }), foregroundStyle(secondary), lineLimit(1)]}>
+        {interaction.prompt}
+      </Text>
+    </VStack>
+  ) : null;
+
+  const approvalExpandedLeading = (
+    <HStack spacing={7} modifiers={[padding({ leading: 4 })]}>
+      <Image systemName="sparkles" color={accent} size={16} />
+      <Text
+        modifiers={[
+          font({ textStyle: "headline", weight: "semibold" }),
+          foregroundStyle(primary),
+          lineLimit(1),
+        ]}
+      >
+        {status}
+      </Text>
+    </HStack>
+  );
+
+  const approvalExpandedBottom = interaction ? (
+    <VStack alignment="leading" spacing={8} modifiers={[padding({ horizontal: 4, vertical: 2 })]}>
+      <Text
+        modifiers={[font({ textStyle: "subheadline" }), foregroundStyle(secondary), lineLimit(2)]}
+      >
+        {interaction.state === "pending" ? interaction.prompt : (detail ?? status)}
+      </Text>
+      {approvalActions}
+    </VStack>
+  ) : null;
 
   // ring: a determinate circular gauge with the percent overlaid at its
   // center. The gauge's own currentValueLabel slot is dropped by the widget
@@ -714,16 +866,23 @@ function HarkAgentActivityLayout(props: LiveActivityProps, _environment: LiveAct
 
   return {
     banner:
-      style === "ring"
-        ? ringBanner
-        : style === "hero"
-          ? heroBanner
-          : style === "terminal"
-            ? terminalBanner
-            : style === "steps"
-              ? stepsBanner
-              : standardBanner,
-    bannerSmall: style === "terminal" ? terminalBannerSmall : standardBannerSmall,
+      style === "approval"
+        ? approvalBanner
+        : style === "ring"
+          ? ringBanner
+          : style === "hero"
+            ? heroBanner
+            : style === "terminal"
+              ? terminalBanner
+              : style === "steps"
+                ? stepsBanner
+                : standardBanner,
+    bannerSmall:
+      style === "approval"
+        ? approvalBannerSmall
+        : style === "terminal"
+          ? terminalBannerSmall
+          : standardBannerSmall,
     compactLeading: <Image systemName={symbol} color={accent} size={16} />,
     compactTrailing: style === "terminal" ? terminalCompactTrailing : standardCompactTrailing,
     minimal: (
@@ -735,11 +894,13 @@ function HarkAgentActivityLayout(props: LiveActivityProps, _environment: LiveAct
       />
     ),
     expandedLeading:
-      style === "hero"
-        ? heroExpandedLeading
-        : style === "terminal"
-          ? terminalExpandedLeading
-          : standardExpandedLeading,
+      style === "approval"
+        ? approvalExpandedLeading
+        : style === "hero"
+          ? heroExpandedLeading
+          : style === "terminal"
+            ? terminalExpandedLeading
+            : standardExpandedLeading,
     expandedTrailing:
       style === "terminal"
         ? terminalExpandedTrailing
@@ -747,15 +908,17 @@ function HarkAgentActivityLayout(props: LiveActivityProps, _environment: LiveAct
           ? stepsExpandedTrailing
           : standardExpandedTrailing,
     expandedBottom:
-      style === "ring"
-        ? ringExpandedBottom
-        : style === "hero"
-          ? heroExpandedBottom
-          : style === "terminal"
-            ? terminalExpandedBottom
-            : style === "steps"
-              ? stepsExpandedBottom
-              : standardExpandedBottom,
+      style === "approval"
+        ? approvalExpandedBottom
+        : style === "ring"
+          ? ringExpandedBottom
+          : style === "hero"
+            ? heroExpandedBottom
+            : style === "terminal"
+              ? terminalExpandedBottom
+              : style === "steps"
+                ? stepsExpandedBottom
+                : standardExpandedBottom,
   };
 }
 

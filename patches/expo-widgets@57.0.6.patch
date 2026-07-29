@@ -93,25 +93,238 @@ index 0000000000000000000000000000000000000000..90f1cc52fcbadc1d64d1d2859223a457
 +    }
 +  }
 +}
+diff --git a/ios/Widgets/AppIntent.swift b/ios/Widgets/AppIntent.swift
+index 972fa4f190d5da8f961218bcbe2436964ac34acf..a008b1c7f27ad73e215728f9c2a02b9b224be7dc 100644
+--- a/ios/Widgets/AppIntent.swift
++++ b/ios/Widgets/AppIntent.swift
+@@ -1,6 +1,20 @@
+ import AppIntents
++import ActivityKit
++import Foundation
+ import WidgetKit
+
++private final class HarkNoRedirectSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
++  func urlSession(
++    _ session: URLSession,
++    task: URLSessionTask,
++    willPerformHTTPRedirection response: HTTPURLResponse,
++    newRequest request: URLRequest,
++    completionHandler: @escaping (URLRequest?) -> Void
++  ) {
++    completionHandler(nil)
++  }
++}
++
+ struct WidgetReload: AppIntent {
+   // title is not used for non-discoverable intents, but it is required
+   static var title: LocalizedStringResource = "Reload widget"
+@@ -112,13 +126,113 @@ struct LiveActivityUserInteraction: LiveActivityIntent {
+   @Parameter(title: "target")
+   var target: String?
+
++  @Parameter(title: "interactionId")
++  var interactionId: String?
++
++  @Parameter(title: "credential")
++  var credential: String?
++
++  @Parameter(title: "deviceId")
++  var deviceId: String?
++
++  @Parameter(title: "deliveryId")
++  var deliveryId: String?
++
+   init() {}
+-  init(source: String?, target: String?) {
++  init(
++    source: String?,
++    target: String?,
++    interactionId: String?,
++    credential: String?,
++    deviceId: String?,
++    deliveryId: String?
++  ) {
+     self.source = source
+     self.target = target
++    self.interactionId = interactionId
++    self.credential = credential
++    self.deviceId = deviceId
++    self.deliveryId = deliveryId
+   }
+
+   func perform() async throws -> some IntentResult {
++    if
++      let source,
++      let target,
++      let interactionId,
++      let credential,
++      let deviceId,
++      let deliveryId,
++      ["approve", "deny", "yes", "no"].contains(target),
++      let encodedId = interactionId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
++      let url = URL(
++        string: "https://hark.ryan.ceo/api/live-activity-interactions/\(encodedId)/respond"
++      )
++    {
++      let payload = [
++        "action": target,
++        "credential": credential,
++        "deviceId": deviceId,
++        "deliveryId": deliveryId,
++      ]
++      let body = try JSONSerialization.data(withJSONObject: payload)
++      var request = URLRequest(url: url, timeoutInterval: 8)
++      request.httpMethod = "POST"
++      request.setValue("application/json", forHTTPHeaderField: "Content-Type")
++      request.httpBody = body
++      let session = URLSession(
++        configuration: .ephemeral,
++        delegate: HarkNoRedirectSessionDelegate(),
++        delegateQueue: nil
++      )
++      defer { session.invalidateAndCancel() }
++
++      var responseStatus: String?
++      for attempt in 0..<2 {
++        do {
++          let (data, response) = try await session.data(for: request)
++          if let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
++            responseStatus = decoded["status"] as? String
++          }
++          if let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
++            break
++          }
++          if responseStatus != nil { break }
++        } catch {
++          if attempt == 1 { throw error }
++        }
++      }
++
++      guard let responseStatus else {
++        throw NSError(domain: "HarkLiveActivity", code: 1)
++      }
++      let outcomeTitle: String
++      switch responseStatus {
++      case "approved": outcomeTitle = "Approved"
++      case "denied": outcomeTitle = "Denied"
++      case "yes": outcomeTitle = "Yes"
++      case "no": outcomeTitle = "No"
++      default: outcomeTitle = responseStatus
++      }
++      for activity in Activity<LiveActivityAttributes>.activities where activity.id == source {
++        guard
++          let propsData = activity.content.state.props.data(using: .utf8),
++          var props = try? JSONSerialization.jsonObject(with: propsData) as? [String: Any],
++          var interaction = props["interaction"] as? [String: Any]
++        else { continue }
++        interaction["state"] = responseStatus
++        props["interaction"] = interaction
++        props["status"] = outcomeTitle
++        props["detail"] = "Sent to the agent."
++        props["updatedAt"] = ISO8601DateFormatter().string(from: Date())
++        let encodedProps = try JSONSerialization.data(withJSONObject: props)
++        guard let propsString = String(data: encodedProps, encoding: .utf8) else { continue }
++        let state = LiveActivityAttributes.ContentState(name: activity.content.state.name, props: propsString)
++        let content = ActivityContent(state: state, staleDate: nil)
++        await activity.end(content, dismissalPolicy: .after(Date().addingTimeInterval(30)))
++      }
++    }
++
+     WidgetsEvents.shared.sendNotification(type: .userEvent, data: [
+       "source": source as Any,
+       "target": target as Any,
+diff --git a/ios/Widgets/Buttons.swift b/ios/Widgets/Buttons.swift
+index 55fb9b3d5fa04d38ab8c2a8b3de7f7656afc401e..aa56ae1db814bbe59687c09a25c972858f93511c 100644
+--- a/ios/Widgets/Buttons.swift
++++ b/ios/Widgets/Buttons.swift
+@@ -7,6 +7,10 @@ final class ButtonProps: ExpoUI.ButtonProps {
+   @Field var target: String?
+   @Field var entryIndex: Int?
+   @Field var environmentString: String?
++  @Field var harkInteractionId: String?
++  @Field var harkInteractionCredential: String?
++  @Field var harkInteractionDeviceId: String?
++  @Field var harkInteractionDeliveryId: String?
+ }
+
+ @available(iOS 17.0, *)
+@@ -45,7 +49,11 @@ struct LiveActivityButtonView: ExpoSwiftUI.View {
+       role: props.role?.toNativeRole(),
+       intent: LiveActivityUserInteraction(
+         source: props.source,
+-        target: props.target
++        target: props.target,
++        interactionId: props.harkInteractionId,
++        credential: props.harkInteractionCredential,
++        deviceId: props.harkInteractionDeviceId,
++        deliveryId: props.harkInteractionDeliveryId
+       )
+     ) {
+       if let label = props.label {
 diff --git a/ios/Widgets/WidgetLiveActivity.swift b/ios/Widgets/WidgetLiveActivity.swift
-index 3e192e10b9bc6d76f0f27cc268fbbf8e48a4b870..55a89a004107b77d76e87b3f3ae26ae911434deb 100644
+index 3e192e10b9bc6d76f0f27cc268fbbf8e48a4b870..10f9500c6ed57a0e5d71323b76d3ec3a551f6477 100644
 --- a/ios/Widgets/WidgetLiveActivity.swift
 +++ b/ios/Widgets/WidgetLiveActivity.swift
-@@ -7,3 +7,17 @@ struct LiveActivityAttributes: ActivityAttributes {
+@@ -4,6 +4,29 @@ import ExpoModulesCore
+ import ActivityKit
+
+ struct LiveActivityAttributes: ActivityAttributes {
 +  var tokenRegistrationURL: String?
 +  var tokenRegistrationToken: String?
 +  var deliveryId: String?
++  var harkInteractionId: String?
++  var harkInteractionCredential: String?
++  var harkInteractionDeviceId: String?
 +
 +  init(
 +    tokenRegistrationURL: String? = nil,
 +    tokenRegistrationToken: String? = nil,
-+    deliveryId: String? = nil
++    deliveryId: String? = nil,
++    harkInteractionId: String? = nil,
++    harkInteractionCredential: String? = nil,
++    harkInteractionDeviceId: String? = nil
 +  ) {
 +    self.tokenRegistrationURL = tokenRegistrationURL
 +    self.tokenRegistrationToken = tokenRegistrationToken
 +    self.deliveryId = deliveryId
++    self.harkInteractionId = harkInteractionId
++    self.harkInteractionCredential = harkInteractionCredential
++    self.harkInteractionDeviceId = harkInteractionDeviceId
 +  }
 +
    public struct ContentState: Codable, Hashable {
      var name: String
      var props: String
+@@ -20,6 +43,15 @@ public struct WidgetLiveActivity: Widget {
+     return getLiveActivityEnvironment(environment: env)
+   }
+
++  func interactionEnvironment(_ context: ActivityViewContext<LiveActivityAttributes>) -> [String: Any] {
++    var result = environment
++    result["harkInteractionId"] = context.attributes.harkInteractionId
++    result["harkInteractionCredential"] = context.attributes.harkInteractionCredential
++    result["harkInteractionDeviceId"] = context.attributes.harkInteractionDeviceId
++    result["harkInteractionDeliveryId"] = context.attributes.deliveryId
++    return result
++  }
++
+   public init() {}
+
+   public var body: some WidgetConfiguration {
+@@ -27,14 +59,14 @@ public struct WidgetLiveActivity: Widget {
+       let nodes = getLiveActivityNodes(
+         forName: context.state.name,
+         props: context.state.props,
+-        environment: environment
++        environment: interactionEnvironment(context)
+       )
+       LiveActivityBannerView(context: context, nodes: nodes)
+     } dynamicIsland: { context in
+       let nodes = getLiveActivityNodes(
+         forName: context.state.name,
+         props: context.state.props,
+-        environment: environment
++        environment: interactionEnvironment(context)
+       )
+       return DynamicIsland {
+         DynamicIslandExpandedRegion(.center) {

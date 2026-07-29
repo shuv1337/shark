@@ -6,6 +6,7 @@ process.env.DATABASE_URL = ":memory:";
 const authState = vi.hoisted(() => ({ userId: "user_1" as string | null }));
 const sent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 const tracked = vi.hoisted(() => [] as string[]);
+const liveActivityPushes = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 const billingState = vi.hoisted(() => ({
   pro: true,
   servicePerMinute: 10_000,
@@ -72,6 +73,18 @@ vi.mock("expo-server-sdk", () => {
   return { Expo, default: Expo };
 });
 
+vi.mock("../lib/apns", () => ({
+  isInvalidApnsTokenReason: () => false,
+  sendLiveActivityPush: async (
+    token: string,
+    environment: string,
+    input: Record<string, unknown>,
+  ) => {
+    liveActivityPushes.push({ token, environment, input });
+    return { status: 200, apnsId: "apns-id", reason: null, accepted: true };
+  },
+}));
+
 afterEach(() => {
   authState.userId = "user_1";
   billingState.pro = true;
@@ -80,12 +93,15 @@ afterEach(() => {
   billingState.allowance = true;
   billingState.acceptPush = true;
   tracked.length = 0;
+  liveActivityPushes.length = 0;
 });
 
 let app: typeof import("../app")["app"];
 let db: typeof import("../db")["db"];
 let schema: typeof import("../db/schema");
 let hashApiToken: typeof import("../lib/token")["hashApiToken"];
+let encryptLiveActivityToken: typeof import("../lib/token")["encryptLiveActivityToken"];
+let createLiveActivityInteractionCredential: typeof import("../lib/live-activity-interaction")["createLiveActivityInteractionCredential"];
 
 const SECRET = `hark_${"a".repeat(43)}`;
 const READ_SECRET = `hark_${"b".repeat(43)}`;
@@ -96,7 +112,8 @@ beforeAll(async () => {
   ({ app } = await import("../app"));
   ({ db } = await import("../db"));
   schema = await import("../db/schema");
-  ({ hashApiToken } = await import("../lib/token"));
+  ({ hashApiToken, encryptLiveActivityToken } = await import("../lib/token"));
+  ({ createLiveActivityInteractionCredential } = await import("../lib/live-activity-interaction"));
   const { runMigrations } = await import("../db/migrate");
   runMigrations();
 
@@ -126,6 +143,10 @@ beforeAll(async () => {
       expoPushToken: "ExponentPushToken[a]",
       platform: "ios",
       active: true,
+      liveActivityPushToStartTokenCiphertext: encryptLiveActivityToken("ab".repeat(32)),
+      liveActivityTokenEnvironment: "sandbox",
+      liveActivitySchemaVersion: 1,
+      liveActivityInteractionVersion: 1,
       createdAt: now,
       lastSeenAt: now,
     },
@@ -135,6 +156,10 @@ beforeAll(async () => {
       expoPushToken: "ExponentPushToken[b]",
       platform: "ios",
       active: true,
+      liveActivityPushToStartTokenCiphertext: encryptLiveActivityToken("cd".repeat(32)),
+      liveActivityTokenEnvironment: "sandbox",
+      liveActivitySchemaVersion: 1,
+      liveActivityInteractionVersion: 1,
       createdAt: now,
       lastSeenAt: now,
     },
@@ -503,6 +528,123 @@ describe("interactions", () => {
       data: { actionDigest: expect.stringMatching(/^[a-f0-9]{64}$/) },
     });
     expect(tracked).toHaveLength(1);
+  });
+
+  it("creates and resolves a device-bound interactive Live Activity", async () => {
+    sent.length = 0;
+    liveActivityPushes.length = 0;
+    const response = await createInteraction({
+      title: "Approval needed",
+      prompt: "Send the prepared release email?",
+      kind: "approval",
+      presentation: "live_activity",
+      primaryLabel: "Send",
+      secondaryLabel: "Deny",
+      expiresInSeconds: 900,
+    });
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as {
+      accepted: number;
+      liveActivityId: string;
+      interaction: { id: string; actionDigest: string; presentation: string };
+    };
+    expect(body).toMatchObject({
+      accepted: 2,
+      interaction: {
+        presentation: "live_activity",
+        primaryLabel: "Send",
+        secondaryLabel: "Deny",
+      },
+    });
+    expect(sent).toHaveLength(0);
+    expect(liveActivityPushes).toHaveLength(2);
+
+    const { eq } = await import("drizzle-orm");
+    const [activity] = await db
+      .select()
+      .from(schema.liveActivity)
+      .where(eq(schema.liveActivity.id, body.liveActivityId));
+    expect(activity).toBeDefined();
+    expect(JSON.stringify(activity?.props)).not.toContain("credential");
+    const sessionActivities = (await (await app.request("/api/activities")).json()) as {
+      activities: Array<{ id: string }>;
+    };
+    expect(sessionActivities.activities.some((item) => item.id === body.liveActivityId)).toBe(
+      false,
+    );
+    const deliveries = await db
+      .select()
+      .from(schema.liveActivityDelivery)
+      .where(eq(schema.liveActivityDelivery.activityId, body.liveActivityId));
+    expect(deliveries).toHaveLength(2);
+    expect(deliveries.every((delivery) => delivery.purpose === "interaction")).toBe(true);
+
+    const firstDelivery = deliveries.find((delivery) => delivery.deviceId === "dev_1");
+    expect(firstDelivery).toBeDefined();
+    const attributes = (
+      liveActivityPushes[0]?.input as { attributes?: Record<string, unknown> } | undefined
+    )?.attributes;
+    expect(attributes).toMatchObject({
+      harkInteractionId: body.interaction.id,
+      harkInteractionDeviceId: expect.any(String),
+      harkInteractionCredential: expect.stringMatching(/^[a-zA-Z0-9_-]{43}$/),
+    });
+    expect(
+      JSON.stringify((liveActivityPushes[0]?.input as { props?: unknown })?.props),
+    ).not.toContain("credential");
+
+    const [interactionRow] = await db
+      .select()
+      .from(schema.interaction)
+      .where(eq(schema.interaction.id, body.interaction.id));
+    const credential = createLiveActivityInteractionCredential({
+      interactionId: body.interaction.id,
+      deliveryId: firstDelivery?.id ?? "",
+      deviceId: "dev_1",
+      actionDigest: body.interaction.actionDigest,
+      expiresAt: interactionRow?.expiresAt ?? new Date(0),
+    });
+    const wrongDevice = await app.request(
+      `/api/live-activity-interactions/${body.interaction.id}/respond`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "approve",
+          credential,
+          deliveryId: firstDelivery?.id,
+          deviceId: "dev_2",
+        }),
+      },
+    );
+    expect(wrongDevice.status).toBe(404);
+
+    const answer = () =>
+      app.request(`/api/live-activity-interactions/${body.interaction.id}/respond`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "approve",
+          credential,
+          deliveryId: firstDelivery?.id,
+          deviceId: "dev_1",
+        }),
+      });
+    const answered = await answer();
+    expect(answered.status).toBe(200);
+    expect(await answered.json()).toMatchObject({ ok: true, status: "approved" });
+    expect(await (await answer()).json()).toMatchObject({
+      ok: true,
+      status: "approved",
+      idempotent: true,
+    });
+    await vi.waitFor(async () => {
+      const [resolved] = await db
+        .select()
+        .from(schema.liveActivity)
+        .where(eq(schema.liveActivity.id, body.liveActivityId));
+      expect(resolved?.status).toBe("ended");
+    });
   });
 
   it("is idempotent per requester token and rejects changed payloads", async () => {
@@ -952,8 +1094,11 @@ describe("agent notifications", () => {
 
   it("threads notifications per sender name and enforces the shared per-minute budget", async () => {
     await db.delete(schema.agentNotification);
-    await db.delete(schema.interaction);
+    await db.delete(schema.liveActivityDeliveryAttempt);
+    await db.delete(schema.liveActivityDelivery);
     await db.delete(schema.liveActivityOperation);
+    await db.delete(schema.liveActivity);
+    await db.delete(schema.interaction);
 
     sent.length = 0;
     const first = await createNotification({ body: "One", title: "Deploy bot" });

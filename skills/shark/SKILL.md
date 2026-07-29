@@ -143,6 +143,11 @@ harkctl notify ask "Run the migration?" \
 
 harkctl notify ask "What should the release note say?" \
   --text --title "Release bot" --wait
+
+harkctl notify ask "Send the prepared release email?" \
+  --approval --live-activity \
+  --primary-label Send --secondary-label Deny \
+  --wait --timeout 15m
 ```
 
 If approval needs external context, keep the approved action fixed and delimit the context:
@@ -158,6 +163,10 @@ END UNTRUSTED CONTEXT
 - `--approval` returns approved or denied.
 - `--yes-no` returns yes or no.
 - `--text` returns a short reply.
+- `--live-activity` puts approval or yes/no buttons on the Lock Screen and expanded Dynamic Island
+  on iOS 17+. It does not support `--text`, `--image`, or `--url`, and must expire within eight hours.
+- `--primary-label` and `--secondary-label` change only the visible verbs. The underlying actions,
+  exit codes, and callback values remain approve/deny or yes/no.
 - `--wait` blocks until answered or timed out.
 - `--poll` waits at most 20 seconds for an immediate answer.
 - A timeout does not cancel the prompt. Read `.interaction.id` from the response and resume with
