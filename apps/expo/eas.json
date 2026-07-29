@@ -19,6 +19,7 @@
   "submit": {
     "production": {
       "ios": {
+        "ascAppId": "6795714470",
         "bundleIdentifier": "dev.shuv.shark",
         "language": "en-US",
         "sku": "shark-ios"
