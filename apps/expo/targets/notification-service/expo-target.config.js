@@ -5,7 +5,4 @@ module.exports = {
   bundleIdentifier: "dev.shuv.shark.notification-service",
   deploymentTarget: "16.4",
   frameworks: ["UserNotifications", "Intents"],
-  entitlements: {
-    "com.apple.developer.usernotifications.communication": true,
-  },
 };
