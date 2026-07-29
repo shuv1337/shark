@@ -2,12 +2,16 @@ import { expoClient } from "@better-auth/expo/client";
 import type { BetterAuthClientPlugin } from "better-auth";
 import { createAuthClient } from "better-auth/react";
 import * as SecureStore from "expo-secure-store";
+import { resolveApiUrl } from "./api-url";
 
 /**
  * In development point this at your machine's LAN address so the device or
  * simulator can reach the Hono API, e.g. EXPO_PUBLIC_API_URL=http://192.168.1.20:8787
  */
-export const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:8787";
+export const API_URL = resolveApiUrl(
+  process.env.EXPO_PUBLIC_API_URL,
+  typeof __DEV__ !== "undefined" && __DEV__,
+);
 
 // The cast works around a known @better-auth/expo type mismatch against
 // better-auth's BetterAuthClientPlugin (see better-auth #2031); the plugin is
