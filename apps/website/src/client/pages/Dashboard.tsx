@@ -11,6 +11,7 @@ import { Link, useNavigate } from "react-router";
 import { BrandWordmark } from "../components/BrandWordmark";
 import { useConfirm } from "../components/ConfirmDialog";
 import { CopyField } from "../components/CopyField";
+import { InboxPanel } from "../components/InboxPanel";
 import { api } from "../lib/api";
 import { signOut, useSession } from "../lib/auth";
 
@@ -205,7 +206,9 @@ export function Dashboard() {
       </header>
 
       <main className="mx-auto w-full max-w-3xl px-6 py-10">
-        <div className="mb-8 flex items-end justify-between gap-4">
+        <InboxPanel />
+
+        <div className="mt-16 mb-8 flex items-end justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold">Services</h1>
             <p className="mt-1 text-sm text-ink-subtle">

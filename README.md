@@ -43,7 +43,9 @@ Live Activities, and create webhook services for external systems.
 
 - Sends rich iOS notifications from a simple webhook.
 - Gives each service its own name, avatar, destination URL, and secret endpoint.
-- Tracks delivery attempts and registered devices in a web dashboard.
+- Keeps complete notification, interaction, and Live Activity history in synchronized iOS and web
+  inboxes.
+- Tracks delivery attempts and registered devices in the web dashboard.
 - Supports approvals and text replies for agent workflows.
 - Shows stateful task progress with Live Activities on the Lock Screen and Dynamic Island.
 - Supports multiple devices and targeted delivery in the fixed self-hosted mode.

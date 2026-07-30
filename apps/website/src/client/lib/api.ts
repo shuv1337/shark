@@ -6,6 +6,9 @@ import type {
   DeviceAuthorizationRequestDto,
   DeviceDto,
   EventDto,
+  InboxDetailDto,
+  InboxFilter,
+  InboxPageDto,
   LiveActivityDto,
   ServiceCreatedResponse,
   ServiceCreateInput,
@@ -77,4 +80,13 @@ export const api = {
   removeDevice: (id: string) => request<{ ok: true }>(`/api/devices/${id}`, { method: "DELETE" }),
   listEvents: (limit = 50) => request<{ events: EventDto[] }>(`/api/events?limit=${limit}`),
   listLiveActivities: () => request<{ activities: LiveActivityDto[] }>("/api/activities"),
+  listInbox: (filter: InboxFilter = "all", cursor?: string | null, limit = 30) => {
+    const params = new URLSearchParams({ filter, limit: String(limit) });
+    if (cursor) params.set("cursor", cursor);
+    return request<InboxPageDto>(`/api/inbox?${params}`);
+  },
+  getInboxItem: (id: string) => request<InboxDetailDto>(`/api/inbox/${encodeURIComponent(id)}`),
+  markInboxItemRead: (id: string) =>
+    request<{ ok: true }>(`/api/inbox/${encodeURIComponent(id)}/read`, { method: "POST" }),
+  markAllInboxRead: () => request<{ ok: true }>("/api/inbox/read-all", { method: "POST" }),
 };
