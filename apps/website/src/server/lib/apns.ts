@@ -129,23 +129,27 @@ export function isInvalidApnsTokenReason(reason: string | null): boolean {
   );
 }
 
-let cachedJwt: { value: string; issuedAt: number } | null = null;
+const cachedJwts = new Map<string, { value: string; issuedAt: number }>();
 
-function providerConfig(): ApnsProviderConfig | null {
-  if (!env.APNS_KEY_ID || !env.APPLE_TEAM_ID || !env.APNS_PRIVATE_KEY) return null;
+function providerConfig(environment: "sandbox" | "production"): ApnsProviderConfig | null {
+  const keyId = environment === "sandbox" ? env.APNS_SANDBOX_KEY_ID : env.APNS_KEY_ID;
+  const privateKey =
+    environment === "sandbox" ? env.APNS_SANDBOX_PRIVATE_KEY : env.APNS_PRIVATE_KEY;
+  if (!keyId || !env.APPLE_TEAM_ID || !privateKey) return null;
   return {
-    keyId: env.APNS_KEY_ID,
+    keyId,
     teamId: env.APPLE_TEAM_ID,
-    privateKey: env.APNS_PRIVATE_KEY,
+    privateKey,
     bundleId: env.APNS_BUNDLE_ID,
   };
 }
 
 function providerJwt(config: ApnsProviderConfig): string {
   const now = Math.floor(Date.now() / 1000);
-  if (cachedJwt && now - cachedJwt.issuedAt < JWT_TTL_SECONDS) return cachedJwt.value;
+  const cached = cachedJwts.get(config.keyId);
+  if (cached && now - cached.issuedAt < JWT_TTL_SECONDS) return cached.value;
   const value = createApnsProviderJwt(config, now);
-  cachedJwt = { value, issuedAt: now };
+  cachedJwts.set(config.keyId, { value, issuedAt: now });
   return value;
 }
 
@@ -155,7 +159,7 @@ export async function sendLiveActivityPush(
   input: LiveActivityPayloadInput,
   priority: 5 | 10,
 ): Promise<ApnsResult> {
-  const config = providerConfig();
+  const config = providerConfig(tokenEnvironment);
   if (!config) {
     return { status: 0, apnsId: null, reason: "ProviderNotConfigured", accepted: false };
   }
@@ -174,9 +178,8 @@ export async function sendLiveActivityPush(
   }
 
   return new Promise<ApnsResult>((resolve) => {
-    // APNs signing keys work in both environments. Route each token to the
-    // environment recorded by its signed app so development and App Store
-    // devices can coexist without a server-wide mode switch.
+    // Topic-specific APNs keys can be environment-scoped. Route both the
+    // endpoint and provider credential from the signed device environment.
     const client = connect(apnsHost(tokenEnvironment));
     let request: ReturnType<typeof client.request> | null = null;
     let settled = false;
