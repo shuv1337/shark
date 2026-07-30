@@ -55,7 +55,9 @@ case "$1 $2" in
           {id:"apple-private",label:"APPLE_SIGN_IN_PRIVATE_KEY_BASE64",type:"CONCEALED",value:"QUJDRA=="},
           {id:"expo",label:"EXPO_ACCESS_TOKEN",type:"CONCEALED",value:"expo-token_123"},
           {id:"apns-key",label:"APNS_KEY_ID",type:"CONCEALED",value:"APNSKEY001"},
-          {id:"apns-private",label:"APNS_PRIVATE_KEY_BASE64",type:"CONCEALED",value:"RUZHSA=="}
+          {id:"apns-private",label:"APNS_PRIVATE_KEY_BASE64",type:"CONCEALED",value:"RUZHSA=="},
+          {id:"apns-dev-key",label:"APNS_SANDBOX_KEY_ID",type:"CONCEALED",value:"APNSDEV001"},
+          {id:"apns-dev-private",label:"APNS_SANDBOX_PRIVATE_KEY_BASE64",type:"CONCEALED",value:"REVWR0g="}
         ]
       }'
     elif [[ "$token" == "backup-test-token" && "$3" == "backup-item-id" ]]; then
@@ -138,6 +140,8 @@ sha256_file() {
 [[ "$(file_mode "$deploy_root/.env.new")" == "600" ]]
 grep -qx 'APP_URL=https://shark.shuv.dev' "$deploy_root/.env.new"
 grep -qx 'APPLE_SIGN_IN_PRIVATE_KEY=QUJDRA==' "$deploy_root/.env.new"
+grep -qx 'APNS_SANDBOX_KEY_ID=APNSDEV001' "$deploy_root/.env.new"
+grep -qx 'APNS_SANDBOX_PRIVATE_KEY=REVWR0g=' "$deploy_root/.env.new"
 if grep -Eq 'app-test-token|backup-test-token' "$deploy_root/.env.new"; then
   echo "1Password service-account credential leaked into the runtime environment." >&2
   exit 1

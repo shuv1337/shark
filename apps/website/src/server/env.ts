@@ -39,6 +39,9 @@ export const envSchema = z.object({
   APNS_KEY_ID: optionalString,
   APPLE_TEAM_ID: optionalString,
   APNS_PRIVATE_KEY: optionalString,
+  /** Environment-scoped APNs credentials used by development-signed device builds. */
+  APNS_SANDBOX_KEY_ID: optionalString,
+  APNS_SANDBOX_PRIVATE_KEY: optionalString,
   APNS_BUNDLE_ID: z.string().min(1).default("dev.shuv.shark"),
   APNS_ENVIRONMENT: z.enum(["sandbox", "production"]).default("sandbox"),
   /**
@@ -95,6 +98,12 @@ export function runtimeEnvIssues(runtime: RuntimeEnv): string[] {
   if (!runtime.APNS_KEY_ID || !runtime.APPLE_TEAM_ID || !runtime.APNS_PRIVATE_KEY) {
     issues.push("APNS_KEY_ID / APPLE_TEAM_ID / APNS_PRIVATE_KEY are not all set.");
   }
+  if (
+    runtime.NODE_ENV === "production" &&
+    (!runtime.APNS_SANDBOX_KEY_ID || !runtime.APNS_SANDBOX_PRIVATE_KEY)
+  ) {
+    issues.push("APNS_SANDBOX_KEY_ID / APNS_SANDBOX_PRIVATE_KEY are not all set.");
+  }
   if (runtime.NODE_ENV === "production") {
     if (runtime.DEPLOYMENT_MODE !== "self_hosted") {
       issues.push("Production requires DEPLOYMENT_MODE=self_hosted.");
@@ -128,15 +137,21 @@ export function assertRuntimeEnv(runtime: RuntimeEnv = env): void {
     runtime.APPLE_TEAM_ID,
     runtime.APNS_PRIVATE_KEY,
   ]);
+  const partialSandboxApns = hasPartialGroup([
+    runtime.APNS_SANDBOX_KEY_ID,
+    runtime.APNS_SANDBOX_PRIVATE_KEY,
+  ]);
   if (
     runtime.AUTUMN_API_KEY ||
     partialApple ||
     partialApns ||
+    partialSandboxApns ||
     (runtime.NODE_ENV === "production" && issues.length > 0)
   ) {
     const partialIssues = [
       ...(partialApple ? ["Partially configured Sign in with Apple credential group."] : []),
       ...(partialApns ? ["Partially configured APNs credential group."] : []),
+      ...(partialSandboxApns ? ["Partially configured sandbox APNs credential group."] : []),
     ];
     throw new Error(
       `Invalid SHark runtime configuration:\n- ${[...new Set([...issues, ...partialIssues])].join("\n- ")}`,

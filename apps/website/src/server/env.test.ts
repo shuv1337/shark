@@ -15,6 +15,8 @@ const production = {
   EXPO_ACCESS_TOKEN: "expo-token",
   APNS_KEY_ID: "APNS_KEY",
   APNS_PRIVATE_KEY: "private-key",
+  APNS_SANDBOX_KEY_ID: "APNS_DEV",
+  APNS_SANDBOX_PRIVATE_KEY: "sandbox-private-key",
   APNS_BUNDLE_ID: "dev.shuv.shark",
   APNS_ENVIRONMENT: "production",
 };
@@ -55,6 +57,7 @@ describe("SHark runtime environment", () => {
     expect(issues.some((issue) => issue.startsWith("APPLE_SIGN_IN_SERVICE_ID"))).toBe(true);
     expect(issues).toContain("EXPO_ACCESS_TOKEN is not set.");
     expect(issues).toContain("APNS_KEY_ID / APPLE_TEAM_ID / APNS_PRIVATE_KEY are not all set.");
+    expect(issues).toContain("APNS_SANDBOX_KEY_ID / APNS_SANDBOX_PRIVATE_KEY are not all set.");
   });
 
   it("rejects a non-empty legacy Autumn key", () => {
@@ -77,5 +80,8 @@ describe("SHark runtime environment", () => {
         }),
       ),
     ).toThrow("Partially configured APNs credential group.");
+    expect(() => assertRuntimeEnv(parseEnv({ APNS_SANDBOX_KEY_ID: "SANDBOX" }))).toThrow(
+      "Partially configured sandbox APNs credential group.",
+    );
   });
 });
