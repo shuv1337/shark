@@ -171,7 +171,12 @@ export async function registerInteractionCategories(): Promise<void> {
         identifier: HARK_REPLY_ACTION_ID,
         buttonTitle: "Reply",
         textInput: { submitButtonTitle: "Send", placeholder: "Reply" },
-        options: opensAuthenticatedApp,
+        // Inline replies must remain in the notification UI. Foreground and
+        // authentication flags prevent the lock-screen text field from appearing.
+        options: {
+          isAuthenticationRequired: false,
+          opensAppToForeground: false,
+        },
       },
     ]),
     Notifications.setNotificationCategoryAsync(HARK_YES_NO_CATEGORY_ID, [

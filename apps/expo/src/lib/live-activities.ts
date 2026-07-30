@@ -1,4 +1,5 @@
 import { LIVE_ACTIVITY_SCHEMA_VERSION } from "@hark/contracts";
+import * as Application from "expo-application";
 import * as SecureStore from "expo-secure-store";
 import { addPushToStartTokenListener, type LiveActivity } from "expo-widgets";
 import { AppState, Platform } from "react-native";
@@ -13,7 +14,14 @@ let pushToStartSubscription: Subscription | null = null;
 let instanceSubscriptions: Subscription[] = [];
 let appStateSubscription: Subscription | null = null;
 
-function environment(): "sandbox" | "production" {
+async function environment(): Promise<"sandbox" | "production"> {
+  try {
+    const signedEnvironment = await Application.getIosPushNotificationServiceEnvironmentAsync();
+    if (signedEnvironment === "development") return "sandbox";
+    if (signedEnvironment === "production") return "production";
+  } catch {
+    // Fall through for platforms and test runtimes where the native API is unavailable.
+  }
   const configured = process.env.EXPO_PUBLIC_APNS_ENVIRONMENT;
   if (configured === "production" || configured === "sandbox") return configured;
   return __DEV__ ? "sandbox" : "production";
@@ -30,12 +38,13 @@ async function uploadUpdateToken(
 ): Promise<void> {
   const id = await deviceId(knownDeviceId);
   if (!id) return;
+  const tokenEnvironment = await environment();
   await api
     .registerLiveActivityUpdateToken({
       deviceId: id,
       updateToken,
       ...(nativeActivityId ? { nativeActivityId } : {}),
-      environment: environment(),
+      environment: tokenEnvironment,
       schemaVersion: LIVE_ACTIVITY_SCHEMA_VERSION,
     })
     .catch(() => undefined);
@@ -81,11 +90,12 @@ function observePushToStart(knownDeviceId?: string): void {
       void (async () => {
         const id = await deviceId(knownDeviceId);
         if (!id) return;
+        const tokenEnvironment = await environment();
         await api
           .registerLiveActivityPushToStartToken({
             deviceId: id,
             pushToStartToken: event.activityPushToStartToken,
-            environment: environment(),
+            environment: tokenEnvironment,
             schemaVersion: LIVE_ACTIVITY_SCHEMA_VERSION,
           })
           .catch(() => undefined);

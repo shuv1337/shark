@@ -7,8 +7,12 @@ const state = vi.hoisted(() => ({
   uploads: [] as Array<Record<string, unknown>>,
   appStateListener: null as ((state: string) => void) | null,
   appStateRemove: vi.fn(),
+  pushEnvironment: "development" as "development" | "production" | null,
 }));
 
+vi.mock("expo-application", () => ({
+  getIosPushNotificationServiceEnvironmentAsync: async () => state.pushEnvironment,
+}));
 vi.mock("expo-secure-store", () => ({ getItemAsync: async () => "dev_1" }));
 vi.mock("expo-widgets", () => ({ addPushToStartTokenListener: () => ({ remove: vi.fn() }) }));
 vi.mock("react-native", () => ({
@@ -52,6 +56,7 @@ afterEach(() => {
   state.uploads.length = 0;
   state.appStateListener = null;
   state.appStateRemove.mockClear();
+  state.pushEnvironment = "development";
 });
 
 describe("Live Activity token sync", () => {
@@ -62,8 +67,28 @@ describe("Live Activity token sync", () => {
     ];
     await syncLiveActivityTokens("dev_1");
     expect(state.uploads).toEqual([
-      expect.objectContaining({ nativeActivityId: "native-a", updateToken: "aa".repeat(32) }),
-      expect.objectContaining({ nativeActivityId: "native-b", updateToken: "bb".repeat(32) }),
+      expect.objectContaining({
+        environment: "sandbox",
+        nativeActivityId: "native-a",
+        updateToken: "aa".repeat(32),
+      }),
+      expect.objectContaining({
+        environment: "sandbox",
+        nativeActivityId: "native-b",
+        updateToken: "bb".repeat(32),
+      }),
+    ]);
+  });
+
+  it("uses the signed production entitlement instead of the build-mode fallback", async () => {
+    state.pushEnvironment = "production";
+    state.instances = [instance("native-production", "ab".repeat(32))];
+    await syncLiveActivityTokens("dev_1");
+    expect(state.uploads).toEqual([
+      expect.objectContaining({
+        environment: "production",
+        nativeActivityId: "native-production",
+      }),
     ]);
   });
 

@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
+  categories: [] as Array<{
+    actions: Array<Record<string, unknown>>;
+    identifier: string;
+  }>,
   cookie: "session" as string | undefined,
   store: new Map<string, string>(),
   submissions: [] as Array<{ id: string; input: Record<string, unknown> }>,
@@ -21,7 +25,12 @@ vi.mock("expo-secure-store", () => ({
 
 vi.mock("expo-notifications", () => ({
   DEFAULT_ACTION_IDENTIFIER: "expo.modules.notifications.actions.DEFAULT",
-  setNotificationCategoryAsync: vi.fn(),
+  setNotificationCategoryAsync: async (
+    identifier: string,
+    actions: Array<Record<string, unknown>>,
+  ) => {
+    state.categories.push({ identifier, actions });
+  },
 }));
 
 vi.mock("react-native", () => ({ Linking: { openURL: vi.fn() } }));
@@ -53,6 +62,7 @@ import {
   DEVICE_ID_KEY,
   flushInteractionResponses,
   handleNotificationResponse,
+  registerInteractionCategories,
 } from "./interactions";
 
 const QUEUE_KEY = "hark.interaction.responseQueue.v1";
@@ -82,10 +92,28 @@ function credentialResponse(interactionId: string) {
 
 afterEach(async () => {
   state.cookie = "session";
+  state.categories.length = 0;
   state.submit = undefined;
   state.submissions.length = 0;
   await clearInteractionResponses();
   state.store.clear();
+});
+
+describe("interaction notification categories", () => {
+  it("keeps text replies inline and available from the lock screen", async () => {
+    await registerInteractionCategories();
+    const reply = state.categories.find(({ identifier }) => identifier === "HARK_REPLY_V1");
+    expect(reply?.actions).toEqual([
+      expect.objectContaining({
+        identifier: "HARK_REPLY",
+        textInput: { submitButtonTitle: "Send", placeholder: "Reply" },
+        options: {
+          isAuthenticationRequired: false,
+          opensAppToForeground: false,
+        },
+      }),
+    ]);
+  });
 });
 
 describe("interaction response queue", () => {
