@@ -1,7 +1,7 @@
 import { copyFileSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
-import { databaseContractIssue } from "../src/server/db/contract";
+import { databaseBackupContractIssue } from "../src/server/db/contract";
 
 const source = resolve(process.env.DATABASE_URL ?? "/data/hark.sqlite");
 const destination = resolve(
@@ -24,7 +24,7 @@ try {
   const integrity = backup.pragma("integrity_check", { simple: true });
   if (integrity !== "ok") throw new Error("Backup failed integrity_check.");
 
-  const contractIssue = databaseContractIssue(backup);
+  const contractIssue = databaseBackupContractIssue(backup);
   if (contractIssue) throw new Error(`Backup contract check failed: ${contractIssue}`);
 } catch (error) {
   backup.close();
