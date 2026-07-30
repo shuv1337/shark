@@ -133,6 +133,11 @@ logs. Unchecked release evidence keeps the goal active.
   0.3.0 was packed from that commit, installed from the retained artifact with SHA-256
   `3d36c5871cb5375fdcde804642e0b2da426d28b7250038dbe4959106fc1c5e7e`, and passed all 29 CLI
   tests.
+- 2026-07-30: the canonical fork CLI was renamed and packed as `sharkctl` 0.4.0. The reviewed
+  artifact was installed globally with SHA-256
+  `bb317e065ab4d93c5bf2d587fc597d4f214994fe3800578db28d07690a563be1` and passed all 31 CLI
+  tests. The globally installed `shark` skill hash-matches the 1.3.0-shark.1 repository source at
+  SHA-256 `ecd611c0f380bc151573933618b44709421f53a65b4be3e026cbfb7227217781`.
 - 2026-07-27: a tracked-history scan found no private-key blocks or common GitHub, Stripe, or Expo
   token forms. No `.p8`, `.p12`, provisioning profile, `.env`, or production environment file
   exists in the worktree; parser strings and runtime variable names were classified as code, not

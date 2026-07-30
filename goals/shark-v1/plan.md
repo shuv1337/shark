@@ -22,7 +22,7 @@ Verification: prove TLS and auth boundaries, exact running digest, persistence, 
 
 ## 4. Complete operator workflow
 
-Complete Phases 6–7: adapt `harkctl`, the installable skill, and product/operator documentation, then execute the complete web, auth, notification, interaction, Live Activity, accessibility, CLI, deletion, logging, and operations acceptance matrix.
+Complete Phases 6–7: adapt `sharkctl`, the installable skill, and product/operator documentation, then execute the complete web, auth, notification, interaction, Live Activity, accessibility, CLI, deletion, logging, and operations acceptance matrix.
 
 Verification: retain command output and artifact identifiers sufficient to prove each checklist item without retaining secrets or user content.
 

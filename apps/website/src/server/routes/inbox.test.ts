@@ -121,7 +121,7 @@ beforeEach(async () => {
     choices: ["approve", "deny"],
     actionDigest: "c".repeat(64),
     acceptedCount: 1,
-    expiresAt: new Date(now.getTime() + 60_000),
+    expiresAt: new Date(Date.now() + 10 * 60_000),
     createdAt: new Date(now.getTime() + 3_000),
   });
 });
@@ -183,7 +183,7 @@ describe("durable inbox", () => {
   });
 
   it("preserves send-time source metadata after rename and deletion", async () => {
-    const now = new Date("2026-07-30T12:01:00.000Z");
+    const now = new Date();
     await db.insert(schema.interaction).values({
       id: "int_service_pending",
       userId: "inbox_user",

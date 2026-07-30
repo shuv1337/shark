@@ -158,7 +158,7 @@ export async function loadConfig(env = process.env) {
   } catch (error) {
     if (error?.code === "ENOENT") {
       throw new RequestError(
-        `No token configured. Run harkctl auth login, set HARK_TOKEN, or create ${path}.`,
+        `No token configured. Run sharkctl auth login, set HARK_TOKEN, or create ${path}.`,
         401,
       );
     }
@@ -277,7 +277,7 @@ async function login(options, env, runtime) {
   const apiUrl = env.HARK_API_URL ?? DEFAULT_API_URL;
   const expiresInSeconds = parseDuration(options["expires-in"] ?? "90d");
   const timeoutSeconds = parseDuration(options.timeout ?? "10m");
-  const clientName = options["client-name"] ?? "harkctl";
+  const clientName = options["client-name"] ?? "sharkctl";
   const scopes = options.scope.length > 0 ? [...new Set(options.scope)] : DEFAULT_SCOPES;
   const started = await publicRequest(apiUrl, "/api/device-authorization/start", {
     method: "POST",
@@ -379,41 +379,41 @@ async function waitForInteraction(config, id, timeoutSeconds, runtime) {
 
 function help() {
   return `Usage:
-  harkctl auth login [--client-name <name>] [--scope <scope>] [--expires-in <duration>]
+  sharkctl auth login [--client-name <name>] [--scope <scope>] [--expires-in <duration>]
                      [--timeout <duration>] [--open|--no-open] [--json]
-  harkctl auth logout
-  harkctl auth status
-  harkctl notify <body> [--title <name>] [--image <url>] [--url <url>] [--device <id>]
+  sharkctl auth logout
+  sharkctl auth status
+  sharkctl notify <body> [--title <name>] [--image <url>] [--url <url>] [--device <id>]
                  [--idempotency-key <key>] [--stdin]
-  harkctl notify ask <prompt> (--approval|--yes-no|--text) [--title <name>] [--image <url>]
+  sharkctl notify ask <prompt> (--approval|--yes-no|--text) [--title <name>] [--image <url>]
                   [--url <url>] [--device <id>] [--expires-in <duration>]
                   [--live-activity [--primary-label <label>] [--secondary-label <label>]]
                   [--idempotency-key <key>] [--stdin] [--wait [--timeout <duration>] | --poll]
-  harkctl interaction get <id>
-  harkctl interaction wait <id> [--timeout <duration>]
-  harkctl activity start --title <title> --status <status> [--progress <0..1>] [--key <key>]
+  sharkctl interaction get <id>
+  sharkctl interaction wait <id> [--timeout <duration>]
+  sharkctl activity start --title <title> --status <status> [--progress <0..1>] [--key <key>]
                          [--style <standard|ring|hero|terminal|steps>]
                          [--accent-color <#RRGGBB>] [--replace]
-  harkctl activity update <id|key> [--status <status>] [--detail <text>] [--progress <0..1>]
+  sharkctl activity update <id|key> [--status <status>] [--detail <text>] [--progress <0..1>]
                             [--style <standard|ring|hero|terminal|steps>]
                             [--if-sequence <n>] [--idempotency-key <key>]
-  harkctl activity end <id|key> [--status <status>] [--dismiss-after <duration>]
+  sharkctl activity end <id|key> [--status <status>] [--dismiss-after <duration>]
                          [--if-sequence <n>] [--idempotency-key <key>]
-  harkctl activity get <id|key>
-  harkctl activity list [--limit <n>]
-  harkctl devices list
-  harkctl services list
-  harkctl services create --title <title> [--image <url>] [--url <url>] [--stdin]
+  sharkctl activity get <id|key>
+  sharkctl activity list [--limit <n>]
+  sharkctl devices list
+  sharkctl services list
+  sharkctl services create --title <title> [--image <url>] [--url <url>] [--stdin]
 
 notify sends a one-shot push; notify ask sends a push that elicits an answer.
 Inside notify, a first positional of exactly "ask" selects the subcommand. Everything
-after a bare "--" is treated as positional, so "harkctl notify -- ask" sends the
+after a bare "--" is treated as positional, so "sharkctl notify -- ask" sends the
 literal body "ask". --wait blocks until the answer or timeout; --poll waits at most
 ${POLL_TIMEOUT_SECONDS} seconds to catch an instant answer. A timed-out poll or wait does
 not end the prompt: it stays answerable on the phone until it expires, and
-harkctl interaction wait <id> resumes waiting at any time.
+sharkctl interaction wait <id> resumes waiting at any time.
 
-Authentication: run harkctl auth login, or set HARK_TOKEN for an advanced manual setup.
+Authentication: run sharkctl auth login, or set HARK_TOKEN for an advanced manual setup.
 Tokens are never accepted as command arguments.`;
 }
 
@@ -725,7 +725,7 @@ export async function execute(argv, env = process.env, overrides = {}) {
     });
     return { body, exitCode: body.accepted === 0 ? 7 : 0 };
   }
-  throw new UsageError("Unknown command. Run harkctl --help.");
+  throw new UsageError("Unknown command. Run sharkctl --help.");
 }
 
 export async function run(argv, env = process.env, overrides = {}) {

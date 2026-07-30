@@ -770,19 +770,19 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
   },
   {
     id: "cli",
-    lead: "`harkctl` wraps the agent API for terminals, scripts, and coding agents: one-shot notifications, questions with answers you can wait on, and Live Activities — no webhook URL required. It needs Node.js 22 or newer.",
+    lead: "`sharkctl` wraps the agent API for terminals, scripts, and coding agents: one-shot notifications, questions with answers you can wait on, and Live Activities — no webhook URL required. It needs Node.js 22 or newer.",
     subsections: [
       {
         id: "cli-install",
         blocks: [
           {
             kind: "p",
-            text: "Run it straight from npm with `npx harkctl`, or install it globally with `npm install -g harkctl`. Signing in uses a browser device-authorization flow — no tokens on the command line, ever.",
+            text: "Run the SHark fork straight from npm with `npx sharkctl`, or install it globally with `npm install -g sharkctl`. The upstream `harkctl` package is not the SHark fork. Signing in uses a browser device-authorization flow — no tokens on the command line, ever.",
           },
           {
             kind: "code",
             language: "bash",
-            code: "npx harkctl auth login",
+            code: "npx sharkctl auth login",
           },
           {
             kind: "steps",
@@ -794,7 +794,11 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
           },
           {
             kind: "p",
-            text: "Each login appears under your dashboard's Services list as an agent connection, with its scopes, creation date, and last use. Revoking it there signs that agent out immediately. `harkctl auth status` shows the active connection; `harkctl auth logout` revokes and removes local credentials.",
+            text: "Each login appears under your dashboard's Services list as an agent connection, with its scopes, creation date, and last use. Revoking it there signs that agent out immediately. `sharkctl auth status` shows the active connection; `sharkctl auth logout` revokes and removes local credentials.",
+          },
+          {
+            kind: "note",
+            text: "`sharkctl` keeps the existing protected `hark` config path and `HARK_*` environment variables so credentials and integrations created before the CLI rename continue to work.",
           },
           {
             kind: "p",
@@ -807,12 +811,12 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
         blocks: [
           {
             kind: "p",
-            text: "`harkctl services create` creates a persistent webhook endpoint for another tool or workflow. Its title, image, and tap URL become defaults, so the sender only needs to POST a `body`. The command prints the credential-bearing `webhookUrl` in its JSON response.",
+            text: "`sharkctl services create` creates a persistent webhook endpoint for another tool or workflow. Its title, image, and tap URL become defaults, so the sender only needs to POST a `body`. The command prints the credential-bearing `webhookUrl` in its JSON response.",
           },
           {
             kind: "code",
             language: "bash",
-            code: `harkctl services create \\
+            code: `sharkctl services create \\
   --title "Release bot" \\
   --image https://example.com/bot.png \\
   --url https://ci.example.com/releases`,
@@ -844,12 +848,12 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
         blocks: [
           {
             kind: "p",
-            text: "`harkctl notify <body>` sends a one-shot push to every active iPhone on your account. Appearance is per call — the title acts as the sender name, and messages with the same title thread together like a service.",
+            text: "`sharkctl notify <body>` sends a one-shot push to every active iPhone on your account. Appearance is per call — the title acts as the sender name, and messages with the same title thread together like a service.",
           },
           {
             kind: "code",
             language: "bash",
-            code: `harkctl notify "Build 48 passed" \\
+            code: `sharkctl notify "Build 48 passed" \\
   --title "CI" \\
   --image https://github.com/github.png \\
   --url https://ci.example.com/builds/48`,
@@ -894,17 +898,17 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
         blocks: [
           {
             kind: "p",
-            text: "`harkctl notify ask <prompt>` sends a push that elicits an answer. Pass exactly one response type: `--approval` (Approve/Deny), `--yes-no` (Yes/No), or `--text` (a short typed reply). The appearance flags from `notify` all apply.",
+            text: "`sharkctl notify ask <prompt>` sends a push that elicits an answer. Pass exactly one response type: `--approval` (Approve/Deny), `--yes-no` (Yes/No), or `--text` (a short typed reply). The appearance flags from `notify` all apply.",
           },
           {
             kind: "code",
             language: "bash",
-            code: `harkctl notify ask "Deploy 8e7fc2a to production?" \\
+            code: `sharkctl notify ask "Deploy 8e7fc2a to production?" \\
   --approval --title "Deploybot" --wait --timeout 15m`,
           },
           {
             kind: "p",
-            text: "`--wait` blocks until the answer arrives or the timeout passes. `--poll` waits at most 20 seconds to catch an instant answer, for the case where someone is already looking at their phone. A timed-out poll or wait does not end the prompt — it stays answerable until it expires (default 15 minutes, `--expires-in` to change), and `harkctl interaction wait <id>` resumes waiting any time.",
+            text: "`--wait` blocks until the answer arrives or the timeout passes. `--poll` waits at most 20 seconds to catch an instant answer, for the case where someone is already looking at their phone. A timed-out poll or wait does not end the prompt — it stays answerable until it expires (default 15 minutes, `--expires-in` to change), and `sharkctl interaction wait <id>` resumes waiting any time.",
           },
           {
             kind: "code",
@@ -933,12 +937,12 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
           {
             kind: "code",
             language: "bash",
-            code: `harkctl activity start --key deploy --replace --style ring \\
+            code: `sharkctl activity start --key deploy --replace --style ring \\
   --title "Deploy #184" --status "Building" --progress 0.1
 
-harkctl activity update deploy --status "Testing" --progress 0.6 --if-sequence 0
+sharkctl activity update deploy --status "Testing" --progress 0.6 --if-sequence 0
 
-harkctl activity end deploy --status "Shipped" --progress 1 --dismiss-after 45s`,
+sharkctl activity end deploy --status "Shipped" --progress 1 --dismiss-after 45s`,
           },
           {
             kind: "bullets",
@@ -971,8 +975,8 @@ harkctl activity end deploy --status "Shipped" --progress 1 --dismiss-after 45s`
           {
             kind: "code",
             language: "bash",
-            code: `if harkctl notify ask "Deploy to production?" --approval --wait --timeout 10m; then
-  ./deploy.sh && harkctl notify "Deployed" --title "Deploybot"
+            code: `if sharkctl notify ask "Deploy to production?" --approval --wait --timeout 10m; then
+  ./deploy.sh && sharkctl notify "Deployed" --title "Deploybot"
 else
   echo "Not approved" >&2
 fi`,

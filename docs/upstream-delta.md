@@ -23,11 +23,12 @@ changes.
   1Password-fed secrets, exact-schema SQLite checkpoint validation, encrypted Restic snapshots,
   and operator promotion with no GitHub VM credential.
 
-## Compatibility names kept intentionally
+## CLI and compatibility names
 
-Do not casually rename `harkctl`, `HARK_*`, `@hark/*`, the `hark` config directory, SQLite names,
-token prefixes and hash-domain strings, notification category IDs, `HarkAgentActivity`, webhook
-routes, DTOs, migrations, or `Hark-Callbacks/1`. These are protocol or persistence identities, not
+`sharkctl` is the canonical fork CLI and package. Keep `HARK_*`, `@hark/*`, the `hark` config
+directory, SQLite names, token prefixes and hash-domain strings, notification category IDs,
+`HarkAgentActivity`, webhook routes, DTOs, migrations, and `Hark-Callbacks/1` stable unless a
+separate migration explicitly changes them. These are protocol or persistence identities, not
 visible incomplete branding.
 
 ## Upstream review

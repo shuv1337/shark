@@ -3,7 +3,7 @@
 - SHark v1 is a personal, noncommercial, minimally rebranded self-hosted fork of Hark.
 - The authoritative scope and detailed acceptance criteria are in `PLAN-shark-minimal-rebrand-self-host.md`; the confirmed decision record is in `HANDOFF-shark-grilling-mac-ios.md`.
 - The product name is SHark and the canonical production origin is `https://shark.shuv.dev`.
-- Internal protocol and compatibility names such as `harkctl`, `HARK_*`, `@hark/*`, database names, token domains, and route/DTO names remain stable unless the plan explicitly changes them.
+- `sharkctl` is the canonical fork CLI and package. Internal protocol and compatibility names such as `HARK_*`, the `hark` config directory, `@hark/*`, database names, token domains, and route/DTO names remain stable unless the plan explicitly changes them.
 - Authentication is Apple-only and production admission uses the normalized exact verified Apple email, including an Apple relay address when that is the returned identity.
 - `ALLOWED_EMAILS` is enforced on every browser session and every durable credential path, not only at account creation.
 - Removing an address revokes access while preserving user data; permanent deletion is a separate explicit operation.

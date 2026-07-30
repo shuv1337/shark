@@ -113,12 +113,12 @@ export function llmsTxt(): string {
 ## Private product
 
 - [Home](https://shark.shuv.dev/): authenticated private application.
-- [Source](https://github.com/shuv1337/shark): SHark website, iOS app, compatibility CLI, and agent skill.
+- [Source](https://github.com/shuv1337/shark): SHark website, iOS app, CLI, and agent skill.
 
 ## Agent tools
 
 - SHark agent skill: install directly from the reviewed operator checkout.
-- \`harkctl\`: compatibility CLI for notifications, approvals, replies, Live Activities, and webhook services.
+- \`sharkctl\`: CLI for notifications, approvals, replies, Live Activities, and webhook services.
 
 ## Notes
 
