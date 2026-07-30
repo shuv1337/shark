@@ -1,3 +1,4 @@
+import { Linking } from "react-native";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
@@ -5,6 +6,7 @@ const state = vi.hoisted(() => ({
     actions: Array<Record<string, unknown>>;
     identifier: string;
   }>,
+  badgeCounts: [] as number[],
   cookie: "session" as string | undefined,
   store: new Map<string, string>(),
   submissions: [] as Array<{ id: string; input: Record<string, unknown> }>,
@@ -31,6 +33,10 @@ vi.mock("expo-notifications", () => ({
   ) => {
     state.categories.push({ identifier, actions });
   },
+  setBadgeCountAsync: async (value: number) => {
+    state.badgeCounts.push(value);
+    return true;
+  },
 }));
 
 vi.mock("react-native", () => ({ Linking: { openURL: vi.fn() } }));
@@ -46,6 +52,7 @@ vi.mock("./api", () => ({
     }
   },
   api: {
+    listInbox: async () => ({ items: [], nextCursor: null, unresolvedCount: 0 }),
     respondToInteraction: async (id: string, input: Record<string, unknown>) => {
       state.submissions.push({ id, input });
       return state.submit?.(id, input);
@@ -93,6 +100,7 @@ function credentialResponse(interactionId: string) {
 afterEach(async () => {
   state.cookie = "session";
   state.categories.length = 0;
+  state.badgeCounts.length = 0;
   state.submit = undefined;
   state.submissions.length = 0;
   await clearInteractionResponses();
@@ -113,6 +121,30 @@ describe("interaction notification categories", () => {
         },
       }),
     ]);
+  });
+});
+
+describe("notification tap routing", () => {
+  it("opens the durable in-app detail before an external rich link", async () => {
+    const opened: Array<{ eventId: string | null }> = [];
+    await handleNotificationResponse(
+      {
+        actionIdentifier: "expo.modules.notifications.actions.DEFAULT",
+        notification: {
+          date: Date.now(),
+          request: {
+            content: {
+              title: "Build finished",
+              body: "Open the complete result.",
+              data: { eventId: "evt_1", url: "https://example.com/result" },
+            },
+          },
+        },
+      } as never,
+      (detail) => opened.push(detail),
+    );
+    expect(opened).toEqual([expect.objectContaining({ eventId: "evt_1" })]);
+    expect(Linking.openURL).not.toHaveBeenCalled();
   });
 });
 

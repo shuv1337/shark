@@ -78,11 +78,13 @@ describe("buildInteractionPushMessages", () => {
       title: "Release",
       prompt: "Deploy production?",
       actionDigest: "a".repeat(64),
+      badge: 3,
     });
     expect(approval).toMatchObject({
       categoryId: "HARK_APPROVAL_V1",
       title: "Release",
       body: "Deploy production?",
+      badge: 3,
       data: {
         interactionId: "int_1",
         interactionKind: "approval",

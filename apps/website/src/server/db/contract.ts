@@ -1,12 +1,12 @@
 import type Database from "better-sqlite3";
 
-export const EXPECTED_MIGRATION_COUNT = 16;
-export const EXPECTED_MIGRATION_CREATED_AT = 1_785_282_742_299;
+export const EXPECTED_MIGRATION_COUNT = 18;
+export const EXPECTED_MIGRATION_CREATED_AT = 1_785_400_611_767;
 export const KNOWN_MIGRATION_CREATED_AT = [
   1_784_838_061_460, 1_784_844_109_833, 1_784_844_695_392, 1_784_857_552_207, 1_784_858_550_283,
   1_784_860_224_866, 1_784_860_882_450, 1_784_861_885_633, 1_784_916_448_420, 1_784_919_690_458,
   1_785_004_560_682, 1_785_016_656_904, 1_785_024_389_331, 1_785_027_353_868, 1_785_085_877_317,
-  1_785_282_742_299,
+  1_785_282_742_299, 1_785_399_448_816, 1_785_400_611_767,
 ] as const;
 
 export const REQUIRED_TABLES = [
@@ -20,6 +20,8 @@ export const REQUIRED_TABLES = [
   "interaction",
   "live_activity",
   "live_activity_delivery",
+  "inbox_item",
+  "inbox_item_event",
 ] as const;
 
 /**

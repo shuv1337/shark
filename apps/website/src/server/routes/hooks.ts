@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { type WebhookResponse, webhookRequestSchema } from "@hark/contracts";
-import { and, count, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, count, desc, eq, gt, gte, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
 import {
@@ -354,6 +354,18 @@ export const hooksRoute = new Hono()
       });
     }
 
+    const [pendingActions] = parsed.data.response
+      ? await db
+          .select({ value: count() })
+          .from(interaction)
+          .where(
+            and(
+              eq(interaction.userId, svc.userId),
+              eq(interaction.status, "pending"),
+              gt(interaction.expiresAt, new Date()),
+            ),
+          )
+      : [{ value: 0 }];
     const messages = parsed.data.response
       ? buildInteractionPushMessages({
           to: devices.map((registeredDevice) => registeredDevice.expoPushToken),
@@ -366,6 +378,7 @@ export const hooksRoute = new Hono()
           responseToken,
           imageUrl: resolved.imageUrl,
           url: resolved.url,
+          badge: pendingActions?.value ?? 0,
         })
       : buildPushMessages({
           to: devices.map((registeredDevice) => registeredDevice.expoPushToken),

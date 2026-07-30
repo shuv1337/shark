@@ -93,6 +93,13 @@ async function submitOrQueue(response: QueuedResponse): Promise<void> {
   await flushInteractionResponses();
 }
 
+export async function submitInboxInteraction(
+  interactionId: string,
+  input: QueuedInput,
+): Promise<void> {
+  await submitOrQueue({ interactionId, input });
+}
+
 export async function flushInteractionResponses(): Promise<void> {
   if (flushing) {
     flushRequested = true;
@@ -132,6 +139,12 @@ export async function flushInteractionResponses(): Promise<void> {
         const current = await readQueue();
         await writeQueue(current.filter((response) => !completed.has(response.interactionId)));
       });
+      if (getCookie()) {
+        void api
+          .listInbox("needs_action", null, 1)
+          .then((summary) => Notifications.setBadgeCountAsync(summary.unresolvedCount))
+          .catch(() => {});
+      }
       // Continue immediately so work enqueued during this pass cannot be stranded.
     }
   })();
@@ -203,12 +216,12 @@ export async function handleNotificationResponse(
     | { interactionId?: string; actionDigest?: string; responseToken?: string; url?: string }
     | undefined;
   if (response.actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER) {
-    if (data?.url) {
-      await Linking.openURL(data.url).catch(() => {});
+    const detail = detailFromNotification(response.notification);
+    if (detail && onOpenDetail) {
+      onOpenDetail(detail);
       return;
     }
-    const detail = detailFromNotification(response.notification);
-    if (detail) onOpenDetail?.(detail);
+    if (data?.url) await Linking.openURL(data.url).catch(() => {});
     return;
   }
   if (!data?.interactionId || !data.actionDigest) return;

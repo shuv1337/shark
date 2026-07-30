@@ -186,7 +186,10 @@ export const agentNotification = sqliteTable(
     body: text("body").notNull(),
     imageUrl: text("image_url"),
     url: text("url"),
+    status: text("status").notNull().default("processing"),
     acceptedCount: integer("accepted_count").notNull().default(0),
+    failedCount: integer("failed_count").notNull().default(0),
+    error: text("error"),
     idempotencyKey: text("idempotency_key"),
     requestHash: text("request_hash"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
@@ -473,6 +476,70 @@ export const liveActivityDeliveryAttempt = sqliteTable(
     ),
     index("live_activity_attempt_token_created_idx").on(table.requesterTokenId, table.createdAt),
     index("live_activity_attempt_activity_created_idx").on(table.activityId, table.createdAt),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Durable account inbox
+// ---------------------------------------------------------------------------
+
+/**
+ * A stable, account-owned projection of every user-visible notification flow.
+ * Source metadata is deliberately snapshotted so revoking an API token or
+ * deleting a service cannot erase or rename history.
+ */
+export const inboxItem = sqliteTable(
+  "inbox_item",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    kind: text("kind").notNull(),
+    sourceName: text("source_name").notNull(),
+    sourceImageUrl: text("source_image_url"),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    imageUrl: text("image_url"),
+    url: text("url"),
+    status: text("status").notNull(),
+    result: text("result"),
+    acceptedCount: integer("accepted_count").notNull().default(0),
+    failedCount: integer("failed_count").notNull().default(0),
+    needsAction: integer("needs_action", { mode: "boolean" }).notNull().default(false),
+    readAt: integer("read_at", { mode: "timestamp_ms" }),
+    occurredAt: integer("occurred_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("inbox_item_entity_unique").on(table.entityType, table.entityId),
+    index("inbox_item_user_occurred_idx").on(table.userId, table.occurredAt),
+    index("inbox_item_user_action_idx").on(table.userId, table.needsAction, table.occurredAt),
+    index("inbox_item_user_read_idx").on(table.userId, table.readAt, table.occurredAt),
+  ],
+);
+
+/** Append-only lifecycle entries displayed as the item's detail timeline. */
+export const inboxItemEvent = sqliteTable(
+  "inbox_item_event",
+  {
+    id: text("id").primaryKey(),
+    inboxItemId: text("inbox_item_id")
+      .notNull()
+      .references(() => inboxItem.id, { onDelete: "cascade" }),
+    dedupeKey: text("dedupe_key").notNull(),
+    kind: text("kind").notNull(),
+    detail: text("detail"),
+    result: text("result"),
+    acceptedCount: integer("accepted_count").notNull().default(0),
+    failedCount: integer("failed_count").notNull().default(0),
+    occurredAt: integer("occurred_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("inbox_item_event_dedupe_unique").on(table.inboxItemId, table.dedupeKey),
+    index("inbox_item_event_item_occurred_idx").on(table.inboxItemId, table.occurredAt),
   ],
 );
 

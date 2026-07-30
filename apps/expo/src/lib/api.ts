@@ -2,6 +2,9 @@ import type {
   DeviceRegisterInput,
   DeviceUnregisterInput,
   EventDto,
+  InboxDetailDto,
+  InboxFilter,
+  InboxPageDto,
   InteractionCredentialResponseInput,
   InteractionDto,
   InteractionResponseInput,
@@ -58,6 +61,15 @@ export const api = {
       body: JSON.stringify(input),
     }),
   listEvents: (limit = 20) => request<{ events: EventDto[] }>(`/api/events?limit=${limit}`),
+  listInbox: (filter: InboxFilter, cursor?: string | null, limit = 30) => {
+    const params = new URLSearchParams({ filter, limit: String(limit) });
+    if (cursor) params.set("cursor", cursor);
+    return request<InboxPageDto>(`/api/inbox?${params}`);
+  },
+  getInboxItem: (id: string) => request<InboxDetailDto>(`/api/inbox/${encodeURIComponent(id)}`),
+  markInboxItemRead: (id: string) =>
+    request<{ ok: true }>(`/api/inbox/${encodeURIComponent(id)}/read`, { method: "POST" }),
+  markAllInboxRead: () => request<{ ok: true }>("/api/inbox/read-all", { method: "POST" }),
   respondToInteraction: (id: string, input: InteractionResponseInput) =>
     request<{ interaction: InteractionDto }>(`/api/interactions/${id}/respond`, {
       method: "POST",

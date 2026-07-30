@@ -10,6 +10,7 @@ import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
 import { AppState } from "react-native";
 import { useSession } from "../src/lib/auth";
+import { inboxIdFromNotificationData } from "../src/lib/inbox";
 import {
   flushInteractionResponses,
   handleNotificationResponse,
@@ -48,7 +49,12 @@ export default function RootLayout() {
 
   useEffect(() => {
     const handleResponse = (response: Notifications.NotificationResponse) => {
+      const inboxId = inboxIdFromNotificationData(response.notification.request.content.data);
       void handleNotificationResponse(response, (detail) => {
+        if (inboxId) {
+          router.push({ pathname: "/inbox-detail", params: { id: inboxId } });
+          return;
+        }
         setNotificationDetail(detail);
         router.push("/notification-detail");
       });

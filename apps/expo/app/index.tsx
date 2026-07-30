@@ -6,6 +6,7 @@ import { ActivityIndicator, Image, StyleSheet, Text, useColorScheme, View } from
 import { SafeAreaView } from "react-native-safe-area-context";
 import { signInWithApple } from "../src/lib/apple-auth";
 import { useSession } from "../src/lib/auth";
+import { isSimulatorPreview } from "../src/lib/inbox-preview";
 import { colors, fonts, tightTracking } from "../src/lib/theme";
 
 export default function SignInScreen() {
@@ -16,7 +17,7 @@ export default function SignInScreen() {
 
   // Keep the sign-in screen mounted until the native authorization code is
   // exchanged and its revocation token is safely stored server-side.
-  if (session && busy !== "apple") return <Redirect href="/home" />;
+  if ((session || isSimulatorPreview) && busy !== "apple") return <Redirect href="/inbox" />;
 
   const continueWithApple = async () => {
     setBusy("apple");
