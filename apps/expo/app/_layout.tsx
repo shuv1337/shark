@@ -5,7 +5,7 @@ import {
   useFonts,
 } from "@expo-google-fonts/inter";
 import * as Notifications from "expo-notifications";
-import { Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
 import { AppState } from "react-native";
@@ -16,6 +16,7 @@ import {
   registerInteractionCategories,
 } from "../src/lib/interactions";
 import { startLiveActivityTokenSync } from "../src/lib/live-activities";
+import { setNotificationDetail } from "../src/lib/notification-detail";
 import { colors } from "../src/lib/theme";
 
 void SplashScreen.preventAutoHideAsync();
@@ -34,6 +35,7 @@ Notifications.setNotificationHandler({
 
 export default function RootLayout() {
   const { data: session } = useSession();
+  const router = useRouter();
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
@@ -45,16 +47,22 @@ export default function RootLayout() {
   }, [fontsLoaded, fontError]);
 
   useEffect(() => {
+    const handleResponse = (response: Notifications.NotificationResponse) => {
+      void handleNotificationResponse(response, (detail) => {
+        setNotificationDetail(detail);
+        router.push("/notification-detail");
+      });
+    };
     // Handle both a cold launch from a notification and taps while the app is running.
     const initialResponse = Notifications.getLastNotificationResponse();
     if (initialResponse) {
-      void handleNotificationResponse(initialResponse);
+      handleResponse(initialResponse);
       void Notifications.clearLastNotificationResponseAsync();
     }
     void flushInteractionResponses();
 
     const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      void handleNotificationResponse(response);
+      handleResponse(response);
     });
     const appState = AppState.addEventListener("change", (state) => {
       if (state === "active") void flushInteractionResponses();
@@ -65,7 +73,7 @@ export default function RootLayout() {
       appState.remove();
       clearInterval(retryTimer);
     };
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     if (!session) return;

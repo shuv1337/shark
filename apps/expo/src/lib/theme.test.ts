@@ -28,16 +28,17 @@ describe("app theme palettes", () => {
     expect(Object.keys(darkColors).sort()).toEqual(Object.keys(lightColors).sort());
   });
 
-  it("uses the Shuv2Code dark neutral foundation with a contrast-safe SHark accent", () => {
+  it("uses the Shuv2Code red and navy palette", () => {
     expect(darkColors).toMatchObject({
       paper: "#0C1119",
       surface: "#0F1621",
       ink: "#E7ECF3",
       muted: "#B9C3D1",
       soft: "#8995A6",
-      accent: "#5ED8B7",
+      accent: "#D35C46",
       accentForeground: "#0C1119",
     });
+    expect(lightColors.accent).toBe("#B64E36");
   });
 
   it("registers each semantic color as an adaptive iOS color", () => {

@@ -37,14 +37,14 @@
   --color-line-strong: oklch(0.87 0.005 260);
   --color-media-line: oklch(0 0 0 / 0.1);
 
-  /* Accent. `accent` is a fill, `accent-text` is the same brand green tuned for
+  /* Accent. `accent` is a fill, `accent-text` is the same brand red tuned for
      use as text/iconography, and `on-accent` is the label colour on a fill. */
-  --color-accent: oklch(0.421 0.08 173);
-  --color-accent-hover: oklch(0.362 0.068 174);
-  --color-accent-text: oklch(0.421 0.08 173);
-  --color-on-accent: oklch(1 0 0);
-  --color-accent-soft: oklch(0.948 0.01 174);
-  --color-accent-wash: oklch(0.421 0.08 173 / 0.03);
+  --color-accent: #b64e36;
+  --color-accent-hover: #9f422f;
+  --color-accent-text: #b64e36;
+  --color-on-accent: #ffffff;
+  --color-accent-soft: rgb(182 78 54 / 0.1);
+  --color-accent-wash: rgb(182 78 54 / 0.04);
 
   /* Status */
   --color-danger: oklch(0.505 0.19 27.5);
@@ -77,7 +77,7 @@
 /* Non-utility theme values used by the hand-written rules below. */
 :root {
   color-scheme: light;
-  --hark-edge-tint: oklch(0.421 0.08 173 / 0.14);
+  --hark-edge-tint: rgb(182 78 54 / 0.14);
   --hark-noise-opacity: 0.1;
   --hark-noise-blend: multiply;
   --hark-backdrop: oklch(0.21 0.02 260 / 0.2);
@@ -105,12 +105,12 @@
     --color-line-strong: oklch(0.53 0.013 260);
     --color-media-line: oklch(1 0 0 / 0.1);
 
-    --color-accent: oklch(0.735 0.12 170);
-    --color-accent-hover: oklch(0.8 0.115 170);
-    --color-accent-text: oklch(0.8 0.11 170);
-    --color-on-accent: oklch(0.19 0.032 173);
-    --color-accent-soft: oklch(0.3 0.038 172);
-    --color-accent-wash: oklch(0.735 0.12 170 / 0.07);
+    --color-accent: #d35c46;
+    --color-accent-hover: #e06a54;
+    --color-accent-text: #d35c46;
+    --color-on-accent: #0c1119;
+    --color-accent-soft: rgb(211 92 70 / 0.18);
+    --color-accent-wash: rgb(211 92 70 / 0.08);
 
     --color-danger: oklch(0.76 0.13 25);
     --color-danger-strong: oklch(0.7 0.17 25);
@@ -125,7 +125,7 @@
 
     --color-brand-blue: oklch(0.75 0.13 253);
 
-    --hark-edge-tint: oklch(0.735 0.12 170 / 0.1);
+    --hark-edge-tint: rgb(211 92 70 / 0.1);
     /* `multiply` has nothing to darken on a dark page, so the grain flips to
      `screen` and drops in opacity to stay a texture rather than a haze. */
     --hark-noise-opacity: 0.055;

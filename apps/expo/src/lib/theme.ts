@@ -7,9 +7,9 @@ export const lightColors = {
   muted: "#6B6A63",
   soft: "#A3A199",
   line: "#E7E5E0",
-  accent: "#035B49",
-  accentPressed: "#02493B",
-  accentSoft: "#E7F0ED",
+  accent: "#B64E36",
+  accentPressed: "#9F422F",
+  accentSoft: "rgba(182, 78, 54, 0.10)",
   accentForeground: "#FFFFFF",
   danger: "#C93B2C",
   warning: "#D48A16",
@@ -17,8 +17,7 @@ export const lightColors = {
 } as const;
 
 /**
- * Dark neutrals follow Shuv2Code's mobile palette. SHark keeps its green
- * identity, lifted to mint so controls retain contrast on the navy surfaces.
+ * The complete palette follows Shuv2Code: warm red actions over navy surfaces.
  */
 export const darkColors: Record<keyof typeof lightColors, string> = {
   paper: "#0C1119",
@@ -27,9 +26,9 @@ export const darkColors: Record<keyof typeof lightColors, string> = {
   muted: "#B9C3D1",
   soft: "#8995A6",
   line: "rgba(255, 255, 255, 0.06)",
-  accent: "#5ED8B7",
-  accentPressed: "#43C49F",
-  accentSoft: "rgba(94, 216, 183, 0.14)",
+  accent: "#D35C46",
+  accentPressed: "#E06A54",
+  accentSoft: "rgba(211, 92, 70, 0.18)",
   accentForeground: "#0C1119",
   danger: "#FCA5A5",
   warning: "#FFB44A",

@@ -433,7 +433,7 @@ export async function startInteractionLiveActivity(
     updatedAt: now.toISOString(),
     symbol: "warning",
     privacyMode: "standard",
-    accentColor: "#5ED8B7",
+    accentColor: "#D35C46",
     style: "approval",
     interaction: {
       id: interactionRow.id,

@@ -386,7 +386,7 @@ describe("Live Activity schemas", () => {
     });
     expect(start.deviceIds).toEqual(["dev_a", "dev_b"]);
     expect(start).toMatchObject({
-      accentColor: "#5ED8B7",
+      accentColor: "#D35C46",
       expiresInSeconds: 28_800,
       staleAfterSeconds: 14_400,
       replace: false,
@@ -398,7 +398,7 @@ describe("Live Activity schemas", () => {
         accentColor: "#aBc123",
       }).success,
     ).toBe(true);
-    for (const accentColor of ["5ED8B7", "#fff", "#5ED8B7CC", "#GGGGGG"]) {
+    for (const accentColor of ["D35C46", "#fff", "#D35C46CC", "#GGGGGG"]) {
       expect(
         liveActivityStartSchema.safeParse({ title: "Task", status: "Starting", accentColor })
           .success,

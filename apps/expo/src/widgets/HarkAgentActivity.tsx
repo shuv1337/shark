@@ -46,7 +46,7 @@ function HarkAgentActivityLayout(props: LiveActivityProps, _environment: LiveAct
   // provides (@expo/ui components and modifiers). Const bindings, ternaries,
   // template literals and Math calls are the proven-safe subset; helpers such
   // as Array.prototype.map or String.prototype.repeat are avoided on purpose.
-  const accent = props.accentColor ?? "#5ED8B7";
+  const accent = props.accentColor ?? "#D35C46";
   const primary = "#E7ECF3";
   const secondary = "#B9C3D1";
   const track = "#FFFFFF29";
