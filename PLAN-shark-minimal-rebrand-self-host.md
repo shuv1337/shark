@@ -30,19 +30,21 @@ internal-TestFlight distribution and prove every push and Live Activity path on
 two physical iPhones. Public TestFlight and App Store distribution are excluded
 from v1 and require a separate future scope decision.
 
-Keep these internal compatibility names unchanged:
+Keep these internal protocol and persistence compatibility names unchanged:
 
 - Workspace package names such as `@hark/contracts`.
 - Database filename and Docker volume names containing `hark`.
 - Token prefixes, token domain-separation strings, route paths, DTO names, CSS
   class names, and Swift/TypeScript symbols containing `Hark`.
-- The existing `harkctl` executable and `HARK_*` environment/config namespace.
+- The `HARK_*` environment/config namespace and existing `hark` config paths.
 
 Change product-facing copy, public origins, store metadata, icons, native
 identifiers, OAuth credentials, deployment ownership, and documentation. This
 produces a real SHark experience without a high-conflict mechanical namespace
-rename. A later optional phase can add a `sharkctl` alias, but it should not
-block the initial self-host.
+rename. The initial release retained the upstream `harkctl` name; the
+2026-07-30 fork decision supersedes that exception and makes `sharkctl` the
+canonical executable and package without renaming protocol-level `HARK_*`
+variables or existing config storage.
 
 The two intentional functional additions are:
 
@@ -72,10 +74,10 @@ The two intentional functional additions are:
 - `apps/expo`: iOS-only Expo app with a notification service extension and
   Live Activity widgets.
 - `packages/contracts`: API and Live Activity contracts shared by web and app.
-- `packages/harkctl`: Node 22 CLI with a configurable `HARK_API_URL`.
+- `packages/sharkctl`: Node 22 CLI with a configurable `HARK_API_URL`.
 - `packages/website-runtime`: the production-only dependency bundle used by the
   Docker image and WAL-aware backup tooling.
-- `skills/hark`: installable agent skill.
+- `skills/shark`: installable agent skill.
 - `Dockerfile` and `compose.yaml`: first-party single-container deployment with
   persistent SQLite storage under `/data`.
 
@@ -172,7 +174,7 @@ is created:
 | Self-host rate limits | 300/service/min and 1,500/account/min | Reuses current Pro defaults and minimizes code/test churn |
 | Paid tiers | Disabled; self-host gets full capability | Removes Autumn without breaking core features |
 | UI palette | Preserve existing Hark UI colors | Limits scope; Devil Phone becomes the identifying mark |
-| CLI name | Keep `harkctl` initially | Avoids package/config/token churn while still supporting SHark |
+| CLI name | `sharkctl` | Canonical fork command; existing `HARK_*` variables and config remain compatible |
 
 If a different domain or bundle ID is selected, substitute it everywhere in
 Phases 1–5 before creating any external identifiers. App and extension bundle
@@ -183,8 +185,8 @@ IDs cannot be casually renamed after distribution begins.
 - [ ] Confirm the deployment is personal/noncommercial or obtain a separate
   commercial license from the upstream licensor before any anticipated
   commercial use.
-- [ ] Preserve the root `LICENSE`, `packages/harkctl/LICENSE`, and the license
-  declaration in `skills/hark/SKILL.md`.
+- [ ] Preserve the root `LICENSE`, `packages/sharkctl/LICENSE`, and the license
+  declaration in `skills/shark/SKILL.md`.
 - [ ] Keep upstream copyright/attribution and add a short fork notice to
   `README.md`: “SHark is a minimally rebranded, self-hosted fork of Hark.”
 - [ ] Record the upstream repository URL and pinned baseline commit in the
@@ -238,7 +240,7 @@ Validation:
   - `apps/expo/app/home.tsx`
   - `apps/expo/targets/notification-service/NotificationService.swift`
   - `apps/expo/targets/notification-service/expo-target.config.js`
-  - `README.md`, `packages/harkctl/README.md`, and `skills/hark/SKILL.md`
+  - `README.md`, `packages/sharkctl/README.md`, and `skills/shark/SKILL.md`
 - [ ] Change the Better Auth display name in
   `apps/website/src/server/auth.ts` to `SHark`.
 - [ ] Change user-facing server log names and default notification titles to
@@ -752,23 +754,23 @@ Validation:
 
 ### 6.1 CLI
 
-- [ ] Change `DEFAULT_API_URL` in `packages/harkctl/src/cli.mjs` to the SHark
+- [ ] Change `DEFAULT_API_URL` in `packages/sharkctl/src/cli.mjs` to the SHark
   origin so the operator does not need `HARK_API_URL` for routine use.
 - [ ] Keep explicit `HARK_API_URL` override behavior and its security warning.
 - [ ] Change user-facing default titles and help text to SHark.
-- [ ] Keep the `harkctl` executable, config locations, token validation, and
-  `HARK_*` environment names for the first milestone.
-- [ ] Update `packages/harkctl/README.md` with the SHark origin and local
+- [ ] Rename the fork package, executable, help text, and default agent
+  connection name from upstream `harkctl` to canonical `sharkctl`.
+- [ ] Keep config locations, token validation, and `HARK_*` environment names
+  compatible so existing credentials and integrations continue to work.
+- [ ] Update `packages/sharkctl/README.md` with the SHark origin and local
   installation path.
-- [ ] Do not publish the fork over the upstream `harkctl` npm package.
-- [ ] Optionally add a second `sharkctl` bin alias only after end-to-end proof;
-  both names must execute identical reviewed code and share the same secure
-  config.
+- [ ] Publish the fork only as the distinct `sharkctl` npm package; never
+  publish over the upstream `harkctl` package.
 
 ### 6.2 Agent skill
 
-- [ ] Create a SHark-facing skill package or rename `skills/hark` to
-  `skills/shark` while preserving the upstream license.
+- [ ] Maintain the SHark-facing skill in `skills/shark` while preserving the
+  upstream license.
 - [ ] Update the skill description, reviewed CLI version/source, default
   origin, allowed webhook-origin checks, and examples.
 - [ ] Retain the strong existing security boundaries:
@@ -793,7 +795,8 @@ Validation:
 - [ ] Clearly distinguish:
   - Expo Push Service for ordinary notifications.
   - Direct APNs credentials for Live Activities.
-- [ ] Document that `HARK_*` and `harkctl` are compatibility names.
+- [ ] Document `sharkctl` as the canonical command and `HARK_*` plus the
+  existing `hark` config paths as compatibility names.
 - [ ] Remove paid-plan claims and replace them with the configured self-hosted
   limits.
 
@@ -859,7 +862,7 @@ Validation:
 
 ### Interactions
 
-- [ ] Send Approve/Deny, Yes/No, and text prompts from `harkctl`.
+- [ ] Send Approve/Deny, Yes/No, and text prompts from `sharkctl`.
 - [ ] Answer from the notification action and verify the waiting CLI receives
   the terminal result.
 - [ ] Verify expiration, cancellation, timeout, and callback retry behavior.

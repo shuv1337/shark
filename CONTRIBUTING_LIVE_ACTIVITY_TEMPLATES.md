@@ -16,7 +16,7 @@ Read these files:
 - `apps/expo/src/widgets/HarkAgentActivity.tsx` — the native widget layout and all presentation
   slots.
 - `apps/expo/src/widgets/HarkAgentActivity.test.ts` — the local widget-runtime test harness.
-- `packages/harkctl/src/cli.mjs` — CLI style validation and help text.
+- `packages/sharkctl/src/cli.mjs` — CLI style validation and help text.
 - `apps/website/src/shared/docs/content.ts` — API documentation and style metadata.
 - `apps/website/src/client/pages/docs/primitives.tsx` — small documentation previews.
 - `apps/expo/app/la-lab.tsx` — optional simulator/device test screen.
@@ -133,13 +133,13 @@ Design requirements:
 - Preserve contrast with caller-provided accent colors.
 - Keep compact and minimal presentations glanceable; do not shrink full banner content into them.
 
-## 3. Update `harkctl`
+## 3. Update `sharkctl`
 
-Add the new ID to `ACTIVITY_STYLES` in `packages/harkctl/src/cli.mjs`. Update both `activity start`
+Add the new ID to `ACTIVITY_STYLES` in `packages/sharkctl/src/cli.mjs`. Update both `activity start`
 and `activity update` help strings in the same file.
 
 Add or update a CLI test so `--style orbit` is accepted and an unknown value remains a usage error.
-Do not publish a new npm version from a contributor PR; maintainers release `harkctl` after merge.
+Do not publish a new npm version from a contributor PR; maintainers release `sharkctl` after merge.
 
 ## 4. Add local no-simulator tests
 
@@ -220,7 +220,7 @@ Do not update generated iOS files, provisioning profiles, credentials, or deploy
 
 Include this checklist in the PR description:
 
-- [ ] The style ID is short, permanent, and added to contracts and `harkctl`.
+- [ ] The style ID is short, permanent, and added to contracts and `sharkctl`.
 - [ ] The contribution contains a genuinely new layout rather than a renamed existing style.
 - [ ] All eight presentation slots resolve to valid nodes.
 - [ ] Missing detail and absent/zero/partial/complete progress are handled.

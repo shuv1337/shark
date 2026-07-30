@@ -330,7 +330,7 @@ describe("agent token authentication", () => {
     expect(token).toHaveProperty("expiresAt");
   });
 
-  it("returns token metadata from auth status for harkctl", async () => {
+  it("returns token metadata from auth status for sharkctl", async () => {
     const response = await agent("/auth/status");
     expect(response.status).toBe(200);
     const body = (await response.json()) as {

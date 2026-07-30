@@ -100,7 +100,7 @@ test("creates a webhook service with default appearance", async () => {
 
 test("auth login polls through pending and slow_down without opening a non-TTY browser", async () => {
   const originalFetch = globalThis.fetch;
-  const directory = await mkdtemp(join(tmpdir(), "harkctl-login-"));
+  const directory = await mkdtemp(join(tmpdir(), "sharkctl-login-"));
   const path = join(directory, "config.json");
   const deviceCode = "d".repeat(43);
   const accessToken = `hark_${"s".repeat(43)}`;
@@ -189,8 +189,9 @@ test("auth login polls through pending and slow_down without opening a non-TTY b
 test("auth login opens only when interactive or explicitly requested", async () => {
   const originalFetch = globalThis.fetch;
   let opened = 0;
-  const mockFetch = async (url) => {
+  const mockFetch = async (url, init) => {
     if (String(url).endsWith("/start")) {
+      assert.equal(JSON.parse(init.body).clientName, "sharkctl");
       return Response.json(
         {
           deviceCode: "o".repeat(43),
@@ -205,7 +206,7 @@ test("auth login opens only when interactive or explicitly requested", async () 
     }
     return Response.json({
       accessToken: `hark_${"o".repeat(43)}`,
-      token: { id: "tok_open", name: "harkctl", prefix: "hark_oooooooo", scopes: [] },
+      token: { id: "tok_open", name: "sharkctl", prefix: "hark_oooooooo", scopes: [] },
     });
   };
   globalThis.fetch = mockFetch;
@@ -299,7 +300,7 @@ test("auth login emits one safe JSON object and keeps both secrets out of output
         )
       : Response.json({
           accessToken,
-          token: { id: "tok_safe", name: "harkctl", prefix: "hark_zzzzzzzz", scopes: [] },
+          token: { id: "tok_safe", name: "sharkctl", prefix: "hark_zzzzzzzz", scopes: [] },
         });
   console.log = (value) => stdout.push(value);
   console.error = (value) => stderr.push(value);
@@ -328,7 +329,7 @@ test("auth login emits one safe JSON object and keeps both secrets out of output
 
 test("auth logout revokes before removing file credentials", async () => {
   const originalFetch = globalThis.fetch;
-  const directory = await mkdtemp(join(tmpdir(), "harkctl-logout-"));
+  const directory = await mkdtemp(join(tmpdir(), "sharkctl-logout-"));
   const path = join(directory, "config.json");
   const token = `hark_${"r".repeat(43)}`;
   await writeFile(path, JSON.stringify({ token, apiUrl: "https://example.test" }), { mode: 0o600 });
@@ -950,7 +951,7 @@ test("activity CLI rejects invalid progress and preserves no-delivery exit behav
 });
 
 test("rejects group-readable config files", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "harkctl-"));
+  const directory = await mkdtemp(join(tmpdir(), "sharkctl-"));
   const path = join(directory, "config.json");
   await writeFile(path, JSON.stringify({ token: "hark_test" }));
   await chmod(path, 0o640);

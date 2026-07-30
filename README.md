@@ -18,16 +18,16 @@ Requires [Node.js 22 or newer](https://nodejs.org/).
    npx skills add . --skill shark --global
    ```
 
-2. Install the compatibility CLI from this reviewed checkout:
+2. Install the SHark CLI from this reviewed checkout:
 
    ```sh
-   pnpm --filter harkctl link --global
+   pnpm --filter sharkctl link --global
    ```
 
 3. Authenticate it with your SHark account:
 
    ```sh
-   harkctl auth login
+   sharkctl auth login
    ```
 
 4. Ask your agent:
@@ -124,20 +124,21 @@ API, widget, CLI, and docs touchpoint, see
 
 ## Agent Workflows
 
-The [`harkctl`](./packages/harkctl) CLI can send one-shot notifications, ask for approvals or short
+The [`sharkctl`](./packages/sharkctl) CLI can send one-shot notifications, ask for approvals or short
 replies, and manage Live Activities from scripts or AI agents.
 
 ```sh
-harkctl auth login
-harkctl notify "Deploy finished ✅" --title "Deploy bot"
-harkctl notify ask "Deploy production?" --approval --wait
-harkctl activity start --title "Release" --status "Building" --progress 0.1
+sharkctl auth login
+sharkctl notify "Deploy finished ✅" --title "Deploy bot"
+sharkctl notify ask "Deploy production?" --approval --wait
+sharkctl activity start --title "Release" --status "Building" --progress 0.1
 ```
 
 The installable [`shark` agent skill](./skills/shark/SKILL.md) follows the open Agent Skills format
 and supports OpenCode, Claude Code, Codex, Cursor, and other compatible agents. Install it only from
-this reviewed operator checkout. The `harkctl` executable, `HARK_*` environment variables, token
-prefixes, and local config paths remain compatibility identifiers for the first release.
+this reviewed operator checkout. `sharkctl` is the fork's canonical executable. The `HARK_*`
+environment variables, token prefixes, and local `hark` config paths remain protocol-compatibility
+identifiers so existing credentials and integrations continue to work.
 
 ## License
 

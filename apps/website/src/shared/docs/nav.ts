@@ -47,7 +47,7 @@ export const DOC_NAV = [
   },
   {
     id: "cli",
-    label: "harkctl CLI",
+    label: "sharkctl CLI",
     items: [
       { id: "cli-install", label: "Install and sign in" },
       { id: "cli-service", label: "Create a webhook service" },

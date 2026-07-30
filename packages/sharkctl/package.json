@@ -1,14 +1,15 @@
 {
-  "name": "harkctl",
-  "version": "0.3.0",
-  "description": "Compatibility CLI for SHark agent approvals and replies",
+  "name": "sharkctl",
+  "version": "0.4.0",
+  "description": "CLI for SHark notifications, approvals, replies, and Live Activities",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/shuv1337/shark.git",
-    "directory": "packages/harkctl"
+    "directory": "packages/sharkctl"
   },
   "homepage": "https://github.com/shuv1337/shark#readme",
   "keywords": [
+    "shark",
     "hark",
     "approval",
     "notifications",
@@ -17,7 +18,7 @@
   ],
   "type": "module",
   "bin": {
-    "harkctl": "bin/harkctl.mjs"
+    "sharkctl": "bin/sharkctl.mjs"
   },
   "files": [
     "bin",
@@ -31,8 +32,8 @@
     "access": "public"
   },
   "scripts": {
-    "build": "node --check src/cli.mjs && node --check bin/harkctl.mjs",
-    "typecheck": "node --check src/cli.mjs && node --check bin/harkctl.mjs",
+    "build": "node --check src/cli.mjs && node --check bin/sharkctl.mjs",
+    "typecheck": "node --check src/cli.mjs && node --check bin/sharkctl.mjs",
     "test": "node --test",
     "prepublishOnly": "pnpm test && pnpm build"
   },

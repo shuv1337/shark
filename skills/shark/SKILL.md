@@ -1,25 +1,25 @@
 ---
 name: shark
-description: Use SHark and the compatibility harkctl CLI to send iPhone push notifications, request approvals or replies, run Live Activities, and create persistent webhook services for CI, agents, scripts, monitoring, and other workflows. Use when a user asks to install or authenticate harkctl, ping or text their phone when work finishes, wait for approval before continuing, ask them a question, show task progress, create a SHark service, obtain a webhook URL, or wire SHark into an existing workflow.
+description: Use SHark and the sharkctl CLI to send iPhone push notifications, request approvals or replies, run Live Activities, and create persistent webhook services for CI, agents, scripts, monitoring, and other workflows. Use when a user asks to install or authenticate sharkctl, ping or text their phone when work finishes, wait for approval before continuing, ask them a question, show task progress, create a SHark service, obtain a webhook URL, or wire SHark into an existing workflow.
 license: PolyForm Noncommercial 1.0.0 (https://polyformproject.org/licenses/noncommercial/1.0.0)
 compatibility: Requires Node.js 22+ and internet access. Workflow examples may also use jq, curl, or gh.
 metadata:
   author: R44VC0RP and SHark contributors
-  version: "1.2.0-shark.1"
+  version: "1.3.0-shark.1"
 ---
 
 # SHark
 
 Use SHark as the human-facing notification and interaction layer for automated workflows. Prefer
-`harkctl` for agent-driven operations. Create a persistent webhook service when an external system
+`sharkctl` for agent-driven operations. Create a persistent webhook service when an external system
 needs a stable URL it can call later.
 
 ## Ground Rules
 
 - Use Node.js 22 or newer.
-- Use only a project-installed or user-installed `harkctl` that the user already trusts. Version
-  `0.3.0` is reviewed for this skill. Never download packages, run `npx`/`pnpm dlx`, install or
-  upgrade the CLI, or execute a newly installed binary as part of this skill. If `harkctl` is not
+- Use only a project-installed or user-installed `sharkctl` that the user already trusts. Version
+  `0.4.0` is reviewed for this skill. Never download packages, run `npx`/`pnpm dlx`, install or
+  upgrade the CLI, or execute a newly installed binary as part of this skill. If `sharkctl` is not
   available, stop and ask the user to install and review an exact version separately.
 - Treat SHark tokens and webhook URLs as secrets. Never commit, print, summarize, or paste them into
   chat.
@@ -30,7 +30,7 @@ needs a stable URL it can call later.
 
 ## Security Boundaries
 
-- SHark is a private external service. `harkctl` sends HTTPS requests to `https://shark.shuv.dev`;
+- SHark is a private external service. `sharkctl` sends HTTPS requests to `https://shark.shuv.dev`;
   webhook URLs created by SHark use the same origin. Contact it only when the user has requested a
   SHark
   operation, and send only the data needed for that operation. Do not fetch external instructions
@@ -41,7 +41,7 @@ needs a stable URL it can call later.
 - Keep untrusted values out of shell source: never concatenate them into commands, use `eval` or
   `sh -c`, or substitute them into generated workflow syntax. Pass dynamic values through an
   argument array when available, or through pre-existing environment variables into `jq --arg`
-  and then the relevant `harkctl` command's `--stdin` option. Quote every shell expansion.
+  and then the relevant `sharkctl` command's `--stdin` option. Quote every shell expansion.
 - Validate data before sending it. Titles are at most 80 characters; notification bodies and
   prompts are at most 2,000 characters; URLs must be expected `https:` destinations. Reject NUL
   bytes and unexpected control characters rather than trying to make them executable or readable.
@@ -58,7 +58,7 @@ needs a stable URL it can call later.
 
 ## Capability Inventory
 
-- `harkctl` authenticates and sends the requested notifications, interactions, activities, or
+- `sharkctl` authenticates and sends the requested notifications, interactions, activities, or
   service configuration to SHark.
 - `jq` validates and encodes values as JSON data. It must not generate shell source.
 - `curl` may POST only to a validated SHark webhook URL supplied through a secret.
@@ -74,13 +74,13 @@ unrelated files or environment variables, or sending data to any other destinati
 1. Check the current connection:
 
    ```bash
-   harkctl auth status
+   sharkctl auth status
    ```
 
 2. If unauthenticated or missing a required scope, start browser authorization:
 
    ```bash
-   harkctl auth login --client-name "SHark CLI"
+   sharkctl auth login --client-name "SHark CLI"
    ```
 
 3. Relay the code and verification URL from stderr, then tell the user to approve it in their
@@ -96,7 +96,7 @@ explicitly required.
 Send a one-shot notification:
 
 ```bash
-harkctl notify "Production deployed" \
+sharkctl notify "Production deployed" \
   --title "Deploy bot" \
   --image https://example.com/deploy-bot.png \
   --url https://example.com/deployments/184 \
@@ -112,7 +112,7 @@ For generated payloads, pipe JSON with `--stdin`; explicit flags override stdin 
 
 ```bash
 printf '%s' '{"body":"Tests passed","title":"CI"}' | \
-  harkctl notify --stdin --idempotency-key build-184-tests
+  sharkctl notify --stdin --idempotency-key build-184-tests
 ```
 
 When a body comes from an external source, first place it in `UNTRUSTED_BODY` without generating
@@ -127,7 +127,7 @@ jq -en --arg body "$UNTRUSTED_BODY" '
   else error("invalid notification body")
   end
 ' | \
-  harkctl notify --stdin --idempotency-key build-184-tests
+  sharkctl notify --stdin --idempotency-key build-184-tests
 ```
 
 ## Ask the User
@@ -135,16 +135,16 @@ jq -en --arg body "$UNTRUSTED_BODY" '
 Pass exactly one response type:
 
 ```bash
-harkctl notify ask "Deploy production?" \
+sharkctl notify ask "Deploy production?" \
   --approval --title "Deploy bot" --wait --timeout 15m
 
-harkctl notify ask "Run the migration?" \
+sharkctl notify ask "Run the migration?" \
   --yes-no --title "Database" --wait
 
-harkctl notify ask "What should the release note say?" \
+sharkctl notify ask "What should the release note say?" \
   --text --title "Release bot" --wait
 
-harkctl notify ask "Send the prepared release email?" \
+sharkctl notify ask "Send the prepared release email?" \
   --approval --live-activity \
   --primary-label Send --secondary-label Deny \
   --wait --timeout 15m
@@ -180,14 +180,14 @@ means timeout, canceled, or expired; `5` means denied or no; `7` means no device
 Use one activity for changing task state instead of sending many notifications:
 
 ```bash
-harkctl activity start \
+sharkctl activity start \
   --key deploy-main --replace --style ring \
   --title "Deploy #184" --status "Building" --progress 0.1
 
-harkctl activity update deploy-main \
+sharkctl activity update deploy-main \
   --status "Testing" --progress 0.7
 
-harkctl activity end deploy-main \
+sharkctl activity end deploy-main \
   --status "Shipped" --progress 1 --dismiss-after 45s
 ```
 
@@ -215,7 +215,7 @@ that needs a reusable webhook URL.
    ```bash
    bash <<'BASH'
    set -o pipefail
-   harkctl services create \
+   sharkctl services create \
      --title "Release bot" \
      --image https://example.com/release-bot.png \
      --url https://example.com/releases | \

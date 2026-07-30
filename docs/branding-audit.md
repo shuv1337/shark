@@ -13,10 +13,11 @@ SHark v1 after the exhaustive source audit.
   preserve the fork boundary.
 - Tests mention `Hark Pro` and `Autumn` only to prove that paid-plan copy is
   absent and stale billing configuration is rejected.
-- The `@hark/*` package scope, `harkctl`, `HARK_*` environment variables,
-  database names, DTO route names, secure-storage prefix, cryptographic domain
-  strings, `HarkAgentActivity`, and `Hark-Callbacks/1` remain protocol or
-  migration compatibility identifiers as required by the rebrand plan.
+- `sharkctl` is the canonical fork CLI and npm package.
+- The `@hark/*` internal package scope, `HARK_*` environment variables, `hark`
+  config directory, database names, DTO route names, secure-storage prefix,
+  cryptographic domain strings, `HarkAgentActivity`, and `Hark-Callbacks/1`
+  remain protocol or migration compatibility identifiers.
 - The Git `upstream` remote intentionally points at the original Hark
   repository.
 
