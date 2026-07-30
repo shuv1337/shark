@@ -163,7 +163,7 @@ index 972fa4f190d5da8f961218bcbe2436964ac34acf..a008b1c7f27ad73e215728f9c2a02b9b
 +      ["approve", "deny", "yes", "no"].contains(target),
 +      let encodedId = interactionId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
 +      let url = URL(
-+        string: "https://hark.ryan.ceo/api/live-activity-interactions/\(encodedId)/respond"
++        string: "https://shark.shuv.dev/api/live-activity-interactions/\(encodedId)/respond"
 +      )
 +    {
 +      let payload = [
