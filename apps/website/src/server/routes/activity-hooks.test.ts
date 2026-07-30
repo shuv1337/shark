@@ -298,7 +298,7 @@ describe("Live Activity webhook routes", () => {
         status: "Deployed",
         progress: 1,
         symbol: "success",
-        accentColor: "#5ED8B7",
+        accentColor: "#D35C46",
         dismissAfterSeconds: 30,
         ifSequence: 1,
       });
@@ -308,7 +308,7 @@ describe("Live Activity webhook routes", () => {
         sequence: 2,
         status: "ended",
         // Operations that omit style leave the stored value unchanged.
-        state: { status: "Deployed", progress: 1, accentColor: "#5ED8B7", style: "terminal" },
+        state: { status: "Deployed", progress: 1, accentColor: "#D35C46", style: "terminal" },
       });
       expect(apnsCalls.at(-1)).toMatchObject({
         priority: 10,

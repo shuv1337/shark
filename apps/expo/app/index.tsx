@@ -2,7 +2,7 @@ import * as AppleAuthentication from "expo-apple-authentication";
 import { Redirect } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useState } from "react";
-import { ActivityIndicator, Image, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Image, StyleSheet, Text, useColorScheme, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { signInWithApple } from "../src/lib/apple-auth";
 import { useSession } from "../src/lib/auth";
@@ -12,6 +12,7 @@ export default function SignInScreen() {
   const { data: session, isPending } = useSession();
   const [busy, setBusy] = useState<"apple" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const colorScheme = useColorScheme();
 
   // Keep the sign-in screen mounted until the native authorization code is
   // exchanged and its revocation token is safely stored server-side.
@@ -31,7 +32,7 @@ export default function SignInScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar style="dark" />
+      <StatusBar style="auto" />
       <View style={styles.header}>
         <Image
           accessible={false}
@@ -55,7 +56,11 @@ export default function SignInScreen() {
         ) : (
           <>
             <AppleAuthentication.AppleAuthenticationButton
-              buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
+              buttonStyle={
+                colorScheme === "dark"
+                  ? AppleAuthentication.AppleAuthenticationButtonStyle.WHITE
+                  : AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
+              }
               buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
               cornerRadius={26}
               onPress={() => {
@@ -64,7 +69,7 @@ export default function SignInScreen() {
               style={[styles.appleButton, busy && styles.buttonDisabled]}
             />
             {busy === "apple" ? (
-              <ActivityIndicator color={colors.ink} style={styles.appleSpinner} />
+              <ActivityIndicator color={colors.appleButtonForeground} style={styles.appleSpinner} />
             ) : null}
           </>
         )}

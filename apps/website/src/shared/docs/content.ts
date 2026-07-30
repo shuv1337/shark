@@ -637,7 +637,7 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
               {
                 name: "accentColor",
                 type: "string",
-                detail: "Six-digit hex, `#RRGGBB`. Defaults to `#5ED8B7`.",
+                detail: "Six-digit hex, `#RRGGBB`. Defaults to `#D35C46`.",
               },
               {
                 name: "style",

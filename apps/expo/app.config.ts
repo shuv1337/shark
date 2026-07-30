@@ -14,7 +14,7 @@ export default ({ config: _config }: ConfigContext): ExpoConfig => {
     icon: "./assets/icon.png",
     scheme: "shark",
     orientation: "portrait",
-    userInterfaceStyle: "light",
+    userInterfaceStyle: "automatic",
     platforms: ["ios"],
     ios: {
       bundleIdentifier: "dev.shuv.shark",
@@ -42,7 +42,7 @@ export default ({ config: _config }: ConfigContext): ExpoConfig => {
       [
         "expo-splash-screen",
         {
-          backgroundColor: "#035B49",
+          backgroundColor: "#0C1119",
           image: "./assets/splash-icon.png",
           imageWidth: 200,
         },

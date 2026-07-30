@@ -132,7 +132,7 @@ describe("Live Activity APNs payloads", () => {
     expect(isInvalidApnsTokenReason("TooManyRequests")).toBe(false);
   });
 
-  it("closes the request and destroys the HTTP/2 client on timeout", async () => {
+  it("uses the token environment and cleans up the HTTP/2 client on timeout", async () => {
     const request = new EventEmitter() as EventEmitter & {
       close: ReturnType<typeof vi.fn>;
       end: ReturnType<typeof vi.fn>;
@@ -157,7 +157,7 @@ describe("Live Activity APNs payloads", () => {
 
     const pending = sendLiveActivityPush(
       "aa".repeat(32),
-      "sandbox",
+      "production",
       {
         event: "update",
         props,
@@ -165,6 +165,7 @@ describe("Live Activity APNs payloads", () => {
       },
       5,
     );
+    expect(transport.connect).toHaveBeenCalledWith("https://api.push.apple.com");
     timeout?.();
 
     await expect(pending).resolves.toMatchObject({ accepted: false, reason: "Timeout" });

@@ -156,7 +156,7 @@ const LA = {
   base: "#0B1512",
   primary: "#F4FBF9",
   secondary: "#B8C9C4",
-  accent: "#5ED8B7",
+  accent: "#D35C46",
   track: "rgba(255,255,255,0.16)",
   progress: 0.65,
 } as const;

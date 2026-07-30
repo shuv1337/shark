@@ -249,7 +249,7 @@ export const LIVE_ACTIVITY_STYLES = [
 ] as const;
 export const liveActivityStyleSchema = z.enum(LIVE_ACTIVITY_STYLES);
 export type LiveActivityStyle = z.infer<typeof liveActivityStyleSchema>;
-export const LIVE_ACTIVITY_DEFAULT_ACCENT_COLOR = "#5ED8B7" as const;
+export const LIVE_ACTIVITY_DEFAULT_ACCENT_COLOR = "#D35C46" as const;
 export const LIVE_ACTIVITY_DEFAULT_EXPIRES_IN_SECONDS = 28_800 as const;
 export const LIVE_ACTIVITY_DEFAULT_STALE_AFTER_SECONDS = 14_400 as const;
 export const liveActivityAccentColorSchema = z

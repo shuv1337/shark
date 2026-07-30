@@ -12,7 +12,6 @@ export interface ApnsProviderConfig {
   teamId: string;
   privateKey: string;
   bundleId: string;
-  environment: "sandbox" | "production";
 }
 
 export type LiveActivityApnsEvent = "start" | "update" | "end";
@@ -102,7 +101,7 @@ export function encodeLiveActivityPayload(input: LiveActivityPayloadInput): Buff
   return payload;
 }
 
-export function apnsHost(environment: ApnsProviderConfig["environment"]): string {
+export function apnsHost(environment: "sandbox" | "production"): string {
   return environment === "production"
     ? "https://api.push.apple.com"
     : "https://api.sandbox.push.apple.com";
@@ -139,7 +138,6 @@ function providerConfig(): ApnsProviderConfig | null {
     teamId: env.APPLE_TEAM_ID,
     privateKey: env.APNS_PRIVATE_KEY,
     bundleId: env.APNS_BUNDLE_ID,
-    environment: env.APNS_ENVIRONMENT,
   };
 }
 
@@ -161,10 +159,6 @@ export async function sendLiveActivityPush(
   if (!config) {
     return { status: 0, apnsId: null, reason: "ProviderNotConfigured", accepted: false };
   }
-  if (tokenEnvironment !== config.environment) {
-    return { status: 0, apnsId: null, reason: "EnvironmentMismatch", accepted: false };
-  }
-
   let payload: Buffer;
   let jwt: string;
   try {
@@ -180,7 +174,10 @@ export async function sendLiveActivityPush(
   }
 
   return new Promise<ApnsResult>((resolve) => {
-    const client = connect(apnsHost(config.environment));
+    // APNs signing keys work in both environments. Route each token to the
+    // environment recorded by its signed app so development and App Store
+    // devices can coexist without a server-wide mode switch.
+    const client = connect(apnsHost(tokenEnvironment));
     let request: ReturnType<typeof client.request> | null = null;
     let settled = false;
     const finish = (result: ApnsResult) => {

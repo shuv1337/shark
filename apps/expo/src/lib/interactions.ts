@@ -14,6 +14,7 @@ import * as SecureStore from "expo-secure-store";
 import { Linking } from "react-native";
 import { ApiError, api } from "./api";
 import { getCookie } from "./auth";
+import { detailFromNotification, type NotificationDetail } from "./notification-detail";
 
 export const DEVICE_ID_KEY = "hark.device.serverId";
 const RETRY_QUEUE_KEY = "hark.interaction.responseQueue.v1";
@@ -171,7 +172,12 @@ export async function registerInteractionCategories(): Promise<void> {
         identifier: HARK_REPLY_ACTION_ID,
         buttonTitle: "Reply",
         textInput: { submitButtonTitle: "Send", placeholder: "Reply" },
-        options: opensAuthenticatedApp,
+        // Inline replies must remain in the notification UI. Foreground and
+        // authentication flags prevent the lock-screen text field from appearing.
+        options: {
+          isAuthenticationRequired: false,
+          opensAppToForeground: false,
+        },
       },
     ]),
     Notifications.setNotificationCategoryAsync(HARK_YES_NO_CATEGORY_ID, [
@@ -191,12 +197,18 @@ export async function registerInteractionCategories(): Promise<void> {
 
 export async function handleNotificationResponse(
   response: Notifications.NotificationResponse,
+  onOpenDetail?: (detail: NotificationDetail) => void,
 ): Promise<void> {
   const data = response.notification.request.content.data as
     | { interactionId?: string; actionDigest?: string; responseToken?: string; url?: string }
     | undefined;
   if (response.actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER) {
-    if (data?.url) await Linking.openURL(data.url).catch(() => {});
+    if (data?.url) {
+      await Linking.openURL(data.url).catch(() => {});
+      return;
+    }
+    const detail = detailFromNotification(response.notification);
+    if (detail) onOpenDetail?.(detail);
     return;
   }
   if (!data?.interactionId || !data.actionDigest) return;
