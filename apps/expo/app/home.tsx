@@ -94,6 +94,7 @@ export default function HomeScreen() {
         platform: "ios",
         deviceName: Device.deviceName ?? undefined,
         interactionSchemaVersion: 1,
+        liveActivityInteractionVersion: 1,
       });
 
       await SecureStore.setItemAsync(EXPO_TOKEN_KEY, expoToken);
