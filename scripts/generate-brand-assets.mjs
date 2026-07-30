@@ -5,13 +5,13 @@ import { Resvg } from "@resvg/resvg-js";
 import { zlibSync } from "fflate";
 
 const root = resolve(import.meta.dirname, "..");
-const sourceSvgPath = resolve(root, "assets/brand/devil-phone.svg");
-const safeRasterPath = resolve(root, "assets/brand/icon-maskable-512.png");
+const sourceIconPath = resolve(root, "assets/brand/shark-devil-icon.png");
+const sourceMarkPath = resolve(root, "assets/brand/shark-devil-mark.png");
 const checkOnly = process.argv.includes("--check");
 
 const expectedSources = {
-  [sourceSvgPath]: "3489212420a5c2cbaa56cec28933b1e1284739b11e3388650ea3fb8a4a7e9f69",
-  [safeRasterPath]: "5d3fa36bb3865110761752c978b811d0b44755e44a99376acf6c9f453af9af1e",
+  [sourceIconPath]: "219df713d1b063ac99aaa198860f800a808cc2fd7b3ad57377db0cd75363840b",
+  [sourceMarkPath]: "bfd066567e3d43184e51548ca229635f5fbd8eedeafa4fc4ff014ac3a086eaab",
 };
 
 function sha256(value) {
@@ -25,11 +25,9 @@ for (const [path, expected] of Object.entries(expectedSources)) {
   }
 }
 
-const sourceSvg = readFileSync(sourceSvgPath, "utf8");
-const innerSvg = sourceSvg.match(/<svg[^>]*>([\s\S]*)<\/svg>/)?.[1];
-if (!innerSvg) throw new Error("Canonical Devil Phone SVG has no root content.");
-
-const background = "#090d10";
+const sourceIconDataUrl = `data:image/png;base64,${readFileSync(sourceIconPath).toString("base64")}`;
+const sourceMarkDataUrl = `data:image/png;base64,${readFileSync(sourceMarkPath).toString("base64")}`;
+const background = "#0c1119";
 
 function render(svg, width) {
   return new Resvg(svg, {
@@ -38,17 +36,18 @@ function render(svg, width) {
   }).render();
 }
 
-function squareSvg({ backgroundColor }) {
-  // The recovered maskable raster places the canonical mark at 75% of the
-  // canvas, centered. Preserve that exact safe-area composition for every
-  // square derivative so horns, handset, tail, and arrow survive all masks.
-  const inset = 387 * 0.125;
-  const markSize = 387 * 0.75;
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 387 387">
-${backgroundColor ? `<rect width="387" height="387" fill="${backgroundColor}"/>` : ""}
-<svg x="${inset}" y="${inset}" width="${markSize}" height="${markSize}" viewBox="0 0 387 387">
-${innerSvg}
-</svg>
+function sourceImageSvg({ backgroundColor, source }) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1254 1254">
+${backgroundColor ? `<rect width="1254" height="1254" fill="${backgroundColor}"/>` : ""}
+<image width="1254" height="1254" href="${source}"/>
+</svg>`;
+}
+
+function croppedMarkSvg() {
+  // Tighten only the website wordmark derivative around the shark silhouette.
+  // Square icon and splash derivatives retain the original approved composition.
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="40 290 1174 674">
+<image width="1254" height="1254" href="${sourceMarkDataUrl}"/>
 </svg>`;
 }
 
@@ -152,25 +151,24 @@ function pixelText(text, x, y, scale, color) {
 
 const ogSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
 <rect width="1200" height="630" fill="${background}"/>
-<svg x="50" y="120" width="390" height="390" viewBox="0 0 387 387">${innerSvg}</svg>
+<image x="36" y="96" width="438" height="438" href="${sourceMarkDataUrl}"/>
 ${pixelText("SHARK", 485, 170, 18, "#f2f0e9")}
 ${pixelText("WEBHOOKS TO IPHONE", 485, 365, 6, "#b2b7ba")}
 </svg>`;
 
-const icon = opaquePng(render(squareSvg({ backgroundColor: background }), 1024));
-const favicon = opaquePng(render(squareSvg({ backgroundColor: background }), 256));
-const mark = render(squareSvg({}), 256).asPng();
-const splash = render(squareSvg({}), 512).asPng();
+const icon = opaquePng(render(sourceImageSvg({ source: sourceIconDataUrl }), 1024));
+const favicon = opaquePng(render(sourceImageSvg({ source: sourceIconDataUrl }), 256));
+const mark = render(croppedMarkSvg(), 384).asPng();
+const splash = render(sourceImageSvg({ source: sourceMarkDataUrl }), 512).asPng();
 const ogImage = opaquePng(render(ogSvg, 1200));
 
 const generated = new Map([
   ["apps/expo/assets/icon.png", icon],
-  ["apps/expo/assets/icon.svg", Buffer.from(sourceSvg)],
   ["apps/expo/assets/splash-icon.png", splash],
   ["apps/website/public/favicon.png", favicon],
   ["apps/website/public/app-store-icon.png", icon],
   ["apps/website/public/ogimage.png", ogImage],
-  ["apps/website/src/client/assets/devil-phone-mark.png", mark],
+  ["apps/website/src/client/assets/shark-devil-mark.png", mark],
 ]);
 
 const manifest = {
