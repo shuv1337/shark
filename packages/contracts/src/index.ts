@@ -185,6 +185,66 @@ export interface EventDto {
 }
 
 // ---------------------------------------------------------------------------
+// Durable inbox
+// ---------------------------------------------------------------------------
+
+export const INBOX_FILTERS = ["all", "needs_action", "active", "failed", "notifications"] as const;
+export type InboxFilter = (typeof INBOX_FILTERS)[number];
+
+export type InboxItemKind = "notification" | "interaction" | "live_activity";
+
+export interface InboxActionDto {
+  interactionId: string;
+  kind: InteractionKind;
+  choices: string[];
+  actionDigest: string;
+  primaryLabel: string | null;
+  secondaryLabel: string | null;
+  expiresAt: string;
+}
+
+export interface InboxItemDto {
+  id: string;
+  kind: InboxItemKind;
+  sourceName: string;
+  sourceImageUrl: string | null;
+  title: string;
+  body: string;
+  imageUrl: string | null;
+  url: string | null;
+  status: string;
+  result: string | null;
+  accepted: number;
+  failed: number;
+  needsAction: boolean;
+  readAt: string | null;
+  occurredAt: string;
+  updatedAt: string;
+  action: InboxActionDto | null;
+}
+
+export interface InboxItemEventDto {
+  id: string;
+  kind: string;
+  detail: string | null;
+  result: string | null;
+  accepted: number;
+  failed: number;
+  occurredAt: string;
+}
+
+export interface InboxPageDto {
+  items: InboxItemDto[];
+  nextCursor: string | null;
+  unresolvedCount: number;
+}
+
+export interface InboxDetailDto {
+  item: InboxItemDto;
+  events: InboxItemEventDto[];
+}
+
+// ---------------------------------------------------------------------------
 // Devices
 // ---------------------------------------------------------------------------
 

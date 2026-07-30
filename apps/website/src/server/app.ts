@@ -16,6 +16,7 @@ import { devicesRoute } from "./routes/devices";
 import { docsTextRoute } from "./routes/docs";
 import { eventsRoute } from "./routes/events";
 import { hooksRoute } from "./routes/hooks";
+import { inboxRoute } from "./routes/inbox";
 import {
   agentRoute,
   interactionCredentialResponseRoute,
@@ -71,6 +72,7 @@ app.route("/api/live-activity", liveActivityRegistrationRoute);
 app.route("/api/billing", billingRoute);
 app.route("/api/devices", devicesRoute);
 app.route("/api/events", eventsRoute);
+app.route("/api/inbox", inboxRoute);
 app.route("/hooks", activityHooksRoute);
 app.route("/hooks", hooksRoute);
 

@@ -372,7 +372,10 @@ export const agentRoute = new Hono<AgentEnv>()
       body: parsed.data.body,
       imageUrl: parsed.data.imageUrl ?? null,
       url: parsed.data.url ?? null,
+      status: "processing",
       acceptedCount: 0,
+      failedCount: 0,
+      error: null,
       idempotencyKey: idempotencyKey ?? null,
       requestHash: idempotencyKey ? requestHash : null,
       createdAt: new Date(),
@@ -393,6 +396,10 @@ export const agentRoute = new Hono<AgentEnv>()
     }
 
     if (selectedDevices.length === 0) {
+      await db
+        .update(agentNotification)
+        .set({ status: "no_devices" })
+        .where(eq(agentNotification.id, notificationId));
       track({
         name: "agent_notification_created",
         userId: token.userId,
@@ -461,7 +468,17 @@ export const agentRoute = new Hono<AgentEnv>()
     }
     await db
       .update(agentNotification)
-      .set({ acceptedCount: result.accepted })
+      .set({
+        status:
+          result.accepted === messages.length
+            ? "accepted"
+            : result.accepted > 0
+              ? "partial"
+              : "failed",
+        acceptedCount: result.accepted,
+        failedCount: messages.length - result.accepted,
+        error: result.errors.length > 0 ? result.errors.join("; ").slice(0, 1000) : null,
+      })
       .where(eq(agentNotification.id, notificationId));
     return c.json(
       {
@@ -756,6 +773,19 @@ export const agentRoute = new Hono<AgentEnv>()
       actionDigest,
       imageUrl: parsed.data.imageUrl,
       url: parsed.data.url,
+      badge:
+        (
+          await db
+            .select({ value: count() })
+            .from(interaction)
+            .where(
+              and(
+                eq(interaction.userId, token.userId),
+                eq(interaction.status, "pending"),
+                gt(interaction.expiresAt, new Date()),
+              ),
+            )
+        )[0]?.value ?? 0,
     });
     const result = await sendPushMessages(messages);
     if (result.staleTokens.length > 0) {

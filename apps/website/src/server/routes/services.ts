@@ -11,6 +11,7 @@ import { db } from "../db";
 import { service } from "../db/schema";
 import { env } from "../env";
 import { newId } from "../lib/id";
+import { syncInboxForUser } from "../lib/inbox";
 import {
   decryptWebhookToken,
   encryptWebhookToken,
@@ -135,6 +136,9 @@ export const servicesRoute = new Hono<AuthedEnv>()
   .delete("/:id", async (c) => {
     const user = c.get("user");
     const id = c.req.param("id");
+    // Freeze source metadata and any final lifecycle state before cascading
+    // deletion removes the canonical service-owned records.
+    await syncInboxForUser(user.id);
     const deleted = await db
       .delete(service)
       .where(and(eq(service.id, id), eq(service.userId, user.id)))

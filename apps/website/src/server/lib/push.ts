@@ -110,6 +110,8 @@ export interface BuildInteractionPushInput {
   eventId?: string;
   imageUrl?: string;
   url?: string;
+  /** Account-wide unresolved action count for the iOS app icon. */
+  badge?: number;
 }
 
 export function buildInteractionPushMessages(input: BuildInteractionPushInput): ExpoPushMessage[] {
@@ -139,6 +141,7 @@ export function buildInteractionPushMessages(input: BuildInteractionPushInput): 
     categoryId,
     priority: "high",
     mutableContent: true,
+    ...(input.badge !== undefined ? { badge: input.badge } : {}),
     ...(input.imageUrl ? { richContent: { image: input.imageUrl } } : {}),
     data,
   }));

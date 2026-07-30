@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 process.env.NODE_ENV = "test";
@@ -1090,6 +1091,40 @@ describe("agent notifications", () => {
     const response = await createNotification({ body: "Over quota" });
     expect(response.status).toBe(429);
     expect(await response.json()).toMatchObject({ error: "Monthly notification limit reached" });
+  });
+
+  it("retains rejected direct-push failures distinctly from no-device attempts", async () => {
+    billingState.acceptPush = false;
+    const response = await createNotification({ body: "Rejected by Expo", title: "Release bot" });
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { notification: { id: string }; accepted: number };
+    expect(body.accepted).toBe(0);
+
+    const [stored] = await db
+      .select()
+      .from(schema.agentNotification)
+      .where(eq(schema.agentNotification.id, body.notification.id));
+    expect(stored).toMatchObject({
+      status: "failed",
+      acceptedCount: 0,
+      failedCount: 2,
+    });
+    expect(stored?.error).toContain("rejected");
+
+    const detail = await app.request(
+      `/api/inbox/${encodeURIComponent(`ibox:agent_notification:${body.notification.id}`)}`,
+    );
+    expect(detail.status).toBe(200);
+    expect(await detail.json()).toMatchObject({
+      item: {
+        status: "failed",
+        accepted: 0,
+        failed: 2,
+      },
+      events: expect.arrayContaining([
+        expect.objectContaining({ kind: "delivery", result: expect.stringContaining("rejected") }),
+      ]),
+    });
   });
 
   it("threads notifications per sender name and enforces the shared per-minute budget", async () => {

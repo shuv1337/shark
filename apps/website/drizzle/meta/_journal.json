@@ -113,6 +113,20 @@
       "when": 1785282742299,
       "tag": "0015_breezy_reavers",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1785399448816,
+      "tag": "0016_slim_dorian_gray",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1785400611767,
+      "tag": "0017_overjoyed_molten_man",
+      "breakpoints": true
     }
   ]
 }
