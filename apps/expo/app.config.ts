@@ -14,7 +14,7 @@ export default ({ config: _config }: ConfigContext): ExpoConfig => {
     icon: "./assets/icon.png",
     scheme: "shark",
     orientation: "portrait",
-    userInterfaceStyle: "light",
+    userInterfaceStyle: "automatic",
     platforms: ["ios"],
     ios: {
       bundleIdentifier: "dev.shuv.shark",

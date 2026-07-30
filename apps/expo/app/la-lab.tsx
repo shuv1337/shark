@@ -255,10 +255,10 @@ function Btn({
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#0B1512" },
+  screen: { flex: 1, backgroundColor: "#0C1119" },
   content: { padding: 16, gap: 14 },
-  heading: { color: "#F2FBF8", fontSize: 22, fontWeight: "700" },
-  caption: { color: "#8FA8A1", fontSize: 13, lineHeight: 18 },
+  heading: { color: "#E7ECF3", fontSize: 22, fontWeight: "700" },
+  caption: { color: "#8995A6", fontSize: 13, lineHeight: 18 },
   section: { gap: 8 },
   sectionLabel: { color: "#5ED8B7", fontSize: 11, fontWeight: "700", textTransform: "uppercase" },
   row: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
@@ -266,14 +266,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 9,
     borderRadius: 10,
-    backgroundColor: "#16302A",
+    backgroundColor: "#0F1621",
     borderWidth: 1,
-    borderColor: "#22453D",
+    borderColor: "rgba(255, 255, 255, 0.06)",
   },
   btnSelected: { backgroundColor: "#1E5145", borderColor: "#5ED8B7" },
   btnPrimary: { backgroundColor: "#08715D", borderColor: "#5ED8B7" },
   btnDanger: { backgroundColor: "#5A1F1F", borderColor: "#B4514F" },
   btnPressed: { opacity: 0.7 },
-  btnText: { color: "#F2FBF8", fontSize: 13, fontWeight: "600" },
-  logLine: { color: "#8FA8A1", fontSize: 12, fontFamily: "Menlo" },
+  btnText: { color: "#E7ECF3", fontSize: 13, fontWeight: "600" },
+  logLine: { color: "#8995A6", fontSize: 12, fontFamily: "Menlo" },
 });

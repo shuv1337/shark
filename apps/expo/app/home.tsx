@@ -225,7 +225,7 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
-      <StatusBar style="dark" />
+      <StatusBar style="auto" />
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.header}>
           <View style={styles.brandGroup}>
@@ -442,7 +442,7 @@ function ActivityLogRow({ activityEvent }: { activityEvent: EventDto }) {
 function activityDotStyle(status: string) {
   if (status === "accepted" || status === "delivered") return { backgroundColor: colors.accent };
   if (status === "failed") return { backgroundColor: colors.danger };
-  if (status === "partial") return { backgroundColor: "#D48A16" };
+  if (status === "partial") return { backgroundColor: colors.warning };
   return { backgroundColor: colors.line };
 }
 
@@ -513,7 +513,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     letterSpacing: tightTracking(13),
   },
-  stepBadgeTextDone: { color: "#FFFFFF" },
+  stepBadgeTextDone: { color: colors.accentForeground },
   cardTitle: {
     color: colors.ink,
     fontFamily: fonts.semibold,
@@ -541,7 +541,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   cardButtonText: {
-    color: "#FFFFFF",
+    color: colors.accentForeground,
     fontFamily: fonts.medium,
     fontSize: 15,
     letterSpacing: tightTracking(15),
@@ -580,7 +580,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
   },
   compactCheckText: {
-    color: "#FFFFFF",
+    color: colors.accentForeground,
     fontFamily: fonts.semibold,
     fontSize: 10,
   },

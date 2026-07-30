@@ -47,8 +47,8 @@ function HarkAgentActivityLayout(props: LiveActivityProps, _environment: LiveAct
   // template literals and Math calls are the proven-safe subset; helpers such
   // as Array.prototype.map or String.prototype.repeat are avoided on purpose.
   const accent = props.accentColor ?? "#5ED8B7";
-  const primary = "#F4FBF9";
-  const secondary = "#B8C9C4";
+  const primary = "#E7ECF3";
+  const secondary = "#B9C3D1";
   const track = "#FFFFFF29";
   const title = props.privacyMode === "private" ? "Agent task" : props.title;
   const status = props.privacyMode === "private" ? "In progress" : props.status;
@@ -149,7 +149,7 @@ function HarkAgentActivityLayout(props: LiveActivityProps, _environment: LiveAct
     <VStack
       alignment="leading"
       spacing={9}
-      modifiers={[padding({ horizontal: 16, vertical: 14 }), activityBackgroundTint("#0B1512")]}
+      modifiers={[padding({ horizontal: 16, vertical: 14 }), activityBackgroundTint("#0C1119")]}
     >
       <HStack spacing={8}>
         <Image
@@ -190,7 +190,7 @@ function HarkAgentActivityLayout(props: LiveActivityProps, _environment: LiveAct
     <VStack
       alignment="leading"
       spacing={5}
-      modifiers={[padding({ all: 10 }), activityBackgroundTint("#0B1512")]}
+      modifiers={[padding({ all: 10 }), activityBackgroundTint("#0C1119")]}
     >
       <HStack spacing={7}>
         <Image systemName="sparkles" color={accent} size={15} />
@@ -266,7 +266,7 @@ function HarkAgentActivityLayout(props: LiveActivityProps, _environment: LiveAct
       spacing={8}
       modifiers={[
         padding({ horizontal: 16, vertical: 14 }),
-        activityBackgroundTint("#0B1512"),
+        activityBackgroundTint("#0C1119"),
         accessibilityElement("combine"),
         accessibilityLabel(a11ySummary),
       ]}
@@ -322,7 +322,7 @@ function HarkAgentActivityLayout(props: LiveActivityProps, _environment: LiveAct
       spacing={13}
       modifiers={[
         padding({ horizontal: 16, vertical: 14 }),
-        activityBackgroundTint("#0B1512"),
+        activityBackgroundTint("#0C1119"),
         accessibilityElement("combine"),
         accessibilityLabel(a11ySummary),
       ]}
@@ -364,7 +364,7 @@ function HarkAgentActivityLayout(props: LiveActivityProps, _environment: LiveAct
       alignment="leading"
       spacing={0}
       modifiers={[
-        activityBackgroundTint("#0B1512"),
+        activityBackgroundTint("#0C1119"),
         accessibilityElement("combine"),
         accessibilityLabel(a11ySummary),
       ]}
@@ -423,7 +423,7 @@ function HarkAgentActivityLayout(props: LiveActivityProps, _environment: LiveAct
       spacing={7}
       modifiers={[
         padding({ horizontal: 16, vertical: 13 }),
-        activityBackgroundTint("#0B1512"),
+        activityBackgroundTint("#0C1119"),
         accessibilityElement("combine"),
         accessibilityLabel(a11ySummary),
       ]}
@@ -515,7 +515,7 @@ function HarkAgentActivityLayout(props: LiveActivityProps, _environment: LiveAct
       spacing={9}
       modifiers={[
         padding({ horizontal: 16, vertical: 14 }),
-        activityBackgroundTint("#0B1512"),
+        activityBackgroundTint("#0C1119"),
         accessibilityElement("combine"),
         accessibilityLabel(a11ySummary),
       ]}
