@@ -30,6 +30,8 @@ export const envSchema = z.object({
   APPLE_SIGN_IN_SERVICE_ID: optionalString,
   /** Native App ID / bundle identifier. This is also the native token audience. */
   APPLE_SIGN_IN_BUNDLE_ID: z.string().min(1).default("dev.shuv.shark"),
+  /** Native watchOS companion App ID / identity-token audience. */
+  APPLE_SIGN_IN_WATCH_BUNDLE_ID: z.string().min(1).default("dev.shuv.shark.watchkitapp"),
   APPLE_SIGN_IN_KEY_ID: optionalString,
   /** Sign in with Apple .p8 key. Accepts PEM text (with \n) or base64-encoded PEM. */
   APPLE_SIGN_IN_PRIVATE_KEY: optionalString,

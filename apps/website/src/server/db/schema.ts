@@ -123,6 +123,27 @@ export const device = sqliteTable("device", {
   lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }).notNull(),
 });
 
+export const watchDevice = sqliteTable(
+  "watch_device",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    appleSubject: text("apple_subject").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    deviceName: text("device_name"),
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("watch_device_user_subject_unique").on(table.userId, table.appleSubject),
+    index("watch_device_user_active_idx").on(table.userId, table.active),
+  ],
+);
+
 /** Small delivery log kept for debugging; not exposed as analytics. */
 export const event = sqliteTable(
   "event",
@@ -295,6 +316,29 @@ export const interaction = sqliteTable(
     index("interaction_service_created_at_idx").on(table.requesterServiceId, table.createdAt),
     index("interaction_callback_due_idx").on(table.callbackStatus, table.callbackNextAttemptAt),
     index("interaction_user_status_expiry_idx").on(table.userId, table.status, table.expiresAt),
+  ],
+);
+
+export const watchAction = sqliteTable(
+  "watch_action",
+  {
+    id: text("id").primaryKey(),
+    watchDeviceId: text("watch_device_id")
+      .notNull()
+      .references(() => watchDevice.id, { onDelete: "cascade" }),
+    interactionId: text("interaction_id")
+      .notNull()
+      .references(() => interaction.id, { onDelete: "cascade" }),
+    requestId: text("request_id").notNull(),
+    action: text("action").notNull(),
+    actionDigest: text("action_digest").notNull(),
+    accepted: integer("accepted", { mode: "boolean" }).notNull(),
+    terminalStatus: text("terminal_status").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("watch_action_device_request_unique").on(table.watchDeviceId, table.requestId),
+    index("watch_action_interaction_idx").on(table.interactionId),
   ],
 );
 

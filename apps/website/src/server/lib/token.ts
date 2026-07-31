@@ -156,3 +156,15 @@ export function hashInteractionResponseToken(token: string): string {
     .update(token, "utf8")
     .digest("hex");
 }
+
+/** Generates a revocable token scoped to the native watchOS companion. */
+export function generateWatchToken(): string {
+  return `shw_${randomBytes(32).toString("base64url")}`;
+}
+
+export function hashWatchToken(token: string): string {
+  return createHash("sha256")
+    .update("shark:watch-token:v1\0", "utf8")
+    .update(token, "utf8")
+    .digest("hex");
+}
