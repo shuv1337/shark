@@ -23,6 +23,8 @@ function makeDatabase(options?: { migrationCount?: number; latest?: number }) {
       "account",
       "service",
       "device",
+      "watch_device",
+      "watch_action",
       "event",
       "api_token",
       "interaction",

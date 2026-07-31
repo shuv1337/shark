@@ -12,6 +12,7 @@ identifiers, or account recovery material to this file.
 | Primary App ID | `dev.shuv.shark` | Apple resource `8M9ZYK5NRH` exists |
 | Widget App ID | `dev.shuv.shark.widgets` | Apple resource `Y67RVQMY6J` exists |
 | Notification extension App ID | `dev.shuv.shark.notification-service` | Apple resource `79T87YT8C5` exists |
+| Watch companion App ID | `dev.shuv.shark.watchkitapp` | Portal creation/provisioning pending |
 | App Group | `group.dev.shuv.shark` | Portal creation/association pending |
 | Apple Services ID | `dev.shuv.shark.web` | Portal creation/configuration pending |
 | Expo slug | `shark-shuv` | Operator-owned project pending |
@@ -34,7 +35,11 @@ Complete these actions in Certificates, Identifiers & Profiles:
 4. Create Services ID `dev.shuv.shark.web`, configure Sign in with Apple against the primary App ID,
    add domain `shark.shuv.dev`, and add return URL
    `https://shark.shuv.dev/api/auth/callback/apple`.
-5. Create or select a Sign in with Apple key for this service and an APNs authentication key for
+5. Create `dev.shuv.shark.watchkitapp` as the Watch companion App ID, enable Sign in with Apple,
+   and group it with the existing `dev.shuv.shark` primary App ID so both surfaces receive the same
+   Apple subject. Automatic signing must produce a profile containing the Apple sign-in entitlement
+   before a physical Watch install is accepted.
+6. Create or select a Sign in with Apple key for this service and an APNs authentication key for
    SHark delivery. Record only their key IDs outside the portal; encode each downloaded `.p8` as
    single-line base64 directly into the `SHark Production App` 1Password item. Never commit or paste key
    material into an issue, PR, log, or chat.

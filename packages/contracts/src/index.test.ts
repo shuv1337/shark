@@ -13,6 +13,8 @@ import {
   liveActivityUpdateSchema,
   pushDataSchema,
   serviceCreateSchema,
+  watchAppleAuthSchema,
+  watchInteractionResponseSchema,
   webhookRequestSchema,
 } from "./index";
 
@@ -291,6 +293,36 @@ describe("interaction schemas", () => {
         actionDigest,
       }).success,
     ).toBe(true);
+  });
+});
+
+describe("watch companion contracts", () => {
+  it("requires both single-use Apple bootstrap credentials", () => {
+    expect(
+      watchAppleAuthSchema.safeParse({
+        identityToken: "identity",
+        authorizationCode: "code",
+        deviceName: "Apple Watch",
+      }).success,
+    ).toBe(true);
+    expect(watchAppleAuthSchema.safeParse({ identityToken: "identity" }).success).toBe(false);
+  });
+
+  it("binds idempotent binary actions to the interaction digest", () => {
+    expect(
+      watchInteractionResponseSchema.safeParse({
+        action: "approve",
+        actionDigest: "a".repeat(64),
+        requestId: "request-1",
+      }).success,
+    ).toBe(true);
+    expect(
+      watchInteractionResponseSchema.safeParse({
+        action: "reply",
+        actionDigest: "a".repeat(64),
+        requestId: "request-1",
+      }).success,
+    ).toBe(false);
   });
 });
 

@@ -25,6 +25,7 @@ import {
 } from "./routes/interactions";
 import { liveActivityRegistrationRoute } from "./routes/live-activity-registration";
 import { servicesRoute } from "./routes/services";
+import { watchAuthRoute, watchRoute } from "./routes/watch";
 
 export const app = new Hono();
 
@@ -73,6 +74,8 @@ app.route("/api/billing", billingRoute);
 app.route("/api/devices", devicesRoute);
 app.route("/api/events", eventsRoute);
 app.route("/api/inbox", inboxRoute);
+app.route("/api/watch/auth", watchAuthRoute);
+app.route("/api/watch", watchRoute);
 app.route("/hooks", activityHooksRoute);
 app.route("/hooks", hooksRoute);
 

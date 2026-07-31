@@ -745,6 +745,20 @@ export const interactionResponseSchema = z.discriminatedUnion("action", [
 ]);
 export type InteractionResponseInput = z.infer<typeof interactionResponseSchema>;
 
+export const watchAppleAuthSchema = z.object({
+  identityToken: z.string().trim().min(1).max(16_384),
+  authorizationCode: z.string().trim().min(1).max(4_096),
+  deviceName: z.string().trim().min(1).max(100).optional(),
+});
+export type WatchAppleAuthInput = z.infer<typeof watchAppleAuthSchema>;
+
+export const watchInteractionResponseSchema = z.object({
+  action: z.enum(["approve", "deny", "yes", "no"]),
+  actionDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  requestId: z.string().trim().min(1).max(100),
+});
+export type WatchInteractionResponseInput = z.infer<typeof watchInteractionResponseSchema>;
+
 export const interactionCredentialResponseSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.enum(["approve", "deny", "yes", "no"]),
