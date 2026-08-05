@@ -108,6 +108,7 @@ const SECRET = `hark_${"a".repeat(43)}`;
 const READ_SECRET = `hark_${"b".repeat(43)}`;
 const OTHER_SECRET = `hark_${"c".repeat(43)}`;
 const EXPIRED_SECRET = `hark_${"d".repeat(43)}`;
+const WATCH_SECRET = `hark_${"w".repeat(43)}`;
 
 beforeAll(async () => {
   ({ app } = await import("../app"));
@@ -218,6 +219,15 @@ beforeAll(async () => {
       expiresAt: new Date(now.getTime() - 1000),
       createdAt: now,
     },
+    {
+      id: "tok_watch",
+      userId: "user_1",
+      name: "Apple Watch",
+      tokenHash: hashApiToken(WATCH_SECRET),
+      prefix: WATCH_SECRET.slice(0, 13),
+      scopes: ["watch:read", "watch:respond"],
+      createdAt: now,
+    },
   ]);
 });
 
@@ -226,6 +236,17 @@ function agent(path: string, token = SECRET, init?: RequestInit) {
     ...init,
     headers: {
       authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      ...init?.headers,
+    },
+  });
+}
+
+function watch(path: string, init?: RequestInit) {
+  return app.request(`/api/watch${path}`, {
+    ...init,
+    headers: {
+      authorization: `Bearer ${WATCH_SECRET}`,
       "content-type": "application/json",
       ...init?.headers,
     },
@@ -369,6 +390,79 @@ describe("agent token authentication", () => {
       .from(schema.apiToken)
       .where(eq(schema.apiToken.id, "tok_full"));
     expect(token?.lastUsedAt?.getTime()).toBe(recent.getTime());
+  });
+});
+
+describe("Apple Watch MVP surface", () => {
+  it("returns a bounded snapshot and lets the first valid action win", async () => {
+    const created = await createInteraction({
+      title: "Deploy",
+      prompt: "Ship now?",
+      kind: "approval",
+    });
+    const interaction = (await created.json()) as {
+      interaction: { id: string; actionDigest: string };
+    };
+    const snapshot = await watch("/snapshot");
+    expect(snapshot.status).toBe(200);
+    expect(await snapshot.json()).toMatchObject({
+      pendingInteraction: { id: interaction.interaction.id, title: "Deploy", kind: "approval" },
+    });
+
+    const first = await watch(`/interactions/${interaction.interaction.id}/respond`, {
+      method: "POST",
+      body: JSON.stringify({
+        action: "approve",
+        actionDigest: interaction.interaction.actionDigest,
+      }),
+    });
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({
+      ok: true,
+      status: "approved",
+      snapshot: { pendingInteraction: null },
+    });
+
+    const duplicate = await watch(`/interactions/${interaction.interaction.id}/respond`, {
+      method: "POST",
+      body: JSON.stringify({
+        action: "approve",
+        actionDigest: interaction.interaction.actionDigest,
+      }),
+    });
+    expect(duplicate.status).toBe(409);
+  });
+
+  it("redacts private active-work content before it reaches the Watch", async () => {
+    const now = new Date();
+    await db.insert(schema.liveActivity).values({
+      id: "act_watch_private",
+      userId: "user_1",
+      requesterTokenId: "tok_full",
+      key: "watch-private",
+      schemaVersion: 1,
+      props: {
+        title: "Private deployment",
+        status: "Leaking detail",
+        detail: "Sensitive",
+        privacyMode: "private",
+      },
+      status: "active",
+      sequence: 1,
+      acceptedCount: 1,
+      failedCount: 0,
+      expiresAt: new Date(now.getTime() + 60_000),
+      createdAt: now,
+      updatedAt: now,
+    });
+    const response = await watch("/snapshot");
+    const body = (await response.json()) as {
+      activeWork: { title: string; status: string; detail: string | null };
+    };
+    expect(body.activeWork).toEqual(
+      expect.objectContaining({ title: "Agent task", status: "In progress", detail: null }),
+    );
+    await db.delete(schema.liveActivity).where(eq(schema.liveActivity.id, "act_watch_private"));
   });
 });
 
