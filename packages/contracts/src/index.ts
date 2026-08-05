@@ -556,6 +556,8 @@ export const API_TOKEN_SCOPES = [
   "services:write",
   "devices:read",
   "events:read",
+  "watch:read",
+  "watch:respond",
 ] as const;
 export const apiTokenScopeSchema = z.enum(API_TOKEN_SCOPES);
 export type ApiTokenScope = z.infer<typeof apiTokenScopeSchema>;
@@ -744,6 +746,43 @@ export const interactionResponseSchema = z.discriminatedUnion("action", [
   }),
 ]);
 export type InteractionResponseInput = z.infer<typeof interactionResponseSchema>;
+
+/**
+ * The deliberately small view consumed by the native watchOS companion. It is
+ * a server-authored snapshot, not an offline inbox protocol.
+ */
+export interface WatchWorkItemDto {
+  id: string;
+  title: string;
+  status: string;
+  detail: string | null;
+  progress: number | null;
+  updatedAt: string;
+  private: boolean;
+}
+
+export interface WatchInteractionDto {
+  id: string;
+  title: string;
+  prompt: string;
+  kind: "approval" | "yes_no";
+  actionDigest: string;
+  expiresAt: string;
+  primaryLabel: string | null;
+  secondaryLabel: string | null;
+}
+
+export interface WatchSnapshotDto {
+  generatedAt: string;
+  activeWork: WatchWorkItemDto | null;
+  pendingInteraction: WatchInteractionDto | null;
+}
+
+export const watchInteractionResponseSchema = z.object({
+  action: z.enum(["approve", "deny", "yes", "no"]),
+  actionDigest: z.string().regex(/^[a-f0-9]{64}$/),
+});
+export type WatchInteractionResponseInput = z.infer<typeof watchInteractionResponseSchema>;
 
 export const interactionCredentialResponseSchema = z.discriminatedUnion("action", [
   z.object({

@@ -18,6 +18,7 @@ export default ({ config: _config }: ConfigContext): ExpoConfig => {
     platforms: ["ios"],
     ios: {
       bundleIdentifier: "dev.shuv.shark",
+      ...(appleTeamId ? { appleTeamId } : {}),
       usesAppleSignIn: true,
       icon: "./assets/icon.png",
       supportsTablet: false,

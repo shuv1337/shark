@@ -25,6 +25,7 @@ import {
 } from "./routes/interactions";
 import { liveActivityRegistrationRoute } from "./routes/live-activity-registration";
 import { servicesRoute } from "./routes/services";
+import { watchRoute } from "./routes/watch";
 
 export const app = new Hono();
 
@@ -64,6 +65,7 @@ app.route("/api/apple-auth", appleAuthRoute);
 app.route("/api/device-authorization", deviceAuthorizationRoute);
 app.route("/api/agent/activities", activitiesAgentRoute);
 app.route("/api/agent", agentRoute);
+app.route("/api/watch", watchRoute);
 app.route("/api/activities", activitiesSessionRoute);
 app.route("/api/interactions", interactionResponseRoute);
 app.route("/api/interaction-responses", interactionCredentialResponseRoute);
