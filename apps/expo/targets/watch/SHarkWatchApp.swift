@@ -178,12 +178,13 @@ private struct WatchRoot: View {
           HStack {
             Button(item.primaryLabel ?? (item.kind == "approval" ? "Approve" : "Yes")) { requestedAction = item.kind == "approval" ? "approve" : "yes" }.tint(.green)
             Button(item.secondaryLabel ?? (item.kind == "approval" ? "Deny" : "No")) { requestedAction = item.kind == "approval" ? "deny" : "no" }.tint(.red)
-          }.disabled(model.isSubmitting || stale)
-          if model.isSubmitting { ProgressView("Sending…") }
+          }
+          .disabled(model.isSubmitting || stale)
           .confirmationDialog("Confirm response", isPresented: Binding(get: { requestedAction != nil }, set: { if !$0 { requestedAction = nil } })) {
             Button("Confirm", role: requestedAction == "deny" || requestedAction == "no" ? .destructive : nil) { if let action = requestedAction { Task { await model.respond(action, to: item) }; requestedAction = nil } }
             Button("Cancel", role: .cancel) { requestedAction = nil }
           }
+          if model.isSubmitting { ProgressView("Sending…") }
         }
         Toggle("Hide details", isOn: Binding(get: { model.hideDetails }, set: model.setPrivacy))
         Button("Refresh") { Task { await model.refresh() } }
