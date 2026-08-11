@@ -36,6 +36,12 @@ private struct AuthorizationStart: Decodable {
   let verificationUri: String
   let expiresIn: Int
   let interval: Int
+
+  var displayVerificationUri: String {
+    verificationUri
+      .replacingOccurrences(of: "https://", with: "")
+      .replacingOccurrences(of: "http://", with: "")
+  }
 }
 
 private struct AuthorizationToken: Decodable { let accessToken: String }
@@ -204,8 +210,13 @@ private struct WatchRoot: View {
   private func setup(_ authorization: AuthorizationStart) -> some View {
     VStack(spacing: 8) {
       Text("Set up SHark").font(.headline)
-      Text("On your iPhone, open:").font(.caption)
-      Text(authorization.verificationUri).font(.caption2).multilineTextAlignment(.center)
+      Text("In Safari on iPhone:").font(.caption)
+      Text(authorization.displayVerificationUri)
+        .font(.caption2.monospaced())
+        .multilineTextAlignment(.center)
+        .lineLimit(3)
+        .minimumScaleFactor(0.75)
+        .fixedSize(horizontal: false, vertical: true)
       Text(authorization.userCode).font(.title3.monospaced()).bold()
       Text("Waiting for approval…").font(.caption).foregroundStyle(.secondary)
     }.padding()
