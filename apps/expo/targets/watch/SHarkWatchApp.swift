@@ -40,6 +40,10 @@ private struct AuthorizationStart: Decodable {
 
 private struct AuthorizationToken: Decodable { let accessToken: String }
 
+private struct APIError: Error {
+  let statusCode: Int
+}
+
 @MainActor
 private final class WatchModel: ObservableObject {
   enum State { case loading, ready(Snapshot), stale(Snapshot), unavailable(String), authorizing(AuthorizationStart) }
@@ -77,7 +81,11 @@ private final class WatchModel: ObservableObject {
       )
       state = .authorizing(start)
       Task { await pollAuthorization(start) }
-    } catch { state = .unavailable("Unable to start Watch setup.") }
+    } catch let error as APIError where error.statusCode == 400 {
+      state = .unavailable("Watch setup is not enabled on this SHark server yet.")
+    } catch {
+      state = .unavailable("Unable to reach SHark. Check your connection and try again.")
+    }
   }
 
   private func pollAuthorization(_ start: AuthorizationStart) async {
@@ -132,7 +140,8 @@ private extension WatchModel {
     if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
     if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body) }
     let (data, response) = try await URLSession.shared.data(for: request)
-    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
+    guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+    guard (200..<300).contains(http.statusCode) else { throw APIError(statusCode: http.statusCode) }
     let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
     return try decoder.decode(T.self, from: data)
   }
@@ -209,7 +218,7 @@ private struct WatchRoot: View {
 
 private enum Keychain {
   static func read(_ key: String) -> String? {
-    var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key, kSecReturnData as String: true]
+    let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key, kSecReturnData as String: true]
     var item: CFTypeRef?; guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
     return String(data: data, encoding: .utf8)
   }

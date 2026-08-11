@@ -5,6 +5,7 @@ module.exports = {
   displayName: "SHark",
   bundleIdentifier: "dev.shuv.shark.watchkitapp",
   deploymentTarget: "9.4",
+  icon: "../../assets/icon.png",
   entitlements: {
     "com.apple.security.application-groups": ["group.dev.shuv.shark"],
   },
