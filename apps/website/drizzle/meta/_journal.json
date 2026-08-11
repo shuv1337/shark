@@ -127,6 +127,13 @@
       "when": 1785400611767,
       "tag": "0017_overjoyed_molten_man",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1786473121959,
+      "tag": "0018_majestic_daimon_hellstrom",
+      "breakpoints": true
     }
   ]
 }

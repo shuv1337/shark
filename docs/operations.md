@@ -8,13 +8,16 @@ gate.
 
 `shark.shuv.dev` is a private single-operator web/API origin. exe.dev terminates HTTPS and proxies
 to loopback-bound port 8787 on `shark-prod`. SQLite persists in the named `shark-data` volume.
-Ordinary notifications use Expo Push Service; Live Activity start, update, and end pushes use
-direct APNs credentials.
+Ordinary iPhone notifications use Expo Push Service, browser notifications use standards-based Web
+Push with VAPID credentials, and Live Activity start, update, and end pushes use direct APNs
+credentials. The root-scoped service worker is a static production asset and must remain available
+at `/sw.js`; do not cache authenticated API responses in it.
 
 The production environment must set `NODE_ENV=production`, `DEPLOYMENT_MODE=self_hosted`, the exact
 Apple allowlist, a unique Better Auth secret, complete Apple and APNs credential groups, an Expo
-server access token, production APNs mode, and the frozen SHark bundle identifiers. Startup fails
-closed when the matrix is incomplete. `TRUSTED_CLIENT_IP_HEADER` remains unset for exe.dev v1.
+server access token, a complete VAPID key/subject group, production APNs mode, and the frozen SHark
+bundle identifiers. Startup fails closed when the matrix is incomplete.
+`TRUSTED_CLIENT_IP_HEADER` remains unset for exe.dev v1.
 
 ## Admission and identity
 
@@ -82,6 +85,10 @@ operator review:
 - The latest nightly/pre-deploy Restic snapshot is verified.
 - Disk pressure, container restarts, and the capped local log files are healthy.
 - Expo receipts are reviewed and `DeviceNotRegistered` tokens are deactivated.
+- `/sw.js` returns 200 with JavaScript content, and a signed-in browser can enable, test, disable,
+  and re-enable notifications without creating duplicate active subscriptions.
+- Web Push responses with an expired subscription status deactivate only that browser target; they
+  do not prevent delivery to healthy iPhone or browser targets.
 
 Never retain emails, tokens, webhook URLs, push identifiers, OAuth codes, callback credentials,
 private keys, or notification/reply content in Git, CI output, logs, screenshots, or verification

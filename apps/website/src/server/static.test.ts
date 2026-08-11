@@ -17,6 +17,7 @@ writeFileSync(join(clientDir, "assets", "app.js"), "private");
 for (const asset of ["favicon.png", "ogimage.png", "app-store-icon.png"]) {
   writeFileSync(join(clientDir, asset), "private");
 }
+writeFileSync(join(clientDir, "sw.js"), 'self.addEventListener("push", () => {});');
 
 let app: typeof import("./app")["app"];
 
@@ -44,15 +45,24 @@ describe("private content boundary", () => {
       "/dashboard",
       "/cli/authorize",
       "/assets/app.js",
-      "/favicon.png",
       "/ogimage.png",
-      "/app-store-icon.png",
       "/docs.md",
       "/llms.txt",
       "/oss",
     ]) {
       expect((await app.request(path)).status, path).toBe(401);
     }
+  });
+
+  it("publishes only the root files required for browser notifications", async () => {
+    const worker = await app.request("/sw.js");
+    expect(worker.status).toBe(200);
+    expect(worker.headers.get("content-type")).toMatch(/javascript/);
+    expect(await worker.text()).toContain('self.addEventListener("push"');
+
+    expect((await app.request("/favicon.png")).status).toBe(200);
+    expect((await app.request("/app-store-icon.png")).status).toBe(200);
+    expect((await app.request("/ogimage.png")).status).toBe(401);
   });
 
   it("redirects signed-out document requests to the content-free Apple bootstrap", async () => {

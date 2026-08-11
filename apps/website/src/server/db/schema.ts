@@ -123,6 +123,26 @@ export const device = sqliteTable("device", {
   lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }).notNull(),
 });
 
+/** Browser Push API subscription secrets are encrypted at rest. */
+export const webPushSubscription = sqliteTable(
+  "web_push_subscription",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** Domain-separated endpoint digest supports lookup without exposing the capability URL. */
+    endpointHash: text("endpoint_hash").notNull().unique(),
+    subscriptionCiphertext: text("subscription_ciphertext").notNull(),
+    deviceName: text("device_name"),
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+    expirationAt: integer("expiration_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("web_push_subscription_user_active_idx").on(table.userId, table.active)],
+);
+
 /** Small delivery log kept for debugging; not exposed as analytics. */
 export const event = sqliteTable(
   "event",

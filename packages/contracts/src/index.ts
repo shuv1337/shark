@@ -271,13 +271,48 @@ export type AppleNativeTokenExchangeInput = z.infer<typeof appleNativeTokenExcha
 
 export interface DeviceDto {
   id: string;
-  platform: "ios";
+  platform: "ios" | "web";
   deviceName: string | null;
   active: boolean;
   liveActivitiesCapable: boolean;
   liveActivityTokenEnvironment: "sandbox" | "production" | null;
   liveActivityTokenUpdatedAt: string | null;
   interactiveLiveActivitiesCapable: boolean;
+  createdAt: string;
+  lastSeenAt: string;
+}
+
+export const webPushSubscriptionSchema = z.object({
+  endpoint: z
+    .url()
+    .max(2048)
+    .refine((value) => new URL(value).protocol === "https:", "Push endpoint must use HTTPS"),
+  expirationTime: z.number().int().nonnegative().nullable().optional(),
+  keys: z.object({
+    p256dh: z.string().min(1).max(512),
+    auth: z.string().min(1).max(512),
+  }),
+});
+export type WebPushSubscriptionInput = z.infer<typeof webPushSubscriptionSchema>;
+
+export const webPushSubscriptionRegisterSchema = z.object({
+  subscription: webPushSubscriptionSchema,
+  deviceName: z.string().trim().min(1).max(80).optional(),
+});
+export type WebPushSubscriptionRegisterInput = z.infer<typeof webPushSubscriptionRegisterSchema>;
+
+export const webPushSubscriptionEndpointSchema = z.object({
+  endpoint: z
+    .url()
+    .max(2048)
+    .refine((value) => new URL(value).protocol === "https:", "Push endpoint must use HTTPS"),
+});
+export type WebPushSubscriptionEndpointInput = z.infer<typeof webPushSubscriptionEndpointSchema>;
+
+export interface WebPushSubscriptionDto {
+  id: string;
+  deviceName: string | null;
+  active: boolean;
   createdAt: string;
   lastSeenAt: string;
 }

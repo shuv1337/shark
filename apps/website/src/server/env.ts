@@ -35,6 +35,13 @@ export const envSchema = z.object({
   APPLE_SIGN_IN_PRIVATE_KEY: optionalString,
   /** Authenticated requests to the Expo Push Service. Required in production. */
   EXPO_ACCESS_TOKEN: optionalString,
+  /** Standards-based Web Push application-server credentials. */
+  VAPID_PUBLIC_KEY: optionalString,
+  VAPID_PRIVATE_KEY: optionalString,
+  VAPID_SUBJECT: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.union([z.email().transform((value) => `mailto:${value}`), z.url()]).optional(),
+  ),
   /** Direct APNs credentials for Live Activity start/update/end delivery. */
   APNS_KEY_ID: optionalString,
   APPLE_TEAM_ID: optionalString,
@@ -95,6 +102,24 @@ export function runtimeEnvIssues(runtime: RuntimeEnv): string[] {
   if (!runtime.EXPO_ACCESS_TOKEN) {
     issues.push("EXPO_ACCESS_TOKEN is not set.");
   }
+  if (!runtime.VAPID_PUBLIC_KEY || !runtime.VAPID_PRIVATE_KEY || !runtime.VAPID_SUBJECT) {
+    issues.push("VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_SUBJECT are not all set.");
+  } else {
+    if (
+      runtime.VAPID_PUBLIC_KEY.length !== 87 ||
+      runtime.VAPID_PRIVATE_KEY.length !== 43 ||
+      !/^[A-Za-z0-9_-]+$/.test(runtime.VAPID_PUBLIC_KEY) ||
+      !/^[A-Za-z0-9_-]+$/.test(runtime.VAPID_PRIVATE_KEY)
+    ) {
+      issues.push("VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are not valid base64url VAPID keys.");
+    }
+    if (
+      !runtime.VAPID_SUBJECT.startsWith("mailto:") &&
+      !runtime.VAPID_SUBJECT.startsWith("https://")
+    ) {
+      issues.push("VAPID_SUBJECT must use mailto: or https:.");
+    }
+  }
   if (!runtime.APNS_KEY_ID || !runtime.APPLE_TEAM_ID || !runtime.APNS_PRIVATE_KEY) {
     issues.push("APNS_KEY_ID / APPLE_TEAM_ID / APNS_PRIVATE_KEY are not all set.");
   }
@@ -141,17 +166,24 @@ export function assertRuntimeEnv(runtime: RuntimeEnv = env): void {
     runtime.APNS_SANDBOX_KEY_ID,
     runtime.APNS_SANDBOX_PRIVATE_KEY,
   ]);
+  const partialVapid = hasPartialGroup([
+    runtime.VAPID_PUBLIC_KEY,
+    runtime.VAPID_PRIVATE_KEY,
+    runtime.VAPID_SUBJECT,
+  ]);
   if (
     runtime.AUTUMN_API_KEY ||
     partialApple ||
     partialApns ||
     partialSandboxApns ||
+    partialVapid ||
     (runtime.NODE_ENV === "production" && issues.length > 0)
   ) {
     const partialIssues = [
       ...(partialApple ? ["Partially configured Sign in with Apple credential group."] : []),
       ...(partialApns ? ["Partially configured APNs credential group."] : []),
       ...(partialSandboxApns ? ["Partially configured sandbox APNs credential group."] : []),
+      ...(partialVapid ? ["Partially configured Web Push VAPID credential group."] : []),
     ];
     throw new Error(
       `Invalid SHark runtime configuration:\n- ${[...new Set([...issues, ...partialIssues])].join("\n- ")}`,

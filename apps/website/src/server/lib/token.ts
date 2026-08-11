@@ -5,6 +5,7 @@ const ENCRYPTION_VERSION = "v1";
 
 type EncryptionPurpose =
   | "webhook-token"
+  | "web-push-subscription"
   | "live-activity-token"
   | "callback-token"
   | "apple-refresh-token";
@@ -112,6 +113,21 @@ export function encryptWebhookToken(token: string): string {
 /** Decrypts and authenticates a stored token. Throws if the value was modified. */
 export function decryptWebhookToken(value: string): string {
   return decryptToken(value, "webhook-token");
+}
+
+export function hashWebPushEndpoint(endpoint: string): string {
+  return createHash("sha256")
+    .update("hark:web-push-endpoint:v1\0", "utf8")
+    .update(endpoint, "utf8")
+    .digest("hex");
+}
+
+export function encryptWebPushSubscription(subscription: string): string {
+  return encryptToken(subscription, "web-push-subscription");
+}
+
+export function decryptWebPushSubscription(value: string): string {
+  return decryptToken(value, "web-push-subscription");
 }
 
 /** Encrypts ActivityKit tokens separately from recoverable webhook secrets. */
