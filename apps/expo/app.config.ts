@@ -1,10 +1,15 @@
 import type { ConfigContext, ExpoConfig } from "expo/config";
 
+const SHARK_EAS_PROJECT_ID = "af59c084-62af-40bd-b679-2d05bafa4746";
+
 export default ({ config: _config }: ConfigContext): ExpoConfig => {
-  const easProjectId = process.env.EAS_PROJECT_ID?.trim();
+  const configuredEasProjectId = process.env.EAS_PROJECT_ID?.trim();
   const appleTeamId = process.env.APPLE_TEAM_ID?.trim();
-  if (process.env.EAS_BUILD_PROFILE && (!easProjectId || !appleTeamId)) {
-    throw new Error("EAS builds require operator-owned EAS_PROJECT_ID and APPLE_TEAM_ID values.");
+  if (configuredEasProjectId && configuredEasProjectId !== SHARK_EAS_PROJECT_ID) {
+    throw new Error("EAS_PROJECT_ID must match SHark's operator-owned Expo project.");
+  }
+  if (process.env.EAS_BUILD_PROFILE && !appleTeamId) {
+    throw new Error("EAS builds require an operator-owned APPLE_TEAM_ID value.");
   }
 
   return {
@@ -72,6 +77,6 @@ export default ({ config: _config }: ConfigContext): ExpoConfig => {
         },
       ],
     ],
-    extra: easProjectId ? { eas: { projectId: easProjectId } } : {},
+    extra: { eas: { projectId: SHARK_EAS_PROJECT_ID } },
   };
 };

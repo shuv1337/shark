@@ -4,6 +4,7 @@ process.env.NODE_ENV = "test";
 process.env.DATABASE_URL = ":memory:";
 
 const sent: Array<Record<string, unknown>> = [];
+const webSent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 const billingTestState = vi.hoisted(() => ({
   pro: false,
   accountPerMinute: null as number | null,
@@ -53,6 +54,16 @@ vi.mock("expo-server-sdk", () => {
   }
   return { Expo, default: Expo };
 });
+
+vi.mock("../lib/web-push", () => ({
+  sendWebPushNotifications: async (
+    rows: Array<{ id: string }>,
+    payload: Record<string, unknown>,
+  ) => {
+    webSent.push(...rows.map((row) => ({ id: row.id, payload })));
+    return { accepted: rows.length, errors: [], staleSubscriptionIds: [] };
+  },
+}));
 
 let app: typeof import("../app")["app"];
 let db: typeof import("../db")["db"];
@@ -135,7 +146,7 @@ describe("POST /hooks/:token", () => {
     const json = (await res.json()) as { ok: boolean; delivered: number; message?: string };
     expect(json.ok).toBe(true);
     expect(json.delivered).toBe(0);
-    expect(json.message).toContain("No active iOS devices");
+    expect(json.message).toContain("No active notification targets");
   });
 
   it("delivers to active devices and resolves overrides", async () => {
@@ -551,5 +562,40 @@ describe("POST /hooks/:token", () => {
     billingTestState.accountPerMinute = null;
     expect(response.status).toBe(429);
     expect(await response.json()).toMatchObject({ error: "Account rate limit exceeded" });
+  });
+
+  it("routes an ordinary webhook to a targeted browser subscription", async () => {
+    billingTestState.pro = true;
+    const now = new Date();
+    await db.insert(schema.webPushSubscription).values({
+      id: "web_hook_target",
+      userId: "user_1",
+      endpointHash: "web-hook-endpoint-hash",
+      subscriptionCiphertext: "encrypted-by-test-boundary",
+      deviceName: "Linux",
+      active: true,
+      createdAt: now,
+      lastSeenAt: now,
+    });
+    webSent.length = 0;
+    const response = await post(TOKEN, {
+      body: "Browser build complete",
+      title: "CI",
+      deviceIds: ["web_hook_target"],
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, delivered: 1 });
+    expect(webSent).toEqual([
+      {
+        id: "web_hook_target",
+        payload: {
+          title: "CI",
+          body: "Browser build complete",
+          url: "https://example.com/app",
+          imageUrl: "https://example.com/default.png",
+          tag: "service-svc_1",
+        },
+      },
+    ]);
   });
 });

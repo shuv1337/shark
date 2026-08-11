@@ -14,6 +14,13 @@ import { CopyField } from "../components/CopyField";
 import { InboxPanel } from "../components/InboxPanel";
 import { api } from "../lib/api";
 import { signOut, useSession } from "../lib/auth";
+import {
+  browserDeviceName,
+  browserPushAvailability,
+  currentWebPushSubscription,
+  enableWebPush,
+  requestWebPushPermission,
+} from "../lib/webPush";
 
 function curlExample(webhookUrl: string): string {
   return [
@@ -90,7 +97,7 @@ function agentPrompt(webhookUrl: string, devices: DeviceDto[]): string {
       ? [
           "",
           "Registered devices:",
-          ...devices.map((device) => `- ${device.deviceName ?? "iPhone"}: ${device.id}`),
+          ...devices.map((device) => `- ${device.deviceName ?? "Device"}: ${device.id}`),
         ]
       : []),
   ].join("\n");
@@ -215,8 +222,8 @@ export function Dashboard() {
               {deliveryDeviceCount === null
                 ? "Each service gets a secret webhook URL."
                 : deliveryDeviceCount === 0
-                  ? "No iPhone registered yet — sign in inside the SHark app to receive notifications."
-                  : `Delivering to ${deliveryDeviceCount} registered ${deliveryDeviceCount === 1 ? "iPhone" : "iPhones"}.`}
+                  ? "No devices registered yet — enable this browser or sign in inside the SHark app."
+                  : `Delivering to ${deliveryDeviceCount} registered ${deliveryDeviceCount === 1 ? "device" : "devices"}.`}
             </p>
           </div>
           <button
@@ -277,6 +284,8 @@ export function Dashboard() {
             setApiTokens((current) => current?.filter((token) => token.id !== id) ?? current)
           }
         />
+
+        <BrowserNotifications onChanged={() => void refresh()} />
 
         <Devices devices={devices} onRemoved={() => void refresh()} />
 
@@ -349,15 +358,210 @@ function WebhookReveal({
   );
 }
 
+type BrowserNotificationState =
+  | "checking"
+  | "unsupported"
+  | "default"
+  | "denied"
+  | "enabled"
+  | "error";
+
+export function BrowserNotifications({ onChanged = () => {} }: { onChanged?: () => void }) {
+  const [state, setState] = useState<BrowserNotificationState>("checking");
+  const [subscription, setSubscription] = useState<PushSubscription | null>(null);
+  const [busy, setBusy] = useState<"enable" | "test" | "disable" | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const onChangedRef = useRef(onChanged);
+
+  useEffect(() => {
+    onChangedRef.current = onChanged;
+  }, [onChanged]);
+
+  const inspect = useCallback(async () => {
+    setError(null);
+    const availability = browserPushAvailability();
+    if (availability.status === "unsupported") {
+      setState("unsupported");
+      return;
+    }
+    if (availability.status === "denied") {
+      setState("denied");
+      return;
+    }
+
+    try {
+      const current = await currentWebPushSubscription();
+      if (current) {
+        await api.registerWebPushSubscription(current.toJSON(), browserDeviceName());
+        onChangedRef.current();
+      }
+      setSubscription(current);
+      setState(current ? "enabled" : "default");
+    } catch (err) {
+      setState("error");
+      setError(err instanceof Error ? err.message : "Could not check browser notifications.");
+    }
+  }, []);
+
+  useEffect(() => {
+    void inspect();
+  }, [inspect]);
+
+  const enable = async () => {
+    setBusy("enable");
+    setError(null);
+    setMessage(null);
+    try {
+      await requestWebPushPermission();
+      const { publicKey } = await api.getWebPushPublicKey();
+      const next = await enableWebPush(publicKey);
+      await api.registerWebPushSubscription(next.toJSON(), browserDeviceName());
+      setSubscription(next);
+      setState("enabled");
+      setMessage("Desktop alerts are enabled for this browser.");
+      onChanged();
+    } catch (err) {
+      const availability = browserPushAvailability();
+      if (availability.status === "denied") setState("denied");
+      setError(err instanceof Error ? err.message : "Could not enable browser notifications.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const sendTest = async () => {
+    if (!subscription) return;
+    setBusy("test");
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await api.testWebPushSubscription(subscription.endpoint);
+      if (!result.accepted) throw new Error("The push service did not accept the test alert.");
+      setMessage("Test alert sent. It may take a moment to appear.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not send a test notification.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const disable = async () => {
+    if (!subscription) return;
+    setBusy("disable");
+    setError(null);
+    setMessage(null);
+    try {
+      await api.removeWebPushSubscription(subscription.endpoint);
+      await subscription.unsubscribe();
+      setSubscription(null);
+      setState("default");
+      setMessage("Desktop alerts are disabled for this browser.");
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not disable browser notifications.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const statusCopy = {
+    checking: "Checking notification support…",
+    unsupported: "This browser does not support Web Push, or this page is not in a secure context.",
+    default: "Enable alerts even when the SHark tab is closed.",
+    denied: "Notifications are blocked. Allow them in this site's browser settings, then reload.",
+    enabled: "Enabled for this browser profile.",
+    error: "SHark could not check notifications for this browser.",
+  }[state];
+
+  return (
+    <section className="mt-16" aria-labelledby="browser-notifications-heading">
+      <div className="mb-4">
+        <h2 id="browser-notifications-heading" className="text-lg font-semibold">
+          This browser
+        </h2>
+        <p className="mt-1 text-sm text-ink-subtle">Desktop notifications</p>
+      </div>
+      <div className="rounded-2xl border border-line bg-surface px-5 py-4 shadow-xs">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium">
+              {state === "enabled" ? "Notifications on" : "Browser alerts"}
+            </p>
+            <p className="mt-1 text-xs text-ink-subtle">{statusCopy}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {state === "default" ? (
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => void enable()}
+                className="bg-accent hover:bg-accent-hover rounded-full px-4 py-2 text-xs font-medium text-on-accent transition disabled:opacity-50"
+              >
+                {busy === "enable" ? "Enabling…" : "Enable notifications"}
+              </button>
+            ) : null}
+            {state === "error" ? (
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => {
+                  setState("checking");
+                  void inspect();
+                }}
+                className="rounded-full border border-line px-3.5 py-2 text-xs font-medium text-ink-muted transition hover:bg-surface-hover disabled:opacity-50"
+              >
+                Try again
+              </button>
+            ) : null}
+            {state === "enabled" ? (
+              <>
+                <button
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => void sendTest()}
+                  className="rounded-full border border-line px-3.5 py-2 text-xs font-medium text-ink-muted transition hover:bg-surface-hover disabled:opacity-50"
+                >
+                  {busy === "test" ? "Sending…" : "Send test"}
+                </button>
+                <button
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => void disable()}
+                  className="rounded-full border border-danger-line px-3.5 py-2 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-50"
+                >
+                  {busy === "disable" ? "Disabling…" : "Disable"}
+                </button>
+              </>
+            ) : null}
+          </div>
+        </div>
+        {message ? (
+          <p className="mt-3 text-xs text-ink-muted" role="status">
+            {message}
+          </p>
+        ) : null}
+        {error ? (
+          <p className="mt-3 text-xs text-danger" role="alert">
+            {error}
+          </p>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 function Devices({ devices, onRemoved }: { devices: DeviceDto[] | null; onRemoved: () => void }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
 
   const remove = async (device: DeviceDto) => {
+    const deviceLabel =
+      device.deviceName ?? (device.platform === "web" ? "this browser" : "this iPhone");
     const confirmed = await confirm({
-      title: "Remove iPhone",
-      message: `Remove ${device.deviceName ?? "this iPhone"} from SHark? It stops receiving notifications until it signs in from the app again.`,
+      title: "Remove device",
+      message: `Remove ${deviceLabel} from SHark? It stops receiving notifications until it is registered again.`,
       confirmLabel: "Remove",
       destructive: true,
     });
@@ -388,7 +592,7 @@ function Devices({ devices, onRemoved }: { devices: DeviceDto[] | null; onRemove
       {devices === null ? <p className="py-6 text-sm text-ink-faint">Loading devices…</p> : null}
       {devices?.length === 0 ? (
         <p className="border-y border-line py-8 text-sm text-ink-faint">
-          No iPhones registered yet.
+          No devices registered yet.
         </p>
       ) : null}
       {devices && devices.length > 0 ? (
@@ -397,18 +601,20 @@ function Devices({ devices, onRemoved }: { devices: DeviceDto[] | null; onRemove
             <li className="flex items-center justify-between gap-4 py-3" key={device.id}>
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">
-                  {device.deviceName ?? "iPhone"}
+                  {device.deviceName ?? (device.platform === "web" ? "Browser" : "iPhone")}
                   {!device.active ? (
                     <span className="ml-2 text-xs text-ink-faint">Inactive</span>
                   ) : null}
                 </p>
                 <p className="truncate font-mono text-[11px] text-ink-faint">{device.id}</p>
                 <p className="mt-0.5 text-[11px] text-ink-faint">
-                  {device.liveActivitiesCapable
-                    ? `Live Activities ready · ${device.liveActivityTokenEnvironment} · refreshed ${new Date(
-                        device.liveActivityTokenUpdatedAt ?? device.lastSeenAt,
-                      ).toLocaleString()}`
-                    : "Live Activities token not registered"}
+                  {device.platform === "web"
+                    ? `Web Push · refreshed ${new Date(device.lastSeenAt).toLocaleString()}`
+                    : device.liveActivitiesCapable
+                      ? `Live Activities ready · ${device.liveActivityTokenEnvironment} · refreshed ${new Date(
+                          device.liveActivityTokenUpdatedAt ?? device.lastSeenAt,
+                        ).toLocaleString()}`
+                      : "Live Activities token not registered"}
                 </p>
               </div>
               <div className="flex shrink-0 gap-2">

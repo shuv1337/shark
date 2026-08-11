@@ -78,6 +78,25 @@ export const api = {
   deleteService: (id: string) => request<{ ok: true }>(`/api/services/${id}`, { method: "DELETE" }),
   listDevices: () => request<{ devices: DeviceDto[] }>("/api/devices"),
   removeDevice: (id: string) => request<{ ok: true }>(`/api/devices/${id}`, { method: "DELETE" }),
+  getWebPushPublicKey: () => request<{ publicKey: string }>("/api/web-push/vapid-public-key"),
+  registerWebPushSubscription: (subscription: PushSubscriptionJSON, deviceName?: string) =>
+    request<{ subscription: { id: string; deviceName: string | null; active: boolean } }>(
+      "/api/web-push/subscriptions",
+      {
+        method: "POST",
+        body: JSON.stringify({ subscription, deviceName }),
+      },
+    ),
+  removeWebPushSubscription: (endpoint: string) =>
+    request<{ ok: true }>("/api/web-push/subscriptions", {
+      method: "DELETE",
+      body: JSON.stringify({ endpoint }),
+    }),
+  testWebPushSubscription: (endpoint: string) =>
+    request<{ ok: true; accepted: number }>("/api/web-push/test", {
+      method: "POST",
+      body: JSON.stringify({ endpoint }),
+    }),
   listEvents: (limit = 50) => request<{ events: EventDto[] }>(`/api/events?limit=${limit}`),
   listLiveActivities: () => request<{ activities: LiveActivityDto[] }>("/api/activities"),
   listInbox: (filter: InboxFilter = "all", cursor?: string | null, limit = 30) => {

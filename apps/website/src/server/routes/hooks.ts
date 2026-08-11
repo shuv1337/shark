@@ -11,6 +11,7 @@ import {
   liveActivityOperation,
   service as serviceTable,
   user as userTable,
+  webPushSubscription,
 } from "../db/schema";
 import { isEmailAllowed } from "../lib/admission";
 import { failureBucket, track } from "../lib/analytics";
@@ -20,7 +21,7 @@ import {
   buildInteractionPushMessages,
   buildPushMessages,
   resolveNotification,
-  sendPushMessages,
+  sendPushFanout,
 } from "../lib/push";
 import {
   encryptCallbackToken,
@@ -67,7 +68,7 @@ function replayResponse(row: EventRow): {
       delivered: row.deliveredCount,
       idempotent: true,
       ...(row.status === "no_devices"
-        ? { message: "No active iOS devices are registered for this account." }
+        ? { message: "No active notification targets are registered for this account." }
         : {}),
     },
     status: 200,
@@ -144,17 +145,30 @@ export const hooksRoute = new Hono()
     }
 
     let targetedDevices: (typeof device.$inferSelect)[] | undefined;
+    let targetedWebSubscriptions: (typeof webPushSubscription.$inferSelect)[] | undefined;
     if (parsed.data.deviceIds) {
-      const selected = await db
-        .select()
-        .from(device)
-        .where(and(eq(device.userId, svc.userId), inArray(device.id, parsed.data.deviceIds)));
-      if (selected.length !== parsed.data.deviceIds.length) {
+      const [selected, selectedWeb] = await Promise.all([
+        db
+          .select()
+          .from(device)
+          .where(and(eq(device.userId, svc.userId), inArray(device.id, parsed.data.deviceIds))),
+        db
+          .select()
+          .from(webPushSubscription)
+          .where(
+            and(
+              eq(webPushSubscription.userId, svc.userId),
+              inArray(webPushSubscription.id, parsed.data.deviceIds),
+            ),
+          ),
+      ]);
+      if (selected.length + selectedWeb.length !== parsed.data.deviceIds.length) {
         return c.json<WebhookResponse>({ ok: false, error: "Invalid device selection" }, 400);
       }
       targetedDevices = selected.filter(
         (registeredDevice) => registeredDevice.active && registeredDevice.platform === "ios",
       );
+      targetedWebSubscriptions = selectedWeb.filter((subscription) => subscription.active);
     }
 
     const since = new Date(Date.now() - 60_000);
@@ -264,20 +278,41 @@ export const hooksRoute = new Hono()
     }
 
     let devices: (typeof device.$inferSelect)[];
+    let webSubscriptions: (typeof webPushSubscription.$inferSelect)[];
     if (targetedDevices) {
       devices = targetedDevices;
+      webSubscriptions = targetedWebSubscriptions ?? [];
     } else {
-      const activeDevices = await db
-        .select()
-        .from(device)
-        .where(
-          and(eq(device.userId, svc.userId), eq(device.active, true), eq(device.platform, "ios")),
-        )
-        .orderBy(desc(device.lastSeenAt));
-      devices =
-        billing.limits.devices === null
-          ? activeDevices
-          : activeDevices.slice(0, billing.limits.devices);
+      const [activeDevices, activeWebSubscriptions] = await Promise.all([
+        db
+          .select()
+          .from(device)
+          .where(
+            and(eq(device.userId, svc.userId), eq(device.active, true), eq(device.platform, "ios")),
+          )
+          .orderBy(desc(device.lastSeenAt)),
+        db
+          .select()
+          .from(webPushSubscription)
+          .where(
+            and(eq(webPushSubscription.userId, svc.userId), eq(webPushSubscription.active, true)),
+          )
+          .orderBy(desc(webPushSubscription.lastSeenAt)),
+      ]);
+      const allTargets = [
+        ...activeDevices.map((row) => ({ kind: "ios" as const, row, seen: row.lastSeenAt })),
+        ...activeWebSubscriptions.map((row) => ({
+          kind: "web" as const,
+          row,
+          seen: row.lastSeenAt,
+        })),
+      ]
+        .sort((a, b) => b.seen.getTime() - a.seen.getTime())
+        .slice(0, billing.limits.devices ?? undefined);
+      devices = allTargets.filter((target) => target.kind === "ios").map((target) => target.row);
+      webSubscriptions = allTargets
+        .filter((target) => target.kind === "web")
+        .map((target) => target.row);
     }
 
     let interactionId: string | undefined;
@@ -329,7 +364,7 @@ export const hooksRoute = new Hono()
       });
     }
 
-    if (devices.length === 0) {
+    if (devices.length + webSubscriptions.length === 0) {
       await db.update(event).set({ status: "no_devices" }).where(eq(event.id, eventId));
       track({
         name: "webhook_delivered",
@@ -350,7 +385,7 @@ export const hooksRoute = new Hono()
               },
             }
           : {}),
-        message: "No active iOS devices are registered for this account.",
+        message: "No active notification targets are registered for this account.",
       });
     }
 
@@ -386,7 +421,17 @@ export const hooksRoute = new Hono()
           serviceId: svc.id,
           resolved,
         });
-    const result = await sendPushMessages(messages);
+    const result = await sendPushFanout({
+      expoMessages: messages,
+      webSubscriptions,
+      webPayload: {
+        title: resolved.title,
+        body: resolved.body,
+        url: resolved.url ?? "/dashboard",
+        ...(resolved.imageUrl ? { imageUrl: resolved.imageUrl } : {}),
+        tag: parsed.data.response ? `interaction-${interactionId}` : `service-${svc.id}`,
+      },
+    });
 
     if (result.staleTokens.length > 0) {
       await db
@@ -401,9 +446,16 @@ export const hooksRoute = new Hono()
         value: result.staleTokens.length,
       });
     }
+    if (result.staleSubscriptionIds.length > 0) {
+      await db
+        .update(webPushSubscription)
+        .set({ active: false })
+        .where(inArray(webPushSubscription.id, result.staleSubscriptionIds));
+    }
 
+    const targetCount = messages.length + webSubscriptions.length;
     const status =
-      result.accepted === messages.length ? "accepted" : result.accepted > 0 ? "partial" : "failed";
+      result.accepted === targetCount ? "accepted" : result.accepted > 0 ? "partial" : "failed";
     const pushError = result.errors.length > 0 ? result.errors.join("; ").slice(0, 1000) : null;
 
     await db
@@ -424,7 +476,7 @@ export const hooksRoute = new Hono()
         serviceId: svc.id,
         plan: billing.plan,
         outcome: failureBucket(result.errors[0]),
-        metadata: { targets: messages.length },
+        metadata: { targets: targetCount },
       });
       // Provider errors can embed the recipient push token, so they stay in the
       // owner-only event log rather than the webhook caller's response.
@@ -438,7 +490,7 @@ export const hooksRoute = new Hono()
       plan: billing.plan,
       outcome: status,
       value: result.accepted,
-      metadata: { targets: messages.length },
+      metadata: { targets: targetCount },
     });
     track({
       name: "notification_sent",

@@ -103,6 +103,9 @@ item-level grants:
   - `APPLE_TEAM_ID`
   - `APPLE_SIGN_IN_PRIVATE_KEY_BASE64`
   - `EXPO_ACCESS_TOKEN`
+  - `VAPID_PUBLIC_KEY`
+  - `VAPID_PRIVATE_KEY`
+  - `VAPID_SUBJECT`
   - `APNS_KEY_ID`
   - `APNS_PRIVATE_KEY_BASE64`
 - Vault `SHark Production Backup`, containing exactly one Secure Note with the same title and these
@@ -116,6 +119,13 @@ documented in `../deploy/README.md`. Service-account vault access cannot be chan
 so delete and recreate an incorrectly scoped account rather than widening its access. The helpers
 fail closed unless each account sees exactly one correctly titled item with exactly its expected
 field set.
+
+Generate one production VAPID key pair with the Web Push library used by the server. Store the
+base64url public and private keys in the application vault, and set `VAPID_SUBJECT` to a monitored
+`mailto:` contact (or an operator-owned HTTPS URL). The public key is intentionally delivered to
+authenticated browsers; the private key must never appear in client bundles, logs, screenshots, or
+verification records. Rotating the pair invalidates existing browser subscriptions, so after a
+rotation each browser must disable and re-enable notifications.
 
 The legacy Bitwarden `shark` machine account, its two access tokens, the `shark` project, and all
 ten migrated secrets were permanently deleted after the 1Password path passed live production

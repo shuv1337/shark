@@ -9,7 +9,14 @@ import {
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
-import { device, liveActivity, liveActivityDelivery, user as userTable } from "../db/schema";
+import {
+  device,
+  liveActivity,
+  liveActivityDelivery,
+  user as userTable,
+  webPushSubscription,
+} from "../db/schema";
+import { env } from "../env";
 import { track } from "../lib/analytics";
 import { getBilling } from "../lib/billing";
 import { newId } from "../lib/id";
@@ -36,19 +43,46 @@ function toDto(row: typeof device.$inferSelect): DeviceDto {
   };
 }
 
+function webToDto(row: typeof webPushSubscription.$inferSelect): DeviceDto {
+  return {
+    id: row.id,
+    platform: "web",
+    deviceName: row.deviceName,
+    active: row.active,
+    liveActivitiesCapable: false,
+    liveActivityTokenEnvironment: null,
+    liveActivityTokenUpdatedAt: null,
+    interactiveLiveActivitiesCapable: false,
+    createdAt: row.createdAt.toISOString(),
+    lastSeenAt: row.lastSeenAt.toISOString(),
+  };
+}
+
 const wait = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+
+function isSameOrigin(request: Request): boolean {
+  const origin = request.headers.get("origin");
+  return origin !== null && origin === new URL(env.APP_URL).origin;
+}
 
 export const devicesRoute = new Hono<AuthedEnv>()
   .use("*", requireAuth)
   .get("/", async (c) => {
     const user = c.get("user");
-    const rows = await db
-      .select()
-      .from(device)
-      .where(eq(device.userId, user.id))
-      .orderBy(desc(device.lastSeenAt));
-    return c.json({ devices: rows.map(toDto) });
+    const [rows, webRows] = await Promise.all([
+      db.select().from(device).where(eq(device.userId, user.id)).orderBy(desc(device.lastSeenAt)),
+      db
+        .select()
+        .from(webPushSubscription)
+        .where(eq(webPushSubscription.userId, user.id))
+        .orderBy(desc(webPushSubscription.lastSeenAt)),
+    ]);
+    return c.json({
+      devices: [...rows.map(toDto), ...webRows.map(webToDto)].sort(
+        (a, b) => Date.parse(b.lastSeenAt) - Date.parse(a.lastSeenAt),
+      ),
+    });
   })
   .post("/live-activity/push-to-start", async (c) => {
     const parsed = liveActivityPushToStartTokenSchema.safeParse(
@@ -189,7 +223,7 @@ export const devicesRoute = new Hono<AuthedEnv>()
     if (!parsed.success) {
       return c.json({ error: "Invalid device registration", issues: parsed.error.issues }, 400);
     }
-    const [existing, activeDevices, billing] = await Promise.all([
+    const [existing, activeDevices, activeWebDevices, billing] = await Promise.all([
       db
         .select({ id: device.id, userId: device.userId, active: device.active })
         .from(device)
@@ -199,13 +233,17 @@ export const devicesRoute = new Hono<AuthedEnv>()
         .select({ id: device.id })
         .from(device)
         .where(and(eq(device.userId, user.id), eq(device.active, true))),
+      db
+        .select({ id: webPushSubscription.id })
+        .from(webPushSubscription)
+        .where(and(eq(webPushSubscription.userId, user.id), eq(webPushSubscription.active, true))),
       getBilling(user),
     ]);
     const isAlreadyActiveForUser = existing[0]?.userId === user.id && existing[0].active;
     if (
       !isAlreadyActiveForUser &&
       billing.limits.devices !== null &&
-      activeDevices.length >= billing.limits.devices
+      activeDevices.length + activeWebDevices.length >= billing.limits.devices
     ) {
       return c.json({ error: "This account has reached its active device limit." }, 402);
     }
@@ -327,18 +365,30 @@ export const devicesRoute = new Hono<AuthedEnv>()
     return c.json({ device: toDto(responseRow) }, 201);
   })
   .delete("/:id", async (c) => {
+    if (!isSameOrigin(c.req.raw)) return c.json({ error: "Invalid request origin" }, 403);
     const user = c.get("user");
-    const removed = await db
-      .delete(device)
-      .where(and(eq(device.userId, user.id), eq(device.id, c.req.param("id"))))
-      .returning({ id: device.id });
-    if (removed.length > 0) {
+    const [removed, removedWeb] = await Promise.all([
+      db
+        .delete(device)
+        .where(and(eq(device.userId, user.id), eq(device.id, c.req.param("id"))))
+        .returning({ id: device.id }),
+      db
+        .delete(webPushSubscription)
+        .where(
+          and(
+            eq(webPushSubscription.userId, user.id),
+            eq(webPushSubscription.id, c.req.param("id")),
+          ),
+        )
+        .returning({ id: webPushSubscription.id }),
+    ]);
+    if (removed.length > 0 || removedWeb.length > 0) {
       track({
         name: "device_unregistered",
         userId: user.id,
-        deviceId: removed[0]?.id ?? null,
+        deviceId: removed[0]?.id ?? removedWeb[0]?.id ?? null,
         outcome: "by_id",
-        value: removed.length,
+        value: removed.length + removedWeb.length,
       });
     }
     return c.json({ ok: true });

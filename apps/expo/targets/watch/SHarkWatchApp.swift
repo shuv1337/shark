@@ -36,9 +36,19 @@ private struct AuthorizationStart: Decodable {
   let verificationUri: String
   let expiresIn: Int
   let interval: Int
+
+  var displayVerificationUri: String {
+    verificationUri
+      .replacingOccurrences(of: "https://", with: "")
+      .replacingOccurrences(of: "http://", with: "")
+  }
 }
 
 private struct AuthorizationToken: Decodable { let accessToken: String }
+
+private struct APIError: Error {
+  let statusCode: Int
+}
 
 @MainActor
 private final class WatchModel: ObservableObject {
@@ -77,7 +87,11 @@ private final class WatchModel: ObservableObject {
       )
       state = .authorizing(start)
       Task { await pollAuthorization(start) }
-    } catch { state = .unavailable("Unable to start Watch setup.") }
+    } catch let error as APIError where error.statusCode == 400 {
+      state = .unavailable("Watch setup is not enabled on this SHark server yet.")
+    } catch {
+      state = .unavailable("Unable to reach SHark. Check your connection and try again.")
+    }
   }
 
   private func pollAuthorization(_ start: AuthorizationStart) async {
@@ -132,7 +146,8 @@ private extension WatchModel {
     if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
     if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body) }
     let (data, response) = try await URLSession.shared.data(for: request)
-    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
+    guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+    guard (200..<300).contains(http.statusCode) else { throw APIError(statusCode: http.statusCode) }
     let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
     return try decoder.decode(T.self, from: data)
   }
@@ -178,12 +193,13 @@ private struct WatchRoot: View {
           HStack {
             Button(item.primaryLabel ?? (item.kind == "approval" ? "Approve" : "Yes")) { requestedAction = item.kind == "approval" ? "approve" : "yes" }.tint(.green)
             Button(item.secondaryLabel ?? (item.kind == "approval" ? "Deny" : "No")) { requestedAction = item.kind == "approval" ? "deny" : "no" }.tint(.red)
-          }.disabled(model.isSubmitting || stale)
-          if model.isSubmitting { ProgressView("Sending…") }
+          }
+          .disabled(model.isSubmitting || stale)
           .confirmationDialog("Confirm response", isPresented: Binding(get: { requestedAction != nil }, set: { if !$0 { requestedAction = nil } })) {
             Button("Confirm", role: requestedAction == "deny" || requestedAction == "no" ? .destructive : nil) { if let action = requestedAction { Task { await model.respond(action, to: item) }; requestedAction = nil } }
             Button("Cancel", role: .cancel) { requestedAction = nil }
           }
+          if model.isSubmitting { ProgressView("Sending…") }
         }
         Toggle("Hide details", isOn: Binding(get: { model.hideDetails }, set: model.setPrivacy))
         Button("Refresh") { Task { await model.refresh() } }
@@ -194,8 +210,13 @@ private struct WatchRoot: View {
   private func setup(_ authorization: AuthorizationStart) -> some View {
     VStack(spacing: 8) {
       Text("Set up SHark").font(.headline)
-      Text("On your iPhone, open:").font(.caption)
-      Text(authorization.verificationUri).font(.caption2).multilineTextAlignment(.center)
+      Text("In Safari on iPhone:").font(.caption)
+      Text(authorization.displayVerificationUri)
+        .font(.caption2.monospaced())
+        .multilineTextAlignment(.center)
+        .lineLimit(3)
+        .minimumScaleFactor(0.75)
+        .fixedSize(horizontal: false, vertical: true)
       Text(authorization.userCode).font(.title3.monospaced()).bold()
       Text("Waiting for approval…").font(.caption).foregroundStyle(.secondary)
     }.padding()
@@ -208,7 +229,7 @@ private struct WatchRoot: View {
 
 private enum Keychain {
   static func read(_ key: String) -> String? {
-    var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key, kSecReturnData as String: true]
+    let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key, kSecReturnData as String: true]
     var item: CFTypeRef?; guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
     return String(data: data, encoding: .utf8)
   }

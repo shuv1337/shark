@@ -13,6 +13,9 @@ const production = {
   APPLE_SIGN_IN_PRIVATE_KEY: "private-key",
   APPLE_TEAM_ID: "TEAM",
   EXPO_ACCESS_TOKEN: "expo-token",
+  VAPID_PUBLIC_KEY: `B${"a".repeat(86)}`,
+  VAPID_PRIVATE_KEY: "b".repeat(43),
+  VAPID_SUBJECT: "mailto:operator@example.com",
   APNS_KEY_ID: "APNS_KEY",
   APNS_PRIVATE_KEY: "private-key",
   APNS_SANDBOX_KEY_ID: "APNS_DEV",
@@ -56,6 +59,9 @@ describe("SHark runtime environment", () => {
     expect(issues).toContain("Production APP_URL must use HTTPS.");
     expect(issues.some((issue) => issue.startsWith("APPLE_SIGN_IN_SERVICE_ID"))).toBe(true);
     expect(issues).toContain("EXPO_ACCESS_TOKEN is not set.");
+    expect(issues).toContain(
+      "VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_SUBJECT are not all set.",
+    );
     expect(issues).toContain("APNS_KEY_ID / APPLE_TEAM_ID / APNS_PRIVATE_KEY are not all set.");
     expect(issues).toContain("APNS_SANDBOX_KEY_ID / APNS_SANDBOX_PRIVATE_KEY are not all set.");
   });
@@ -83,5 +89,22 @@ describe("SHark runtime environment", () => {
     expect(() => assertRuntimeEnv(parseEnv({ APNS_SANDBOX_KEY_ID: "SANDBOX" }))).toThrow(
       "Partially configured sandbox APNs credential group.",
     );
+    expect(() => assertRuntimeEnv(parseEnv({ VAPID_PUBLIC_KEY: "public" }))).toThrow(
+      "Partially configured Web Push VAPID credential group.",
+    );
+  });
+
+  it("normalizes a bare VAPID contact email to a mailto subject", () => {
+    expect(parseEnv({ VAPID_SUBJECT: "operator@example.com" }).VAPID_SUBJECT).toBe(
+      "mailto:operator@example.com",
+    );
+  });
+
+  it("rejects malformed production VAPID credentials before the server starts", () => {
+    const parsed = parseEnv({ ...production, VAPID_PRIVATE_KEY: "not-a-real-key" });
+    expect(runtimeEnvIssues(parsed)).toContain(
+      "VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are not valid base64url VAPID keys.",
+    );
+    expect(() => assertRuntimeEnv(parsed)).toThrow("not valid base64url VAPID keys");
   });
 });

@@ -25,6 +25,7 @@ import {
   liveActivityOperation,
   service,
   user as userTable,
+  webPushSubscription,
 } from "../db/schema";
 import { isEmailAllowed } from "../lib/admission";
 import { failureBucket, track } from "../lib/analytics";
@@ -32,7 +33,7 @@ import { checkNotificationAllowance, getBilling, trackNotification } from "../li
 import { newId } from "../lib/id";
 import { deliverInteractionCallbacks } from "../lib/interaction-callbacks";
 import { verifyLiveActivityInteractionCredential } from "../lib/live-activity-interaction";
-import { buildInteractionPushMessages, buildPushMessages, sendPushMessages } from "../lib/push";
+import { buildInteractionPushMessages, buildPushMessages, sendPushFanout } from "../lib/push";
 import { hashInteractionResponseToken } from "../lib/token";
 import {
   type AgentEnv,
@@ -49,6 +50,59 @@ import {
 import { createServiceForUser } from "./services";
 
 type InteractionRow = typeof interaction.$inferSelect;
+
+async function selectNotificationTargets(
+  userId: string,
+  deviceIds: string[] | undefined,
+  limit: number | null,
+): Promise<{
+  devices: Array<typeof device.$inferSelect>;
+  webSubscriptions: Array<typeof webPushSubscription.$inferSelect>;
+  valid: boolean;
+}> {
+  const [devices, webSubscriptions] = await Promise.all([
+    db
+      .select()
+      .from(device)
+      .where(
+        deviceIds
+          ? and(eq(device.userId, userId), inArray(device.id, deviceIds))
+          : and(eq(device.userId, userId), eq(device.active, true), eq(device.platform, "ios")),
+      )
+      .orderBy(desc(device.lastSeenAt)),
+    db
+      .select()
+      .from(webPushSubscription)
+      .where(
+        deviceIds
+          ? and(eq(webPushSubscription.userId, userId), inArray(webPushSubscription.id, deviceIds))
+          : and(eq(webPushSubscription.userId, userId), eq(webPushSubscription.active, true)),
+      )
+      .orderBy(desc(webPushSubscription.lastSeenAt)),
+  ]);
+  if (deviceIds && devices.length + webSubscriptions.length !== deviceIds.length) {
+    return { devices: [], webSubscriptions: [], valid: false };
+  }
+  const allTargets = [
+    ...devices
+      .filter((row) => row.active && row.platform === "ios")
+      .map((row) => ({ kind: "ios" as const, row, seen: row.lastSeenAt })),
+    ...webSubscriptions
+      .filter((row) => row.active)
+      .map((row) => ({ kind: "web" as const, row, seen: row.lastSeenAt })),
+  ]
+    .sort((a, b) => b.seen.getTime() - a.seen.getTime())
+    .slice(0, deviceIds ? undefined : (limit ?? undefined));
+  return {
+    devices: allTargets
+      .filter((target) => target.kind === "ios")
+      .map((target) => target.row as typeof device.$inferSelect),
+    webSubscriptions: allTargets
+      .filter((target) => target.kind === "web")
+      .map((target) => target.row as typeof webPushSubscription.$inferSelect),
+    valid: true,
+  };
+}
 
 function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -331,28 +385,14 @@ export const agentRoute = new Hono<AgentEnv>()
       return c.json({ error: "Device routing is unavailable" }, 402);
     }
 
-    let selectedDevices: (typeof device.$inferSelect)[];
-    if (parsed.data.deviceIds) {
-      const owned = await db
-        .select()
-        .from(device)
-        .where(and(eq(device.userId, token.userId), inArray(device.id, parsed.data.deviceIds)));
-      if (owned.length !== parsed.data.deviceIds.length) {
-        return c.json({ error: "Invalid device selection" }, 400);
-      }
-      selectedDevices = owned.filter((row) => row.active && row.platform === "ios");
-    } else {
-      selectedDevices = await db
-        .select()
-        .from(device)
-        .where(
-          and(eq(device.userId, token.userId), eq(device.active, true), eq(device.platform, "ios")),
-        )
-        .orderBy(desc(device.lastSeenAt));
-      if (billing.limits.devices !== null) {
-        selectedDevices = selectedDevices.slice(0, billing.limits.devices);
-      }
-    }
+    const targets = await selectNotificationTargets(
+      token.userId,
+      parsed.data.deviceIds,
+      billing.limits.devices,
+    );
+    if (!targets.valid) return c.json({ error: "Invalid device selection" }, 400);
+    const selectedDevices = targets.devices;
+    const selectedWebSubscriptions = targets.webSubscriptions;
 
     const limited = await enforceAgentRateLimit(token, owner);
     if (limited) {
@@ -395,7 +435,7 @@ export const agentRoute = new Hono<AgentEnv>()
       return c.json({ error: "Idempotency-Key was already used with a different payload" }, 409);
     }
 
-    if (selectedDevices.length === 0) {
+    if (selectedDevices.length + selectedWebSubscriptions.length === 0) {
       await db
         .update(agentNotification)
         .set({ status: "no_devices" })
@@ -410,7 +450,7 @@ export const agentRoute = new Hono<AgentEnv>()
         {
           notification: toNotificationDto(outcome.row),
           accepted: 0,
-          message: "No active iOS devices are registered for this account.",
+          message: "No active notification targets are registered for this account.",
         },
         201,
       );
@@ -434,7 +474,17 @@ export const agentRoute = new Hono<AgentEnv>()
         url: parsed.data.url,
       },
     });
-    const result = await sendPushMessages(messages);
+    const result = await sendPushFanout({
+      expoMessages: messages,
+      webSubscriptions: selectedWebSubscriptions,
+      webPayload: {
+        title: parsed.data.title,
+        body: parsed.data.body,
+        url: parsed.data.url ?? "/dashboard",
+        ...(parsed.data.imageUrl ? { imageUrl: parsed.data.imageUrl } : {}),
+        tag: `agent-${token.id}`,
+      },
+    });
     if (result.staleTokens.length > 0) {
       await db
         .update(device)
@@ -448,13 +498,19 @@ export const agentRoute = new Hono<AgentEnv>()
         value: result.staleTokens.length,
       });
     }
+    if (result.staleSubscriptionIds.length > 0) {
+      await db
+        .update(webPushSubscription)
+        .set({ active: false })
+        .where(inArray(webPushSubscription.id, result.staleSubscriptionIds));
+    }
     track({
       name: "agent_notification_created",
       userId: token.userId,
       plan: billing.plan,
       outcome: result.accepted > 0 ? "accepted" : failureBucket(result.errors[0]),
       value: result.accepted,
-      metadata: { targets: messages.length },
+      metadata: { targets: messages.length + selectedWebSubscriptions.length },
     });
     if (result.accepted > 0) {
       track({
@@ -470,13 +526,13 @@ export const agentRoute = new Hono<AgentEnv>()
       .update(agentNotification)
       .set({
         status:
-          result.accepted === messages.length
+          result.accepted === messages.length + selectedWebSubscriptions.length
             ? "accepted"
             : result.accepted > 0
               ? "partial"
               : "failed",
         acceptedCount: result.accepted,
-        failedCount: messages.length - result.accepted,
+        failedCount: messages.length + selectedWebSubscriptions.length - result.accepted,
         error: result.errors.length > 0 ? result.errors.join("; ").slice(0, 1000) : null,
       })
       .where(eq(agentNotification.id, notificationId));
@@ -485,7 +541,9 @@ export const agentRoute = new Hono<AgentEnv>()
         notification: toNotificationDto({ ...outcome.row, acceptedCount: result.accepted }),
         accepted: result.accepted,
         // Provider errors can embed push tokens, so the reason is deliberately coarse.
-        ...(result.accepted === 0 ? { message: "No notifications were accepted by Expo." } : {}),
+        ...(result.accepted === 0
+          ? { message: "No notification provider accepted the request." }
+          : {}),
       },
       201,
     );
@@ -542,28 +600,14 @@ export const agentRoute = new Hono<AgentEnv>()
       return c.json({ error: "Device routing is unavailable" }, 402);
     }
 
-    let selectedDevices: (typeof device.$inferSelect)[];
-    if (parsed.data.deviceIds) {
-      const owned = await db
-        .select()
-        .from(device)
-        .where(and(eq(device.userId, token.userId), inArray(device.id, parsed.data.deviceIds)));
-      if (owned.length !== parsed.data.deviceIds.length) {
-        return c.json({ error: "Invalid device selection" }, 400);
-      }
-      selectedDevices = owned.filter((row) => row.active && row.platform === "ios");
-    } else {
-      selectedDevices = await db
-        .select()
-        .from(device)
-        .where(
-          and(eq(device.userId, token.userId), eq(device.active, true), eq(device.platform, "ios")),
-        )
-        .orderBy(desc(device.lastSeenAt));
-      if (billing.limits.devices !== null) {
-        selectedDevices = selectedDevices.slice(0, billing.limits.devices);
-      }
-    }
+    const targets = await selectNotificationTargets(
+      token.userId,
+      parsed.data.deviceIds,
+      billing.limits.devices,
+    );
+    if (!targets.valid) return c.json({ error: "Invalid device selection" }, 400);
+    const selectedDevices = targets.devices;
+    const selectedWebSubscriptions = targets.webSubscriptions;
 
     const since = new Date(Date.now() - 60_000);
     const [
@@ -709,7 +753,11 @@ export const agentRoute = new Hono<AgentEnv>()
       }
       throw error;
     }
-    if (selectedDevices.length === 0) {
+    if (
+      selectedDevices.length +
+        (presentation === "notification" ? selectedWebSubscriptions.length : 0) ===
+      0
+    ) {
       track({
         name: "interaction_created",
         userId: token.userId,
@@ -721,7 +769,10 @@ export const agentRoute = new Hono<AgentEnv>()
         {
           interaction: toDto(row),
           accepted: 0,
-          message: "No active iOS devices are registered for this account.",
+          message:
+            presentation === "live_activity"
+              ? "No Live Activity-capable iOS devices are registered for this account."
+              : "No active notification targets are registered for this account.",
         },
         201,
       );
@@ -787,7 +838,17 @@ export const agentRoute = new Hono<AgentEnv>()
             )
         )[0]?.value ?? 0,
     });
-    const result = await sendPushMessages(messages);
+    const result = await sendPushFanout({
+      expoMessages: messages,
+      webSubscriptions: selectedWebSubscriptions,
+      webPayload: {
+        title: parsed.data.title,
+        body: parsed.data.prompt,
+        url: parsed.data.url ?? "/dashboard",
+        ...(parsed.data.imageUrl ? { imageUrl: parsed.data.imageUrl } : {}),
+        tag: `interaction-${row.id}`,
+      },
+    });
     if (result.staleTokens.length > 0) {
       await db
         .update(device)
@@ -801,6 +862,12 @@ export const agentRoute = new Hono<AgentEnv>()
         value: result.staleTokens.length,
       });
     }
+    if (result.staleSubscriptionIds.length > 0) {
+      await db
+        .update(webPushSubscription)
+        .set({ active: false })
+        .where(inArray(webPushSubscription.id, result.staleSubscriptionIds));
+    }
     const [updated] = await db
       .update(interaction)
       .set({ acceptedCount: result.accepted })
@@ -813,7 +880,10 @@ export const agentRoute = new Hono<AgentEnv>()
       plan: billing.plan,
       outcome: result.accepted > 0 ? "accepted" : failureBucket(result.errors[0]),
       value: result.accepted,
-      metadata: { kind: parsed.data.kind, targets: messages.length },
+      metadata: {
+        kind: parsed.data.kind,
+        targets: messages.length + selectedWebSubscriptions.length,
+      },
     });
     if (result.accepted > 0) {
       track({
@@ -830,7 +900,9 @@ export const agentRoute = new Hono<AgentEnv>()
         interaction: toDto(row),
         accepted: result.accepted,
         // Provider errors can embed push tokens, so the reason is deliberately coarse.
-        ...(result.accepted === 0 ? { message: "No notifications were accepted by Expo." } : {}),
+        ...(result.accepted === 0
+          ? { message: "No notification provider accepted the request." }
+          : {}),
       },
       201,
     );

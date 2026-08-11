@@ -54,6 +54,9 @@ case "$1 $2" in
           {id:"apple-team",label:"APPLE_TEAM_ID",type:"CONCEALED",value:"7H54B326YZ"},
           {id:"apple-private",label:"APPLE_SIGN_IN_PRIVATE_KEY_BASE64",type:"CONCEALED",value:"QUJDRA=="},
           {id:"expo",label:"EXPO_ACCESS_TOKEN",type:"CONCEALED",value:"expo-token_123"},
+          {id:"vapid-public",label:"VAPID_PUBLIC_KEY",type:"CONCEALED",value:("B" + ("a" * 86))},
+          {id:"vapid-private",label:"VAPID_PRIVATE_KEY",type:"CONCEALED",value:("b" * 43)},
+          {id:"vapid-subject",label:"VAPID_SUBJECT",type:"CONCEALED",value:"mailto:operator@example.com"},
           {id:"apns-key",label:"APNS_KEY_ID",type:"CONCEALED",value:"APNSKEY001"},
           {id:"apns-private",label:"APNS_PRIVATE_KEY_BASE64",type:"CONCEALED",value:"RUZHSA=="},
           {id:"apns-dev-key",label:"APNS_SANDBOX_KEY_ID",type:"CONCEALED",value:"APNSDEV001"},
@@ -142,6 +145,9 @@ grep -qx 'APP_URL=https://shark.shuv.dev' "$deploy_root/.env.new"
 grep -qx 'APPLE_SIGN_IN_PRIVATE_KEY=QUJDRA==' "$deploy_root/.env.new"
 grep -qx 'APNS_SANDBOX_KEY_ID=APNSDEV001' "$deploy_root/.env.new"
 grep -qx 'APNS_SANDBOX_PRIVATE_KEY=REVWR0g=' "$deploy_root/.env.new"
+grep -Eq '^VAPID_PUBLIC_KEY=B[a]{86}$' "$deploy_root/.env.new"
+grep -Eq '^VAPID_PRIVATE_KEY=[b]{43}$' "$deploy_root/.env.new"
+grep -qx 'VAPID_SUBJECT=mailto:operator@example.com' "$deploy_root/.env.new"
 if grep -Eq 'app-test-token|backup-test-token' "$deploy_root/.env.new"; then
   echo "1Password service-account credential leaked into the runtime environment." >&2
   exit 1

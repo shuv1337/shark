@@ -25,6 +25,7 @@
     "expo-server-sdk": "^6.1.0",
     "hono": "^4.12.31",
     "jose": "^6.2.4",
+    "web-push": "^3.6.7",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -33,6 +34,7 @@
     "@types/node": "^22.19.0",
     "@types/react": "^19.2.8",
     "@types/react-dom": "^19.2.3",
+    "@types/web-push": "^3.6.4",
     "@vitejs/plugin-react": "^5.1.4",
     "concurrently": "^9.2.1",
     "drizzle-kit": "^0.31.10",

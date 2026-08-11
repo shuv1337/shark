@@ -8,6 +8,10 @@ const authState = vi.hoisted(() => ({ userId: "user_1" as string | null }));
 const sent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 const tracked = vi.hoisted(() => [] as string[]);
 const liveActivityPushes = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+const webPushState = vi.hoisted(() => ({
+  stale: false,
+  calls: [] as Array<{ ids: string[]; payload: Record<string, unknown> }>,
+}));
 const billingState = vi.hoisted(() => ({
   pro: true,
   servicePerMinute: 10_000,
@@ -86,6 +90,20 @@ vi.mock("../lib/apns", () => ({
   },
 }));
 
+vi.mock("../lib/web-push", () => ({
+  sendWebPushNotifications: async (
+    rows: Array<{ id: string }>,
+    payload: Record<string, unknown>,
+  ) => {
+    webPushState.calls.push({ ids: rows.map((row) => row.id), payload });
+    return {
+      accepted: webPushState.stale ? 0 : rows.length,
+      errors: webPushState.stale ? ["subscription expired"] : [],
+      staleSubscriptionIds: webPushState.stale ? rows.map((row) => row.id) : [],
+    };
+  },
+}));
+
 afterEach(() => {
   authState.userId = "user_1";
   billingState.pro = true;
@@ -95,6 +113,8 @@ afterEach(() => {
   billingState.acceptPush = true;
   tracked.length = 0;
   liveActivityPushes.length = 0;
+  webPushState.stale = false;
+  webPushState.calls.length = 0;
 });
 
 let app: typeof import("../app")["app"];
@@ -258,6 +278,20 @@ async function createInteraction(body: Record<string, unknown>, key?: string) {
     method: "POST",
     headers: key ? { "Idempotency-Key": key } : undefined,
     body: JSON.stringify(body),
+  });
+}
+
+async function insertWebSubscription(id: string) {
+  const now = new Date();
+  await db.insert(schema.webPushSubscription).values({
+    id,
+    userId: "user_1",
+    endpointHash: `${id}-endpoint-hash`,
+    subscriptionCiphertext: "encrypted-at-adapter-boundary",
+    deviceName: "Linux browser",
+    active: true,
+    createdAt: now,
+    lastSeenAt: now,
   });
 }
 
@@ -623,6 +657,59 @@ describe("interactions", () => {
       data: { actionDigest: expect.stringMatching(/^[a-f0-9]{64}$/) },
     });
     expect(tracked).toHaveLength(1);
+  });
+
+  it("delivers notification interactions to browsers but keeps Live Activities iOS-only", async () => {
+    sent.length = 0;
+    await insertWebSubscription("web_interaction_target");
+    try {
+      const notification = await createInteraction({
+        title: "Desktop approval",
+        prompt: "Review the deploy in SHark",
+        kind: "approval",
+        deviceIds: ["web_interaction_target"],
+        expiresInSeconds: 60,
+      });
+      expect(notification.status).toBe(201);
+      expect(await notification.json()).toMatchObject({
+        accepted: 1,
+        interaction: { status: "pending", accepted: 1, presentation: "notification" },
+      });
+      expect(webPushState.calls).toEqual([
+        {
+          ids: ["web_interaction_target"],
+          payload: {
+            title: "Desktop approval",
+            body: "Review the deploy in SHark",
+            url: "/dashboard",
+            tag: expect.stringMatching(/^interaction-int_/),
+          },
+        },
+      ]);
+      expect(sent).toHaveLength(0);
+
+      webPushState.calls.length = 0;
+      liveActivityPushes.length = 0;
+      const liveActivity = await createInteraction({
+        title: "Watch approval",
+        prompt: "Review on an Apple device",
+        kind: "approval",
+        presentation: "live_activity",
+        deviceIds: ["web_interaction_target"],
+        expiresInSeconds: 900,
+      });
+      expect(liveActivity.status).toBe(201);
+      expect(await liveActivity.json()).toMatchObject({
+        accepted: 0,
+        message: "No Live Activity-capable iOS devices are registered for this account.",
+      });
+      expect(webPushState.calls).toHaveLength(0);
+      expect(liveActivityPushes).toHaveLength(0);
+    } finally {
+      await db
+        .delete(schema.webPushSubscription)
+        .where(eq(schema.webPushSubscription.id, "web_interaction_target"));
+    }
   });
 
   it("creates and resolves a device-bound interactive Live Activity", async () => {
@@ -1154,6 +1241,65 @@ describe("agent notifications", () => {
     expect(tracked).toHaveLength(1);
   });
 
+  it("routes agent notifications to browsers and deactivates stale subscriptions", async () => {
+    sent.length = 0;
+    await insertWebSubscription("web_notification_target");
+    try {
+      const delivered = await createNotification({
+        body: "Deploy finished",
+        title: "Desktop bot",
+        deviceIds: ["web_notification_target"],
+      });
+      expect(delivered.status).toBe(201);
+      const deliveredBody = (await delivered.json()) as {
+        notification: { id: string };
+        accepted: number;
+      };
+      expect(deliveredBody.accepted).toBe(1);
+      expect(sent).toHaveLength(0);
+      expect(webPushState.calls).toEqual([
+        {
+          ids: ["web_notification_target"],
+          payload: {
+            title: "Desktop bot",
+            body: "Deploy finished",
+            url: "/dashboard",
+            tag: "agent-tok_full",
+          },
+        },
+      ]);
+      const [storedDelivery] = await db
+        .select()
+        .from(schema.agentNotification)
+        .where(eq(schema.agentNotification.id, deliveredBody.notification.id));
+      expect(storedDelivery).toMatchObject({
+        status: "accepted",
+        acceptedCount: 1,
+        failedCount: 0,
+      });
+
+      webPushState.stale = true;
+      const stale = await createNotification({
+        body: "Subscription expired",
+        deviceIds: ["web_notification_target"],
+      });
+      expect(stale.status).toBe(201);
+      expect(await stale.json()).toMatchObject({
+        accepted: 0,
+        message: "No notification provider accepted the request.",
+      });
+      const [subscription] = await db
+        .select()
+        .from(schema.webPushSubscription)
+        .where(eq(schema.webPushSubscription.id, "web_notification_target"));
+      expect(subscription?.active).toBe(false);
+    } finally {
+      await db
+        .delete(schema.webPushSubscription)
+        .where(eq(schema.webPushSubscription.id, "web_notification_target"));
+    }
+  });
+
   it("defaults the title to SHark and requires the notifications:send scope", async () => {
     const defaulted = await createNotification({ body: "Ping" });
     expect(await defaulted.json()).toMatchObject({ notification: { title: "SHark" } });
@@ -1308,13 +1454,13 @@ describe("agent notifications", () => {
     });
   });
 
-  it("reports accepted 0 with a message and skips usage tracking when Expo rejects", async () => {
+  it("reports accepted 0 with a message and skips usage tracking when providers reject", async () => {
     billingState.acceptPush = false;
     const response = await createNotification({ body: "Rejected" });
     expect(response.status).toBe(201);
     expect(await response.json()).toMatchObject({
       accepted: 0,
-      message: "No notifications were accepted by Expo.",
+      message: "No notification provider accepted the request.",
     });
     expect(tracked).toHaveLength(0);
   });

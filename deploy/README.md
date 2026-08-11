@@ -24,7 +24,8 @@ whitespace:
   vault `SHark Production App`. That vault must contain exactly one Secure Note titled
   `SHark Production App`, with concealed fields `ALLOWED_EMAILS`, `BETTER_AUTH_SECRET`,
   `APPLE_SIGN_IN_KEY_ID`, `APPLE_TEAM_ID`, `APPLE_SIGN_IN_PRIVATE_KEY_BASE64`,
-  `EXPO_ACCESS_TOKEN`, `APNS_KEY_ID`, `APNS_PRIVATE_KEY_BASE64`,
+  `EXPO_ACCESS_TOKEN`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`,
+  `APNS_KEY_ID`, `APNS_PRIVATE_KEY_BASE64`,
   `APNS_SANDBOX_KEY_ID`, and `APNS_SANDBOX_PRIVATE_KEY_BASE64`.
 - `op-backup-service-account-token`: a different read-only 1Password service-account token with
   access only to vault `SHark Production Backup`. That vault must contain exactly one Secure Note

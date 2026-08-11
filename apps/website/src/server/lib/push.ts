@@ -9,7 +9,9 @@ import {
   type WebhookRequest,
 } from "@hark/contracts";
 import { Expo, type ExpoPushMessage, type ExpoPushTicket } from "expo-server-sdk";
+import type { webPushSubscription } from "../db/schema";
 import { env } from "../env";
+import { sendWebPushNotifications, type WebPushPayload } from "./web-push";
 
 export interface ServiceDefaults {
   title: string;
@@ -161,11 +163,18 @@ export interface SendResult {
   errors: string[];
   /** Expo push tokens that Expo reported as no longer registered. */
   staleTokens: string[];
+  /** Browser subscriptions rejected as expired or no longer registered. */
+  staleSubscriptionIds: string[];
 }
 
 export async function sendPushMessages(messages: ExpoPushMessage[]): Promise<SendResult> {
   const expo = getExpo();
-  const result: SendResult = { accepted: 0, errors: [], staleTokens: [] };
+  const result: SendResult = {
+    accepted: 0,
+    errors: [],
+    staleTokens: [],
+    staleSubscriptionIds: [],
+  };
 
   for (const chunk of expo.chunkPushNotifications(messages)) {
     let tickets: ExpoPushTicket[];
@@ -189,4 +198,21 @@ export async function sendPushMessages(messages: ExpoPushMessage[]): Promise<Sen
   }
 
   return result;
+}
+
+export async function sendPushFanout(input: {
+  expoMessages: ExpoPushMessage[];
+  webSubscriptions: Array<typeof webPushSubscription.$inferSelect>;
+  webPayload: WebPushPayload;
+}): Promise<SendResult> {
+  const [expoResult, webResult] = await Promise.all([
+    sendPushMessages(input.expoMessages),
+    sendWebPushNotifications(input.webSubscriptions, input.webPayload),
+  ]);
+  return {
+    accepted: expoResult.accepted + webResult.accepted,
+    errors: [...expoResult.errors, ...webResult.errors],
+    staleTokens: expoResult.staleTokens,
+    staleSubscriptionIds: webResult.staleSubscriptionIds,
+  };
 }

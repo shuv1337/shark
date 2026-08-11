@@ -5,7 +5,8 @@ import type { Hono } from "hono";
 import { requireAuth } from "./middleware";
 
 export const PRIVATE_DOCUMENT_ROUTES = ["/", "/docs", "/privacy", "/terms", "/dashboard"] as const;
-export const PRIVATE_ROOT_ASSETS = ["/favicon.png", "/ogimage.png", "/app-store-icon.png"] as const;
+export const PRIVATE_ROOT_ASSETS = ["/ogimage.png"] as const;
+export const PUBLIC_PUSH_ASSETS = ["/sw.js", "/favicon.png", "/app-store-icon.png"] as const;
 
 export function mountPrivateStaticRoutes(
   app: Hono,
@@ -29,6 +30,12 @@ export function mountPrivateStaticRoutes(
     const file = path.slice(1);
     if (existsSync(resolve(clientDir, file))) {
       app.get(path, requireAuth, serveStatic({ path: `${staticRoot}/${file}` }));
+    }
+  }
+  for (const path of PUBLIC_PUSH_ASSETS) {
+    const file = path.slice(1);
+    if (existsSync(resolve(clientDir, file))) {
+      app.get(path, serveStatic({ path: `${staticRoot}/${file}` }));
     }
   }
   app.use("/assets/*", requireAuth, serveStatic({ root: staticRoot }));

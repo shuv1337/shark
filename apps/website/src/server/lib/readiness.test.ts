@@ -23,6 +23,7 @@ function makeDatabase(options?: { migrationCount?: number; latest?: number }) {
       "account",
       "service",
       "device",
+      "web_push_subscription",
       "event",
       "api_token",
       "interaction",

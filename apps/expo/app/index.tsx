@@ -1,7 +1,7 @@
 import * as AppleAuthentication from "expo-apple-authentication";
 import { Redirect } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ActivityIndicator, Image, StyleSheet, Text, useColorScheme, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { signInWithApple } from "../src/lib/apple-auth";
@@ -13,6 +13,7 @@ export default function SignInScreen() {
   const { data: session, isPending } = useSession();
   const [busy, setBusy] = useState<"apple" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const signInInFlight = useRef(false);
   const colorScheme = useColorScheme();
 
   // Keep the sign-in screen mounted until the native authorization code is
@@ -20,13 +21,21 @@ export default function SignInScreen() {
   if ((session || isSimulatorPreview) && busy !== "apple") return <Redirect href="/inbox" />;
 
   const continueWithApple = async () => {
+    if (signInInFlight.current) return;
+    signInInFlight.current = true;
     setBusy("apple");
     setError(null);
     try {
-      await signInWithApple();
+      const result = await signInWithApple();
+      if (result === "cancelled") {
+        setError(
+          "Sign in with Apple was dismissed. If you did not cancel it, try again and keep this screen open.",
+        );
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Apple sign-in failed");
     } finally {
+      signInInFlight.current = false;
       setBusy(null);
     }
   };
@@ -65,7 +74,7 @@ export default function SignInScreen() {
               buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
               cornerRadius={26}
               onPress={() => {
-                if (!busy) void continueWithApple();
+                void continueWithApple();
               }}
               style={[styles.appleButton, busy && styles.buttonDisabled]}
             />

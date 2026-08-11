@@ -14,6 +14,7 @@ import {
   pushDataSchema,
   serviceCreateSchema,
   webhookRequestSchema,
+  webPushSubscriptionRegisterSchema,
 } from "./index";
 
 describe("appleNativeTokenExchangeSchema", () => {
@@ -447,6 +448,29 @@ describe("deviceRegisterSchema", () => {
       deviceRegisterSchema.safeParse({
         expoPushToken: "ExponentPushToken[x]",
         platform: "android",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("webPushSubscriptionRegisterSchema", () => {
+  it("requires an endpoint and both browser subscription keys", () => {
+    expect(
+      webPushSubscriptionRegisterSchema.safeParse({
+        subscription: {
+          endpoint: "https://push.example.com/send/abc",
+          expirationTime: null,
+          keys: { p256dh: "public-key", auth: "auth-secret" },
+        },
+        deviceName: "Linux Firefox",
+      }).success,
+    ).toBe(true);
+    expect(
+      webPushSubscriptionRegisterSchema.safeParse({
+        subscription: {
+          endpoint: "https://push.example.com/send/abc",
+          keys: { p256dh: "public-key" },
+        },
       }).success,
     ).toBe(false);
   });
