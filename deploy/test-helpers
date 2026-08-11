@@ -122,6 +122,8 @@ exec 9>"$test_root/inherited-deploy.lock"
 grep -Fqx 'current_new="$current_file.new"' "$repo_root/deploy/shark-deploy"
 grep -Fqx 'cp "$provenance_file" "$current_new"' "$repo_root/deploy/shark-deploy"
 grep -Fqx 'mv "$current_new" "$current_file"' "$repo_root/deploy/shark-deploy"
+grep -Fqx '      APNS_SANDBOX_KEY_ID: ${APNS_SANDBOX_KEY_ID:?set APNS_SANDBOX_KEY_ID in .env}' "$repo_root/compose.yaml"
+grep -Fqx '      APNS_SANDBOX_PRIVATE_KEY: ${APNS_SANDBOX_PRIVATE_KEY:?set APNS_SANDBOX_PRIVATE_KEY in .env}' "$repo_root/compose.yaml"
 
 file_mode() {
   if stat -c '%a' "$1" >/dev/null 2>&1; then
