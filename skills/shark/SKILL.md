@@ -1,11 +1,6 @@
 ---
 name: shark
-description: Use SHark and the sharkctl CLI to send iPhone push notifications, request approvals or replies, run Live Activities, and create persistent webhook services for CI, agents, scripts, monitoring, and other workflows. Use when a user asks to install or authenticate sharkctl, ping or text their phone when work finishes, wait for approval before continuing, ask them a question, show task progress, create a SHark service, obtain a webhook URL, or wire SHark into an existing workflow.
-license: PolyForm Noncommercial 1.0.0 (https://polyformproject.org/licenses/noncommercial/1.0.0)
-compatibility: Requires Node.js 22+ and internet access. Workflow examples may also use jq, curl, or gh.
-metadata:
-  author: R44VC0RP and SHark contributors
-  version: "1.3.0-shark.1"
+description: Use when a user wants SHark and sharkctl for iPhone notifications, approvals, replies, Live Activities, persistent webhook services, authentication, task progress, or workflow integration.
 ---
 
 # SHark
@@ -18,7 +13,7 @@ needs a stable URL it can call later.
 
 - Use Node.js 22 or newer.
 - Use only a project-installed or user-installed `sharkctl` that the user already trusts. Version
-  `0.4.0` is reviewed for this skill. Never download packages, run `npx`/`pnpm dlx`, install or
+  `0.4.1` is reviewed for this skill. Never download packages, run `npx`/`pnpm dlx`, install or
   upgrade the CLI, or execute a newly installed binary as part of this skill. If `sharkctl` is not
   available, stop and ask the user to install and review an exact version separately.
 - Treat SHark tokens and webhook URLs as secrets. Never commit, print, summarize, or paste them into
