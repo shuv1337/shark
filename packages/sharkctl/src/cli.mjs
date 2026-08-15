@@ -458,7 +458,10 @@ export async function execute(argv, env = process.env, overrides = {}) {
   }
 
   if (group === "auth" && action === "status") {
-    return { body: await request(config, "/api/agent/auth/status"), exitCode: 0 };
+    const status = await request(config, "/api/agent/auth/status");
+    // Auth status is commonly captured in agent logs. Keep its public output to the
+    // authentication result instead of forwarding server-side token metadata.
+    return { body: { authenticated: status.authenticated === true }, exitCode: 0 };
   }
   if (group === "devices" && action === "list") {
     return { body: await request(config, "/api/agent/devices"), exitCode: 0 };

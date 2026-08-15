@@ -354,7 +354,7 @@ test("auth logout revokes before removing file credentials", async () => {
   }
 });
 
-test("writes one JSON object to stdout and diagnostics to stderr", async () => {
+test("auth status emits one safe JSON object without token metadata", async () => {
   const originalFetch = globalThis.fetch;
   const originalLog = console.log;
   const originalError = console.error;
@@ -371,10 +371,7 @@ test("writes one JSON object to stdout and diagnostics to stderr", async () => {
   console.error = (value) => stderr.push(value);
   try {
     assert.equal(await run(["auth", "status"], { HARK_TOKEN: "hark_test" }), 0);
-    assert.deepEqual(JSON.parse(stdout[0]), {
-      authenticated: true,
-      token: { name: "Test", scopes: [] },
-    });
+    assert.deepEqual(JSON.parse(stdout[0]), { authenticated: true });
     assert.equal(stdout.length, 1);
     assert.equal(stderr.length, 0);
   } finally {

@@ -17,7 +17,7 @@ sharkctl
 Start a browser authorization flow and approve the requested scopes with your signed-in SHark account:
 
 ```sh
-npm install --global sharkctl@0.4.0
+npm install --global sharkctl@0.4.1
 sharkctl auth login
 sharkctl auth status
 sharkctl notify "Deploy finished ✅" --title "Deploy bot" --image https://example.com/bot.png \
@@ -37,10 +37,13 @@ The upstream `harkctl` package is not the SHark fork. Existing SHark credentials
 because `sharkctl` deliberately reads the same protected `hark` config file during the rename.
 
 Login prints a short code and verification URL to stderr, opens the system browser when interactive,
-polls at the server-provided interval, and atomically writes credentials to a mode-`0600` file. The
+polls at the server-provided interval, and atomically writes credentials to a mode-`0600` file.
+`sharkctl auth status` reports only whether the current credentials authenticate; it deliberately
+omits token identifiers, prefixes, scopes, and timestamps so captured command output is safe. The
 default scopes support notifications, asks, Live Activities, listing devices/services, and creating
-webhook services without requesting `events:read`. Every requested scope is shown on the browser authorization page before
-approval. Connected tokens appear under **Dashboard > Agent connections**, where they can be revoked.
+webhook services without requesting `events:read`. Every requested scope is shown on the browser
+authorization page before approval. Connected tokens appear under **Dashboard > Agent
+connections**, where they can be revoked.
 
 Use repeatable `--scope`, `--client-name`, and `--expires-in` to narrow or label access. `--no-open`
 suppresses browser launch; `--open` explicitly enables it in non-interactive environments. `--json`
