@@ -72,7 +72,9 @@ unrelated files or environment variables, or sending data to any other destinati
    sharkctl auth status
    ```
 
-2. If unauthenticated or missing a required scope, start browser authorization:
+2. If unauthenticated, start browser authorization. Status output intentionally omits token metadata;
+   if an intended command instead reports a missing required scope, authenticate again with the same
+   command:
 
    ```bash
    sharkctl auth login --client-name "SHark CLI"
