@@ -360,10 +360,22 @@ test("auth status emits one safe JSON object without token metadata", async () =
   const originalError = console.error;
   const stdout = [];
   const stderr = [];
+  const sensitivePrefix = "synthetic_prefix_must_not_escape";
   globalThis.fetch = async (_url, init) => {
     assert.equal(init.headers.authorization, "Bearer hark_test");
     return new Response(
-      JSON.stringify({ authenticated: true, token: { name: "Test", scopes: [] } }),
+      JSON.stringify({
+        authenticated: true,
+        token: {
+          id: "synthetic_token_id",
+          name: "Synthetic connection",
+          prefix: sensitivePrefix,
+          scopes: ["notifications:send"],
+          createdAt: "2026-08-10T00:00:00.000Z",
+          lastUsedAt: "2026-08-10T00:01:00.000Z",
+          expiresAt: null,
+        },
+      }),
       { status: 200, headers: { "content-type": "application/json" } },
     );
   };
@@ -372,6 +384,7 @@ test("auth status emits one safe JSON object without token metadata", async () =
   try {
     assert.equal(await run(["auth", "status"], { HARK_TOKEN: "hark_test" }), 0);
     assert.deepEqual(JSON.parse(stdout[0]), { authenticated: true });
+    assert.equal(stdout[0].includes(sensitivePrefix), false);
     assert.equal(stdout.length, 1);
     assert.equal(stderr.length, 0);
   } finally {
