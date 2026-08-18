@@ -6,7 +6,7 @@ import {
   liveActivityPushToStartTokenSchema,
   liveActivityUpdateTokenSchema,
 } from "@hark/contracts";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
 import {
@@ -23,6 +23,7 @@ import { newId } from "../lib/id";
 import { buildWelcomePushMessages, sendPushMessages } from "../lib/push";
 import { encryptLiveActivityToken } from "../lib/token";
 import { type AuthedEnv, requireAuth } from "../middleware";
+import { replayLateTerminalDelivery } from "./activities";
 
 function toDto(row: typeof device.$inferSelect): DeviceDto {
   return {
@@ -140,18 +141,30 @@ export const devicesRoute = new Hono<AuthedEnv>()
         .get();
       if (!registeredDevice) return { kind: "device-not-found" } as const;
 
+      const activeCandidate = inArray(liveActivity.status, ["starting", "active", "partial"]);
+      const lateTerminalCandidate = and(
+        eq(liveActivity.status, "ended"),
+        eq(liveActivityDelivery.status, "ended"),
+        eq(liveActivityDelivery.lastEvent, "end"),
+        eq(liveActivityDelivery.lastApnsReason, "MissingUpdateToken"),
+        isNull(liveActivityDelivery.updateTokenCiphertext),
+      );
       const candidateWhere = [
         eq(liveActivityDelivery.deviceId, registeredDevice.id),
         eq(liveActivity.userId, userId),
         eq(liveActivity.schemaVersion, parsed.data.schemaVersion),
         eq(liveActivityDelivery.schemaVersion, parsed.data.schemaVersion),
-        inArray(liveActivity.status, ["starting", "active", "partial"]),
+        or(activeCandidate, lateTerminalCandidate),
       ];
       if (parsed.data.activityId) candidateWhere.push(eq(liveActivity.id, parsed.data.activityId));
-      let candidates: Array<{ id: string; activityId: string }> = [];
+      let candidates: Array<{ id: string; activityId: string; activityStatus: string }> = [];
       if (parsed.data.nativeActivityId) {
         const exact = tx
-          .select({ id: liveActivityDelivery.id, activityId: liveActivityDelivery.activityId })
+          .select({
+            id: liveActivityDelivery.id,
+            activityId: liveActivityDelivery.activityId,
+            activityStatus: liveActivity.status,
+          })
           .from(liveActivityDelivery)
           .innerJoin(liveActivity, eq(liveActivity.id, liveActivityDelivery.activityId))
           .where(
@@ -165,7 +178,11 @@ export const devicesRoute = new Hono<AuthedEnv>()
       }
       if (candidates.length === 0) {
         candidates = tx
-          .select({ id: liveActivityDelivery.id, activityId: liveActivityDelivery.activityId })
+          .select({
+            id: liveActivityDelivery.id,
+            activityId: liveActivityDelivery.activityId,
+            activityStatus: liveActivity.status,
+          })
           .from(liveActivityDelivery)
           .innerJoin(liveActivity, eq(liveActivity.id, liveActivityDelivery.activityId))
           .where(
@@ -191,7 +208,7 @@ export const devicesRoute = new Hono<AuthedEnv>()
           updateTokenUpdatedAt: now,
           environment: parsed.data.environment,
           schemaVersion: LIVE_ACTIVITY_SCHEMA_VERSION,
-          status: "active",
+          status: candidate.activityStatus === "ended" ? "ended" : "active",
           updatedAt: now,
         })
         .where(eq(liveActivityDelivery.id, candidate.id))
@@ -200,6 +217,8 @@ export const devicesRoute = new Hono<AuthedEnv>()
         kind: "registered",
         activityId: candidate.activityId,
         deviceId: registeredDevice.id,
+        deliveryId: candidate.id,
+        replayTerminal: candidate.activityStatus === "ended",
       } as const;
     });
     if (result.kind === "device-not-found") return c.json({ error: "Device not found" }, 404);
@@ -215,7 +234,14 @@ export const devicesRoute = new Hono<AuthedEnv>()
         409,
       );
     }
-    return c.json({ activityId: result.activityId, deviceId: result.deviceId });
+    const replay = result.replayTerminal
+      ? await replayLateTerminalDelivery(result.activityId, result.deliveryId)
+      : null;
+    return c.json({
+      activityId: result.activityId,
+      deviceId: result.deviceId,
+      ...(result.replayTerminal ? { replayedTerminal: replay !== null } : {}),
+    });
   })
   .post("/", async (c) => {
     const user = c.get("user");
