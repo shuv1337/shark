@@ -1,11 +1,12 @@
 import { liveActivityBackgroundTokenSchema } from "@hark/contracts";
-import { and, eq, gt, inArray } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
 import { liveActivity, liveActivityDelivery, user } from "../db/schema";
 import { isEmailAllowed } from "../lib/admission";
 import { verifyLiveActivityRegistrationToken } from "../lib/live-activity-registration";
 import { encryptLiveActivityToken } from "../lib/token";
+import { replayLateTerminalDelivery } from "./activities";
 
 export const liveActivityRegistrationRoute = new Hono().post("/update-token", async (c) => {
   const parsed = liveActivityBackgroundTokenSchema.safeParse(await c.req.json().catch(() => null));
@@ -19,6 +20,7 @@ export const liveActivityRegistrationRoute = new Hono().post("/update-token", as
       .select({
         deliveryId: liveActivityDelivery.id,
         activityId: liveActivity.id,
+        activityStatus: liveActivity.status,
         expiresAt: liveActivity.expiresAt,
         ownerEmail: user.email,
       })
@@ -28,8 +30,19 @@ export const liveActivityRegistrationRoute = new Hono().post("/update-token", as
       .where(
         and(
           eq(liveActivityDelivery.id, parsed.data.deliveryId),
-          inArray(liveActivityDelivery.status, ["pending", "accepted", "active"]),
-          inArray(liveActivity.status, ["starting", "active", "partial"]),
+          or(
+            and(
+              inArray(liveActivityDelivery.status, ["pending", "accepted", "active"]),
+              inArray(liveActivity.status, ["starting", "active", "partial"]),
+            ),
+            and(
+              eq(liveActivityDelivery.status, "ended"),
+              eq(liveActivity.status, "ended"),
+              eq(liveActivityDelivery.lastEvent, "end"),
+              eq(liveActivityDelivery.lastApnsReason, "MissingUpdateToken"),
+              isNull(liveActivityDelivery.updateTokenCiphertext),
+            ),
+          ),
           gt(liveActivity.expiresAt, now),
         ),
       )
@@ -44,7 +57,7 @@ export const liveActivityRegistrationRoute = new Hono().post("/update-token", as
         candidate.expiresAt,
       )
     ) {
-      return false;
+      return null;
     }
 
     tx.update(liveActivityDelivery)
@@ -52,14 +65,24 @@ export const liveActivityRegistrationRoute = new Hono().post("/update-token", as
         nativeActivityId: parsed.data.nativeActivityId,
         updateTokenCiphertext: encryptLiveActivityToken(parsed.data.updateToken.toLowerCase()),
         updateTokenUpdatedAt: now,
-        status: "active",
+        status: candidate.activityStatus === "ended" ? "ended" : "active",
         updatedAt: now,
       })
       .where(eq(liveActivityDelivery.id, candidate.deliveryId))
       .run();
-    return true;
+    return {
+      activityId: candidate.activityId,
+      deliveryId: candidate.deliveryId,
+      replayTerminal: candidate.activityStatus === "ended",
+    };
   });
   if (!registered) return c.json({ error: "Live Activity delivery not found" }, 404);
 
-  return c.json({ ok: true });
+  const replay = registered.replayTerminal
+    ? await replayLateTerminalDelivery(registered.activityId, registered.deliveryId)
+    : null;
+  return c.json({
+    ok: true,
+    ...(registered.replayTerminal ? { replayedTerminal: replay !== null } : {}),
+  });
 });

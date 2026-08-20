@@ -33,6 +33,12 @@ sharkctl activity end release-main --status "Complete" --progress 1 --if-sequenc
 sharkctl auth logout
 ```
 
+Treat every successful `activity start` as an obligation to issue `activity end` on success,
+failure, cancellation, or cleanup. Keep the returned activity ID or use a stable key, and give the
+end request a stable idempotency key when it may be retried. Sending a normal notification does not
+end or correlate with an activity. If an end initially reports `MissingUpdateToken`, SHark retains
+the terminal state and replays it when iOS registers the activity update token late.
+
 The upstream `harkctl` package is not the SHark fork. Existing SHark credentials remain usable
 because `sharkctl` deliberately reads the same protected `hark` config file during the rename.
 

@@ -11,7 +11,7 @@ import {
   liveActivityStartSchema,
   liveActivityUpdateSchema,
 } from "@hark/contracts";
-import { and, count, desc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
 import {
@@ -398,6 +398,76 @@ export async function dispatchLiveActivity(
     failed: results.filter((result) => !result.accepted).length,
     errors: [...new Set(results.flatMap((result) => (result.reason ? [result.reason] : [])))],
   };
+}
+
+/**
+ * Replays an explicit terminal operation when iOS supplies the per-activity update token only
+ * after the original end attempt failed with MissingUpdateToken. The existing operation is reused
+ * so retries do not create a second lifecycle event or consume another notification allowance.
+ */
+export async function replayLateTerminalDelivery(
+  activityId: string,
+  deliveryId: string,
+): Promise<{ accepted: number; failed: number } | null> {
+  const [candidate] = await db
+    .select({ activity: liveActivity, delivery: liveActivityDelivery })
+    .from(liveActivityDelivery)
+    .innerJoin(liveActivity, eq(liveActivity.id, liveActivityDelivery.activityId))
+    .where(
+      and(
+        eq(liveActivity.id, activityId),
+        eq(liveActivity.status, "ended"),
+        eq(liveActivityDelivery.id, deliveryId),
+        eq(liveActivityDelivery.status, "ended"),
+        eq(liveActivityDelivery.lastEvent, "end"),
+        eq(liveActivityDelivery.lastApnsReason, "MissingUpdateToken"),
+        isNotNull(liveActivityDelivery.updateTokenCiphertext),
+      ),
+    )
+    .limit(1);
+  if (!candidate) return null;
+
+  const [operation] = await db
+    .select()
+    .from(liveActivityOperation)
+    .where(
+      and(
+        eq(liveActivityOperation.activityId, activityId),
+        eq(liveActivityOperation.event, "end"),
+        eq(liveActivityOperation.sequence, candidate.activity.sequence),
+      ),
+    )
+    .orderBy(desc(liveActivityOperation.createdAt))
+    .limit(1);
+  if (!operation) return null;
+
+  const requester: ActivityRequester = candidate.activity.requesterTokenId
+    ? { requesterTokenId: candidate.activity.requesterTokenId }
+    : { requesterServiceId: candidate.activity.requesterServiceId as string };
+  const result = await dispatchLiveActivity(
+    candidate.activity,
+    [candidate.delivery],
+    operation.id,
+    "end",
+    requester,
+  );
+  await Promise.all([
+    db
+      .update(liveActivityOperation)
+      .set({
+        acceptedCount: sql`${liveActivityOperation.acceptedCount} + ${result.accepted}`,
+        failedCount: sql`max(0, ${liveActivityOperation.failedCount} - 1 + ${result.failed})`,
+      })
+      .where(eq(liveActivityOperation.id, operation.id)),
+    db
+      .update(liveActivity)
+      .set({
+        acceptedCount: sql`${liveActivity.acceptedCount} + ${result.accepted}`,
+        failedCount: sql`max(0, ${liveActivity.failedCount} - 1 + ${result.failed})`,
+      })
+      .where(eq(liveActivity.id, activityId)),
+  ]);
+  return { accepted: result.accepted, failed: result.failed };
 }
 
 type InteractionRow = typeof interaction.$inferSelect;

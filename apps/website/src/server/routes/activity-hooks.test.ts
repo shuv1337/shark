@@ -333,6 +333,49 @@ describe("Live Activity webhook routes", () => {
     }
   });
 
+  it("replays a terminal webhook activity after background token registration", async () => {
+    const started = await start();
+    const startBody = (await started.json()) as { activityId: string };
+    const startCall = apnsCalls.at(-1);
+    if (!startCall) throw new Error("Expected a Live Activity start call");
+    const attributes = (
+      startCall.input as {
+        attributes: { deliveryId: string; tokenRegistrationToken: string };
+      }
+    ).attributes;
+
+    apnsCalls.length = 0;
+    const ended = await activityRequest(TOKEN, `/${startBody.activityId}/end`, "POST", {
+      status: "Complete",
+      progress: 1,
+    });
+    expect(await ended.json()).toMatchObject({
+      ok: true,
+      status: "ended",
+      accepted: 0,
+      failed: 1,
+    });
+
+    authState.userId = null;
+    const registered = await app.request("/api/live-activity/update-token", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        deliveryId: attributes.deliveryId,
+        registrationToken: attributes.tokenRegistrationToken,
+        nativeActivityId: "native-background-late",
+        updateToken: "bc".repeat(32),
+      }),
+    });
+    expect(registered.status).toBe(200);
+    expect(await registered.json()).toMatchObject({ ok: true, replayedTerminal: true });
+    expect(apnsCalls.at(-1)).toMatchObject({
+      token: "bc".repeat(32),
+      environment: "sandbox",
+      input: { event: "end", props: { status: "Complete", progress: 1 } },
+    });
+  });
+
   it("is idempotent and enforces one active activity per device", async () => {
     const first = await start(TOKEN, "deploy-start");
     const firstBody = (await first.json()) as { activityId: string };

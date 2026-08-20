@@ -657,6 +657,81 @@ describe("Live Activity agent routes", () => {
     expect(replacement.status).toBe(201);
   });
 
+  it("replays an ended activity when its update token registers late", async () => {
+    const created = await start({
+      title: "Late terminal token",
+      status: "Running",
+      deviceIds: ["activity_dev_1"],
+    });
+    const body = (await created.json()) as { activity: { id: string } };
+
+    apnsCalls.length = 0;
+    const ended = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+      method: "POST",
+      body: JSON.stringify({ status: "Complete", progress: 1, dismissAfterSeconds: 30 }),
+    });
+    expect(await ended.json()).toMatchObject({
+      accepted: 0,
+      failed: 1,
+      activity: { status: "ended", props: { status: "Complete", progress: 1 } },
+      message: "MissingUpdateToken",
+    });
+
+    const registered = await app.request("/api/devices/live-activity/update-token", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        deviceId: "activity_dev_1",
+        activityId: body.activity.id,
+        nativeActivityId: "native-late-terminal",
+        updateToken: "ef".repeat(32),
+        environment: "sandbox",
+        schemaVersion: 1,
+      }),
+    });
+    expect(registered.status).toBe(200);
+    expect(await registered.json()).toMatchObject({
+      activityId: body.activity.id,
+      deviceId: "activity_dev_1",
+      replayedTerminal: true,
+    });
+    expect(apnsCalls.at(-1)).toMatchObject({
+      token: "ef".repeat(32),
+      environment: "sandbox",
+      input: {
+        event: "end",
+        props: { status: "Complete", progress: 1 },
+      },
+    });
+
+    const { eq } = await import("drizzle-orm");
+    const activity = db
+      .select()
+      .from(schema.liveActivity)
+      .where(eq(schema.liveActivity.id, body.activity.id))
+      .get();
+    const delivery = db
+      .select()
+      .from(schema.liveActivityDelivery)
+      .where(eq(schema.liveActivityDelivery.activityId, body.activity.id))
+      .get();
+    const operation = db
+      .select()
+      .from(schema.liveActivityOperation)
+      .where(eq(schema.liveActivityOperation.activityId, body.activity.id))
+      .orderBy(schema.liveActivityOperation.sequence)
+      .all()
+      .at(-1);
+    expect(activity).toMatchObject({ status: "ended", acceptedCount: 1, failedCount: 0 });
+    expect(delivery).toMatchObject({
+      status: "ended",
+      lastEvent: "end",
+      lastApnsStatus: 200,
+      lastApnsReason: null,
+    });
+    expect(operation).toMatchObject({ event: "end", acceptedCount: 1, failedCount: 0 });
+  });
+
   it("revokes Live Activity capability atomically when device ownership changes", async () => {
     const created = await start({
       title: "Transferred",

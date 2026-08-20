@@ -193,6 +193,14 @@ that should take the device slot on each run. Use the returned sequence with `--
 reject stale writes. Prefer meaningful updates over tight progress loops. iOS may suppress fresh
 activity starts less than about one minute apart; update the current activity instead.
 
+Starting an activity creates a lifecycle obligation. Retain its returned `.activity.id` or use a
+stable `--key`, then call `activity end` on every terminal path: success, failure, cancellation, and
+agent cleanup. Give the end request its own stable `--idempotency-key` so cleanup can be retried.
+A separate `notify` call is an independent inbox item; it does not correlate with or end a Live
+Activity, even when the title and requester match. If an update or end reports
+`MissingUpdateToken`, do not start a replacement merely to clear it. End the existing activity once
+the task is terminal; SHark records that state and can replay it when iOS registers the token late.
+
 ## Create and Wire a Webhook Service
 
 Use this workflow when the user asks to add SHark to CI, automation, monitoring, or another system
