@@ -17,3 +17,4 @@ apps/expo/ios/
 apps/expo/android/
 apps/expo/credentials.json
 expo-env.d.ts
+apps/macos/build/

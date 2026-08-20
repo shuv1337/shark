@@ -5,6 +5,13 @@ logs. Unchecked release evidence keeps the goal active.
 
 ## Source baseline
 
+- 2026-08-20: native macOS menu-bar companion, scoped device-code authorization, encrypted APNs
+  device registration, privacy-redacted delivery, inbox/actions, and mixed-platform fanout were
+  added. Contracts (28), sharkctl (31), Expo (31), website (224), and macOS (3) tests passed;
+  monorepo lint, typecheck, production build, brand checks, migration regeneration, and diff checks
+  passed. A signed Debug app for `dev.shuv.shark.macos` validated on disk with the development APS,
+  sandbox, and outbound-network entitlements. Production deployment, local installation, account
+  linking, notification authorization, and a real APNs receipt remain separate acceptance gates.
 - 2026-07-27: root typecheck passed.
 - 2026-07-27: contracts 24 tests, CLI 29 tests, Expo 15 tests, and website 179 tests passed
   (247 total).

@@ -50,6 +50,7 @@ export const envSchema = z.object({
   APNS_SANDBOX_KEY_ID: optionalString,
   APNS_SANDBOX_PRIVATE_KEY: optionalString,
   APNS_BUNDLE_ID: z.string().min(1).default("dev.shuv.shark"),
+  APNS_MACOS_BUNDLE_ID: z.string().min(1).default("dev.shuv.shark.macos"),
   APNS_ENVIRONMENT: z.enum(["sandbox", "production"]).default("sandbox"),
   /**
    * Legacy only. A non-empty value is rejected so stale hosted-product

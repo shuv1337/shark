@@ -14,6 +14,8 @@
     "test": "pnpm -r test",
     "lint": "biome check .",
     "format": "biome format --write .",
+    "macos:generate": "cd apps/macos && xcodegen generate",
+    "macos:test": "cd apps/macos && xcodebuild -project SHarkMac.xcodeproj -scheme SHarkMac -destination 'platform=macOS' -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO test",
     "brand:generate": "node scripts/generate-brand-assets.mjs",
     "brand:check": "node scripts/generate-brand-assets.mjs --check && node scripts/check-fork-boundaries.mjs"
   },

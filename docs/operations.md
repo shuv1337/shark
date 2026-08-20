@@ -9,9 +9,11 @@ gate.
 `shark.shuv.dev` is a private single-operator web/API origin. exe.dev terminates HTTPS and proxies
 to loopback-bound port 8787 on `shark-prod`. SQLite persists in the named `shark-data` volume.
 Ordinary iPhone notifications use Expo Push Service, browser notifications use standards-based Web
-Push with VAPID credentials, and Live Activity start, update, and end pushes use direct APNs
-credentials. The root-scoped service worker is a static production asset and must remain available
-at `/sw.js`; do not cache authenticated API responses in it.
+Push with VAPID credentials, and the native macOS companion plus Live Activity start, update, and
+end pushes use direct APNs credentials. macOS uses topic `APNS_MACOS_BUNDLE_ID` (default
+`dev.shuv.shark.macos`) and the same team APNs signing key. The root-scoped service worker is a
+static production asset and must remain available at `/sw.js`; do not cache authenticated API
+responses in it.
 
 The production environment must set `NODE_ENV=production`, `DEPLOYMENT_MODE=self_hosted`, the exact
 Apple allowlist, a unique Better Auth secret, complete Apple and APNs credential groups, an Expo
@@ -84,11 +86,14 @@ operator review:
 - The running container image ID matches the release provenance.
 - The latest nightly/pre-deploy Restic snapshot is verified.
 - Disk pressure, container restarts, and the capped local log files are healthy.
-- Expo receipts are reviewed and `DeviceNotRegistered` tokens are deactivated.
+- Expo receipts and APNs responses are reviewed; expired native tokens are deactivated per target.
 - `/sw.js` returns 200 with JavaScript content, and a signed-in browser can enable, test, disable,
   and re-enable notifications without creating duplicate active subscriptions.
 - Web Push responses with an expired subscription status deactivate only that browser target; they
   do not prevent delivery to healthy iPhone or browser targets.
+- A signed macOS app can complete device-code authorization, register its APNs token, refresh the
+  server-backed inbox, and submit each approval/reply at most once. Private-preview mode must redact
+  APNs alert content and omit notification actions.
 
 Never retain emails, tokens, webhook URLs, push identifiers, OAuth codes, callback credentials,
 private keys, or notification/reply content in Git, CI output, logs, screenshots, or verification

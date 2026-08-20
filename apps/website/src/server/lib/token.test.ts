@@ -3,9 +3,11 @@ import {
   apiTokenPrefix,
   decryptAppleRefreshToken,
   decryptLiveActivityToken,
+  decryptMacosApnsToken,
   decryptWebhookToken,
   encryptAppleRefreshToken,
   encryptLiveActivityToken,
+  encryptMacosApnsToken,
   encryptWebhookToken,
   generateApiToken,
   generateWebhookToken,
@@ -77,6 +79,16 @@ describe("Live Activity token encryption", () => {
     expect(encrypted).not.toContain(token);
     expect(decryptLiveActivityToken(encrypted)).toBe(token);
     expect(() => decryptWebhookToken(encrypted)).toThrow();
+  });
+});
+
+describe("macOS APNs token encryption", () => {
+  it("round-trips in a separate encryption domain", () => {
+    const token = "ab".repeat(32);
+    const encrypted = encryptMacosApnsToken(token);
+    expect(encrypted).not.toContain(token);
+    expect(decryptMacosApnsToken(encrypted)).toBe(token);
+    expect(() => decryptLiveActivityToken(encrypted)).toThrow();
   });
 });
 

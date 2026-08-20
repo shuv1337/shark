@@ -108,6 +108,11 @@ item-level grants:
   - `VAPID_SUBJECT`
   - `APNS_KEY_ID`
   - `APNS_PRIVATE_KEY_BASE64`
+
+The APNs key must also be authorized for the explicit macOS App ID
+`dev.shuv.shark.macos`. Enable Push Notifications for that identifier and create a Developer ID or
+development provisioning profile carrying the macOS APS entitlement. `APNS_MACOS_BUNDLE_ID` is a
+non-secret deployment setting and defaults to that frozen identifier.
 - Vault `SHark Production Backup`, containing exactly one Secure Note with the same title and these
   concealed fields:
   - `RESTIC_REPOSITORY`

@@ -7,6 +7,7 @@ type EncryptionPurpose =
   | "webhook-token"
   | "web-push-subscription"
   | "live-activity-token"
+  | "macos-apns-token"
   | "callback-token"
   | "apple-refresh-token";
 
@@ -137,6 +138,21 @@ export function encryptLiveActivityToken(token: string): string {
 
 export function decryptLiveActivityToken(value: string): string {
   return decryptToken(value, "live-activity-token");
+}
+
+export function encryptMacosApnsToken(token: string): string {
+  return encryptToken(token, "macos-apns-token");
+}
+
+export function decryptMacosApnsToken(value: string): string {
+  return decryptToken(value, "macos-apns-token");
+}
+
+export function hashMacosApnsToken(token: string): string {
+  return createHash("sha256")
+    .update("hark:macos-apns-token:v1\0", "utf8")
+    .update(token, "utf8")
+    .digest("hex");
 }
 
 export function encryptCallbackToken(token: string): string {

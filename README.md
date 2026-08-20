@@ -1,6 +1,7 @@
 # SHark
 
-SHark turns webhooks into clean, source-branded iPhone notifications. Connect CI jobs, agents,
+SHark turns webhooks into clean, source-branded notifications on iPhone, Apple Watch, macOS, and
+the web. Connect CI jobs, agents,
 scripts, monitoring tools, or anything else that can send an HTTP request.
 
 SHark is a minimally rebranded, self-hosted fork of
@@ -41,7 +42,7 @@ Live Activities, and create webhook services for external systems.
 
 ## What SHark Does
 
-- Sends rich iOS notifications from a simple webhook.
+- Sends rich native Apple and browser notifications from a simple webhook.
 - Gives each service its own name, avatar, destination URL, and secret endpoint.
 - Keeps complete notification, interaction, and Live Activity history in synchronized iOS and web
   inboxes.
@@ -49,6 +50,8 @@ Live Activities, and create webhook services for external systems.
 - Supports approvals and text replies for agent workflows.
 - Shows stateful task progress with Live Activities on the Lock Screen and Dynamic Island.
 - Supports multiple devices and targeted delivery in the fixed self-hosted mode.
+- Includes a native macOS menu-bar companion for inbox triage, approvals, replies, and direct APNs
+  delivery.
 
 ## Webhook Setup
 

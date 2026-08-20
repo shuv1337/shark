@@ -13,6 +13,7 @@ import {
   device,
   liveActivity,
   liveActivityDelivery,
+  macosDevice,
   user as userTable,
   webPushSubscription,
 } from "../db/schema";
@@ -59,6 +60,21 @@ function webToDto(row: typeof webPushSubscription.$inferSelect): DeviceDto {
   };
 }
 
+function macosToDto(row: typeof macosDevice.$inferSelect): DeviceDto {
+  return {
+    id: row.id,
+    platform: "macos",
+    deviceName: row.deviceName,
+    active: row.active,
+    liveActivitiesCapable: false,
+    liveActivityTokenEnvironment: null,
+    liveActivityTokenUpdatedAt: null,
+    interactiveLiveActivitiesCapable: false,
+    createdAt: row.createdAt.toISOString(),
+    lastSeenAt: row.lastSeenAt.toISOString(),
+  };
+}
+
 const wait = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
@@ -71,16 +87,21 @@ export const devicesRoute = new Hono<AuthedEnv>()
   .use("*", requireAuth)
   .get("/", async (c) => {
     const user = c.get("user");
-    const [rows, webRows] = await Promise.all([
+    const [rows, webRows, macosRows] = await Promise.all([
       db.select().from(device).where(eq(device.userId, user.id)).orderBy(desc(device.lastSeenAt)),
       db
         .select()
         .from(webPushSubscription)
         .where(eq(webPushSubscription.userId, user.id))
         .orderBy(desc(webPushSubscription.lastSeenAt)),
+      db
+        .select()
+        .from(macosDevice)
+        .where(eq(macosDevice.userId, user.id))
+        .orderBy(desc(macosDevice.lastSeenAt)),
     ]);
     return c.json({
-      devices: [...rows.map(toDto), ...webRows.map(webToDto)].sort(
+      devices: [...rows.map(toDto), ...webRows.map(webToDto), ...macosRows.map(macosToDto)].sort(
         (a, b) => Date.parse(b.lastSeenAt) - Date.parse(a.lastSeenAt),
       ),
     });
@@ -249,27 +270,35 @@ export const devicesRoute = new Hono<AuthedEnv>()
     if (!parsed.success) {
       return c.json({ error: "Invalid device registration", issues: parsed.error.issues }, 400);
     }
-    const [existing, activeDevices, activeWebDevices, billing] = await Promise.all([
-      db
-        .select({ id: device.id, userId: device.userId, active: device.active })
-        .from(device)
-        .where(eq(device.expoPushToken, parsed.data.expoPushToken))
-        .limit(1),
-      db
-        .select({ id: device.id })
-        .from(device)
-        .where(and(eq(device.userId, user.id), eq(device.active, true))),
-      db
-        .select({ id: webPushSubscription.id })
-        .from(webPushSubscription)
-        .where(and(eq(webPushSubscription.userId, user.id), eq(webPushSubscription.active, true))),
-      getBilling(user),
-    ]);
+    const [existing, activeDevices, activeWebDevices, activeMacosDevices, billing] =
+      await Promise.all([
+        db
+          .select({ id: device.id, userId: device.userId, active: device.active })
+          .from(device)
+          .where(eq(device.expoPushToken, parsed.data.expoPushToken))
+          .limit(1),
+        db
+          .select({ id: device.id })
+          .from(device)
+          .where(and(eq(device.userId, user.id), eq(device.active, true))),
+        db
+          .select({ id: webPushSubscription.id })
+          .from(webPushSubscription)
+          .where(
+            and(eq(webPushSubscription.userId, user.id), eq(webPushSubscription.active, true)),
+          ),
+        db
+          .select({ id: macosDevice.id })
+          .from(macosDevice)
+          .where(and(eq(macosDevice.userId, user.id), eq(macosDevice.active, true))),
+        getBilling(user),
+      ]);
     const isAlreadyActiveForUser = existing[0]?.userId === user.id && existing[0].active;
     if (
       !isAlreadyActiveForUser &&
       billing.limits.devices !== null &&
-      activeDevices.length + activeWebDevices.length >= billing.limits.devices
+      activeDevices.length + activeWebDevices.length + activeMacosDevices.length >=
+        billing.limits.devices
     ) {
       return c.json({ error: "This account has reached its active device limit." }, 402);
     }
@@ -393,7 +422,7 @@ export const devicesRoute = new Hono<AuthedEnv>()
   .delete("/:id", async (c) => {
     if (!isSameOrigin(c.req.raw)) return c.json({ error: "Invalid request origin" }, 403);
     const user = c.get("user");
-    const [removed, removedWeb] = await Promise.all([
+    const [removed, removedWeb, removedMacos] = await Promise.all([
       db
         .delete(device)
         .where(and(eq(device.userId, user.id), eq(device.id, c.req.param("id"))))
@@ -407,14 +436,18 @@ export const devicesRoute = new Hono<AuthedEnv>()
           ),
         )
         .returning({ id: webPushSubscription.id }),
+      db
+        .delete(macosDevice)
+        .where(and(eq(macosDevice.userId, user.id), eq(macosDevice.id, c.req.param("id"))))
+        .returning({ id: macosDevice.id }),
     ]);
-    if (removed.length > 0 || removedWeb.length > 0) {
+    if (removed.length > 0 || removedWeb.length > 0 || removedMacos.length > 0) {
       track({
         name: "device_unregistered",
         userId: user.id,
-        deviceId: removed[0]?.id ?? removedWeb[0]?.id ?? null,
+        deviceId: removed[0]?.id ?? removedWeb[0]?.id ?? removedMacos[0]?.id ?? null,
         outcome: "by_id",
-        value: removed.length + removedWeb.length,
+        value: removed.length + removedWeb.length + removedMacos.length,
       });
     }
     return c.json({ ok: true });

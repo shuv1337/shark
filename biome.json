@@ -12,6 +12,7 @@
       "!**/.expo",
       "!**/ios",
       "!**/android",
+      "!apps/macos/build",
       "!**/data",
       "!**/*.d.ts",
       "!assets/brand/*.svg",

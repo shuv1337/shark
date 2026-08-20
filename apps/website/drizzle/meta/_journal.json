@@ -134,6 +134,13 @@
       "when": 1786473121959,
       "tag": "0018_majestic_daimon_hellstrom",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1787254532866,
+      "tag": "0019_thin_black_cat",
+      "breakpoints": true
     }
   ]
 }

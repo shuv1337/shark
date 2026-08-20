@@ -23,6 +23,7 @@ import {
   liveActivity,
   liveActivityDelivery,
   liveActivityOperation,
+  macosDevice,
   service,
   user as userTable,
   webPushSubscription,
@@ -58,9 +59,10 @@ async function selectNotificationTargets(
 ): Promise<{
   devices: Array<typeof device.$inferSelect>;
   webSubscriptions: Array<typeof webPushSubscription.$inferSelect>;
+  macosDevices: Array<typeof macosDevice.$inferSelect>;
   valid: boolean;
 }> {
-  const [devices, webSubscriptions] = await Promise.all([
+  const [devices, webSubscriptions, macosDevices] = await Promise.all([
     db
       .select()
       .from(device)
@@ -79,9 +81,21 @@ async function selectNotificationTargets(
           : and(eq(webPushSubscription.userId, userId), eq(webPushSubscription.active, true)),
       )
       .orderBy(desc(webPushSubscription.lastSeenAt)),
+    db
+      .select()
+      .from(macosDevice)
+      .where(
+        deviceIds
+          ? and(eq(macosDevice.userId, userId), inArray(macosDevice.id, deviceIds))
+          : and(eq(macosDevice.userId, userId), eq(macosDevice.active, true)),
+      )
+      .orderBy(desc(macosDevice.lastSeenAt)),
   ]);
-  if (deviceIds && devices.length + webSubscriptions.length !== deviceIds.length) {
-    return { devices: [], webSubscriptions: [], valid: false };
+  if (
+    deviceIds &&
+    devices.length + webSubscriptions.length + macosDevices.length !== deviceIds.length
+  ) {
+    return { devices: [], webSubscriptions: [], macosDevices: [], valid: false };
   }
   const allTargets = [
     ...devices
@@ -90,6 +104,9 @@ async function selectNotificationTargets(
     ...webSubscriptions
       .filter((row) => row.active)
       .map((row) => ({ kind: "web" as const, row, seen: row.lastSeenAt })),
+    ...macosDevices
+      .filter((row) => row.active)
+      .map((row) => ({ kind: "macos" as const, row, seen: row.lastSeenAt })),
   ]
     .sort((a, b) => b.seen.getTime() - a.seen.getTime())
     .slice(0, deviceIds ? undefined : (limit ?? undefined));
@@ -100,6 +117,9 @@ async function selectNotificationTargets(
     webSubscriptions: allTargets
       .filter((target) => target.kind === "web")
       .map((target) => target.row as typeof webPushSubscription.$inferSelect),
+    macosDevices: allTargets
+      .filter((target) => target.kind === "macos")
+      .map((target) => target.row as typeof macosDevice.$inferSelect),
     valid: true,
   };
 }
@@ -250,36 +270,69 @@ export const agentRoute = new Hono<AgentEnv>()
     return c.json({ ok: true });
   })
   .get("/devices", requireScopes("devices:read"), async (c) => {
-    const rows = await db
-      .select({
-        id: device.id,
-        platform: device.platform,
-        deviceName: device.deviceName,
-        active: device.active,
-        liveActivityPushToStartTokenCiphertext: device.liveActivityPushToStartTokenCiphertext,
-        liveActivityTokenEnvironment: device.liveActivityTokenEnvironment,
-        liveActivityTokenUpdatedAt: device.liveActivityTokenUpdatedAt,
-        createdAt: device.createdAt,
-        lastSeenAt: device.lastSeenAt,
-      })
-      .from(device)
-      .where(eq(device.userId, c.get("apiToken").userId))
-      .orderBy(desc(device.lastSeenAt));
+    const userId = c.get("apiToken").userId;
+    const [rows, webRows, macosRows] = await Promise.all([
+      db
+        .select({
+          id: device.id,
+          platform: device.platform,
+          deviceName: device.deviceName,
+          active: device.active,
+          liveActivityPushToStartTokenCiphertext: device.liveActivityPushToStartTokenCiphertext,
+          liveActivityTokenEnvironment: device.liveActivityTokenEnvironment,
+          liveActivityTokenUpdatedAt: device.liveActivityTokenUpdatedAt,
+          liveActivityInteractionVersion: device.liveActivityInteractionVersion,
+          createdAt: device.createdAt,
+          lastSeenAt: device.lastSeenAt,
+        })
+        .from(device)
+        .where(eq(device.userId, userId)),
+      db.select().from(webPushSubscription).where(eq(webPushSubscription.userId, userId)),
+      db.select().from(macosDevice).where(eq(macosDevice.userId, userId)),
+    ]);
     return c.json({
-      devices: rows.map((row) => ({
-        ...row,
-        platform: "ios" as const,
-        liveActivitiesCapable: Boolean(row.liveActivityPushToStartTokenCiphertext),
-        liveActivityTokenEnvironment:
-          row.liveActivityTokenEnvironment === "sandbox" ||
-          row.liveActivityTokenEnvironment === "production"
-            ? row.liveActivityTokenEnvironment
-            : null,
-        liveActivityTokenUpdatedAt: row.liveActivityTokenUpdatedAt?.toISOString() ?? null,
-        liveActivityPushToStartTokenCiphertext: undefined,
-        createdAt: row.createdAt.toISOString(),
-        lastSeenAt: row.lastSeenAt.toISOString(),
-      })),
+      devices: [
+        ...rows.map((row) => ({
+          id: row.id,
+          platform: "ios" as const,
+          deviceName: row.deviceName,
+          active: row.active,
+          liveActivitiesCapable: Boolean(row.liveActivityPushToStartTokenCiphertext),
+          liveActivityTokenEnvironment:
+            row.liveActivityTokenEnvironment === "sandbox" ||
+            row.liveActivityTokenEnvironment === "production"
+              ? row.liveActivityTokenEnvironment
+              : null,
+          liveActivityTokenUpdatedAt: row.liveActivityTokenUpdatedAt?.toISOString() ?? null,
+          interactiveLiveActivitiesCapable: row.liveActivityInteractionVersion === 1,
+          createdAt: row.createdAt.toISOString(),
+          lastSeenAt: row.lastSeenAt.toISOString(),
+        })),
+        ...webRows.map((row) => ({
+          id: row.id,
+          platform: "web" as const,
+          deviceName: row.deviceName,
+          active: row.active,
+          liveActivitiesCapable: false,
+          liveActivityTokenEnvironment: null,
+          liveActivityTokenUpdatedAt: null,
+          interactiveLiveActivitiesCapable: false,
+          createdAt: row.createdAt.toISOString(),
+          lastSeenAt: row.lastSeenAt.toISOString(),
+        })),
+        ...macosRows.map((row) => ({
+          id: row.id,
+          platform: "macos" as const,
+          deviceName: row.deviceName,
+          active: row.active,
+          liveActivitiesCapable: false,
+          liveActivityTokenEnvironment: null,
+          liveActivityTokenUpdatedAt: null,
+          interactiveLiveActivitiesCapable: false,
+          createdAt: row.createdAt.toISOString(),
+          lastSeenAt: row.lastSeenAt.toISOString(),
+        })),
+      ].sort((a, b) => Date.parse(b.lastSeenAt) - Date.parse(a.lastSeenAt)),
     });
   })
   .get("/services", requireScopes("services:read"), async (c) => {
@@ -393,6 +446,7 @@ export const agentRoute = new Hono<AgentEnv>()
     if (!targets.valid) return c.json({ error: "Invalid device selection" }, 400);
     const selectedDevices = targets.devices;
     const selectedWebSubscriptions = targets.webSubscriptions;
+    const selectedMacosDevices = targets.macosDevices;
 
     const limited = await enforceAgentRateLimit(token, owner);
     if (limited) {
@@ -435,7 +489,10 @@ export const agentRoute = new Hono<AgentEnv>()
       return c.json({ error: "Idempotency-Key was already used with a different payload" }, 409);
     }
 
-    if (selectedDevices.length + selectedWebSubscriptions.length === 0) {
+    if (
+      selectedDevices.length + selectedWebSubscriptions.length + selectedMacosDevices.length ===
+      0
+    ) {
       await db
         .update(agentNotification)
         .set({ status: "no_devices" })
@@ -484,6 +541,13 @@ export const agentRoute = new Hono<AgentEnv>()
         ...(parsed.data.imageUrl ? { imageUrl: parsed.data.imageUrl } : {}),
         tag: `agent-${token.id}`,
       },
+      macosDevices: selectedMacosDevices,
+      macosPayload: {
+        title: parsed.data.title,
+        body: parsed.data.body,
+        threadId: `agent-${token.id}`,
+        data: { notificationId, ...(parsed.data.url ? { url: parsed.data.url } : {}) },
+      },
     });
     if (result.staleTokens.length > 0) {
       await db
@@ -504,13 +568,21 @@ export const agentRoute = new Hono<AgentEnv>()
         .set({ active: false })
         .where(inArray(webPushSubscription.id, result.staleSubscriptionIds));
     }
+    if (result.staleMacosDeviceIds.length > 0) {
+      await db
+        .update(macosDevice)
+        .set({ active: false })
+        .where(inArray(macosDevice.id, result.staleMacosDeviceIds));
+    }
     track({
       name: "agent_notification_created",
       userId: token.userId,
       plan: billing.plan,
       outcome: result.accepted > 0 ? "accepted" : failureBucket(result.errors[0]),
       value: result.accepted,
-      metadata: { targets: messages.length + selectedWebSubscriptions.length },
+      metadata: {
+        targets: messages.length + selectedWebSubscriptions.length + selectedMacosDevices.length,
+      },
     });
     if (result.accepted > 0) {
       track({
@@ -526,13 +598,18 @@ export const agentRoute = new Hono<AgentEnv>()
       .update(agentNotification)
       .set({
         status:
-          result.accepted === messages.length + selectedWebSubscriptions.length
+          result.accepted ===
+          messages.length + selectedWebSubscriptions.length + selectedMacosDevices.length
             ? "accepted"
             : result.accepted > 0
               ? "partial"
               : "failed",
         acceptedCount: result.accepted,
-        failedCount: messages.length + selectedWebSubscriptions.length - result.accepted,
+        failedCount:
+          messages.length +
+          selectedWebSubscriptions.length +
+          selectedMacosDevices.length -
+          result.accepted,
         error: result.errors.length > 0 ? result.errors.join("; ").slice(0, 1000) : null,
       })
       .where(eq(agentNotification.id, notificationId));
@@ -608,6 +685,7 @@ export const agentRoute = new Hono<AgentEnv>()
     if (!targets.valid) return c.json({ error: "Invalid device selection" }, 400);
     const selectedDevices = targets.devices;
     const selectedWebSubscriptions = targets.webSubscriptions;
+    const selectedMacosDevices = targets.macosDevices;
 
     const since = new Date(Date.now() - 60_000);
     const [
@@ -755,7 +833,9 @@ export const agentRoute = new Hono<AgentEnv>()
     }
     if (
       selectedDevices.length +
-        (presentation === "notification" ? selectedWebSubscriptions.length : 0) ===
+        (presentation === "notification"
+          ? selectedWebSubscriptions.length + selectedMacosDevices.length
+          : 0) ===
       0
     ) {
       track({
@@ -848,6 +928,37 @@ export const agentRoute = new Hono<AgentEnv>()
         ...(parsed.data.imageUrl ? { imageUrl: parsed.data.imageUrl } : {}),
         tag: `interaction-${row.id}`,
       },
+      macosDevices: selectedMacosDevices,
+      macosPayload: {
+        title: parsed.data.title,
+        body: parsed.data.prompt,
+        category:
+          parsed.data.kind === "approval"
+            ? "HARK_APPROVAL_V1"
+            : parsed.data.kind === "yes_no"
+              ? "HARK_YES_NO_V1"
+              : "HARK_REPLY_V1",
+        threadId: `interaction-${row.id}`,
+        badge:
+          (
+            await db
+              .select({ value: count() })
+              .from(interaction)
+              .where(
+                and(
+                  eq(interaction.userId, token.userId),
+                  eq(interaction.status, "pending"),
+                  gt(interaction.expiresAt, new Date()),
+                ),
+              )
+          )[0]?.value ?? 0,
+        data: {
+          interactionId: row.id,
+          kind: parsed.data.kind,
+          actionDigest,
+          ...(parsed.data.url ? { url: parsed.data.url } : {}),
+        },
+      },
     });
     if (result.staleTokens.length > 0) {
       await db
@@ -868,6 +979,12 @@ export const agentRoute = new Hono<AgentEnv>()
         .set({ active: false })
         .where(inArray(webPushSubscription.id, result.staleSubscriptionIds));
     }
+    if (result.staleMacosDeviceIds.length > 0) {
+      await db
+        .update(macosDevice)
+        .set({ active: false })
+        .where(inArray(macosDevice.id, result.staleMacosDeviceIds));
+    }
     const [updated] = await db
       .update(interaction)
       .set({ acceptedCount: result.accepted })
@@ -882,7 +999,7 @@ export const agentRoute = new Hono<AgentEnv>()
       value: result.accepted,
       metadata: {
         kind: parsed.data.kind,
-        targets: messages.length + selectedWebSubscriptions.length,
+        targets: messages.length + selectedWebSubscriptions.length + selectedMacosDevices.length,
       },
     });
     if (result.accepted > 0) {

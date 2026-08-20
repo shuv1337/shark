@@ -9,8 +9,10 @@ import {
   type WebhookRequest,
 } from "@hark/contracts";
 import { Expo, type ExpoPushMessage, type ExpoPushTicket } from "expo-server-sdk";
-import type { webPushSubscription } from "../db/schema";
+import type { macosDevice, webPushSubscription } from "../db/schema";
 import { env } from "../env";
+import type { NotificationPayloadInput } from "./apns";
+import { sendMacosPushNotifications } from "./macos-push";
 import { sendWebPushNotifications, type WebPushPayload } from "./web-push";
 
 export interface ServiceDefaults {
@@ -165,6 +167,8 @@ export interface SendResult {
   staleTokens: string[];
   /** Browser subscriptions rejected as expired or no longer registered. */
   staleSubscriptionIds: string[];
+  /** Native macOS devices whose APNs capability token is no longer valid. */
+  staleMacosDeviceIds: string[];
 }
 
 export async function sendPushMessages(messages: ExpoPushMessage[]): Promise<SendResult> {
@@ -174,6 +178,7 @@ export async function sendPushMessages(messages: ExpoPushMessage[]): Promise<Sen
     errors: [],
     staleTokens: [],
     staleSubscriptionIds: [],
+    staleMacosDeviceIds: [],
   };
 
   for (const chunk of expo.chunkPushNotifications(messages)) {
@@ -204,15 +209,21 @@ export async function sendPushFanout(input: {
   expoMessages: ExpoPushMessage[];
   webSubscriptions: Array<typeof webPushSubscription.$inferSelect>;
   webPayload: WebPushPayload;
+  macosDevices?: Array<typeof macosDevice.$inferSelect>;
+  macosPayload?: NotificationPayloadInput;
 }): Promise<SendResult> {
-  const [expoResult, webResult] = await Promise.all([
+  const [expoResult, webResult, macosResult] = await Promise.all([
     sendPushMessages(input.expoMessages),
     sendWebPushNotifications(input.webSubscriptions, input.webPayload),
+    input.macosPayload
+      ? sendMacosPushNotifications(input.macosDevices ?? [], input.macosPayload)
+      : Promise.resolve({ accepted: 0, errors: [], staleMacosDeviceIds: [] }),
   ]);
   return {
-    accepted: expoResult.accepted + webResult.accepted,
-    errors: [...expoResult.errors, ...webResult.errors],
+    accepted: expoResult.accepted + webResult.accepted + macosResult.accepted,
+    errors: [...expoResult.errors, ...webResult.errors, ...macosResult.errors],
     staleTokens: expoResult.staleTokens,
     staleSubscriptionIds: webResult.staleSubscriptionIds,
+    staleMacosDeviceIds: macosResult.staleMacosDeviceIds,
   };
 }
