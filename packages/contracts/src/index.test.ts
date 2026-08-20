@@ -11,6 +11,8 @@ import {
   liveActivityPropsSchema,
   liveActivityStartSchema,
   liveActivityUpdateSchema,
+  macosDeviceRegisterSchema,
+  macosInteractionResponseSchema,
   pushDataSchema,
   serviceCreateSchema,
   webhookRequestSchema,
@@ -448,6 +450,57 @@ describe("deviceRegisterSchema", () => {
       deviceRegisterSchema.safeParse({
         expoPushToken: "ExponentPushToken[x]",
         platform: "android",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("macOS companion contracts", () => {
+  it("accepts variable-length APNs registrations and rejects malformed tokens", () => {
+    expect(
+      macosDeviceRegisterSchema.safeParse({
+        apnsToken: "ab".repeat(32),
+        environment: "sandbox",
+        deviceName: "Shuvbot",
+      }).success,
+    ).toBe(true);
+    expect(
+      macosDeviceRegisterSchema.safeParse({
+        apnsToken: "cd".repeat(40),
+        environment: "production",
+      }).success,
+    ).toBe(true);
+    expect(
+      macosDeviceRegisterSchema.safeParse({
+        apnsToken: "not-a-token",
+        environment: "production",
+      }).success,
+    ).toBe(false);
+    expect(
+      macosDeviceRegisterSchema.safeParse({
+        apnsToken: "abc",
+        environment: "production",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("supports native approval, yes/no, and bounded text replies", () => {
+    const digest = "a".repeat(64);
+    expect(
+      macosInteractionResponseSchema.safeParse({ action: "approve", actionDigest: digest }).success,
+    ).toBe(true);
+    expect(
+      macosInteractionResponseSchema.safeParse({
+        action: "reply",
+        actionDigest: digest,
+        response: "Ship it",
+      }).success,
+    ).toBe(true);
+    expect(
+      macosInteractionResponseSchema.safeParse({
+        action: "reply",
+        actionDigest: digest,
+        response: " ",
       }).success,
     ).toBe(false);
   });

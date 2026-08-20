@@ -271,7 +271,7 @@ export type AppleNativeTokenExchangeInput = z.infer<typeof appleNativeTokenExcha
 
 export interface DeviceDto {
   id: string;
-  platform: "ios" | "web";
+  platform: "ios" | "web" | "macos";
   deviceName: string | null;
   active: boolean;
   liveActivitiesCapable: boolean;
@@ -281,6 +281,21 @@ export interface DeviceDto {
   createdAt: string;
   lastSeenAt: string;
 }
+
+export const macosDeviceRegisterSchema = z.object({
+  apnsToken: z
+    .string()
+    .trim()
+    .min(2)
+    .max(400)
+    .regex(/^[a-f0-9]+$/i, "APNs token must be hexadecimal")
+    .refine((token) => token.length % 2 === 0, "APNs token must contain whole bytes")
+    .transform((token) => token.toLowerCase()),
+  environment: z.enum(["sandbox", "production"]),
+  deviceName: z.string().trim().min(1).max(80).optional(),
+  privacyMode: z.enum(["standard", "private"]).default("standard"),
+});
+export type MacosDeviceRegisterInput = z.infer<typeof macosDeviceRegisterSchema>;
 
 export const webPushSubscriptionSchema = z.object({
   endpoint: z
@@ -593,6 +608,9 @@ export const API_TOKEN_SCOPES = [
   "events:read",
   "watch:read",
   "watch:respond",
+  "macos:read",
+  "macos:respond",
+  "macos:register",
 ] as const;
 export const apiTokenScopeSchema = z.enum(API_TOKEN_SCOPES);
 export type ApiTokenScope = z.infer<typeof apiTokenScopeSchema>;
@@ -781,6 +799,19 @@ export const interactionResponseSchema = z.discriminatedUnion("action", [
   }),
 ]);
 export type InteractionResponseInput = z.infer<typeof interactionResponseSchema>;
+
+export const macosInteractionResponseSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.enum(["approve", "deny", "yes", "no"]),
+    actionDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  }),
+  z.object({
+    action: z.literal("reply"),
+    response: z.string().trim().min(1, "Reply is required").max(4000),
+    actionDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  }),
+]);
+export type MacosInteractionResponseInput = z.infer<typeof macosInteractionResponseSchema>;
 
 /**
  * The deliberately small view consumed by the native watchOS companion. It is

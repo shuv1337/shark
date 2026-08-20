@@ -143,6 +143,26 @@ export const webPushSubscription = sqliteTable(
   (table) => [index("web_push_subscription_user_active_idx").on(table.userId, table.active)],
 );
 
+/** Native macOS notification devices use direct APNs and keep capability tokens encrypted. */
+export const macosDevice = sqliteTable(
+  "macos_device",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    apnsTokenHash: text("apns_token_hash").notNull().unique(),
+    apnsTokenCiphertext: text("apns_token_ciphertext").notNull(),
+    environment: text("environment").notNull(),
+    deviceName: text("device_name"),
+    privacyMode: text("privacy_mode").notNull().default("standard"),
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("macos_device_user_active_idx").on(table.userId, table.active)],
+);
+
 /** Small delivery log kept for debugging; not exposed as analytics. */
 export const event = sqliteTable(
   "event",

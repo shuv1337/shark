@@ -6,7 +6,7 @@ import {
 import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
-import { device, webPushSubscription } from "../db/schema";
+import { device, macosDevice, webPushSubscription } from "../db/schema";
 import { env } from "../env";
 import { getBilling } from "../lib/billing";
 import { newId } from "../lib/id";
@@ -48,7 +48,7 @@ export const webPushRoute = new Hono<AuthedEnv>()
     }
     const user = c.get("user");
     const endpointHash = hashWebPushEndpoint(parsed.data.subscription.endpoint);
-    const [existing, iosDevices, webDevices, billing] = await Promise.all([
+    const [existing, iosDevices, webDevices, macosDevices, billing] = await Promise.all([
       db
         .select()
         .from(webPushSubscription)
@@ -62,6 +62,10 @@ export const webPushRoute = new Hono<AuthedEnv>()
         .select({ id: webPushSubscription.id })
         .from(webPushSubscription)
         .where(and(eq(webPushSubscription.userId, user.id), eq(webPushSubscription.active, true))),
+      db
+        .select({ id: macosDevice.id })
+        .from(macosDevice)
+        .where(and(eq(macosDevice.userId, user.id), eq(macosDevice.active, true))),
       getBilling(user),
     ]);
     if (existing[0] && existing[0].userId !== user.id) {
@@ -71,7 +75,7 @@ export const webPushRoute = new Hono<AuthedEnv>()
     if (
       !isAlreadyActiveForUser &&
       billing.limits.devices !== null &&
-      iosDevices.length + webDevices.length >= billing.limits.devices
+      iosDevices.length + webDevices.length + macosDevices.length >= billing.limits.devices
     ) {
       return c.json({ error: "This account has reached its active device limit." }, 402);
     }

@@ -39,6 +39,15 @@ export interface ApnsResult {
   accepted: boolean;
 }
 
+export interface NotificationPayloadInput {
+  title: string;
+  body: string;
+  category?: string;
+  threadId?: string;
+  badge?: number;
+  data?: Record<string, string>;
+}
+
 function base64UrlJson(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
 }
@@ -101,6 +110,25 @@ export function encodeLiveActivityPayload(input: LiveActivityPayloadInput): Buff
   return payload;
 }
 
+export function buildNotificationPayload(input: NotificationPayloadInput): Record<string, unknown> {
+  const aps: Record<string, unknown> = {
+    alert: { title: input.title, body: input.body },
+    sound: "default",
+  };
+  if (input.category) aps.category = input.category;
+  if (input.threadId) aps["thread-id"] = input.threadId;
+  if (input.badge !== undefined) aps.badge = input.badge;
+  return { aps, ...(input.data ? { hark: input.data } : {}) };
+}
+
+function encodeNotificationPayload(input: NotificationPayloadInput): Buffer {
+  const payload = Buffer.from(JSON.stringify(buildNotificationPayload(input)));
+  if (payload.byteLength > MAX_APNS_PAYLOAD_BYTES) {
+    throw new Error(`Notification APNs payload exceeds ${MAX_APNS_PAYLOAD_BYTES} bytes`);
+  }
+  return payload;
+}
+
 export function apnsHost(environment: "sandbox" | "production"): string {
   return environment === "production"
     ? "https://api.push.apple.com"
@@ -120,6 +148,21 @@ export function liveActivityHeaders(
     "apns-push-type": "liveactivity",
     "apns-topic": `${config.bundleId}.push-type.liveactivity`,
     "apns-priority": String(priority),
+  };
+}
+
+export function notificationHeaders(
+  config: Pick<ApnsProviderConfig, "bundleId">,
+  token: string,
+  jwt: string,
+): Record<string, string> {
+  return {
+    ":method": "POST",
+    ":path": `/3/device/${token}`,
+    authorization: `bearer ${jwt}`,
+    "apns-push-type": "alert",
+    "apns-topic": config.bundleId,
+    "apns-priority": "10",
   };
 }
 
@@ -153,6 +196,88 @@ function providerJwt(config: ApnsProviderConfig): string {
   return value;
 }
 
+async function sendApnsPayload(
+  environment: "sandbox" | "production",
+  headers: Record<string, string>,
+  payload: Buffer,
+): Promise<ApnsResult> {
+  return new Promise<ApnsResult>((resolve) => {
+    const client = connect(apnsHost(environment));
+    let request: ReturnType<typeof client.request> | null = null;
+    let settled = false;
+    const finish = (result: ApnsResult) => {
+      if (settled) return;
+      settled = true;
+      request?.close();
+      client.close();
+      client.destroy();
+      resolve(result);
+    };
+    client.setTimeout(10_000, () =>
+      finish({ status: 0, apnsId: null, reason: "Timeout", accepted: false }),
+    );
+    client.on("error", (error) =>
+      finish({ status: 0, apnsId: null, reason: error.message, accepted: false }),
+    );
+
+    request = client.request(headers);
+    let status = 0;
+    let apnsId: string | null = null;
+    const chunks: Buffer[] = [];
+    request.on("response", (responseHeaders) => {
+      status = Number(responseHeaders[":status"] ?? 0);
+      apnsId = typeof responseHeaders["apns-id"] === "string" ? responseHeaders["apns-id"] : null;
+    });
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("error", (error) =>
+      finish({ status: 0, apnsId, reason: error.message, accepted: false }),
+    );
+    request.on("end", () => {
+      let reason: string | null = null;
+      if (chunks.length > 0) {
+        try {
+          const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { reason?: unknown };
+          if (typeof body.reason === "string") reason = body.reason;
+        } catch {
+          reason = "InvalidApnsResponse";
+        }
+      }
+      finish({ status, apnsId, reason, accepted: status === 200 });
+    });
+    request.end(payload);
+  });
+}
+
+export async function sendNotificationPush(
+  token: string,
+  tokenEnvironment: "sandbox" | "production",
+  input: NotificationPayloadInput,
+): Promise<ApnsResult> {
+  const baseConfig = providerConfig(tokenEnvironment);
+  if (!baseConfig) {
+    return { status: 0, apnsId: null, reason: "ProviderNotConfigured", accepted: false };
+  }
+  const config = {
+    ...baseConfig,
+    bundleId: env.APNS_MACOS_BUNDLE_ID ?? "dev.shuv.shark.macos",
+  };
+  try {
+    const jwt = providerJwt(config);
+    return await sendApnsPayload(
+      tokenEnvironment,
+      notificationHeaders(config, token, jwt),
+      encodeNotificationPayload(input),
+    );
+  } catch (error) {
+    return {
+      status: 0,
+      apnsId: null,
+      reason: error instanceof Error ? error.message : "InvalidProviderConfiguration",
+      accepted: false,
+    };
+  }
+}
+
 export async function sendLiveActivityPush(
   token: string,
   tokenEnvironment: "sandbox" | "production",
@@ -177,51 +302,11 @@ export async function sendLiveActivityPush(
     };
   }
 
-  return new Promise<ApnsResult>((resolve) => {
-    // Topic-specific APNs keys can be environment-scoped. Route both the
-    // endpoint and provider credential from the signed device environment.
-    const client = connect(apnsHost(tokenEnvironment));
-    let request: ReturnType<typeof client.request> | null = null;
-    let settled = false;
-    const finish = (result: ApnsResult) => {
-      if (settled) return;
-      settled = true;
-      request?.close();
-      client.close();
-      client.destroy();
-      resolve(result);
-    };
-    client.setTimeout(10_000, () =>
-      finish({ status: 0, apnsId: null, reason: "Timeout", accepted: false }),
-    );
-    client.on("error", (error) =>
-      finish({ status: 0, apnsId: null, reason: error.message, accepted: false }),
-    );
-
-    request = client.request(liveActivityHeaders(config, token, jwt, priority));
-    let status = 0;
-    let apnsId: string | null = null;
-    const chunks: Buffer[] = [];
-    request.on("response", (headers) => {
-      status = Number(headers[":status"] ?? 0);
-      apnsId = typeof headers["apns-id"] === "string" ? headers["apns-id"] : null;
-    });
-    request.on("data", (chunk: Buffer) => chunks.push(chunk));
-    request.on("error", (error) =>
-      finish({ status: 0, apnsId, reason: error.message, accepted: false }),
-    );
-    request.on("end", () => {
-      let reason: string | null = null;
-      if (chunks.length > 0) {
-        try {
-          const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { reason?: unknown };
-          if (typeof body.reason === "string") reason = body.reason;
-        } catch {
-          reason = "InvalidApnsResponse";
-        }
-      }
-      finish({ status, apnsId, reason, accepted: status === 200 });
-    });
-    request.end(payload);
-  });
+  // Topic-specific APNs keys can be environment-scoped. Route both the
+  // endpoint and provider credential from the signed device environment.
+  return sendApnsPayload(
+    tokenEnvironment,
+    liveActivityHeaders(config, token, jwt, priority),
+    payload,
+  );
 }

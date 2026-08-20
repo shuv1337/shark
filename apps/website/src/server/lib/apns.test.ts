@@ -21,11 +21,13 @@ vi.mock("../env", () => ({ env: transport.env }));
 import {
   apnsHost,
   buildLiveActivityPayload,
+  buildNotificationPayload,
   createApnsProviderJwt,
   encodeLiveActivityPayload,
   isInvalidApnsTokenReason,
   liveActivityHeaders,
   normalizeApnsPrivateKey,
+  notificationHeaders,
   sendLiveActivityPush,
 } from "./apns";
 
@@ -207,6 +209,47 @@ describe("Live Activity APNs payloads", () => {
     const jwtHeader = headers.authorization?.slice("bearer ".length).split(".")[0] ?? "";
     expect(JSON.parse(Buffer.from(jwtHeader, "base64url").toString())).toMatchObject({
       kid: "DEVKEY123",
+    });
+  });
+});
+
+describe("macOS notification APNs payloads", () => {
+  it("builds a normal alert with native interaction metadata", () => {
+    expect(
+      buildNotificationPayload({
+        title: "Deploy approval",
+        body: "Ship release 42?",
+        category: "HARK_APPROVAL_V1",
+        threadId: "agent-release",
+        badge: 2,
+        data: {
+          interactionId: "int_1",
+          kind: "approval",
+          actionDigest: "a".repeat(64),
+        },
+      }),
+    ).toEqual({
+      aps: {
+        alert: { title: "Deploy approval", body: "Ship release 42?" },
+        sound: "default",
+        category: "HARK_APPROVAL_V1",
+        "thread-id": "agent-release",
+        badge: 2,
+      },
+      hark: {
+        interactionId: "int_1",
+        kind: "approval",
+        actionDigest: "a".repeat(64),
+      },
+    });
+  });
+
+  it("uses the macOS bundle topic and alert push type", () => {
+    expect(notificationHeaders({ bundleId: "dev.shuv.shark.macos" }, "abc", "jwt")).toMatchObject({
+      ":path": "/3/device/abc",
+      "apns-push-type": "alert",
+      "apns-topic": "dev.shuv.shark.macos",
+      "apns-priority": "10",
     });
   });
 });

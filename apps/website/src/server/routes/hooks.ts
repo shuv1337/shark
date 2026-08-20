@@ -9,6 +9,7 @@ import {
   interaction,
   liveActivity,
   liveActivityOperation,
+  macosDevice,
   service as serviceTable,
   user as userTable,
   webPushSubscription,
@@ -146,8 +147,9 @@ export const hooksRoute = new Hono()
 
     let targetedDevices: (typeof device.$inferSelect)[] | undefined;
     let targetedWebSubscriptions: (typeof webPushSubscription.$inferSelect)[] | undefined;
+    let targetedMacosDevices: (typeof macosDevice.$inferSelect)[] | undefined;
     if (parsed.data.deviceIds) {
-      const [selected, selectedWeb] = await Promise.all([
+      const [selected, selectedWeb, selectedMacos] = await Promise.all([
         db
           .select()
           .from(device)
@@ -161,14 +163,24 @@ export const hooksRoute = new Hono()
               inArray(webPushSubscription.id, parsed.data.deviceIds),
             ),
           ),
+        db
+          .select()
+          .from(macosDevice)
+          .where(
+            and(eq(macosDevice.userId, svc.userId), inArray(macosDevice.id, parsed.data.deviceIds)),
+          ),
       ]);
-      if (selected.length + selectedWeb.length !== parsed.data.deviceIds.length) {
+      if (
+        selected.length + selectedWeb.length + selectedMacos.length !==
+        parsed.data.deviceIds.length
+      ) {
         return c.json<WebhookResponse>({ ok: false, error: "Invalid device selection" }, 400);
       }
       targetedDevices = selected.filter(
         (registeredDevice) => registeredDevice.active && registeredDevice.platform === "ios",
       );
       targetedWebSubscriptions = selectedWeb.filter((subscription) => subscription.active);
+      targetedMacosDevices = selectedMacos.filter((registeredDevice) => registeredDevice.active);
     }
 
     const since = new Date(Date.now() - 60_000);
@@ -279,11 +291,13 @@ export const hooksRoute = new Hono()
 
     let devices: (typeof device.$inferSelect)[];
     let webSubscriptions: (typeof webPushSubscription.$inferSelect)[];
+    let macosDevices: (typeof macosDevice.$inferSelect)[];
     if (targetedDevices) {
       devices = targetedDevices;
       webSubscriptions = targetedWebSubscriptions ?? [];
+      macosDevices = targetedMacosDevices ?? [];
     } else {
-      const [activeDevices, activeWebSubscriptions] = await Promise.all([
+      const [activeDevices, activeWebSubscriptions, activeMacosDevices] = await Promise.all([
         db
           .select()
           .from(device)
@@ -298,11 +312,21 @@ export const hooksRoute = new Hono()
             and(eq(webPushSubscription.userId, svc.userId), eq(webPushSubscription.active, true)),
           )
           .orderBy(desc(webPushSubscription.lastSeenAt)),
+        db
+          .select()
+          .from(macosDevice)
+          .where(and(eq(macosDevice.userId, svc.userId), eq(macosDevice.active, true)))
+          .orderBy(desc(macosDevice.lastSeenAt)),
       ]);
       const allTargets = [
         ...activeDevices.map((row) => ({ kind: "ios" as const, row, seen: row.lastSeenAt })),
         ...activeWebSubscriptions.map((row) => ({
           kind: "web" as const,
+          row,
+          seen: row.lastSeenAt,
+        })),
+        ...activeMacosDevices.map((row) => ({
+          kind: "macos" as const,
           row,
           seen: row.lastSeenAt,
         })),
@@ -312,6 +336,9 @@ export const hooksRoute = new Hono()
       devices = allTargets.filter((target) => target.kind === "ios").map((target) => target.row);
       webSubscriptions = allTargets
         .filter((target) => target.kind === "web")
+        .map((target) => target.row);
+      macosDevices = allTargets
+        .filter((target) => target.kind === "macos")
         .map((target) => target.row);
     }
 
@@ -364,7 +391,7 @@ export const hooksRoute = new Hono()
       });
     }
 
-    if (devices.length + webSubscriptions.length === 0) {
+    if (devices.length + webSubscriptions.length + macosDevices.length === 0) {
       await db.update(event).set({ status: "no_devices" }).where(eq(event.id, eventId));
       track({
         name: "webhook_delivered",
@@ -431,6 +458,31 @@ export const hooksRoute = new Hono()
         ...(resolved.imageUrl ? { imageUrl: resolved.imageUrl } : {}),
         tag: parsed.data.response ? `interaction-${interactionId}` : `service-${svc.id}`,
       },
+      macosDevices,
+      macosPayload: {
+        title: resolved.title,
+        body: resolved.body,
+        ...(parsed.data.response
+          ? {
+              category:
+                parsed.data.response.type === "approval"
+                  ? "HARK_APPROVAL_V1"
+                  : parsed.data.response.type === "yes_no"
+                    ? "HARK_YES_NO_V1"
+                    : "HARK_REPLY_V1",
+              data: {
+                interactionId: interactionId as string,
+                kind: parsed.data.response.type === "text" ? "reply" : parsed.data.response.type,
+                actionDigest: interactionActionDigest as string,
+                ...(resolved.url ? { url: resolved.url } : {}),
+              },
+            }
+          : {
+              data: { eventId, ...(resolved.url ? { url: resolved.url } : {}) },
+            }),
+        threadId: parsed.data.response ? `interaction-${interactionId}` : `service-${svc.id}`,
+        badge: parsed.data.response ? (pendingActions?.value ?? 0) : undefined,
+      },
     });
 
     if (result.staleTokens.length > 0) {
@@ -452,8 +504,14 @@ export const hooksRoute = new Hono()
         .set({ active: false })
         .where(inArray(webPushSubscription.id, result.staleSubscriptionIds));
     }
+    if (result.staleMacosDeviceIds.length > 0) {
+      await db
+        .update(macosDevice)
+        .set({ active: false })
+        .where(inArray(macosDevice.id, result.staleMacosDeviceIds));
+    }
 
-    const targetCount = messages.length + webSubscriptions.length;
+    const targetCount = messages.length + webSubscriptions.length + macosDevices.length;
     const status =
       result.accepted === targetCount ? "accepted" : result.accepted > 0 ? "partial" : "failed";
     const pushError = result.errors.length > 0 ? result.errors.join("; ").slice(0, 1000) : null;

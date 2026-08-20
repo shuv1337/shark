@@ -24,6 +24,7 @@ function makeDatabase(options?: { migrationCount?: number; latest?: number }) {
       "service",
       "device",
       "web_push_subscription",
+      "macos_device",
       "event",
       "api_token",
       "interaction",

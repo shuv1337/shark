@@ -1,0 +1,172 @@
+import AppKit
+import UserNotifications
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+    weak static var store: CompanionStore?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        center.setNotificationCategories(Self.categories)
+        Task {
+            await Self.store?.start()
+            await Self.store?.ensureRemoteNotificationsRegistered()
+        }
+    }
+
+    func application(
+        _ application: NSApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        let token = deviceToken.map { String(format: "%02x", $0) }.joined()
+        #if DEBUG
+        let environment = "sandbox"
+        #else
+        let environment = "production"
+        #endif
+        Task { await Self.store?.registerDevice(apnsToken: token, environment: environment) }
+    }
+
+    func application(
+        _ application: NSApplication,
+        didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {
+        Self.store?.registrationFailed(error.localizedDescription)
+    }
+
+    func application(
+        _ application: NSApplication,
+        didReceiveRemoteNotification userInfo: [String: Any]
+    ) {
+        Task { await Self.store?.refresh() }
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        Task { @MainActor in await Self.store?.refresh() }
+        return [.banner, .sound, .badge]
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        let content = response.notification.request.content
+        let metadata = content.userInfo["hark"] as? [String: Any]
+        let interactionID = metadata?["interactionId"] as? String
+        let actionDigest = metadata?["actionDigest"] as? String
+        let urlValue = metadata?["url"] as? String
+        let actionIdentifier = response.actionIdentifier
+        let responseText = (response as? UNTextInputNotificationResponse)?.userText
+        await Self.handleNotificationAction(
+            interactionID: interactionID,
+            actionDigest: actionDigest,
+            urlValue: urlValue,
+            actionIdentifier: actionIdentifier,
+            responseText: responseText
+        )
+    }
+
+    private static func handleNotificationAction(
+        interactionID: String?,
+        actionDigest: String?,
+        urlValue: String?,
+        actionIdentifier: String,
+        responseText: String?
+    ) async {
+        guard
+            let interactionID,
+            let actionDigest
+        else {
+            await Self.store?.refresh()
+            if let urlValue, let url = URL(string: urlValue) {
+                NSWorkspace.shared.open(url)
+            }
+            return
+        }
+        let item = Self.store?.snapshot?.items.first {
+            $0.action?.interactionId == interactionID && $0.action?.actionDigest == actionDigest
+        }
+        let action: CompanionAction?
+        switch actionIdentifier {
+        case Constants.approve: action = .approve
+        case Constants.deny: action = .deny
+        case Constants.yes: action = .yes
+        case Constants.no: action = .no
+        case Constants.reply:
+            action = responseText.map(CompanionAction.reply)
+        default:
+            action = nil
+            if let item { await Self.store?.markRead(item) } else { await Self.store?.refresh() }
+        }
+        if let action {
+            await Self.store?.respond(
+                interactionID: interactionID,
+                actionDigest: actionDigest,
+                with: action
+            )
+        }
+    }
+
+    private enum Constants {
+        static let approval = "HARK_APPROVAL_V1"
+        static let yesNo = "HARK_YES_NO_V1"
+        static let replyCategory = "HARK_REPLY_V1"
+        static let approve = "HARK_APPROVE"
+        static let deny = "HARK_DENY"
+        static let yes = "HARK_YES"
+        static let no = "HARK_NO"
+        static let reply = "HARK_REPLY"
+    }
+
+    private static let categories: Set<UNNotificationCategory> = [
+        UNNotificationCategory(
+            identifier: Constants.approval,
+            actions: [
+                UNNotificationAction(
+                    identifier: Constants.approve,
+                    title: "Approve",
+                    options: [.authenticationRequired]
+                ),
+                UNNotificationAction(
+                    identifier: Constants.deny,
+                    title: "Deny",
+                    options: [.authenticationRequired, .destructive]
+                ),
+            ],
+            intentIdentifiers: []
+        ),
+        UNNotificationCategory(
+            identifier: Constants.yesNo,
+            actions: [
+                UNNotificationAction(
+                    identifier: Constants.yes,
+                    title: "Yes",
+                    options: [.authenticationRequired]
+                ),
+                UNNotificationAction(
+                    identifier: Constants.no,
+                    title: "No",
+                    options: [.authenticationRequired, .destructive]
+                ),
+            ],
+            intentIdentifiers: []
+        ),
+        UNNotificationCategory(
+            identifier: Constants.replyCategory,
+            actions: [
+                UNTextInputNotificationAction(
+                    identifier: Constants.reply,
+                    title: "Reply",
+                    options: [.authenticationRequired],
+                    textInputButtonTitle: "Send",
+                    textInputPlaceholder: "Reply to SHark"
+                ),
+            ],
+            intentIdentifiers: []
+        ),
+    ]
+}
