@@ -592,6 +592,185 @@ test("notify ask rejects unsupported Live Activity response shapes", async () =>
   );
 });
 
+test("notify ask derives the interaction expiry from --timeout when no expiry is explicit", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith("/api/agent/interactions")) {
+      assert.equal(JSON.parse(init.body).expiresInSeconds, 5400);
+      return Response.json({ accepted: 1, interaction: { id: "int_derive", status: "pending" } });
+    }
+    return Response.json({ interaction: { id: "int_derive", status: "replied", response: "ok" } });
+  };
+  try {
+    const result = await execute(
+      ["notify", "ask", "Deploy?", "--text", "--wait", "--timeout", "90m"],
+      { HARK_TOKEN: "hark_test" },
+    );
+    assert.equal(result.exitCode, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("notify ask clamps a derived expiry to the server range of 30 seconds through 24 hours", async () => {
+  const originalFetch = globalThis.fetch;
+  const expiries = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith("/api/agent/interactions")) {
+      expiries.push(JSON.parse(init.body).expiresInSeconds);
+      return Response.json({ accepted: 1, interaction: { id: "int_clamp", status: "pending" } });
+    }
+    return Response.json({ interaction: { id: "int_clamp", status: "replied", response: "ok" } });
+  };
+  try {
+    const short = await execute(
+      ["notify", "ask", "Deploy?", "--text", "--wait", "--timeout", "10s"],
+      { HARK_TOKEN: "hark_test" },
+    );
+    assert.equal(short.exitCode, 0);
+    const long = await execute(
+      ["notify", "ask", "Deploy?", "--text", "--wait", "--timeout", "48h"],
+      { HARK_TOKEN: "hark_test" },
+    );
+    assert.equal(long.exitCode, 0);
+    assert.deepEqual(expiries, [30, 86_400]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("notify ask clamps a derived Live Activity expiry to 8 hours via flag or stdin presentation", async () => {
+  const originalFetch = globalThis.fetch;
+  const expiries = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith("/api/agent/interactions")) {
+      expiries.push(JSON.parse(init.body).expiresInSeconds);
+      return Response.json({ accepted: 1, interaction: { id: "int_la_clamp", status: "pending" } });
+    }
+    return Response.json({
+      interaction: { id: "int_la_clamp", status: "replied", response: "ok" },
+    });
+  };
+  try {
+    const flagged = await execute(
+      ["notify", "ask", "Deploy?", "--approval", "--live-activity", "--wait", "--timeout", "12h"],
+      { HARK_TOKEN: "hark_test" },
+    );
+    assert.equal(flagged.exitCode, 0);
+    const fromStdin = await execute(
+      ["notify", "ask", "Deploy?", "--approval", "--stdin", "--wait", "--timeout", "9h"],
+      { HARK_TOKEN: "hark_test" },
+      { stdin: [JSON.stringify({ prompt: "Deploy?", presentation: "live_activity" })] },
+    );
+    assert.equal(fromStdin.exitCode, 0);
+    assert.deepEqual(expiries, [28_800, 28_800]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("notify ask keeps explicit flag and stdin expiry ahead of timeout derivation", async () => {
+  const originalFetch = globalThis.fetch;
+  const warnings = [];
+  const expiries = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith("/api/agent/interactions")) {
+      expiries.push(JSON.parse(init.body).expiresInSeconds);
+      return Response.json({ accepted: 1, interaction: { id: "int_explicit", status: "pending" } });
+    }
+    return Response.json({
+      interaction: { id: "int_explicit", status: "replied", response: "ok" },
+    });
+  };
+  try {
+    // A long --timeout with an explicit shorter expiry warns instead of deriving.
+    const flagged = await execute(
+      ["notify", "ask", "Deploy?", "--text", "--wait", "--expires-in", "5m", "--timeout", "90m"],
+      { HARK_TOKEN: "hark_test" },
+      { stderr: (message) => warnings.push(message) },
+    );
+    assert.equal(flagged.exitCode, 0);
+
+    // stdin.expiresIn counts as explicit and suppresses derivation.
+    const fromStdin = await execute(
+      ["notify", "ask", "Deploy?", "--text", "--stdin", "--wait", "--timeout", "90m"],
+      { HARK_TOKEN: "hark_test" },
+      {
+        stdin: [JSON.stringify({ expiresIn: "5m" })],
+        stderr: (message) => warnings.push(message),
+      },
+    );
+    assert.equal(fromStdin.exitCode, 0);
+
+    // --expires-in overrides stdin.expiresIn.
+    const both = await execute(
+      [
+        "notify",
+        "ask",
+        "Deploy?",
+        "--text",
+        "--stdin",
+        "--expires-in",
+        "10m",
+        "--wait",
+        "--timeout",
+        "90m",
+      ],
+      { HARK_TOKEN: "hark_test" },
+      {
+        stdin: [JSON.stringify({ expiresIn: "5m" })],
+        stderr: (message) => warnings.push(message),
+      },
+    );
+    assert.equal(both.exitCode, 0);
+
+    assert.deepEqual(expiries, [300, 300, 600]);
+    assert.equal(warnings.length, 3);
+    for (const warning of warnings) {
+      assert.match(warning, /exceeds the interaction expiry/);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("notify ask derived expiry does not warn and --poll keeps its default expiry behavior", async () => {
+  const originalFetch = globalThis.fetch;
+  const warnings = [];
+  const expiries = [];
+  const urls = [];
+  globalThis.fetch = async (url, init) => {
+    urls.push(String(url));
+    if (String(url).endsWith("/api/agent/interactions")) {
+      expiries.push(JSON.parse(init.body).expiresInSeconds);
+      return Response.json({ accepted: 1, interaction: { id: "int_nowarn", status: "pending" } });
+    }
+    return Response.json({ interaction: { id: "int_nowarn", status: "replied", response: "ok" } });
+  };
+  try {
+    // A derived expiry equals the timeout, so waiting beyond expiry is impossible
+    // and no warning is emitted.
+    const derived = await execute(
+      ["notify", "ask", "Deploy?", "--text", "--wait", "--timeout", "30s"],
+      { HARK_TOKEN: "hark_test" },
+      { stderr: (message) => warnings.push(message) },
+    );
+    assert.equal(derived.exitCode, 0);
+    assert.deepEqual(expiries, [30]);
+    assert.deepEqual(warnings, []);
+
+    // --poll without an explicit expiry still defaults the prompt to 15 minutes.
+    const polled = await execute(["notify", "ask", "Deploy?", "--approval", "--poll"], {
+      HARK_TOKEN: "hark_test",
+    });
+    assert.equal(polled.exitCode, 0);
+    assert.match(urls.at(-1), /\/wait\?timeout=20$/);
+    assert.deepEqual(expiries, [30, 900]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("notify ask --text maps to a reply interaction and defaults the title", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (_url, init) => {

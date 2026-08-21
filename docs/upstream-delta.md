@@ -22,6 +22,12 @@ changes.
 - Production uses the `shark-prod` deployment, attested immutable GHCR digests,
   1Password-fed secrets, exact-schema SQLite checkpoint validation, encrypted Restic snapshots,
   and operator promotion with no GitHub VM credential.
+- Accepted CLI behavior delta: with `sharkctl notify ask --wait --timeout X` and no explicit expiry
+  (`--expires-in` flag or `stdin.expiresIn`), sharkctl derives the interaction expiry from the wait
+  timeout, clamped to the server range of 30 seconds through 24 hours (8 hours for an effective
+  Live Activity keyed on the flag or `stdin.presentation === "live_activity"`). Upstream Hark
+  defaults the expiry to 15 minutes in that case. Explicit expiry still wins, `--poll` behavior is
+  unchanged, and a stderr warning fires when the wait timeout exceeds the effective expiry.
 
 ## CLI and compatibility names
 
