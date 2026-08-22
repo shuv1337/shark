@@ -74,7 +74,7 @@ describe("web inbox", () => {
     const html = renderToStaticMarkup(<InboxDetailContent detail={detail} />);
     expect(html).toContain("Production approval");
     expect(html).toContain("Open link");
-    expect(html).toContain("registered iPhone");
+    expect(html).toContain("registered iPhone or the macOS menu bar app");
     expect(html).toContain("Timeline");
     expect(html).toContain("Accepted by one device.");
   });

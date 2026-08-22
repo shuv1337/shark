@@ -384,8 +384,8 @@ export function InboxDetailContent({ detail }: { detail: InboxDetailDto }) {
         <div className="mt-6 rounded-xl border border-danger-line bg-danger-soft px-4 py-4">
           <p className="text-sm font-semibold text-danger">Needs your response</p>
           <p className="mt-1 text-sm leading-5 text-ink-muted">
-            Respond from a registered iPhone so the signed device identity remains attached to the
-            decision.
+            Respond from a registered iPhone or the macOS menu bar app so the reply comes from a
+            signed device.
           </p>
           <p className="mt-2 text-xs text-ink-faint">
             Expires {formatInboxDateTime(item.action.expiresAt)}
