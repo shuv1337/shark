@@ -343,9 +343,10 @@ async function login(options, env, runtime) {
   throw new RequestError("Authorization timed out", 408, { error: "expired_token" });
 }
 
-async function readStdinJson() {
+async function readStdinJson(runtime) {
   let input = "";
-  for await (const chunk of process.stdin) input += chunk;
+  const stream = runtime?.stdin ?? process.stdin;
+  for await (const chunk of stream) input += chunk;
   try {
     return JSON.parse(input);
   } catch {
@@ -409,7 +410,9 @@ notify sends a one-shot push; notify ask sends a push that elicits an answer.
 Inside notify, a first positional of exactly "ask" selects the subcommand. Everything
 after a bare "--" is treated as positional, so "sharkctl notify -- ask" sends the
 literal body "ask". --wait blocks until the answer or timeout; --poll waits at most
-${POLL_TIMEOUT_SECONDS} seconds to catch an instant answer. A timed-out poll or wait does
+${POLL_TIMEOUT_SECONDS} seconds to catch an instant answer. With --wait --timeout and no explicit
+expiry (--expires-in or stdin.expiresIn), the prompt expiry is derived from the timeout and clamped
+to 30 s through 24 h (8 h for Live Activities). A timed-out poll or wait does
 not end the prompt: it stays answerable on the phone until it expires, and
 sharkctl interaction wait <id> resumes waiting at any time.
 
@@ -470,7 +473,7 @@ export async function execute(argv, env = process.env, overrides = {}) {
     return { body: await request(config, "/api/agent/services"), exitCode: 0 };
   }
   if (group === "services" && action === "create") {
-    const stdin = options.stdin ? await readStdinJson() : {};
+    const stdin = options.stdin ? await readStdinJson(runtime) : {};
     const title = options.title ?? stdin.title;
     if (!title) throw new UsageError("services create requires --title");
     const payload = {
@@ -506,7 +509,7 @@ export async function execute(argv, env = process.env, overrides = {}) {
     };
   }
   if (group === "activity" && action === "start") {
-    const stdin = options.stdin ? await readStdinJson() : {};
+    const stdin = options.stdin ? await readStdinJson(runtime) : {};
     const progress = options.progress === undefined ? stdin.progress : Number(options.progress);
     if (progress !== undefined && (!Number.isFinite(progress) || progress < 0 || progress > 1)) {
       throw new UsageError("--progress must be a number from 0 to 1");
@@ -546,7 +549,7 @@ export async function execute(argv, env = process.env, overrides = {}) {
   if (group === "activity" && action === "update") {
     const identifier = id ?? options.key;
     if (!identifier) throw new UsageError("activity update requires an activity ID or --key");
-    const stdin = options.stdin ? await readStdinJson() : {};
+    const stdin = options.stdin ? await readStdinJson(runtime) : {};
     const progress = options.progress === undefined ? stdin.progress : Number(options.progress);
     if (
       progress !== undefined &&
@@ -591,7 +594,7 @@ export async function execute(argv, env = process.env, overrides = {}) {
   if (group === "activity" && action === "end") {
     const identifier = id ?? options.key;
     if (!identifier) throw new UsageError("activity end requires an activity ID or --key");
-    const stdin = options.stdin ? await readStdinJson() : {};
+    const stdin = options.stdin ? await readStdinJson(runtime) : {};
     const ifSequence =
       options["if-sequence"] === undefined
         ? stdin.ifSequence
@@ -659,11 +662,30 @@ export async function execute(argv, env = process.env, overrides = {}) {
       if (options.timeout !== undefined && !options.wait) {
         throw new UsageError("--timeout requires --wait");
       }
-      const stdin = options.stdin ? await readStdinJson() : {};
+      const stdin = options.stdin ? await readStdinJson(runtime) : {};
       const prompt = positionals.slice(2).join(" ") || stdin.prompt;
       if (!prompt) throw new UsageError("notify ask requires a prompt");
-      const expiresInSeconds = parseDuration(options["expires-in"] ?? stdin.expiresIn ?? "15m");
       const liveActivity = options["live-activity"] || stdin.presentation === "live_activity";
+      const waitTimeout =
+        options.wait && options.timeout !== undefined ? parseDuration(options.timeout) : undefined;
+      let expiresInSeconds;
+      if (options["expires-in"] !== undefined || stdin.expiresIn !== undefined) {
+        // An explicit --expires-in flag or stdin.expiresIn always wins.
+        expiresInSeconds = parseDuration(options["expires-in"] ?? stdin.expiresIn);
+      } else if (waitTimeout !== undefined) {
+        // With --wait --timeout and no explicit expiry, derive the server-side
+        // expiry from the wait timeout so the prompt stays answerable for as
+        // long as the caller intends to wait. Clamp to the server range
+        // (30 s through 24 h), or 8 h for an effective Live Activity.
+        expiresInSeconds = Math.min(Math.max(waitTimeout, 30), liveActivity ? 28_800 : 86_400);
+      } else {
+        expiresInSeconds = parseDuration("15m");
+      }
+      if (waitTimeout !== undefined && waitTimeout > expiresInSeconds) {
+        runtime.stderr(
+          `warning: wait timeout of ${waitTimeout}s exceeds the interaction expiry of ${expiresInSeconds}s; waiting beyond expiry cannot produce an answer`,
+        );
+      }
       if (liveActivity && selectors[0] === "reply") {
         throw new UsageError("--live-activity supports --approval or --yes-no, not --text");
       }
@@ -699,16 +721,14 @@ export async function execute(argv, env = process.env, overrides = {}) {
       });
       if (body.accepted === 0) return { body, exitCode: 7 };
       if (!options.wait && !options.poll) return { body, exitCode: 0 };
-      const timeout = options.poll
-        ? POLL_TIMEOUT_SECONDS
-        : parseDuration(options.timeout ?? `${expiresInSeconds}s`);
+      const timeout = options.poll ? POLL_TIMEOUT_SECONDS : (waitTimeout ?? expiresInSeconds);
       const waited = await waitForInteraction(config, body.interaction.id, timeout, runtime);
       return {
         body: { ...body, interaction: waited.interaction, timedOut: waited.timedOut ?? false },
         exitCode: waited.timedOut ? 4 : interactionExitCode(waited.interaction),
       };
     }
-    const stdin = options.stdin ? await readStdinJson() : {};
+    const stdin = options.stdin ? await readStdinJson(runtime) : {};
     const notificationBody = positionals.slice(1).join(" ") || stdin.body;
     if (!notificationBody) throw new UsageError("notify requires a message body");
     const payload = {

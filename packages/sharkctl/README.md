@@ -74,6 +74,14 @@ does not end the prompt — it stays answerable on the phone until it expires, a
 `sharkctl interaction wait <id>` resumes waiting at any time; `--poll` cannot be combined with
 `--wait` or `--timeout`.
 
+When `--wait --timeout` is given without an explicit expiry (`--expires-in` flag or
+`stdin.expiresIn`), the prompt expiry is derived from the wait timeout so the prompt stays
+answerable for as long as the caller intends to wait. The derived value is clamped to the server
+range of 30 seconds through 24 hours, or 30 seconds through 8 hours for Live Activities. An
+explicit expiry always wins over derivation, and `--poll` keeps its default 15-minute expiry.
+A stderr warning is emitted whenever the wait timeout exceeds the effective expiry, because
+waiting beyond expiry cannot produce an answer.
+
 Inside `notify`, a first positional of exactly `ask` selects the subcommand. Everything after a bare
 `--` separator is treated as positional, so `sharkctl notify -- ask` sends the literal body “ask”.
 
