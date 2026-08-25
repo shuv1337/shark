@@ -18,3 +18,4 @@ apps/expo/android/
 apps/expo/credentials.json
 expo-env.d.ts
 apps/macos/build/
+apps/macos/**/*.xcuserdata/

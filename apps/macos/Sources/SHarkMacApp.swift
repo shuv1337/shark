@@ -18,7 +18,12 @@ struct SHarkMacApp: App {
             MenuBarRoot(store: store)
                 .frame(width: 410, height: 560)
         } label: {
-            Label("SHark", systemImage: menuIcon)
+            if let menuIcon {
+                Label("SHark", systemImage: menuIcon)
+            } else {
+                Image("MenuBarIcon")
+                    .accessibilityLabel("SHark")
+            }
         }
         .menuBarExtraStyle(.window)
 
@@ -27,10 +32,10 @@ struct SHarkMacApp: App {
         }
     }
 
-    private var menuIcon: String {
+    private var menuIcon: String? {
         if (store.snapshot?.unresolvedCount ?? 0) > 0 { return "exclamationmark.bubble.fill" }
         if case .stale = store.state { return "wifi.exclamationmark" }
-        return "fish.fill"
+        return nil
     }
 }
 
@@ -76,8 +81,10 @@ private struct MenuBarRoot: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Image(systemName: "fish.fill")
-                .foregroundStyle(.orange)
+            Image("SharkDevilMark")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 42, height: 24)
             VStack(alignment: .leading, spacing: 1) {
                 Text("SHark").font(.headline)
                 if let snapshot = store.snapshot {
@@ -188,7 +195,10 @@ private struct SignInView: View {
     @ObservedObject var store: CompanionStore
     var body: some View {
         VStack(spacing: 16) {
-            Image(systemName: "fish.fill").font(.system(size: 42)).foregroundStyle(.orange)
+            Image("SharkDevilMark")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 120, height: 70)
             Text("SHark on your Mac").font(.title2.bold())
             Text("Receive desktop alerts and handle approvals without opening the web dashboard.")
                 .multilineTextAlignment(.center)
@@ -196,7 +206,7 @@ private struct SignInView: View {
                 .frame(maxWidth: 300)
             Button("Connect to SHark") { Task { await store.beginSignIn() } }
                 .buttonStyle(.borderedProminent)
-                .tint(.orange)
+                .tint(.red)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
