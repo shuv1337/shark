@@ -39,7 +39,7 @@ struct SHarkMacApp: App {
     }
 }
 
-private struct MenuBarRoot: View {
+struct MenuBarRoot: View {
     @ObservedObject var store: CompanionStore
     @State private var filter = Filter.all
     @State private var replyingTo: InboxItem?

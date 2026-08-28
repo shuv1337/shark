@@ -1,9 +1,11 @@
 import AppKit
+import SwiftUI
 import UserNotifications
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     weak static var store: CompanionStore?
+    private var companionWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let center = UNUserNotificationCenter.current()
@@ -13,6 +15,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             await Self.store?.start()
             await Self.store?.ensureRemoteNotificationsRegistered()
         }
+        if ProcessInfo.processInfo.arguments.contains("--show-inbox") {
+            showCompanionWindow()
+        }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showCompanionWindow()
+        return true
+    }
+
+    private func showCompanionWindow() {
+        guard let store = Self.store else { return }
+        if companionWindow == nil {
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 410, height: 560),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "SHark"
+            window.contentMinSize = NSSize(width: 360, height: 440)
+            window.contentViewController = NSHostingController(rootView: MenuBarRoot(store: store))
+            window.isReleasedWhenClosed = false
+            window.center()
+            companionWindow = window
+        }
+        companionWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
     }
 
     func application(
