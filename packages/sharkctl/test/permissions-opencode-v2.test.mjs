@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
 import { mkdtemp, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";

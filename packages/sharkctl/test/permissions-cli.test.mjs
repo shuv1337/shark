@@ -106,5 +106,9 @@ test("uninstall all reverses only SHark-owned adapters", async () => {
     home,
     checkAuthentication: async () => true,
   });
-  assert.deepEqual(doctor.installed, { claude: false, codex: false, opencode: { v1: false, v2: false } });
+  assert.deepEqual(doctor.installed, {
+    claude: false,
+    codex: false,
+    opencode: { v1: false, v2: false },
+  });
 });

@@ -5,7 +5,11 @@ import { join } from "node:path";
 function registrationPath(file) {
   return (
     file ??
-    join(process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"), "opencode", "service.json")
+    join(
+      process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"),
+      "opencode",
+      "service.json",
+    )
   );
 }
 

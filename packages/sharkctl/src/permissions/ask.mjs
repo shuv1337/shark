@@ -9,7 +9,13 @@ export const REQUIRED_PERMISSION_SCOPES = [
   "interactions:create",
   "interactions:read",
 ];
-const sharkctlPath = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "bin", "sharkctl.mjs");
+const sharkctlPath = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "bin",
+  "sharkctl.mjs",
+);
 
 function safeText(value, fallback, maxLength = 48) {
   const printable = Array.from(String(value ?? fallback), (character) => {
