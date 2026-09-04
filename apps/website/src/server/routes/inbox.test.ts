@@ -247,4 +247,81 @@ describe("durable inbox", () => {
     };
     expect(failed.items).toEqual([]);
   });
+
+  it("only includes ongoing Live Activities in the active filter", async () => {
+    await db.update(schema.agentNotification).set({
+      status: "partial",
+      acceptedCount: 1,
+      failedCount: 1,
+      error: "SyntheticFailure",
+    });
+    await db.insert(schema.liveActivity).values({
+      id: "act_partial",
+      userId: "inbox_user",
+      requesterTokenId: "tok_inbox",
+      schemaVersion: 1,
+      props: { title: "Release build", detail: "Still running" },
+      status: "partial",
+      acceptedCount: 1,
+      failedCount: 1,
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const active = (await (await app.request("/api/inbox?filter=active")).json()) as {
+      items: Array<{ id: string; kind: string; status: string }>;
+    };
+    expect(active.items).toEqual([
+      expect.objectContaining({
+        id: "ibox:live_activity:act_partial",
+        kind: "live_activity",
+        status: "partial",
+      }),
+    ]);
+
+    const failed = (await (await app.request("/api/inbox?filter=failed")).json()) as {
+      items: Array<{ id: string }>;
+    };
+    expect(failed.items.map((entry) => entry.id)).toContain("ibox:agent_notification:anot_inbox");
+  });
+
+  it("persists Live Activity expiry while reconciling the inbox", async () => {
+    await db.insert(schema.liveActivity).values({
+      id: "act_expired",
+      userId: "inbox_user",
+      requesterTokenId: "tok_inbox",
+      schemaVersion: 1,
+      props: { title: "Old build", detail: "No longer running" },
+      status: "active",
+      acceptedCount: 1,
+      expiresAt: new Date(Date.now() - 1_000),
+      createdAt: new Date(Date.now() - 120_000),
+      updatedAt: new Date(Date.now() - 60_000),
+    });
+
+    const response = (await (await app.request("/api/inbox")).json()) as {
+      items: Array<{ id: string; status: string; result: string | null }>;
+    };
+    expect(response.items).toContainEqual(
+      expect.objectContaining({
+        id: "ibox:live_activity:act_expired",
+        status: "expired",
+        result: "Expired",
+      }),
+    );
+
+    const source = (await db.select().from(schema.liveActivity)).find(
+      (activity) => activity.id === "act_expired",
+    );
+    expect(source).toMatchObject({ status: "expired" });
+    expect(source?.endedAt).toBeInstanceOf(Date);
+
+    const detail = (await (
+      await app.request("/api/inbox/ibox%3Alive_activity%3Aact_expired")
+    ).json()) as { events: Array<{ kind: string; result: string | null }> };
+    expect(detail.events).toContainEqual(
+      expect.objectContaining({ kind: "expired", result: "Expired" }),
+    );
+  });
 });

@@ -5,6 +5,8 @@ import {
   deviceRegisterSchema,
   interactionCreateSchema,
   interactionResponseSchema,
+  isInboxItemActive,
+  isInboxItemDeliveryFailure,
   LIVE_ACTIVITY_SCHEMA_VERSION,
   liveActivityBackgroundTokenSchema,
   liveActivityEndSchema,
@@ -18,6 +20,15 @@ import {
   webhookRequestSchema,
   webPushSubscriptionRegisterSchema,
 } from "./index";
+
+describe("inbox lifecycle semantics", () => {
+  it("distinguishes active partial activities from terminal partial notifications", () => {
+    expect(isInboxItemActive({ kind: "live_activity", status: "partial" })).toBe(true);
+    expect(isInboxItemDeliveryFailure({ kind: "live_activity", status: "partial" })).toBe(false);
+    expect(isInboxItemActive({ kind: "notification", status: "partial" })).toBe(false);
+    expect(isInboxItemDeliveryFailure({ kind: "notification", status: "partial" })).toBe(true);
+  });
+});
 
 describe("appleNativeTokenExchangeSchema", () => {
   it("requires both bounded Apple credentials", () => {

@@ -4,6 +4,8 @@ import {
   type InboxFilter,
   type InboxItemDto,
   type InboxItemEventDto,
+  isInboxItemActive,
+  isInboxItemDeliveryFailure,
 } from "@hark/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
@@ -454,10 +456,10 @@ export function inboxStateLabel(item: InboxItemDto) {
   return item.needsAction ? "Needs action" : (item.result ?? item.status);
 }
 
-function inboxStateDot(item: InboxItemDto) {
+export function inboxStateDot(item: InboxItemDto) {
   if (item.needsAction) return "bg-accent";
-  if (["failed", "no_devices"].includes(item.status)) return "bg-danger-strong";
-  if (["active", "starting", "partial"].includes(item.status)) return "bg-info";
+  if (isInboxItemDeliveryFailure(item)) return "bg-danger-strong";
+  if (isInboxItemActive(item)) return "bg-info";
   return "bg-idle";
 }
 

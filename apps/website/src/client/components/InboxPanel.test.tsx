@@ -6,6 +6,7 @@ import {
   InboxPanel,
   InboxRow,
   inboxKindLabel,
+  inboxStateDot,
   inboxStateLabel,
 } from "./InboxPanel";
 
@@ -83,5 +84,14 @@ describe("web inbox", () => {
     expect(inboxKindLabel("live_activity")).toBe("Live Activity");
     expect(inboxStateLabel(item)).toBe("Needs action");
     expect(inboxStateLabel({ ...item, needsAction: false, result: "Approved" })).toBe("Approved");
+  });
+
+  it("renders partial notifications as terminal failures and partial activities as active", () => {
+    expect(
+      inboxStateDot({ ...item, kind: "notification", status: "partial", needsAction: false }),
+    ).toBe("bg-danger-strong");
+    expect(
+      inboxStateDot({ ...item, kind: "live_activity", status: "partial", needsAction: false }),
+    ).toBe("bg-info");
   });
 });

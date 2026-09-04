@@ -1,4 +1,10 @@
-import { INBOX_FILTERS, type InboxFilter, type InboxItemDto } from "@hark/contracts";
+import {
+  INBOX_FILTERS,
+  type InboxFilter,
+  type InboxItemDto,
+  isInboxItemActive,
+  isInboxItemDeliveryFailure,
+} from "@hark/contracts";
 import * as Notifications from "expo-notifications";
 import { Redirect, useFocusEffect, useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
@@ -253,9 +259,8 @@ function formatTime(value: string) {
 
 function stateDot(item: InboxItemDto) {
   if (item.needsAction) return { backgroundColor: colors.warning };
-  if (["failed", "no_devices"].includes(item.status)) return { backgroundColor: colors.danger };
-  if (["active", "starting", "partial"].includes(item.status))
-    return { backgroundColor: colors.accent };
+  if (isInboxItemDeliveryFailure(item)) return { backgroundColor: colors.danger };
+  if (isInboxItemActive(item)) return { backgroundColor: colors.accent };
   return { backgroundColor: colors.soft };
 }
 
