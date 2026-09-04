@@ -43,9 +43,9 @@ import {
   syncLiveActivityTokens,
 } from "./live-activities";
 
-function instance(id: unknown, token: string) {
+function instance(id: unknown, token: string, usePublicId = false) {
   return {
-    nativeLiveActivity: { id },
+    ...(usePublicId ? { getId: () => id } : { nativeLiveActivity: { id } }),
     getPushToken: async () => token,
     addPushTokenListener: () => ({ remove: vi.fn() }),
   };
@@ -62,8 +62,8 @@ afterEach(() => {
 describe("Live Activity token sync", () => {
   it("uploads each initial token with its SDK 57 native activity ID", async () => {
     state.instances = [
-      instance("native-a", "aa".repeat(32)),
-      instance("native-b", "bb".repeat(32)),
+      instance("native-a", "aa".repeat(32), true),
+      instance("native-b", "bb".repeat(32), true),
     ];
     await syncLiveActivityTokens("dev_1");
     expect(state.uploads).toEqual([

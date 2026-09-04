@@ -1,6 +1,7 @@
+# Carried forward from expo-widgets 57.0.6 and adapted for 57.0.17 Live Activity url attributes.
 diff --git a/ios/HarkLiveActivityTokenRegistrar.swift b/ios/HarkLiveActivityTokenRegistrar.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..90f1cc52fcbadc1d64d1d2859223a457c899fcf8
+index 0000000..90f1cc5
 --- /dev/null
 +++ b/ios/HarkLiveActivityTokenRegistrar.swift
 @@ -0,0 +1,89 @@
@@ -94,7 +95,7 @@ index 0000000000000000000000000000000000000000..90f1cc52fcbadc1d64d1d2859223a457
 +  }
 +}
 diff --git a/ios/Widgets/AppIntent.swift b/ios/Widgets/AppIntent.swift
-index 972fa4f190d5da8f961218bcbe2436964ac34acf..a008b1c7f27ad73e215728f9c2a02b9b224be7dc 100644
+index 972fa4f..bfe45f2 100644
 --- a/ios/Widgets/AppIntent.swift
 +++ b/ios/Widgets/AppIntent.swift
 @@ -1,6 +1,20 @@
@@ -102,7 +103,7 @@ index 972fa4f190d5da8f961218bcbe2436964ac34acf..a008b1c7f27ad73e215728f9c2a02b9b
 +import ActivityKit
 +import Foundation
  import WidgetKit
-
+ 
 +private final class HarkNoRedirectSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
 +  func urlSession(
 +    _ session: URLSession,
@@ -121,7 +122,7 @@ index 972fa4f190d5da8f961218bcbe2436964ac34acf..a008b1c7f27ad73e215728f9c2a02b9b
 @@ -112,13 +126,113 @@ struct LiveActivityUserInteraction: LiveActivityIntent {
    @Parameter(title: "target")
    var target: String?
-
+ 
 +  @Parameter(title: "interactionId")
 +  var interactionId: String?
 +
@@ -151,7 +152,7 @@ index 972fa4f190d5da8f961218bcbe2436964ac34acf..a008b1c7f27ad73e215728f9c2a02b9b
 +    self.deviceId = deviceId
 +    self.deliveryId = deliveryId
    }
-
+ 
    func perform() async throws -> some IntentResult {
 +    if
 +      let source,
@@ -234,7 +235,7 @@ index 972fa4f190d5da8f961218bcbe2436964ac34acf..a008b1c7f27ad73e215728f9c2a02b9b
        "source": source as Any,
        "target": target as Any,
 diff --git a/ios/Widgets/Buttons.swift b/ios/Widgets/Buttons.swift
-index 55fb9b3d5fa04d38ab8c2a8b3de7f7656afc401e..aa56ae1db814bbe59687c09a25c972858f93511c 100644
+index 55fb9b3..aa56ae1 100644
 --- a/ios/Widgets/Buttons.swift
 +++ b/ios/Widgets/Buttons.swift
 @@ -7,6 +7,10 @@ final class ButtonProps: ExpoUI.ButtonProps {
@@ -246,7 +247,7 @@ index 55fb9b3d5fa04d38ab8c2a8b3de7f7656afc401e..aa56ae1db814bbe59687c09a25c97285
 +  @Field var harkInteractionDeviceId: String?
 +  @Field var harkInteractionDeliveryId: String?
  }
-
+ 
  @available(iOS 17.0, *)
 @@ -45,7 +49,11 @@ struct LiveActivityButtonView: ExpoSwiftUI.View {
        role: props.role?.toNativeRole(),
@@ -262,21 +263,28 @@ index 55fb9b3d5fa04d38ab8c2a8b3de7f7656afc401e..aa56ae1db814bbe59687c09a25c97285
      ) {
        if let label = props.label {
 diff --git a/ios/Widgets/WidgetLiveActivity.swift b/ios/Widgets/WidgetLiveActivity.swift
-index 3e192e10b9bc6d76f0f27cc268fbbf8e48a4b870..10f9500c6ed57a0e5d71323b76d3ec3a551f6477 100644
+index 24d4571..cdb6e6c 100644
 --- a/ios/Widgets/WidgetLiveActivity.swift
 +++ b/ios/Widgets/WidgetLiveActivity.swift
-@@ -4,6 +4,29 @@ import ExpoModulesCore
- import ActivityKit
-
- struct LiveActivityAttributes: ActivityAttributes {
+@@ -7,14 +7,34 @@ struct LiveActivityAttributes: ActivityAttributes {
+   // The deep link URL passed to start(). Stored in the static attributes so it is
+   // scoped to this activity and survives content updates, unlike ContentState.
+   var url: String?
 +  var tokenRegistrationURL: String?
 +  var tokenRegistrationToken: String?
 +  var deliveryId: String?
 +  var harkInteractionId: String?
 +  var harkInteractionCredential: String?
 +  var harkInteractionDeviceId: String?
-+
+ 
+   public struct ContentState: Codable, Hashable {
+     var name: String
+     var props: String
+   }
+ 
+-  init(url: String? = nil) {
 +  init(
++    url: String? = nil,
 +    tokenRegistrationURL: String? = nil,
 +    tokenRegistrationToken: String? = nil,
 +    deliveryId: String? = nil,
@@ -284,23 +292,22 @@ index 3e192e10b9bc6d76f0f27cc268fbbf8e48a4b870..10f9500c6ed57a0e5d71323b76d3ec3a
 +    harkInteractionCredential: String? = nil,
 +    harkInteractionDeviceId: String? = nil
 +  ) {
+     self.url = url
 +    self.tokenRegistrationURL = tokenRegistrationURL
 +    self.tokenRegistrationToken = tokenRegistrationToken
 +    self.deliveryId = deliveryId
 +    self.harkInteractionId = harkInteractionId
 +    self.harkInteractionCredential = harkInteractionCredential
 +    self.harkInteractionDeviceId = harkInteractionDeviceId
-+  }
-+
-   public struct ContentState: Codable, Hashable {
-     var name: String
-     var props: String
-@@ -20,6 +43,15 @@ public struct WidgetLiveActivity: Widget {
-     return getLiveActivityEnvironment(environment: env)
    }
-
+ }
+ 
+@@ -26,12 +46,21 @@ public struct WidgetLiveActivity: Widget {
+ 
+   public init() {}
+ 
 +  func interactionEnvironment(_ context: ActivityViewContext<LiveActivityAttributes>) -> [String: Any] {
-+    var result = environment
++    var result = getLiveActivityEnvironment(for: env, in: context)
 +    result["harkInteractionId"] = context.attributes.harkInteractionId
 +    result["harkInteractionCredential"] = context.attributes.harkInteractionCredential
 +    result["harkInteractionDeviceId"] = context.attributes.harkInteractionDeviceId
@@ -308,23 +315,22 @@ index 3e192e10b9bc6d76f0f27cc268fbbf8e48a4b870..10f9500c6ed57a0e5d71323b76d3ec3a
 +    return result
 +  }
 +
-   public init() {}
-
    public var body: some WidgetConfiguration {
-@@ -27,14 +59,14 @@ public struct WidgetLiveActivity: Widget {
+     ActivityConfiguration(for: LiveActivityAttributes.self) { context in
        let nodes = getLiveActivityNodes(
          forName: context.state.name,
          props: context.state.props,
--        environment: environment
+-        environment: getLiveActivityEnvironment(for: env, in: context)
 +        environment: interactionEnvironment(context)
        )
-       LiveActivityBannerView(context: context, nodes: nodes)
-     } dynamicIsland: { context in
+       // Only apply widgetURL when the activity has one: a hierarchy with more than one
+       // widgetURL modifier is undefined behavior, and layouts can set their own through
+@@ -46,7 +75,7 @@ public struct WidgetLiveActivity: Widget {
        let nodes = getLiveActivityNodes(
          forName: context.state.name,
          props: context.state.props,
--        environment: environment
+-        environment: getLiveActivityEnvironment(for: env, in: context)
 +        environment: interactionEnvironment(context)
        )
-       return DynamicIsland {
+       let island = DynamicIsland {
          DynamicIslandExpandedRegion(.center) {
