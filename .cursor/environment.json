@@ -1,11 +1,12 @@
 {
   "name": "SHark",
   "install": "bash .cursor/install.sh",
+  "start": "bash .cursor/ensure-node-shim.sh",
   "terminals": [
     {
       "name": "website-dev",
       "command": "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; exec pnpm dev",
-      "description": "Runs `pnpm dev`: the Hono API on port 8788 and the Vite web dashboard on port 8787 (which proxies /api and /hooks to the API). The install script installs a `node` shim so tools resolve Node >= 22.16."
+      "description": "Runs `pnpm dev`: the Hono API on port 8788 and the Vite web dashboard on port 8787 (which proxies /api and /hooks to the API)."
     }
   ],
   "ports": [
