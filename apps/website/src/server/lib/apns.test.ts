@@ -21,7 +21,9 @@ vi.mock("../env", () => ({ env: transport.env }));
 import {
   apnsHost,
   buildLiveActivityPayload,
+  backgroundNotificationHeaders,
   buildNotificationPayload,
+  buildSilentNotificationPayload,
   createApnsProviderJwt,
   encodeLiveActivityPayload,
   isInvalidApnsTokenReason,
@@ -250,6 +252,23 @@ describe("macOS notification APNs payloads", () => {
       "apns-push-type": "alert",
       "apns-topic": "dev.shuv.shark.macos",
       "apns-priority": "10",
+    });
+  });
+
+  it("builds a silent background withdrawal payload without an alert", () => {
+    expect(
+      buildSilentNotificationPayload({
+        data: { v: 1, command: "notification.withdraw", eventId: "evt_1" },
+      }),
+    ).toEqual({
+      aps: { "content-available": 1 },
+      hark: { v: 1, command: "notification.withdraw", eventId: "evt_1" },
+    });
+    expect(
+      backgroundNotificationHeaders({ bundleId: "dev.shuv.shark.macos" }, "abc", "jwt"),
+    ).toMatchObject({
+      "apns-push-type": "background",
+      "apns-priority": "5",
     });
   });
 });

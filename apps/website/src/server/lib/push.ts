@@ -13,7 +13,10 @@ import type { macosDevice, webPushSubscription } from "../db/schema";
 import { env } from "../env";
 import type { NotificationPayloadInput } from "./apns";
 import { sendMacosPushNotifications } from "./macos-push";
+import { buildNotificationWithdrawalPushMessages } from "./notification-withdrawal";
 import { sendWebPushNotifications, type WebPushPayload } from "./web-push";
+
+export { buildNotificationWithdrawalPushMessages };
 
 export interface ServiceDefaults {
   title: string;

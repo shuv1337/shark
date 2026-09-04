@@ -2,7 +2,9 @@ import type { macosDevice } from "../db/schema";
 import {
   isInvalidApnsTokenReason,
   type NotificationPayloadInput,
+  type SilentNotificationPayloadInput,
   sendNotificationPush,
+  sendSilentNotificationPush,
 } from "./apns";
 import { decryptMacosApnsToken } from "./token";
 
@@ -12,9 +14,11 @@ export interface MacosPushResult {
   staleMacosDeviceIds: string[];
 }
 
-export async function sendMacosPushNotifications(
-  devices: Array<typeof macosDevice.$inferSelect>,
-  payload: NotificationPayloadInput,
+type MacosDeviceRow = typeof macosDevice.$inferSelect;
+
+async function sendToMacosDevices(
+  devices: MacosDeviceRow[],
+  send: (device: MacosDeviceRow) => Promise<{ accepted: boolean; reason: string | null }>,
 ): Promise<MacosPushResult> {
   const result: MacosPushResult = { accepted: 0, errors: [], staleMacosDeviceIds: [] };
   await Promise.all(
@@ -24,21 +28,7 @@ export async function sendMacosPushNotifications(
         return;
       }
       try {
-        const devicePayload: NotificationPayloadInput =
-          device.privacyMode === "private"
-            ? {
-                title: "SHark alert",
-                body: "Open SHark to view details.",
-                threadId: payload.threadId,
-                badge: payload.badge,
-                data: payload.data,
-              }
-            : payload;
-        const response = await sendNotificationPush(
-          decryptMacosApnsToken(device.apnsTokenCiphertext),
-          device.environment,
-          devicePayload,
-        );
+        const response = await send(device);
         if (response.accepted) {
           result.accepted += 1;
           return;
@@ -51,4 +41,41 @@ export async function sendMacosPushNotifications(
     }),
   );
   return result;
+}
+
+export async function sendMacosPushNotifications(
+  devices: MacosDeviceRow[],
+  payload: NotificationPayloadInput,
+): Promise<MacosPushResult> {
+  return sendToMacosDevices(devices, async (device) => {
+    const devicePayload: NotificationPayloadInput =
+      device.privacyMode === "private"
+        ? {
+            title: "SHark alert",
+            body: "Open SHark to view details.",
+            threadId: payload.threadId,
+            badge: payload.badge,
+            data: payload.data,
+          }
+        : payload;
+    return sendNotificationPush(
+      decryptMacosApnsToken(device.apnsTokenCiphertext),
+      device.environment,
+      devicePayload,
+    );
+  });
+}
+
+/** Silent APNs only — never redacted into a visible banner. */
+export async function sendMacosSilentPush(
+  devices: MacosDeviceRow[],
+  payload: SilentNotificationPayloadInput,
+): Promise<MacosPushResult> {
+  return sendToMacosDevices(devices, (device) =>
+    sendSilentNotificationPush(
+      decryptMacosApnsToken(device.apnsTokenCiphertext),
+      device.environment,
+      payload,
+    ),
+  );
 }

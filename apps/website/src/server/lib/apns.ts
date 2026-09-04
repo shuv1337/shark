@@ -48,6 +48,10 @@ export interface NotificationPayloadInput {
   data?: Record<string, string>;
 }
 
+export interface SilentNotificationPayloadInput {
+  data: Record<string, string | number>;
+}
+
 function base64UrlJson(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
 }
@@ -121,8 +125,25 @@ export function buildNotificationPayload(input: NotificationPayloadInput): Recor
   return { aps, ...(input.data ? { hark: input.data } : {}) };
 }
 
+export function buildSilentNotificationPayload(
+  input: SilentNotificationPayloadInput,
+): Record<string, unknown> {
+  return {
+    aps: { "content-available": 1 },
+    hark: input.data,
+  };
+}
+
 function encodeNotificationPayload(input: NotificationPayloadInput): Buffer {
   const payload = Buffer.from(JSON.stringify(buildNotificationPayload(input)));
+  if (payload.byteLength > MAX_APNS_PAYLOAD_BYTES) {
+    throw new Error(`Notification APNs payload exceeds ${MAX_APNS_PAYLOAD_BYTES} bytes`);
+  }
+  return payload;
+}
+
+function encodeSilentNotificationPayload(input: SilentNotificationPayloadInput): Buffer {
+  const payload = Buffer.from(JSON.stringify(buildSilentNotificationPayload(input)));
   if (payload.byteLength > MAX_APNS_PAYLOAD_BYTES) {
     throw new Error(`Notification APNs payload exceeds ${MAX_APNS_PAYLOAD_BYTES} bytes`);
   }
@@ -163,6 +184,21 @@ export function notificationHeaders(
     "apns-push-type": "alert",
     "apns-topic": config.bundleId,
     "apns-priority": "10",
+  };
+}
+
+export function backgroundNotificationHeaders(
+  config: Pick<ApnsProviderConfig, "bundleId">,
+  token: string,
+  jwt: string,
+): Record<string, string> {
+  return {
+    ":method": "POST",
+    ":path": `/3/device/${token}`,
+    authorization: `bearer ${jwt}`,
+    "apns-push-type": "background",
+    "apns-topic": config.bundleId,
+    "apns-priority": "5",
   };
 }
 
@@ -248,10 +284,15 @@ async function sendApnsPayload(
   });
 }
 
-export async function sendNotificationPush(
+async function sendMacosApns(
   token: string,
   tokenEnvironment: "sandbox" | "production",
-  input: NotificationPayloadInput,
+  headers: (
+    config: Pick<ApnsProviderConfig, "bundleId">,
+    deviceToken: string,
+    jwt: string,
+  ) => Record<string, string>,
+  payload: Buffer,
 ): Promise<ApnsResult> {
   const baseConfig = providerConfig(tokenEnvironment);
   if (!baseConfig) {
@@ -263,10 +304,50 @@ export async function sendNotificationPush(
   };
   try {
     const jwt = providerJwt(config);
-    return await sendApnsPayload(
+    return await sendApnsPayload(tokenEnvironment, headers(config, token, jwt), payload);
+  } catch (error) {
+    return {
+      status: 0,
+      apnsId: null,
+      reason: error instanceof Error ? error.message : "InvalidProviderConfiguration",
+      accepted: false,
+    };
+  }
+}
+
+export async function sendNotificationPush(
+  token: string,
+  tokenEnvironment: "sandbox" | "production",
+  input: NotificationPayloadInput,
+): Promise<ApnsResult> {
+  try {
+    return await sendMacosApns(
+      token,
       tokenEnvironment,
-      notificationHeaders(config, token, jwt),
+      notificationHeaders,
       encodeNotificationPayload(input),
+    );
+  } catch (error) {
+    return {
+      status: 0,
+      apnsId: null,
+      reason: error instanceof Error ? error.message : "InvalidProviderConfiguration",
+      accepted: false,
+    };
+  }
+}
+
+export async function sendSilentNotificationPush(
+  token: string,
+  tokenEnvironment: "sandbox" | "production",
+  input: SilentNotificationPayloadInput,
+): Promise<ApnsResult> {
+  try {
+    return await sendMacosApns(
+      token,
+      tokenEnvironment,
+      backgroundNotificationHeaders,
+      encodeSilentNotificationPayload(input),
     );
   } catch (error) {
     return {

@@ -18,6 +18,7 @@ import { isEmailAllowed } from "../lib/admission";
 import { failureBucket, track } from "../lib/analytics";
 import { checkNotificationAllowance, getBilling, trackNotification } from "../lib/billing";
 import { newId } from "../lib/id";
+import { notificationEventTag } from "../lib/notification-withdrawal";
 import {
   buildInteractionPushMessages,
   buildPushMessages,
@@ -455,8 +456,9 @@ export const hooksRoute = new Hono()
         title: resolved.title,
         body: resolved.body,
         url: resolved.url ?? "/dashboard",
+        eventId,
         ...(resolved.imageUrl ? { imageUrl: resolved.imageUrl } : {}),
-        tag: parsed.data.response ? `interaction-${interactionId}` : `service-${svc.id}`,
+        tag: parsed.data.response ? `interaction-${interactionId}` : notificationEventTag(eventId),
       },
       macosDevices,
       macosPayload: {
@@ -471,6 +473,7 @@ export const hooksRoute = new Hono()
                     ? "HARK_YES_NO_V1"
                     : "HARK_REPLY_V1",
               data: {
+                eventId,
                 interactionId: interactionId as string,
                 kind: parsed.data.response.type === "text" ? "reply" : parsed.data.response.type,
                 actionDigest: interactionActionDigest as string,

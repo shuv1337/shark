@@ -593,7 +593,8 @@ describe("POST /hooks/:token", () => {
           body: "Browser build complete",
           url: "https://example.com/app",
           imageUrl: "https://example.com/default.png",
-          tag: "service-svc_1",
+          eventId: expect.stringMatching(/^evt_/),
+          tag: expect.stringMatching(/^event-evt_/),
         },
       },
     ]);

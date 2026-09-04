@@ -62,6 +62,22 @@ describe("sendWebPushNotifications", () => {
       url: "/dashboard",
     });
 
+    mock.statusCode = 201;
+    mock.payloads.length = 0;
+    const withdrawn = await sendWebPushNotifications([row], {
+      v: 1,
+      command: "notification.withdraw",
+      eventId: "evt_1",
+      tag: "event-evt_1",
+    });
+    expect(withdrawn).toEqual({ accepted: 1, errors: [], staleSubscriptionIds: [] });
+    expect(JSON.parse(mock.payloads[0] ?? "{}")).toEqual({
+      v: 1,
+      command: "notification.withdraw",
+      eventId: "evt_1",
+      tag: "event-evt_1",
+    });
+
     mock.statusCode = 410;
     const stale = await sendWebPushNotifications([row], { title: "SHark", body: "Again" });
     expect(stale.accepted).toBe(0);
