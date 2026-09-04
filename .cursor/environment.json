@@ -4,8 +4,8 @@
   "terminals": [
     {
       "name": "website-dev",
-      "command": "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\" && nvm use default >/dev/null 2>&1; exec pnpm dev",
-      "description": "Runs `pnpm dev`: the Hono API on port 8788 and the Vite web dashboard on port 8787 (which proxies /api and /hooks to the API)."
+      "command": "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; exec pnpm dev",
+      "description": "Runs `pnpm dev`: the Hono API on port 8788 and the Vite web dashboard on port 8787 (which proxies /api and /hooks to the API). The install script installs a `node` shim so tools resolve Node >= 22.16."
     }
   ],
   "ports": [
