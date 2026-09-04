@@ -15,20 +15,29 @@ export interface MacosPushResult {
 }
 
 type MacosDeviceRow = typeof macosDevice.$inferSelect;
+type MacosApnsEnvironment = "sandbox" | "production";
+
+function macosApnsEnvironment(environment: string): MacosApnsEnvironment | null {
+  return environment === "sandbox" || environment === "production" ? environment : null;
+}
 
 async function sendToMacosDevices(
   devices: MacosDeviceRow[],
-  send: (device: MacosDeviceRow) => Promise<{ accepted: boolean; reason: string | null }>,
+  send: (
+    device: MacosDeviceRow,
+    environment: MacosApnsEnvironment,
+  ) => Promise<{ accepted: boolean; reason: string | null }>,
 ): Promise<MacosPushResult> {
   const result: MacosPushResult = { accepted: 0, errors: [], staleMacosDeviceIds: [] };
   await Promise.all(
     devices.map(async (device) => {
-      if (device.environment !== "sandbox" && device.environment !== "production") {
+      const environment = macosApnsEnvironment(device.environment);
+      if (!environment) {
         result.errors.push("Invalid macOS APNs environment");
         return;
       }
       try {
-        const response = await send(device);
+        const response = await send(device, environment);
         if (response.accepted) {
           result.accepted += 1;
           return;
@@ -47,7 +56,7 @@ export async function sendMacosPushNotifications(
   devices: MacosDeviceRow[],
   payload: NotificationPayloadInput,
 ): Promise<MacosPushResult> {
-  return sendToMacosDevices(devices, async (device) => {
+  return sendToMacosDevices(devices, async (device, environment) => {
     const devicePayload: NotificationPayloadInput =
       device.privacyMode === "private"
         ? {
@@ -60,7 +69,7 @@ export async function sendMacosPushNotifications(
         : payload;
     return sendNotificationPush(
       decryptMacosApnsToken(device.apnsTokenCiphertext),
-      device.environment,
+      environment,
       devicePayload,
     );
   });
@@ -71,10 +80,10 @@ export async function sendMacosSilentPush(
   devices: MacosDeviceRow[],
   payload: SilentNotificationPayloadInput,
 ): Promise<MacosPushResult> {
-  return sendToMacosDevices(devices, (device) =>
+  return sendToMacosDevices(devices, (device, environment) =>
     sendSilentNotificationPush(
       decryptMacosApnsToken(device.apnsTokenCiphertext),
-      device.environment,
+      environment,
       payload,
     ),
   );
