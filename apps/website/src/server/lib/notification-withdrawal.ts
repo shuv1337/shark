@@ -1,7 +1,4 @@
-import {
-  type NotificationWithdrawalPushData,
-  PUSH_SCHEMA_VERSION,
-} from "@hark/contracts";
+import { type NotificationWithdrawalPushData, PUSH_SCHEMA_VERSION } from "@hark/contracts";
 import type { ExpoPushMessage } from "expo-server-sdk";
 import type { SilentNotificationPayloadInput } from "./apns";
 import type { WebPushPayload } from "./web-push";

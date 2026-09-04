@@ -20,8 +20,8 @@ vi.mock("../env", () => ({ env: transport.env }));
 
 import {
   apnsHost,
-  buildLiveActivityPayload,
   backgroundNotificationHeaders,
+  buildLiveActivityPayload,
   buildNotificationPayload,
   buildSilentNotificationPayload,
   createApnsProviderJwt,
