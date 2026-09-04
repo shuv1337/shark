@@ -7,6 +7,7 @@ import {
   interactionResponseSchema,
   isInboxItemActive,
   isInboxItemDeliveryFailure,
+  isInboxItemWithdrawn,
   LIVE_ACTIVITY_SCHEMA_VERSION,
   liveActivityBackgroundTokenSchema,
   liveActivityEndSchema,
@@ -27,6 +28,15 @@ describe("inbox lifecycle semantics", () => {
     expect(isInboxItemDeliveryFailure({ kind: "live_activity", status: "partial" })).toBe(false);
     expect(isInboxItemActive({ kind: "notification", status: "partial" })).toBe(false);
     expect(isInboxItemDeliveryFailure({ kind: "notification", status: "partial" })).toBe(true);
+    expect(isInboxItemActive({ kind: "notification", status: "withdrawn" })).toBe(false);
+    expect(isInboxItemActive({ kind: "notification", status: "withdraw_partial" })).toBe(false);
+    expect(isInboxItemDeliveryFailure({ kind: "notification", status: "withdrawn" })).toBe(false);
+    expect(isInboxItemDeliveryFailure({ kind: "notification", status: "withdraw_partial" })).toBe(
+      false,
+    );
+    expect(isInboxItemWithdrawn({ status: "withdrawn" })).toBe(true);
+    expect(isInboxItemWithdrawn({ status: "withdraw_partial" })).toBe(true);
+    expect(isInboxItemWithdrawn({ status: "partial" })).toBe(false);
   });
 });
 
@@ -553,5 +563,56 @@ describe("pushDataSchema", () => {
       conversationId: "hark-svc_1",
     });
     expect(result.success).toBe(true);
+  });
+
+  it("round-trips an interaction payload", () => {
+    const result = pushDataSchema.safeParse({
+      v: 1,
+      interactionId: "int_1",
+      eventId: "evt_1",
+      interactionKind: "approval",
+      sourceName: "Acme CRM",
+      conversationId: "hark-svc_1",
+      categoryId: "HARK_APPROVAL_V1",
+      actionDigest: "a".repeat(64),
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts only versioned notification withdrawal commands", () => {
+    expect(
+      pushDataSchema.safeParse({
+        v: 1,
+        command: "notification.withdraw",
+        eventId: "evt_1",
+      }).success,
+    ).toBe(true);
+    expect(
+      pushDataSchema.safeParse({
+        v: 2,
+        command: "notification.withdraw",
+        eventId: "evt_1",
+      }).success,
+    ).toBe(false);
+    expect(
+      pushDataSchema.safeParse({
+        v: 1,
+        command: "notification.withdraw",
+        eventId: "",
+      }).success,
+    ).toBe(false);
+    expect(
+      pushDataSchema.safeParse({
+        v: 1,
+        command: "notification.withdraw",
+      }).success,
+    ).toBe(false);
+    expect(
+      pushDataSchema.safeParse({
+        v: 1,
+        command: "notification.unknown",
+        eventId: "evt_1",
+      }).success,
+    ).toBe(false);
   });
 });

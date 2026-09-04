@@ -170,6 +170,18 @@ export type WebhookResponse =
     }
   | { ok: false; error: string; issues?: unknown; retryAfterSeconds?: number };
 
+export type WithdrawEventStatus = "withdrawn" | "withdraw_partial";
+
+export type WithdrawEventResponse =
+  | {
+      ok: true;
+      eventId: string;
+      status: WithdrawEventStatus;
+      accepted: number;
+      idempotent?: boolean;
+    }
+  | { ok: false; error: string };
+
 export interface EventDto {
   id: string;
   serviceId: string;
@@ -233,6 +245,11 @@ export function isInboxItemDeliveryFailure(item: Pick<InboxItemDto, "kind" | "st
     ["failed", "no_devices"].includes(item.status) ||
     (item.kind === "notification" && item.status === "partial")
   );
+}
+
+/** Withdrawn and partially withdrawn notifications are terminal history, not an active lifecycle. */
+export function isInboxItemWithdrawn(item: Pick<InboxItemDto, "status">): boolean {
+  return item.status === "withdrawn" || item.status === "withdraw_partial";
 }
 
 export interface InboxItemEventDto {
@@ -1036,9 +1053,19 @@ export const interactionPushDataSchema = z.object({
   avatarUrl: z.url().optional(),
   url: z.url().optional(),
 });
-export const pushDataSchema = z.union([webhookPushDataSchema, interactionPushDataSchema]);
+export const notificationWithdrawalPushDataSchema = z.object({
+  v: z.literal(PUSH_SCHEMA_VERSION),
+  command: z.literal("notification.withdraw"),
+  eventId: z.string().min(1),
+});
+export const pushDataSchema = z.union([
+  webhookPushDataSchema,
+  interactionPushDataSchema,
+  notificationWithdrawalPushDataSchema,
+]);
 export type PushData = z.infer<typeof pushDataSchema>;
 export type InteractionPushData = z.infer<typeof interactionPushDataSchema>;
+export type NotificationWithdrawalPushData = z.infer<typeof notificationWithdrawalPushDataSchema>;
 
 // ---------------------------------------------------------------------------
 // Generic API envelope
