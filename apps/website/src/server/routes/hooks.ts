@@ -1,11 +1,16 @@
 import { createHash } from "node:crypto";
-import { type WebhookResponse, webhookRequestSchema } from "@hark/contracts";
-import { and, count, desc, eq, gt, gte, inArray } from "drizzle-orm";
+import {
+  type WebhookResponse,
+  type WithdrawEventResponse,
+  webhookRequestSchema,
+} from "@hark/contracts";
+import { and, count, desc, eq, gt, gte, inArray, isNull, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
 import {
   device,
   event,
+  inboxItem,
   interaction,
   liveActivity,
   liveActivityOperation,
@@ -18,12 +23,14 @@ import { isEmailAllowed } from "../lib/admission";
 import { failureBucket, track } from "../lib/analytics";
 import { checkNotificationAllowance, getBilling, trackNotification } from "../lib/billing";
 import { newId } from "../lib/id";
+import { syncInboxForUser } from "../lib/inbox";
 import { notificationEventTag } from "../lib/notification-withdrawal";
 import {
   buildInteractionPushMessages,
   buildPushMessages,
   resolveNotification,
   sendPushFanout,
+  sendWithdrawalFanout,
 } from "../lib/push";
 import {
   encryptCallbackToken,
@@ -627,7 +634,195 @@ export const hooksRoute = new Hono()
       .returning();
     if (!row) return c.json({ ok: false, error: "Pending event response not found" }, 404);
     return c.json({ ok: true, eventId: c.req.param("eventId"), status: "canceled" });
+  })
+  .post("/:token/events/:eventId/withdraw", async (c) => {
+    const eventId = c.req.param("eventId");
+    const [match] = await db
+      .select({ event, service: serviceTable, owner: userTable })
+      .from(event)
+      .innerJoin(serviceTable, eq(event.serviceId, serviceTable.id))
+      .innerJoin(userTable, eq(serviceTable.userId, userTable.id))
+      .where(
+        and(
+          eq(event.id, eventId),
+          eq(serviceTable.tokenHash, hashWebhookToken(c.req.param("token"))),
+        ),
+      )
+      .limit(1);
+    if (!match || !isEmailAllowed(match.owner.email)) {
+      return c.json<WithdrawEventResponse>({ ok: false, error: "Event not found" }, 404);
+    }
+
+    if (match.event.status === "processing" || match.event.status === "withdraw_processing") {
+      return c.json<WithdrawEventResponse>({ ok: false, error: "Event is still processing" }, 409);
+    }
+    if (match.event.status === "withdrawn" || match.event.status === "withdraw_partial") {
+      return c.json<WithdrawEventResponse>({
+        ok: true,
+        eventId,
+        status: match.event.status,
+        accepted: 0,
+        idempotent: true,
+      });
+    }
+    if (!isWithdrawableEventStatus(match.event.status)) {
+      return c.json<WithdrawEventResponse>({ ok: false, error: "Event is still processing" }, 409);
+    }
+
+    const [claimed] = await db
+      .update(event)
+      .set({ status: "withdraw_processing" })
+      .where(and(eq(event.id, eventId), eq(event.status, match.event.status)))
+      .returning({ id: event.id });
+    if (!claimed) {
+      return c.json<WithdrawEventResponse>(
+        { ok: false, error: "Withdrawal already in progress" },
+        409,
+      );
+    }
+
+    const priorStatus = match.event.status;
+    const userId = match.service.userId;
+    try {
+      const [devices, webSubscriptions, macosDevices] = await Promise.all([
+        db
+          .select()
+          .from(device)
+          .where(
+            and(eq(device.userId, userId), eq(device.active, true), eq(device.platform, "ios")),
+          ),
+        db
+          .select()
+          .from(webPushSubscription)
+          .where(and(eq(webPushSubscription.userId, userId), eq(webPushSubscription.active, true))),
+        db
+          .select()
+          .from(macosDevice)
+          .where(and(eq(macosDevice.userId, userId), eq(macosDevice.active, true))),
+      ]);
+      const targetCount = devices.length + webSubscriptions.length + macosDevices.length;
+      if (targetCount === 0) {
+        await markEventWithdrawn(eventId, userId, "withdrawn");
+        return c.json<WithdrawEventResponse>({
+          ok: true,
+          eventId,
+          status: "withdrawn",
+          accepted: 0,
+        });
+      }
+
+      const result = await sendWithdrawalFanout({
+        expoTokens: devices.map((registeredDevice) => registeredDevice.expoPushToken),
+        webSubscriptions,
+        macosDevices,
+        eventId,
+      });
+      await deactivateStaleWithdrawalTargets(result);
+
+      if (result.accepted === 0) {
+        await restoreEventAfterFailedWithdrawal(eventId, priorStatus);
+        return c.json<WithdrawEventResponse>(
+          { ok: false, error: "Withdrawal delivery failed" },
+          502,
+        );
+      }
+
+      const status = result.accepted === targetCount ? "withdrawn" : "withdraw_partial";
+      await markEventWithdrawn(eventId, userId, status);
+      return c.json<WithdrawEventResponse>({
+        ok: true,
+        eventId,
+        status,
+        accepted: result.accepted,
+      });
+    } catch (error) {
+      await restoreEventAfterFailedWithdrawal(eventId, priorStatus);
+      throw error;
+    }
   });
+
+const WITHDRAWABLE_EVENT_STATUSES = [
+  "accepted",
+  "delivered",
+  "partial",
+  "failed",
+  "no_devices",
+] as const;
+
+function isWithdrawableEventStatus(
+  status: string,
+): status is (typeof WITHDRAWABLE_EVENT_STATUSES)[number] {
+  return (WITHDRAWABLE_EVENT_STATUSES as readonly string[]).includes(status);
+}
+
+async function deactivateStaleWithdrawalTargets(result: {
+  staleTokens: string[];
+  staleSubscriptionIds: string[];
+  staleMacosDeviceIds: string[];
+}): Promise<void> {
+  if (result.staleTokens.length > 0) {
+    await db
+      .update(device)
+      .set({ active: false })
+      .where(inArray(device.expoPushToken, result.staleTokens));
+  }
+  if (result.staleSubscriptionIds.length > 0) {
+    await db
+      .update(webPushSubscription)
+      .set({ active: false })
+      .where(inArray(webPushSubscription.id, result.staleSubscriptionIds));
+  }
+  if (result.staleMacosDeviceIds.length > 0) {
+    await db
+      .update(macosDevice)
+      .set({ active: false })
+      .where(inArray(macosDevice.id, result.staleMacosDeviceIds));
+  }
+}
+
+async function markEventWithdrawn(
+  eventId: string,
+  userId: string,
+  status: "withdrawn" | "withdraw_partial",
+): Promise<void> {
+  await Promise.all([
+    db.update(event).set({ status }).where(eq(event.id, eventId)),
+    db
+      .update(interaction)
+      .set({ status: "canceled", canceledAt: new Date() })
+      .where(and(eq(interaction.eventId, eventId), eq(interaction.status, "pending"))),
+  ]);
+  await syncInboxForUser(userId);
+  await db
+    .update(inboxItem)
+    .set({ readAt: new Date() })
+    .where(
+      and(
+        eq(inboxItem.userId, userId),
+        isNull(inboxItem.readAt),
+        or(
+          and(eq(inboxItem.entityType, "event"), eq(inboxItem.entityId, eventId)),
+          and(
+            eq(inboxItem.entityType, "interaction"),
+            inArray(
+              inboxItem.entityId,
+              db
+                .select({ id: interaction.id })
+                .from(interaction)
+                .where(eq(interaction.eventId, eventId)),
+            ),
+          ),
+        ),
+      ),
+    );
+}
+
+async function restoreEventAfterFailedWithdrawal(eventId: string, status: string): Promise<void> {
+  await db
+    .update(event)
+    .set({ status })
+    .where(and(eq(event.id, eventId), eq(event.status, "withdraw_processing")));
+}
 
 async function expireIfNeededForWebhook(row: typeof interaction.$inferSelect) {
   if (row.status !== "pending" || row.expiresAt > new Date()) return row;

@@ -5,6 +5,7 @@ process.env.DATABASE_URL = ":memory:";
 
 const sent: Array<Record<string, unknown>> = [];
 const webSent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+const macosSent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 const billingTestState = vi.hoisted(() => ({
   pro: false,
   accountPerMinute: null as number | null,
@@ -40,9 +41,16 @@ vi.mock("expo-server-sdk", () => {
       return [messages];
     }
     async sendPushNotificationsAsync(chunk: Array<Record<string, unknown>>) {
+      if (
+        chunk.some(
+          (message) => typeof message.to === "string" && message.to.includes("withdraw-throw"),
+        )
+      ) {
+        throw new Error("synthetic withdrawal failure");
+      }
       sent.push(...chunk);
       return chunk.map((message) =>
-        message.to === "ExponentPushToken[stale]"
+        typeof message.to === "string" && message.to.includes("stale")
           ? {
               status: "error",
               message: "device gone",
@@ -60,8 +68,25 @@ vi.mock("../lib/web-push", () => ({
     rows: Array<{ id: string }>,
     payload: Record<string, unknown>,
   ) => {
+    if (typeof payload.eventId === "string" && payload.eventId.includes("withdraw_throw")) {
+      throw new Error("synthetic withdrawal failure");
+    }
     webSent.push(...rows.map((row) => ({ id: row.id, payload })));
     return { accepted: rows.length, errors: [], staleSubscriptionIds: [] };
+  },
+}));
+
+vi.mock("../lib/macos-push", () => ({
+  sendMacosPushNotifications: async (
+    rows: Array<{ id: string }>,
+    payload: Record<string, unknown>,
+  ) => {
+    macosSent.push(...rows.map((row) => ({ id: row.id, payload, kind: "alert" })));
+    return { accepted: rows.length, errors: [], staleMacosDeviceIds: [] };
+  },
+  sendMacosSilentPush: async (rows: Array<{ id: string }>, payload: Record<string, unknown>) => {
+    macosSent.push(...rows.map((row) => ({ id: row.id, payload, kind: "silent" })));
+    return { accepted: rows.length, errors: [], staleMacosDeviceIds: [] };
   },
 }));
 
@@ -598,5 +623,326 @@ describe("POST /hooks/:token", () => {
         },
       },
     ]);
+  });
+});
+
+async function seedWithdrawFixture(input: {
+  suffix: string;
+  status?: string;
+  expoToken?: string | null;
+  extraExpoToken?: string;
+  includeWeb?: boolean;
+  includeMacos?: boolean;
+  includeInteraction?: boolean;
+}) {
+  const now = new Date();
+  const token = `whk_withdraw-${input.suffix}`.padEnd(36, "x");
+  const userId = `user_withdraw_${input.suffix}`;
+  const serviceId = `svc_withdraw_${input.suffix}`;
+  const eventId = `evt_withdraw_${input.suffix}`;
+  await db.insert(schema.user).values({
+    id: userId,
+    name: `Withdraw ${input.suffix}`,
+    email: `withdraw-${input.suffix}@example.com`,
+    emailVerified: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.insert(schema.service).values({
+    id: serviceId,
+    userId,
+    title: "Withdraw Test",
+    tokenHash: hashWebhookToken(token),
+    createdAt: now,
+    updatedAt: now,
+  });
+  if (input.expoToken !== null) {
+    await db.insert(schema.device).values({
+      id: `dev_withdraw_${input.suffix}`,
+      userId,
+      expoPushToken: input.expoToken ?? `ExponentPushToken[withdraw-${input.suffix}]`,
+      platform: "ios",
+      active: true,
+      createdAt: now,
+      lastSeenAt: now,
+    });
+  }
+  if (input.extraExpoToken) {
+    await db.insert(schema.device).values({
+      id: `dev_withdraw_${input.suffix}_extra`,
+      userId,
+      expoPushToken: input.extraExpoToken,
+      platform: "ios",
+      active: true,
+      createdAt: now,
+      lastSeenAt: now,
+    });
+  }
+  if (input.includeWeb) {
+    await db.insert(schema.webPushSubscription).values({
+      id: `web_withdraw_${input.suffix}`,
+      userId,
+      endpointHash: `web-withdraw-${input.suffix}`,
+      subscriptionCiphertext: "encrypted-by-test-boundary",
+      deviceName: "Linux",
+      active: true,
+      createdAt: now,
+      lastSeenAt: now,
+    });
+  }
+  if (input.includeMacos) {
+    await db.insert(schema.macosDevice).values({
+      id: `mac_withdraw_${input.suffix}`,
+      userId,
+      apnsTokenHash: input.suffix.padEnd(64, "c"),
+      apnsTokenCiphertext: "ciphertext",
+      environment: "sandbox",
+      deviceName: "Mac",
+      active: true,
+      createdAt: now,
+      lastSeenAt: now,
+    });
+  }
+  await db.insert(schema.event).values({
+    id: eventId,
+    serviceId,
+    title: "CI",
+    body: "Old result",
+    status: input.status ?? "accepted",
+    deliveredCount: 1,
+    createdAt: now,
+  });
+  if (input.includeInteraction) {
+    await db.insert(schema.interaction).values({
+      id: `int_withdraw_${input.suffix}`,
+      userId,
+      requesterServiceId: serviceId,
+      eventId,
+      title: "CI",
+      prompt: "Continue?",
+      kind: "approval",
+      status: "pending",
+      choices: ["approve", "deny"],
+      actionDigest: `withdraw-${input.suffix}`,
+      expiresAt: new Date(now.getTime() + 60_000),
+      createdAt: now,
+    });
+  }
+  return { token, eventId, userId };
+}
+
+describe("POST /hooks/:token/events/:eventId/withdraw", () => {
+  it("authenticates ownership, fans out silently, and cancels a pending response", async () => {
+    const { token, eventId } = await seedWithdrawFixture({
+      suffix: "ok",
+      includeWeb: true,
+      includeMacos: true,
+      includeInteraction: true,
+    });
+
+    const denied = await app.request(`/hooks/whk_wrong/events/${eventId}/withdraw`, {
+      method: "POST",
+    });
+    expect(denied.status).toBe(404);
+    expect(await denied.json()).toEqual({ ok: false, error: "Event not found" });
+
+    sent.length = 0;
+    webSent.length = 0;
+    macosSent.length = 0;
+    const response = await app.request(`/hooks/${token}/events/${eventId}/withdraw`, {
+      method: "POST",
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ok: true,
+      eventId,
+      status: "withdrawn",
+      accepted: 3,
+    });
+    expect(sent).toEqual([
+      {
+        to: "ExponentPushToken[withdraw-ok]",
+        data: { v: 1, command: "notification.withdraw", eventId },
+        _contentAvailable: true,
+      },
+    ]);
+    expect(webSent).toEqual([
+      {
+        id: "web_withdraw_ok",
+        payload: {
+          v: 1,
+          command: "notification.withdraw",
+          eventId,
+          tag: `event-${eventId}`,
+        },
+      },
+    ]);
+    expect(macosSent).toEqual([
+      {
+        id: "mac_withdraw_ok",
+        kind: "silent",
+        payload: { data: { v: 1, command: "notification.withdraw", eventId } },
+      },
+    ]);
+
+    const { eq } = await import("drizzle-orm");
+    const [savedEvent] = await db.select().from(schema.event).where(eq(schema.event.id, eventId));
+    const [savedInteraction] = await db
+      .select()
+      .from(schema.interaction)
+      .where(eq(schema.interaction.id, "int_withdraw_ok"));
+    const [inbox] = await db
+      .select()
+      .from(schema.inboxItem)
+      .where(eq(schema.inboxItem.entityId, "int_withdraw_ok"));
+    const timeline = await db
+      .select()
+      .from(schema.inboxItemEvent)
+      .where(eq(schema.inboxItemEvent.inboxItemId, "ibox:interaction:int_withdraw_ok"));
+    expect(savedEvent?.status).toBe("withdrawn");
+    expect(savedInteraction).toMatchObject({ status: "canceled" });
+    expect(savedInteraction?.canceledAt).toBeInstanceOf(Date);
+    expect(inbox).toMatchObject({ status: "canceled", result: "Canceled" });
+    expect(inbox?.readAt).toBeInstanceOf(Date);
+    expect(timeline).toContainEqual(
+      expect.objectContaining({ kind: "withdrawal", dedupeKey: "withdrawal", result: "Withdrawn" }),
+    );
+
+    const repeated = await app.request(`/hooks/${token}/events/${eventId}/withdraw`, {
+      method: "POST",
+    });
+    expect(repeated.status).toBe(200);
+    expect(await repeated.json()).toEqual({
+      ok: true,
+      eventId,
+      status: "withdrawn",
+      accepted: 0,
+      idempotent: true,
+    });
+    expect(sent).toHaveLength(1);
+    expect(webSent).toHaveLength(1);
+    expect(macosSent).toHaveLength(1);
+  });
+
+  it("does not treat a missing event as withdrawable", async () => {
+    const { token } = await seedWithdrawFixture({ suffix: "missing" });
+    const response = await app.request(`/hooks/${token}/events/evt_does_not_exist/withdraw`, {
+      method: "POST",
+    });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ ok: false, error: "Event not found" });
+    expect(sent.filter((message) => message.to === "ExponentPushToken[withdraw-missing]")).toEqual(
+      [],
+    );
+  });
+
+  it("rejects an in-flight event without sending", async () => {
+    const { token, eventId } = await seedWithdrawFixture({
+      suffix: "inflight",
+      status: "withdraw_processing",
+    });
+    sent.length = 0;
+    const response = await app.request(`/hooks/${token}/events/${eventId}/withdraw`, {
+      method: "POST",
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ ok: false, error: "Event is still processing" });
+    expect(sent).toEqual([]);
+  });
+
+  it("marks withdrawn when no targets remain", async () => {
+    const { token, eventId } = await seedWithdrawFixture({
+      suffix: "none",
+      expoToken: null,
+    });
+    sent.length = 0;
+    const response = await app.request(`/hooks/${token}/events/${eventId}/withdraw`, {
+      method: "POST",
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ok: true,
+      eventId,
+      status: "withdrawn",
+      accepted: 0,
+    });
+    expect(sent).toEqual([]);
+    const { eq } = await import("drizzle-orm");
+    const [savedEvent] = await db.select().from(schema.event).where(eq(schema.event.id, eventId));
+    const [inbox] = await db
+      .select()
+      .from(schema.inboxItem)
+      .where(eq(schema.inboxItem.entityId, eventId));
+    expect(savedEvent?.status).toBe("withdrawn");
+    expect(inbox).toMatchObject({ status: "withdrawn", result: "Withdrawn" });
+    expect(inbox?.readAt).toBeInstanceOf(Date);
+  });
+
+  it("records withdraw_partial when some targets accept", async () => {
+    const { token, eventId } = await seedWithdrawFixture({
+      suffix: "partial",
+      extraExpoToken: "ExponentPushToken[withdraw-partial-stale]",
+    });
+    sent.length = 0;
+    const response = await app.request(`/hooks/${token}/events/${eventId}/withdraw`, {
+      method: "POST",
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ok: true,
+      eventId,
+      status: "withdraw_partial",
+      accepted: 1,
+    });
+    const { eq } = await import("drizzle-orm");
+    const [savedEvent] = await db.select().from(schema.event).where(eq(schema.event.id, eventId));
+    const [stale] = await db
+      .select()
+      .from(schema.device)
+      .where(eq(schema.device.id, "dev_withdraw_partial_extra"));
+    const [inbox] = await db
+      .select()
+      .from(schema.inboxItem)
+      .where(eq(schema.inboxItem.entityId, eventId));
+    expect(savedEvent?.status).toBe("withdraw_partial");
+    expect(stale?.active).toBe(false);
+    expect(inbox).toMatchObject({ status: "withdraw_partial", result: "Partially withdrawn" });
+  });
+
+  it("restores the prior status when every command is rejected", async () => {
+    const { token, eventId } = await seedWithdrawFixture({
+      suffix: "fail",
+      expoToken: "ExponentPushToken[withdraw-fail-stale]",
+    });
+    const response = await app.request(`/hooks/${token}/events/${eventId}/withdraw`, {
+      method: "POST",
+    });
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: "Withdrawal delivery failed",
+    });
+    const { eq } = await import("drizzle-orm");
+    const [savedEvent] = await db.select().from(schema.event).where(eq(schema.event.id, eventId));
+    const [savedDevice] = await db
+      .select()
+      .from(schema.device)
+      .where(eq(schema.device.id, "dev_withdraw_fail"));
+    expect(savedEvent?.status).toBe("accepted");
+    expect(savedDevice?.active).toBe(false);
+  });
+
+  it("restores the prior status when fanout throws", async () => {
+    const { token, eventId } = await seedWithdrawFixture({
+      suffix: "throw",
+      includeWeb: true,
+    });
+    const response = await app.request(`/hooks/${token}/events/${eventId}/withdraw`, {
+      method: "POST",
+    });
+    expect(response.status).toBe(500);
+    const { eq } = await import("drizzle-orm");
+    const [savedEvent] = await db.select().from(schema.event).where(eq(schema.event.id, eventId));
+    expect(savedEvent?.status).toBe("accepted");
   });
 });

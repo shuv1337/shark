@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 process.env.NODE_ENV = "test";
@@ -323,5 +324,58 @@ describe("durable inbox", () => {
     expect(detail.events).toContainEqual(
       expect.objectContaining({ kind: "expired", result: "Expired" }),
     );
+  });
+
+  it("keeps withdrawn notifications in history instead of active or failed", async () => {
+    await db
+      .update(schema.event)
+      .set({ status: "withdrawn" })
+      .where(eq(schema.event.id, "evt_inbox"));
+    await db.insert(schema.event).values({
+      id: "evt_withdraw_partial",
+      serviceId: "svc_inbox",
+      title: "Partial withdraw",
+      body: "Some devices missed the silent command.",
+      status: "withdraw_partial",
+      deliveredCount: 1,
+      createdAt: new Date("2026-07-30T12:00:06.000Z"),
+    });
+
+    const all = (await (await app.request("/api/inbox")).json()) as {
+      items: Array<{ id: string; status: string; result: string | null }>;
+    };
+    expect(all.items).toContainEqual(
+      expect.objectContaining({
+        id: "ibox:event:evt_inbox",
+        status: "withdrawn",
+        result: "Withdrawn",
+      }),
+    );
+    expect(all.items).toContainEqual(
+      expect.objectContaining({
+        id: "ibox:event:evt_withdraw_partial",
+        status: "withdraw_partial",
+        result: "Partially withdrawn",
+      }),
+    );
+
+    const active = (await (await app.request("/api/inbox?filter=active")).json()) as {
+      items: Array<{ id: string }>;
+    };
+    expect(active.items.map((item) => item.id)).not.toContain("ibox:event:evt_inbox");
+    expect(active.items.map((item) => item.id)).not.toContain("ibox:event:evt_withdraw_partial");
+
+    const failed = (await (await app.request("/api/inbox?filter=failed")).json()) as {
+      items: Array<{ id: string }>;
+    };
+    expect(failed.items.map((item) => item.id)).not.toContain("ibox:event:evt_inbox");
+    expect(failed.items.map((item) => item.id)).not.toContain("ibox:event:evt_withdraw_partial");
+
+    const detail = (await (await app.request("/api/inbox/ibox%3Aevent%3Aevt_inbox")).json()) as {
+      events: Array<{ kind: string; result: string | null }>;
+    };
+    expect(detail.events.filter((entry) => entry.kind === "withdrawal")).toEqual([
+      expect.objectContaining({ kind: "withdrawal", result: "Withdrawn" }),
+    ]);
   });
 });

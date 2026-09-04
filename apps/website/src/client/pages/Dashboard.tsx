@@ -928,7 +928,7 @@ function StatusDot({ status }: { status: string }) {
         ? "bg-danger-strong"
         : status === "partial"
           ? "bg-warn"
-          : status === "processing"
+          : status === "processing" || status === "withdraw_processing"
             ? "bg-info"
             : "bg-idle";
   return <span className={`${color} size-2 rounded-full`} aria-hidden="true" />;
@@ -963,7 +963,11 @@ function activityLabel(activityEvent: EventDto): string {
     return `Partially accepted for ${activityEvent.deliveredCount} devices`;
   }
   if (activityEvent.status === "no_devices") return "No active devices";
-  if (activityEvent.status === "processing") return "Processing";
+  if (activityEvent.status === "processing" || activityEvent.status === "withdraw_processing") {
+    return "Processing";
+  }
+  if (activityEvent.status === "withdrawn") return "Withdrawn";
+  if (activityEvent.status === "withdraw_partial") return "Partially withdrawn";
   return "Failed";
 }
 

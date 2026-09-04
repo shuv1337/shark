@@ -12,8 +12,12 @@ import { Expo, type ExpoPushMessage, type ExpoPushTicket } from "expo-server-sdk
 import type { macosDevice, webPushSubscription } from "../db/schema";
 import { env } from "../env";
 import type { NotificationPayloadInput } from "./apns";
-import { sendMacosPushNotifications } from "./macos-push";
-import { buildNotificationWithdrawalPushMessages } from "./notification-withdrawal";
+import { sendMacosPushNotifications, sendMacosSilentPush } from "./macos-push";
+import {
+  buildMacosWithdrawalPayload,
+  buildNotificationWithdrawalPushMessages,
+  buildWebWithdrawalPayload,
+} from "./notification-withdrawal";
 import { sendWebPushNotifications, type WebPushPayload } from "./web-push";
 
 export { buildNotificationWithdrawalPushMessages };
@@ -221,6 +225,26 @@ export async function sendPushFanout(input: {
     input.macosPayload
       ? sendMacosPushNotifications(input.macosDevices ?? [], input.macosPayload)
       : Promise.resolve({ accepted: 0, errors: [], staleMacosDeviceIds: [] }),
+  ]);
+  return {
+    accepted: expoResult.accepted + webResult.accepted + macosResult.accepted,
+    errors: [...expoResult.errors, ...webResult.errors, ...macosResult.errors],
+    staleTokens: expoResult.staleTokens,
+    staleSubscriptionIds: webResult.staleSubscriptionIds,
+    staleMacosDeviceIds: macosResult.staleMacosDeviceIds,
+  };
+}
+
+export async function sendWithdrawalFanout(input: {
+  expoTokens: string[];
+  webSubscriptions: Array<typeof webPushSubscription.$inferSelect>;
+  macosDevices: Array<typeof macosDevice.$inferSelect>;
+  eventId: string;
+}): Promise<SendResult> {
+  const [expoResult, webResult, macosResult] = await Promise.all([
+    sendPushMessages(buildNotificationWithdrawalPushMessages(input.expoTokens, input.eventId)),
+    sendWebPushNotifications(input.webSubscriptions, buildWebWithdrawalPayload(input.eventId)),
+    sendMacosSilentPush(input.macosDevices, buildMacosWithdrawalPayload(input.eventId)),
   ]);
   return {
     accepted: expoResult.accepted + webResult.accepted + macosResult.accepted,
