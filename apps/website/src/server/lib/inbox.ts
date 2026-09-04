@@ -12,6 +12,29 @@ import { db } from "../db";
 export async function syncInboxForUser(userId: string): Promise<void> {
   const now = Date.now();
 
+  // Expiry is a lifecycle transition, not just a presentation concern. Persist it
+  // before materializing the inbox so API reads, reusable keys, and delivery slots
+  // all agree that an expired activity is terminal.
+  db.run(sql`
+    update live_activity_delivery
+    set status = 'ended', update_token_ciphertext = null, update_token_updated_at = null,
+        ended_at = coalesce(ended_at, ${now}), updated_at = ${now}
+    where status in ('pending', 'accepted', 'active')
+      and activity_id in (
+        select id from live_activity
+        where user_id = ${userId}
+          and status in ('starting', 'active', 'partial')
+          and expires_at <= ${now}
+      )
+  `);
+  db.run(sql`
+    update live_activity
+    set status = 'expired', ended_at = coalesce(ended_at, ${now}), updated_at = ${now}
+    where user_id = ${userId}
+      and status in ('starting', 'active', 'partial')
+      and expires_at <= ${now}
+  `);
+
   // Webhook pushes that created an interaction are represented by the
   // interaction item, avoiding duplicate cards for one user-visible request.
   db.run(sql`
@@ -262,7 +285,7 @@ export async function syncInboxForUser(userId: string): Promise<void> {
     from live_activity a
     where a.user_id = ${userId}
       and a.interaction_id is null
-      and a.status in ('starting', 'active', 'partial')
+      and a.status = 'expired'
       and a.expires_at <= ${now}
   `);
 

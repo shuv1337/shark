@@ -149,10 +149,13 @@ export const inboxRoute = new Hono<AuthedEnv>()
       filter === "needs_action"
         ? eq(inboxItem.needsAction, true)
         : filter === "active"
-          ? or(
-              eq(inboxItem.status, "starting"),
-              eq(inboxItem.status, "active"),
-              eq(inboxItem.status, "partial"),
+          ? and(
+              eq(inboxItem.kind, "live_activity"),
+              or(
+                eq(inboxItem.status, "starting"),
+                eq(inboxItem.status, "active"),
+                eq(inboxItem.status, "partial"),
+              ),
             )
           : filter === "failed"
             ? or(

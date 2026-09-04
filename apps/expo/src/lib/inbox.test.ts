@@ -1,3 +1,4 @@
+import { isInboxItemActive, isInboxItemDeliveryFailure } from "@hark/contracts";
 import { describe, expect, it } from "vitest";
 import { inboxIdFromNotificationData } from "./inbox";
 
@@ -16,5 +17,13 @@ describe("inbox notification routing", () => {
     expect(inboxIdFromNotificationData(null)).toBeNull();
     expect(inboxIdFromNotificationData({ eventId: 1 })).toBeNull();
     expect(inboxIdFromNotificationData({})).toBeNull();
+  });
+});
+
+describe("inbox state presentation", () => {
+  it("does not present a partial notification as active", () => {
+    expect(isInboxItemActive({ kind: "notification", status: "partial" })).toBe(false);
+    expect(isInboxItemDeliveryFailure({ kind: "notification", status: "partial" })).toBe(true);
+    expect(isInboxItemActive({ kind: "live_activity", status: "partial" })).toBe(true);
   });
 });

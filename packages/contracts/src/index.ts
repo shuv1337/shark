@@ -223,6 +223,18 @@ export interface InboxItemDto {
   action: InboxActionDto | null;
 }
 
+/** A partial notification is terminal fanout; only Live Activities can remain active when partial. */
+export function isInboxItemActive(item: Pick<InboxItemDto, "kind" | "status">): boolean {
+  return item.kind === "live_activity" && ["starting", "active", "partial"].includes(item.status);
+}
+
+export function isInboxItemDeliveryFailure(item: Pick<InboxItemDto, "kind" | "status">): boolean {
+  return (
+    ["failed", "no_devices"].includes(item.status) ||
+    (item.kind === "notification" && item.status === "partial")
+  );
+}
+
 export interface InboxItemEventDto {
   id: string;
   kind: string;
