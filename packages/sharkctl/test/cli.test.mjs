@@ -1139,6 +1139,52 @@ test("activity CLI rejects invalid progress and preserves no-delivery exit behav
   }
 });
 
+test("help lists permission bridge commands", async () => {
+  const result = await execute(["--help"]);
+  assert.match(result.body.help, /permissions setup/);
+  assert.match(result.body.help, /permissions uninstall/);
+  assert.match(result.body.help, /permissions doctor/);
+});
+
+test("permissions doctor reads scopes in process without printing token metadata", async () => {
+  const home = await mkdtemp(join(tmpdir(), "sharkctl-permissions-"));
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const stdout = [];
+  const sensitivePrefix = "synthetic_prefix_must_not_escape";
+  globalThis.fetch = async (url) => {
+    assert.match(String(url), /\/api\/agent\/auth\/status$/);
+    return Response.json({
+      authenticated: true,
+      token: {
+        id: "synthetic_token_id",
+        name: "Synthetic connection",
+        prefix: sensitivePrefix,
+        scopes: ["notifications:send", "interactions:create"],
+      },
+    });
+  };
+  console.log = (value) => stdout.push(value);
+  try {
+    assert.equal(await run(["permissions", "doctor"], { HARK_TOKEN: "hark_test", HOME: home }), 0);
+    const body = JSON.parse(stdout[0]);
+    assert.equal(body.authenticated, true);
+    assert.deepEqual(body.missingScopes, ["interactions:read"]);
+    assert.equal(body.token, undefined);
+    assert.equal(body.scopes, undefined);
+    assert.equal(stdout[0].includes(sensitivePrefix), false);
+    assert.deepEqual(body.installed, {
+      claude: false,
+      codex: false,
+      opencode: { v1: false, v2: false },
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("rejects group-readable config files", async () => {
   const directory = await mkdtemp(join(tmpdir(), "sharkctl-"));
   const path = join(directory, "config.json");

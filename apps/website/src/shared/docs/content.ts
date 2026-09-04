@@ -995,6 +995,37 @@ sharkctl activity end deploy --status "Shipped" --progress 1 --dismiss-after 45s
         ],
       },
       {
+        id: "cli-permissions",
+        blocks: [
+          {
+            kind: "p",
+            text: "Route permission requests from Claude Code, Codex, OpenCode V1, and OpenCode V2 to SHark with one setup command. Only an explicit phone approval grants a request, and it grants it once. Denial, timeout, malformed input, authentication failure, network failure, and no-device delivery deny.",
+          },
+          {
+            kind: "code",
+            language: "bash",
+            code: `sharkctl permissions setup all
+sharkctl permissions doctor`,
+          },
+          {
+            kind: "p",
+            text: "The default sharkctl login includes the required `notifications:send`, `interactions:create`, and `interactions:read` scopes. A narrowed login must retain all three; setup and `doctor` report missing scopes before hooks are installed. Public `auth status` still prints only whether credentials authenticate.",
+          },
+          {
+            kind: "p",
+            text: "Use `permissions setup claude`, `permissions setup codex`, or `permissions setup opencode` for one integration. After Codex setup, review and trust the hook through `/hooks`. OpenCode setup installs both a V1 plugin connector and the V2 background connector on macOS. `sharkctl permissions uninstall all` removes only SHark-owned hooks and services.",
+          },
+          {
+            kind: "p",
+            text: "Phone prompts contain only the agent name, permission or tool name, project directory basename, and resource count. Raw commands, patches, prompts, file contents, URLs, environment variables, transcript paths, and absolute paths are not sent to SHark.",
+          },
+          {
+            kind: "note",
+            text: "Linux setup installs Claude and Codex hooks and skips OpenCode. Permission hooks use the user-owned `hark` credential file and do not inherit `HARK_TOKEN` or `HARK_API_URL` from the coding agent.",
+          },
+        ],
+      },
+      {
         id: "cli-scripting",
         blocks: [
           {

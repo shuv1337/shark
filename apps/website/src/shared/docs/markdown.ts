@@ -118,7 +118,7 @@ export function llmsTxt(): string {
 ## Agent tools
 
 - SHark agent skill: install directly from the reviewed operator checkout.
-- \`sharkctl\`: CLI for notifications, approvals, replies, Live Activities, and webhook services.
+- \`sharkctl\`: CLI for notifications, approvals, replies, Live Activities, permission bridges, and webhook services.
 
 ## Notes
 

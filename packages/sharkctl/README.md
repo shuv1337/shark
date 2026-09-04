@@ -10,6 +10,7 @@ sharkctl
 │  └─ ask       <prompt> (--approval | --yes-no | --text)  push that elicits an answer
 ├─ interaction  get <id> · wait <id>
 ├─ activity     start · update · end · get · list
+├─ permissions  setup · doctor · uninstall
 ├─ devices      list
 └─ services     create · list
 ```
@@ -113,6 +114,44 @@ available in self-hosted mode, and SHark permits one active activity per device;
 silently end whatever occupies the device and take the slot (the response reports the count as
 `replaced`). A `--key` becomes reusable once its activity ends, so `activity start --key deploy
 --replace` works as a fixed-key restart.
+
+## permissions
+
+Route permission requests from Claude Code, Codex, OpenCode V1, and OpenCode V2 to SHark:
+
+```sh
+sharkctl permissions setup all
+```
+
+Install or remove one integration at a time:
+
+```sh
+sharkctl permissions setup claude
+sharkctl permissions setup codex
+sharkctl permissions setup opencode
+sharkctl permissions doctor
+sharkctl permissions uninstall all
+```
+
+The default login includes the required `notifications:send`, `interactions:create`, and
+`interactions:read` scopes. A narrowed login must retain all three; setup and `doctor` identify any
+missing scopes. `sharkctl auth status` still reports only `{ authenticated }` so captured output stays
+safe; setup and doctor resolve scopes in-process and never print token identifiers or prefixes.
+
+Claude Code and Codex use synchronous `PermissionRequest` hooks. After Codex setup, open `/hooks`
+and trust the SHark hook. OpenCode setup installs both connectors: a V1 plugin shim for current V1
+servers and a per-user macOS LaunchAgent for the shared V2 service.
+
+Only an explicit SHark approval grants a request, and it grants it once. Denial, timeout,
+authentication failure, network failure, malformed input, and no-device delivery all deny. Phone
+prompts contain only the agent name, permission/tool name, project directory basename, and resource
+count. Raw commands, patches, prompts, file contents, URLs, environment variables, transcript paths,
+and absolute paths are not sent to SHark.
+
+Setup merges existing Claude and Codex JSON atomically. Uninstall removes only SHark-owned hooks,
+the V1 shim, and the V2 LaunchAgent; it never removes shared SHark credentials or unrelated agent
+configuration. The OpenCode background connector currently requires macOS. Permission hooks use the
+user-owned `hark` credential file and intentionally do not inherit `HARK_TOKEN` or `HARK_API_URL`.
 
 ## Configuration
 

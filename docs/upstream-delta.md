@@ -26,6 +26,11 @@ changes.
   Upstream Hark is iOS-only. SHark also cancels a still-pending interaction, projects
   `withdrawn` / `withdraw_partial` through the durable inbox, and marks `inbox_item.readAt`
   instead of an `event.readAt` column. Notification Center removal remains best effort.
+- Coding-agent permission bridges (`sharkctl permissions`) are ported from Hark with SHark names
+  and paths: LaunchAgent `dev.shuv.shark-permission-bridge`, state under
+  `~/Library/Application Support/SHark/permission-bridge`, and no Hark artwork URLs. Setup and
+  doctor resolve required scopes in-process because public `auth status` stays metadata-stripped.
+  OpenCode V2 discovery is a local helper rather than `@opencode-ai/client`.
 - Accepted CLI behavior delta: with `sharkctl notify ask --wait --timeout X` and no explicit expiry
   (`--expires-in` flag or `stdin.expiresIn`), sharkctl derives the interaction expiry from the wait
   timeout, clamped to the server range of 30 seconds through 24 hours (8 hours for an effective

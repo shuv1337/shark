@@ -3,6 +3,8 @@ import { randomBytes } from "node:crypto";
 import { chmod, mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
+import { REQUIRED_PERMISSION_SCOPES } from "./permissions/ask.mjs";
+import { main as permissionsMain } from "./permissions/cli.mjs";
 
 const DEFAULT_API_URL = "https://shark.shuv.dev";
 const DEFAULT_SCOPES = [
@@ -378,6 +380,24 @@ async function waitForInteraction(config, id, timeoutSeconds, runtime) {
   }
 }
 
+async function permissionAuthenticationStatus(env) {
+  try {
+    const status = await request(await loadConfig(env), "/api/agent/auth/status");
+    const scopes = Array.isArray(status?.token?.scopes) ? status.token.scopes : [];
+    return {
+      authenticated: status?.authenticated === true,
+      scopes,
+      missingScopes: REQUIRED_PERMISSION_SCOPES.filter((scope) => !scopes.includes(scope)),
+    };
+  } catch {
+    return {
+      authenticated: false,
+      scopes: [],
+      missingScopes: [...REQUIRED_PERMISSION_SCOPES],
+    };
+  }
+}
+
 function help() {
   return `Usage:
   sharkctl auth login [--client-name <name>] [--scope <scope>] [--expires-in <duration>]
@@ -402,6 +422,9 @@ function help() {
                          [--if-sequence <n>] [--idempotency-key <key>]
   sharkctl activity get <id|key>
   sharkctl activity list [--limit <n>]
+  sharkctl permissions setup [claude|codex|opencode|all]
+  sharkctl permissions uninstall [claude|codex|opencode|all]
+  sharkctl permissions doctor
   sharkctl devices list
   sharkctl services list
   sharkctl services create --title <title> [--image <url>] [--url <url>] [--stdin]
@@ -437,6 +460,14 @@ export async function execute(argv, env = process.env, overrides = {}) {
 
   if (group === "auth" && action === "login") {
     return { body: await login(options, env, runtime), exitCode: 0 };
+  }
+
+  if (group === "permissions") {
+    const body = await permissionsMain(positionals.slice(1), {
+      authenticationStatus: () => permissionAuthenticationStatus(env),
+    });
+    if (body?.help) return { body, exitCode: 0, text: true };
+    return { body: body ?? { ok: true }, exitCode: 0 };
   }
 
   const config = await loadConfig(env);
