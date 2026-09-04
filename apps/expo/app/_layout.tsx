@@ -18,6 +18,10 @@ import {
 } from "../src/lib/interactions";
 import { startLiveActivityTokenSync } from "../src/lib/live-activities";
 import { setNotificationDetail } from "../src/lib/notification-detail";
+import {
+  dismissNotificationsForEvent,
+  withdrawalEventId,
+} from "../src/lib/notification-withdrawals";
 import { colors } from "../src/lib/theme";
 
 void SplashScreen.preventAutoHideAsync();
@@ -26,12 +30,24 @@ void registerInteractionCategories().catch((error) => {
 });
 
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
+  handleNotification: async (notification) => {
+    const eventId = withdrawalEventId(notification.request.content.data);
+    if (eventId) {
+      await dismissNotificationsForEvent(eventId);
+      return {
+        shouldShowBanner: false,
+        shouldShowList: false,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+      };
+    }
+    return {
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    };
+  },
 });
 
 export default function RootLayout() {

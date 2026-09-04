@@ -12,6 +12,8 @@
 		24566CA69C14284A0B39DD03 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BC99CC3BCC358A9364276B38 /* Assets.xcassets */; };
 		6DE03BDE778D651F00341D2B /* SHarkMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E892DDBE25459501563763FD /* SHarkMacApp.swift */; };
 		7557D0D573251839FD449455 /* CompanionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD7EFEE73027DDA8DE0F4CF3 /* CompanionStore.swift */; };
+		A11F01E1C010000000000002 /* NotificationWithdrawal.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11F01E1C010000000000001 /* NotificationWithdrawal.swift */; };
+		A11F01E1C010000000000004 /* NotificationWithdrawalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11F01E1C010000000000003 /* NotificationWithdrawalTests.swift */; };
 		C07AB8E1BA22EFE71BEDB9B7 /* CompanionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376A2E2C4E7F7BD4F22CB929 /* CompanionStoreTests.swift */; };
 		E19647ED82AA71888F019CC8 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 607D2CF50A2B7719A7488860 /* APIClient.swift */; };
 		E4804756A03360FE46E91A2B /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = E05744EBA8D75A58B9A0122F /* AppDelegate.swift */; };
@@ -34,6 +36,8 @@
 		6055A8D96CCDF0DC89E3DE93 /* SHarkMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SHarkMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		607D2CF50A2B7719A7488860 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		79B177BE9293B8F68B019C9E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		A11F01E1C010000000000001 /* NotificationWithdrawal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationWithdrawal.swift; sourceTree = "<group>"; };
+		A11F01E1C010000000000003 /* NotificationWithdrawalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationWithdrawalTests.swift; sourceTree = "<group>"; };
 		AD7EFEE73027DDA8DE0F4CF3 /* CompanionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionStore.swift; sourceTree = "<group>"; };
 		B8ACAE9FBCC5C233286461B8 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		BC99CC3BCC358A9364276B38 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -76,6 +80,7 @@
 			isa = PBXGroup;
 			children = (
 				376A2E2C4E7F7BD4F22CB929 /* CompanionStoreTests.swift */,
+				A11F01E1C010000000000003 /* NotificationWithdrawalTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -88,6 +93,7 @@
 				AD7EFEE73027DDA8DE0F4CF3 /* CompanionStore.swift */,
 				588CC585655018F27D440DD4 /* KeychainVault.swift */,
 				B8ACAE9FBCC5C233286461B8 /* Models.swift */,
+				A11F01E1C010000000000001 /* NotificationWithdrawal.swift */,
 				E892DDBE25459501563763FD /* SHarkMacApp.swift */,
 			);
 			path = Sources;
@@ -192,6 +198,7 @@
 				7557D0D573251839FD449455 /* CompanionStore.swift in Sources */,
 				0EBB6E227ACB7CDA4D8E6113 /* KeychainVault.swift in Sources */,
 				0D16BA04EFD0DE24B6C3D603 /* Models.swift in Sources */,
+				A11F01E1C010000000000002 /* NotificationWithdrawal.swift in Sources */,
 				6DE03BDE778D651F00341D2B /* SHarkMacApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -201,6 +208,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C07AB8E1BA22EFE71BEDB9B7 /* CompanionStoreTests.swift in Sources */,
+				A11F01E1C010000000000004 /* NotificationWithdrawalTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

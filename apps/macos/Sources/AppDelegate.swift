@@ -69,13 +69,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         _ application: NSApplication,
         didReceiveRemoteNotification userInfo: [String: Any]
     ) {
-        Task { await Self.store?.refresh() }
+        Task {
+            if let eventId = NotificationWithdrawal.eventId(fromRemoteNotification: userInfo) {
+                await Self.removeDeliveredNotifications(for: eventId)
+            }
+            await Self.store?.refresh()
+        }
     }
 
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
+        let userInfo = notification.request.content.userInfo
+        if NotificationWithdrawal.eventId(fromRemoteNotification: userInfo) != nil {
+            Task { @MainActor in
+                if let eventId = NotificationWithdrawal.eventId(fromRemoteNotification: userInfo) {
+                    await Self.removeDeliveredNotifications(for: eventId)
+                }
+                await Self.store?.refresh()
+            }
+            return []
+        }
         Task { @MainActor in await Self.store?.refresh() }
         return [.banner, .sound, .badge]
     }
@@ -98,6 +113,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             actionIdentifier: actionIdentifier,
             responseText: responseText
         )
+    }
+
+    private static func removeDeliveredNotifications(for eventId: String) async {
+        let center = UNUserNotificationCenter.current()
+        let delivered = await center.deliveredNotifications()
+        let identifiers = NotificationWithdrawal.identifiersToRemove(
+            eventId: eventId,
+            delivered: delivered.map { notification in
+                (notification.request.identifier, notification.request.content.userInfo)
+            }
+        )
+        guard !identifiers.isEmpty else { return }
+        center.removeDeliveredNotifications(withIdentifiers: identifiers)
     }
 
     private static func handleNotificationAction(
