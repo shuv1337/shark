@@ -5,11 +5,14 @@ import { env } from "../env";
 import { decryptWebPushSubscription } from "./token";
 
 export interface WebPushPayload {
-  title: string;
-  body: string;
+  title?: string;
+  body?: string;
   url?: string;
   imageUrl?: string;
   tag?: string;
+  eventId?: string;
+  command?: string;
+  v?: number;
 }
 
 export interface WebPushSendResult {

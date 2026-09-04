@@ -3,13 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 process.env.NODE_ENV = "test";
 process.env.BETTER_AUTH_SECRET = "m".repeat(32);
 
-const apns = vi.hoisted(() => ({ send: vi.fn() }));
+const apns = vi.hoisted(() => ({ send: vi.fn(), sendSilent: vi.fn() }));
 vi.mock("./apns", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./apns")>()),
   sendNotificationPush: apns.send,
+  sendSilentNotificationPush: apns.sendSilent,
 }));
 
-import { sendMacosPushNotifications } from "./macos-push";
+import { sendMacosPushNotifications, sendMacosSilentPush } from "./macos-push";
 import { encryptMacosApnsToken } from "./token";
 
 function row(id: string, token: string, environment: "sandbox" | "production") {
@@ -28,7 +29,10 @@ function row(id: string, token: string, environment: "sandbox" | "production") {
 }
 
 describe("macOS APNs fanout", () => {
-  beforeEach(() => apns.send.mockReset());
+  beforeEach(() => {
+    apns.send.mockReset();
+    apns.sendSilent.mockReset();
+  });
 
   it("decrypts per-device tokens and counts accepted and stale results", async () => {
     apns.send
@@ -76,5 +80,18 @@ describe("macOS APNs fanout", () => {
       }),
     );
     expect(apns.send.mock.calls[0]?.[2]).not.toHaveProperty("category");
+  });
+
+  it("sends silent withdrawal payloads without a visible banner", async () => {
+    apns.sendSilent.mockResolvedValue({ accepted: true, status: 200, reason: null, apnsId: "one" });
+    const privateDevice = { ...row("d", "ab".repeat(32), "sandbox"), privacyMode: "private" };
+    const result = await sendMacosSilentPush([privateDevice], {
+      data: { v: 1, command: "notification.withdraw", eventId: "evt_1" },
+    });
+    expect(result).toEqual({ accepted: 1, errors: [], staleMacosDeviceIds: [] });
+    expect(apns.send).not.toHaveBeenCalled();
+    expect(apns.sendSilent).toHaveBeenCalledWith("ab".repeat(32), "sandbox", {
+      data: { v: 1, command: "notification.withdraw", eventId: "evt_1" },
+    });
   });
 });

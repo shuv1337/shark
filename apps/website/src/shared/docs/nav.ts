@@ -29,6 +29,7 @@ export const DOC_NAV = [
       { id: "notification-response", label: "Response shape" },
       { id: "interactive-responses", label: "Interactive responses" },
       { id: "response-status", label: "Read and cancel" },
+      { id: "notification-withdrawal", label: "Withdraw a notification" },
       { id: "response-callbacks", label: "Callbacks" },
     ],
   },

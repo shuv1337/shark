@@ -51,6 +51,8 @@ export async function syncInboxForUser(userId: string): Promise<void> {
            when e.status = 'partial' then 'Partially accepted'
            when e.status = 'no_devices' then 'No active devices'
            when e.status = 'failed' then coalesce(e.error, 'Failed')
+           when e.status = 'withdrawn' then 'Withdrawn'
+           when e.status = 'withdraw_partial' then 'Partially withdrawn'
            else null end,
       e.delivered_count, case when e.status = 'failed' then 1 else 0 end,
       0, e.created_at, e.created_at
@@ -199,6 +201,33 @@ export async function syncInboxForUser(userId: string): Promise<void> {
     inner join service s on s.id = e.service_id
     left join interaction i on i.event_id = e.id
     where s.user_id = ${userId}
+      and e.status not in ('withdrawn', 'withdraw_partial', 'withdraw_processing')
+      and exists (
+        select 1 from inbox_item item
+        where item.id = case when i.id is null
+          then 'ibox:event:' || e.id else 'ibox:interaction:' || i.id end
+      )
+  `);
+
+  db.run(sql`
+    insert or ignore into inbox_item_event (
+      id, inbox_item_id, dedupe_key, kind, detail, result,
+      accepted_count, failed_count, occurred_at
+    )
+    select
+      'iboxev:event:' || e.id || ':withdrawal',
+      case when i.id is null then 'ibox:event:' || e.id else 'ibox:interaction:' || i.id end,
+      'withdrawal', 'withdrawal',
+      e.error,
+      case when e.status = 'withdrawn' then 'Withdrawn'
+           when e.status = 'withdraw_partial' then 'Partially withdrawn'
+           else e.status end,
+      e.delivered_count, 0, ${now}
+    from event e
+    inner join service s on s.id = e.service_id
+    left join interaction i on i.event_id = e.id
+    where s.user_id = ${userId}
+      and e.status in ('withdrawn', 'withdraw_partial')
       and exists (
         select 1 from inbox_item item
         where item.id = case when i.id is null

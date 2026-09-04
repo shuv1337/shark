@@ -6,18 +6,42 @@ self.addEventListener("push", (event) => {
     payload = { body: event.data?.text() };
   }
 
+  if (payload.command === "notification.withdraw") {
+    event.waitUntil(withdrawPresentedNotifications(payload));
+    return;
+  }
+
   const title = typeof payload.title === "string" ? payload.title : "SHark";
   const options = {
     body: typeof payload.body === "string" ? payload.body : "You have a new SHark alert.",
     icon: "/app-store-icon.png",
     badge: "/favicon.png",
-    data: { url: typeof payload.url === "string" ? payload.url : "/dashboard" },
+    data: {
+      url: typeof payload.url === "string" ? payload.url : "/dashboard",
+      ...(typeof payload.eventId === "string" ? { eventId: payload.eventId } : {}),
+    },
   };
   if (typeof payload.imageUrl === "string") options.image = payload.imageUrl;
   if (typeof payload.tag === "string") options.tag = payload.tag;
 
   event.waitUntil(self.registration.showNotification(title, options));
 });
+
+async function withdrawPresentedNotifications(payload) {
+  const eventId = typeof payload.eventId === "string" ? payload.eventId : "";
+  if (!eventId) return;
+
+  const tagged =
+    typeof payload.tag === "string"
+      ? await self.registration.getNotifications({ tag: payload.tag })
+      : [];
+  for (const notification of tagged) notification.close();
+
+  const remaining = await self.registration.getNotifications();
+  for (const notification of remaining) {
+    if (notification.data?.eventId === eventId) notification.close();
+  }
+}
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();

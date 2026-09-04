@@ -22,5 +22,9 @@ describe("Expo application config", () => {
     const config = createConfig({ config: {} } as ConfigContext);
 
     expect(config.extra).toMatchObject({ eas: { projectId: SHARK_EAS_PROJECT_ID } });
+    expect(config.plugins).toContainEqual([
+      "expo-notifications",
+      { enableBackgroundRemoteNotifications: true },
+    ]);
   });
 });

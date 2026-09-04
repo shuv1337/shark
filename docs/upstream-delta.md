@@ -22,6 +22,10 @@ changes.
 - Production uses the `shark-prod` deployment, attested immutable GHCR digests,
   1Password-fed secrets, exact-schema SQLite checkpoint validation, encrypted Restic snapshots,
   and operator promotion with no GitHub VM credential.
+- Delivered notification withdrawal fans out silent commands to Expo, web push, and macOS.
+  Upstream Hark is iOS-only. SHark also cancels a still-pending interaction, projects
+  `withdrawn` / `withdraw_partial` through the durable inbox, and marks `inbox_item.readAt`
+  instead of an `event.readAt` column. Notification Center removal remains best effort.
 - Accepted CLI behavior delta: with `sharkctl notify ask --wait --timeout X` and no explicit expiry
   (`--expires-in` flag or `stdin.expiresIn`), sharkctl derives the interaction expiry from the wait
   timeout, clamped to the server range of 30 seconds through 24 hours (8 hours for an effective

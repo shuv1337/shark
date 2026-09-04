@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildInteractionPushMessages,
+  buildNotificationWithdrawalPushMessages,
   buildPushMessages,
   buildWelcomePushMessages,
   resolveNotification,
@@ -102,6 +103,29 @@ describe("buildInteractionPushMessages", () => {
       actionDigest: "b".repeat(64),
     });
     expect(reply?.categoryId).toBe("HARK_REPLY_V1");
+  });
+});
+
+describe("buildNotificationWithdrawalPushMessages", () => {
+  it("builds data-only background commands for every device", () => {
+    const messages = buildNotificationWithdrawalPushMessages(
+      ["ExponentPushToken[a]", "ExponentPushToken[b]"],
+      "evt_1",
+    );
+
+    expect(messages).toEqual([
+      {
+        to: "ExponentPushToken[a]",
+        data: { v: 1, command: "notification.withdraw", eventId: "evt_1" },
+        _contentAvailable: true,
+      },
+      {
+        to: "ExponentPushToken[b]",
+        data: { v: 1, command: "notification.withdraw", eventId: "evt_1" },
+        _contentAvailable: true,
+      },
+    ]);
+    expect(messages.every((message) => !("title" in message) && !("body" in message))).toBe(true);
   });
 });
 

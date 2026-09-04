@@ -163,7 +163,7 @@ export const DOC_CONTENT: DocSection[] = [
           },
           {
             kind: "p",
-            text: "`eventId` identifies the event in the dashboard activity log and, for interactive notifications, is the handle used to read or cancel the pending response. `delivered` is the number of push requests accepted by Expo.",
+            text: "`eventId` identifies the event in the dashboard activity log, can withdraw the delivered notification, and, for interactive notifications, is the handle used to read or cancel the pending response. `delivered` is the number of push requests accepted by Expo, browsers, and macOS.",
           },
           {
             kind: "note",
@@ -194,7 +194,12 @@ export const DOC_CONTENT: DocSection[] = [
               {
                 method: "POST",
                 path: "/hooks/:token/events/:eventId/cancel",
-                detail: "Withdraw a pending interactive response.",
+                detail: "Cancel a pending interactive response only.",
+              },
+              {
+                method: "POST",
+                path: "/hooks/:token/events/:eventId/withdraw",
+                detail: "Request removal of a delivered notification.",
               },
             ],
           },
@@ -418,7 +423,7 @@ export const DOC_CONTENT: DocSection[] = [
         blocks: [
           {
             kind: "p",
-            text: "Poll the event with the `eventId` from the send response, or withdraw it while it is still pending.",
+            text: "Poll the event with the `eventId` from the send response, or cancel that pending interactive response. Cancel does not remove a delivered banner; use withdraw for that.",
           },
           {
             kind: "code",
@@ -452,6 +457,40 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
               "For `text` prompts, `action` becomes `reply` and `text` holds the answer. For the other types `action` holds the chosen option and `text` is `null`.",
               "Reading a pending request after `expiresAt` settles it as `expired`.",
               "Cancel returns `404` if the response is not pending, and events belonging to another service are never visible.",
+            ],
+          },
+        ],
+      },
+      {
+        id: "notification-withdrawal",
+        blocks: [
+          {
+            kind: "p",
+            text: "Keep the `eventId` returned when you send a notification, then POST `/withdraw` to ask SHark to remove that banner from registered iPhones, browsers, and the macOS companion. This is separate from `/cancel`, which only settles a pending interactive response.",
+          },
+          {
+            kind: "code",
+            language: "bash",
+            code: `curl -X POST \\
+  '${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/withdraw'`,
+          },
+          {
+            kind: "code",
+            language: "json",
+            code: `{
+  "ok": true,
+  "eventId": "evt_Cxns2IdbF4H0TJYq",
+  "status": "withdrawn",
+  "accepted": 1
+}`,
+          },
+          {
+            kind: "bullets",
+            items: [
+              "`accepted` counts silent commands accepted by Expo, the browser push service, and APNs. It does not mean the operating system removed the banner.",
+              "`status` is `withdrawn` when every selected target accepted the command, or `withdraw_partial` when at least one did. A later call returns the same terminal status with `idempotent: true` and sends nothing.",
+              "Background delivery is best effort and may be delayed or skipped, particularly after a force-quit. macOS Notification Center removal also requires the companion to handle the silent push.",
+              "The same webhook token must own the event. An unknown or unauthorized token returns `404`.",
             ],
           },
         ],
