@@ -16,4 +16,4 @@ packageExtensions:
 
 patchedDependencies:
   '@better-auth/core@1.6.25': patches/@better-auth__core@1.6.25.patch
-  expo-widgets@57.0.6: patches/expo-widgets@57.0.6.patch
+  expo-widgets@57.0.17: patches/expo-widgets@57.0.17.patch
