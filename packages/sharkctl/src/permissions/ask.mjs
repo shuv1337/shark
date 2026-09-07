@@ -46,17 +46,17 @@ export function uniqueIdempotencyKey(prefix) {
   return stableIdempotencyKey(prefix, [randomUUID()]);
 }
 
-function sharkEnvironment() {
+export function sharkEnvironment(env = process.env) {
   // Permission hooks run inside coding-agent processes. Use the user-owned
   // credential file (and an explicit HARK_CONFIG override) rather than inheriting
   // HARK_TOKEN or HARK_API_URL from the agent environment.
   return {
-    ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
-    ...(process.env.USER ? { USER: process.env.USER } : {}),
-    ...(process.env.TMPDIR ? { TMPDIR: process.env.TMPDIR } : {}),
-    ...(process.env.HARK_CONFIG ? { HARK_CONFIG: process.env.HARK_CONFIG } : {}),
-    ...(process.env.XDG_CONFIG_HOME ? { XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME } : {}),
-    ...(process.env.APPDATA ? { APPDATA: process.env.APPDATA } : {}),
+    ...(env.HOME ? { HOME: env.HOME } : {}),
+    ...(env.USER ? { USER: env.USER } : {}),
+    ...(env.TMPDIR ? { TMPDIR: env.TMPDIR } : {}),
+    ...(env.HARK_CONFIG ? { HARK_CONFIG: env.HARK_CONFIG } : {}),
+    ...(env.XDG_CONFIG_HOME ? { XDG_CONFIG_HOME: env.XDG_CONFIG_HOME } : {}),
+    ...(env.APPDATA ? { APPDATA: env.APPDATA } : {}),
   };
 }
 

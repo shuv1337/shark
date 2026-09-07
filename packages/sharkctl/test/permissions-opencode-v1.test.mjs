@@ -94,3 +94,48 @@ test("OpenCode V1 falls back to the deprecated reply route", async () => {
     server.close();
   }
 });
+
+test("OpenCode V1 reconciles pending requests without changing their fingerprints", async () => {
+  const permission = {
+    id: "per_reconciled",
+    sessionID: "ses_reconciled",
+    permission: "bash",
+    patterns: ["synthetic command", "another synthetic command"],
+    always: ["synthetic *"],
+    tool: { messageID: "msg_synthetic", callID: "call_synthetic" },
+  };
+  let reply;
+  const server = createServer(async (request, response) => {
+    response.setHeader("content-type", "application/json");
+    if (request.url?.startsWith("/permission?") && request.method === "GET") {
+      return response.end(JSON.stringify([permission]));
+    }
+    if (request.url?.startsWith("/permission/per_reconciled/reply?")) {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      reply = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      return response.end("true");
+    }
+    response.statusCode = 404;
+    return response.end();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    let sent;
+    await handleOpenCodeV1Event(
+      {
+        serverUrl: `http://127.0.0.1:${server.address().port}`,
+        directory: "/tmp/synthetic-project",
+        event: { type: "server.connected" },
+      },
+      async (request) => {
+        sent = request;
+        return "approved";
+      },
+    );
+    assert.deepEqual(reply, { reply: "once" });
+    assert.match(sent.body, /bash permission in synthetic-project for 2 resources/);
+  } finally {
+    server.close();
+  }
+});

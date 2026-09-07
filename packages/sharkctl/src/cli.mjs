@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { chmod, mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
-import { REQUIRED_PERMISSION_SCOPES } from "./permissions/ask.mjs";
+import { REQUIRED_PERMISSION_SCOPES, sharkEnvironment } from "./permissions/ask.mjs";
 import { main as permissionsMain } from "./permissions/cli.mjs";
 
 const DEFAULT_API_URL = "https://shark.shuv.dev";
@@ -382,7 +382,7 @@ async function waitForInteraction(config, id, timeoutSeconds, runtime) {
 
 async function permissionAuthenticationStatus(env) {
   try {
-    const status = await request(await loadConfig(env), "/api/agent/auth/status");
+    const status = await request(await loadConfig(sharkEnvironment(env)), "/api/agent/auth/status");
     const scopes = Array.isArray(status?.token?.scopes) ? status.token.scopes : [];
     return {
       authenticated: status?.authenticated === true,

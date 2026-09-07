@@ -103,8 +103,7 @@ async function replyIfCurrent(serverUrl, directory, original, decision) {
   await reply(serverUrl, directory, original, decision).catch(() => {});
 }
 
-function startRequest(serverUrl, directory, request, ask = askSharkPermission) {
-  const permission = normalize(request);
+function startRequest(serverUrl, directory, permission, ask = askSharkPermission) {
   const id = jobKey(serverUrl, directory, permission.id);
   if (!permission.id || !permission.sessionID) return Promise.resolve();
   const existing = jobs.get(id);
@@ -153,7 +152,7 @@ export async function handleOpenCodeV1Event(
 ) {
   try {
     if (event.type === "permission.asked" || event.type === "permission.updated") {
-      await startRequest(serverUrl, directory, event.properties, ask);
+      await startRequest(serverUrl, directory, normalize(event.properties), ask);
     } else if (event.type === "server.connected") {
       await reconcile(serverUrl, directory, ask);
     }

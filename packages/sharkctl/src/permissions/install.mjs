@@ -42,6 +42,10 @@ async function atomicWrite(path, content, expected) {
       await handle.close();
     }
     await chmod(temporary, previousMode);
+    const beforeReplace = await readOptional(path);
+    if ((beforeReplace === undefined ? undefined : digest(beforeReplace)) !== expected) {
+      throw new Error(`Configuration changed while installing: ${path}`);
+    }
     await rename(temporary, path);
   } finally {
     await rm(temporary, { force: true });

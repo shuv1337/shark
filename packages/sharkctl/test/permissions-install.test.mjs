@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import fs, { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -101,4 +102,38 @@ test("installers reject destructive JSON shapes without changing the file", asyn
     /Expected a JSON object/,
   );
   assert.equal(await readFile(path, "utf8"), "[]\n");
+});
+
+test("installation preserves edits made while the replacement file is being written", async () => {
+  const home = await temporaryHome();
+  const directory = join(home, ".claude");
+  const path = join(directory, "settings.json");
+  await mkdir(directory);
+  await writeFile(path, JSON.stringify({ unrelated: "preserve" }));
+  const userEdit = `${JSON.stringify({ userEdit: "must survive" })}\n`;
+  const originalOpen = fs.open;
+  let edited = false;
+  // Pause replacement preparation so a separate writer deterministically changes
+  // the original after the installer's initial comparison has already succeeded.
+  fs.open = async (...args) => {
+    const handle = await originalOpen(...args);
+    if (args[0].startsWith(`${path}.shark-`)) {
+      await writeFile(path, userEdit);
+      edited = true;
+    }
+    return handle;
+  };
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(
+      installClaude({ home, entrypoint: "/opt/shark/sharkctl.mjs" }),
+      /Configuration changed while installing/,
+    );
+    assert.ok(edited, "the independent writer ran after replacement creation");
+    assert.equal(await readFile(path, "utf8"), userEdit);
+  } finally {
+    fs.open = originalOpen;
+    syncBuiltinESMExports();
+    await rm(home, { recursive: true, force: true });
+  }
 });

@@ -133,6 +133,10 @@ sharkctl permissions doctor
 sharkctl permissions uninstall all
 ```
 
+Permission setup requires a credential file created by `sharkctl auth login`; an environment-only
+`HARK_TOKEN` is not sufficient. Setup and `doctor` check the same file credential and API origin
+used by permission hooks, ignoring `HARK_TOKEN` and `HARK_API_URL` overrides.
+
 The default login includes the required `notifications:send`, `interactions:create`, and
 `interactions:read` scopes. A narrowed login must retain all three; setup and `doctor` identify any
 missing scopes. `sharkctl auth status` still reports only `{ authenticated }` so captured output stays
