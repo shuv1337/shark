@@ -12,6 +12,7 @@ const transport = vi.hoisted(() => ({
     APNS_SANDBOX_PRIVATE_KEY: "",
     APNS_BUNDLE_ID: "dev.shuv.shark",
     APNS_ENVIRONMENT: "sandbox" as const,
+    BETTER_AUTH_SECRET: "synthetic-secret".repeat(3),
   },
 }));
 
@@ -31,7 +32,12 @@ import {
   normalizeApnsPrivateKey,
   notificationHeaders,
   sendLiveActivityPush,
+  sendNotificationPush,
+  sendSilentNotificationPush,
 } from "./apns";
+import { sendMacosPushNotifications } from "./macos-push";
+import { APNS_PAYLOAD_BYTE_LIMIT, pushJsonBytes } from "./push-preview";
+import { encryptMacosApnsToken } from "./token";
 
 const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
 const pem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
@@ -216,6 +222,44 @@ describe("Live Activity APNs payloads", () => {
 });
 
 describe("macOS notification APNs payloads", () => {
+  function captureTransport() {
+    const payloads: Buffer[] = [];
+    transport.connect.mockReset().mockImplementation(() => {
+      const request = Object.assign(new EventEmitter(), {
+        close: vi.fn(),
+        end: (payload: Buffer) => {
+          payloads.push(payload);
+          queueMicrotask(() => {
+            request.emit("response", { ":status": 200 });
+            request.emit("end");
+          });
+        },
+      });
+      return Object.assign(new EventEmitter(), {
+        close: vi.fn(),
+        destroy: vi.fn(),
+        setTimeout: vi.fn(),
+        request: () => request,
+      });
+    });
+    return payloads;
+  }
+
+  function macosRow(id: string, privacyMode: "private" | "standard") {
+    return {
+      id,
+      userId: "synthetic-user",
+      apnsTokenHash: `${id}-hash`,
+      apnsTokenCiphertext: encryptMacosApnsToken("a".repeat(64)),
+      environment: "sandbox",
+      privacyMode,
+      deviceName: "Mac",
+      active: true,
+      createdAt: new Date(),
+      lastSeenAt: new Date(),
+    };
+  }
+
   it("builds a normal alert with native interaction metadata", () => {
     expect(
       buildNotificationPayload({
@@ -270,5 +314,98 @@ describe("macOS notification APNs payloads", () => {
       "apns-push-type": "background",
       "apns-priority": "5",
     });
+  });
+
+  it("bounds the actual APNs envelope after per-device privacy redaction", async () => {
+    const payloads = captureTransport();
+    const input = {
+      title: "\u0000".repeat(80),
+      body: "気".repeat(2000),
+      category: "HARK_APPROVAL_V1",
+      threadId: "interaction-synthetic",
+      badge: 3,
+      data: {
+        interactionId: "interaction-synthetic",
+        eventId: "event-synthetic",
+        kind: "approval",
+        actionDigest: "a".repeat(64),
+        url: `https://example.com/${"u".repeat(2028)}`,
+      },
+    };
+    const saved = structuredClone(input);
+    const result = await sendMacosPushNotifications(
+      [macosRow("standard", "standard"), macosRow("private", "private")],
+      input,
+    );
+    expect(result).toEqual({ accepted: 2, errors: [], staleMacosDeviceIds: [] });
+    expect(payloads).toHaveLength(2);
+    for (const payload of payloads)
+      expect(payload.byteLength).toBeLessThanOrEqual(APNS_PAYLOAD_BYTE_LIMIT);
+    const [standard, privatePreview] = payloads.map((payload) =>
+      JSON.parse(payload.toString("utf8")),
+    );
+    expect(standard.aps.alert.title).toBe(input.title);
+    expect(standard.aps.alert.body.endsWith("…")).toBe(true);
+    expect(standard.aps).toMatchObject({
+      category: input.category,
+      "thread-id": input.threadId,
+      badge: 3,
+    });
+    expect(standard.hark).toEqual(input.data);
+    expect(privatePreview.aps.alert).toEqual({
+      title: "SHark alert",
+      body: "Open SHark to view details.",
+    });
+    expect(privatePreview.aps.category).toBeUndefined();
+    expect(privatePreview.hark).toEqual(input.data);
+    expect(input).toEqual(saved);
+  });
+
+  it("keeps an exact-limit APNs payload and drops an oversized optional URL whole", async () => {
+    const payloads = captureTransport();
+    const base = { title: "Title", body: "", data: { eventId: "event-synthetic" } };
+    const exact = {
+      ...base,
+      body: "a".repeat(APNS_PAYLOAD_BYTE_LIMIT - pushJsonBytes(buildNotificationPayload(base))),
+    };
+    expect((await sendNotificationPush("a".repeat(64), "sandbox", exact)).accepted).toBe(true);
+    expect(payloads[0]?.byteLength).toBe(APNS_PAYLOAD_BYTE_LIMIT);
+    expect(JSON.parse(payloads[0]?.toString() ?? "{}")).toEqual(buildNotificationPayload(exact));
+
+    const hugeUrl = {
+      ...base,
+      body: "Body",
+      data: { ...base.data, url: `https://example.com/${"気".repeat(2028)}` },
+    };
+    await sendNotificationPush("a".repeat(64), "sandbox", hugeUrl);
+    expect(JSON.parse(payloads[1]?.toString() ?? "{}")).toEqual({
+      aps: { alert: { title: "Title", body: "Body" }, sound: "default" },
+      hark: base.data,
+    });
+  });
+
+  it("rejects oversized required metadata without network calls or stale-device classification", async () => {
+    captureTransport();
+    const result = await sendMacosPushNotifications([macosRow("synthetic", "standard")], {
+      title: "Title",
+      body: "Body",
+      data: { actionDigest: "private".repeat(1000) },
+    });
+    expect(result).toEqual({
+      accepted: 0,
+      errors: ["Push payload metadata exceeds the 4096-byte budget"],
+      staleMacosDeviceIds: [],
+    });
+    expect(transport.connect).not.toHaveBeenCalled();
+
+    // Data-only lifecycle commands retain their existing strict encoder.
+    const silent = await sendSilentNotificationPush("a".repeat(64), "sandbox", {
+      data: { v: 1, command: "notification.withdraw", eventId: "private".repeat(1000) },
+    });
+    expect(silent).toMatchObject({
+      accepted: false,
+      reason: "Notification APNs payload exceeds 4096 bytes",
+    });
+    expect(transport.connect).not.toHaveBeenCalled();
   });
 });

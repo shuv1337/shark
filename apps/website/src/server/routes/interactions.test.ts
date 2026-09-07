@@ -1201,6 +1201,107 @@ describe("agent notifications", () => {
     });
   }
 
+  it("fits an agent notification push preview while retaining complete stored and inbox text", async () => {
+    const { EXPO_MESSAGE_BYTE_BUDGET } = await import("../lib/push-preview");
+    const text = `${'💥\\"\u0001'.repeat(300)}done`;
+    const imageUrl = "https://example.com/full-preview.png";
+    const url = "https://example.com/full-preview";
+    sent.length = 0;
+    const response = await createNotification({
+      title: "Preview bot",
+      body: text,
+      imageUrl,
+      url,
+      deviceIds: ["dev_1"],
+    });
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { notification: { id: string }; accepted: number };
+    expect(body.accepted).toBe(1);
+    const [stored] = await db
+      .select()
+      .from(schema.agentNotification)
+      .where(eq(schema.agentNotification.id, body.notification.id));
+    expect(stored).toMatchObject({
+      title: "Preview bot",
+      body: text,
+      imageUrl,
+      url,
+      status: "accepted",
+      acceptedCount: 1,
+      failedCount: 0,
+    });
+    expect(sent).toHaveLength(1);
+    const preview = sent[0];
+    expect(Buffer.byteLength(JSON.stringify(preview), "utf8")).toBeLessThanOrEqual(
+      EXPO_MESSAGE_BYTE_BUDGET,
+    );
+    expect(preview?.body).not.toBe(text);
+    expect(preview?.body).toEqual(expect.stringMatching(/…$/));
+    expect(preview).toMatchObject({
+      to: "ExponentPushToken[a]",
+      title: "Preview bot",
+      data: { eventId: body.notification.id, serviceId: "tok_full", sourceName: "Preview bot" },
+    });
+    const detail = await app.request(
+      `/api/inbox/${encodeURIComponent(`ibox:agent_notification:${body.notification.id}`)}`,
+    );
+    expect(detail.status).toBe(200);
+    expect(await detail.json()).toMatchObject({
+      item: { title: "Preview bot", body: text, imageUrl, url },
+    });
+  });
+
+  it("settles local preview failures without deactivating targets or losing sibling delivery", async () => {
+    const now = new Date();
+    const oversizedToken = `ExponentPushToken[${"synthetic-recipient".repeat(300)}]`;
+    await db.insert(schema.device).values({
+      id: "dev_oversized_preview",
+      userId: "user_1",
+      expoPushToken: oversizedToken,
+      platform: "ios",
+      active: true,
+      createdAt: now,
+      lastSeenAt: now,
+    });
+    await insertWebSubscription("web_preview_sibling");
+    try {
+      for (const includeWeb of [false, true]) {
+        sent.length = 0;
+        const response = await createNotification({
+          title: "Preview failure",
+          body: "The complete stored content survives a provider-local failure.",
+          deviceIds: ["dev_oversized_preview", ...(includeWeb ? ["web_preview_sibling"] : [])],
+        });
+        expect(response.status).toBe(201);
+        const body = (await response.json()) as { notification: { id: string }; accepted: number };
+        expect(body.accepted).toBe(includeWeb ? 1 : 0);
+        expect(JSON.stringify(body)).not.toContain("synthetic-recipient");
+        expect(sent).toHaveLength(0);
+        const [stored] = await db
+          .select()
+          .from(schema.agentNotification)
+          .where(eq(schema.agentNotification.id, body.notification.id));
+        expect(stored).toMatchObject({
+          status: includeWeb ? "partial" : "failed",
+          acceptedCount: includeWeb ? 1 : 0,
+          failedCount: 1,
+        });
+        expect(stored?.error).toMatch(/^Push payload metadata exceeds the \d+-byte budget$/);
+        expect(stored?.error).not.toContain("synthetic-recipient");
+        const [device] = await db
+          .select()
+          .from(schema.device)
+          .where(eq(schema.device.id, "dev_oversized_preview"));
+        expect(device?.active).toBe(true);
+      }
+    } finally {
+      await db.delete(schema.device).where(eq(schema.device.id, "dev_oversized_preview"));
+      await db
+        .delete(schema.webPushSubscription)
+        .where(eq(schema.webPushSubscription.id, "web_preview_sibling"));
+    }
+  });
+
   it("sends a one-shot notification with the webhook-style push payload", async () => {
     sent.length = 0;
     const response = await createNotification({

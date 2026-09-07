@@ -18,6 +18,7 @@ import {
   buildNotificationWithdrawalPushMessages,
   buildWebWithdrawalPayload,
 } from "./notification-withdrawal";
+import { fitPushMessage, PushPreviewTooLargeError } from "./push-preview";
 import { sendWebPushNotifications, type WebPushPayload } from "./web-push";
 
 export { buildNotificationWithdrawalPushMessages };
@@ -188,7 +189,24 @@ export async function sendPushMessages(messages: ExpoPushMessage[]): Promise<Sen
     staleMacosDeviceIds: [],
   };
 
-  for (const chunk of expo.chunkPushNotifications(messages)) {
+  const previews: ExpoPushMessage[] = [];
+  for (const message of messages) {
+    // Budget the payload delivered to one recipient, and keep ticket-to-token
+    // mapping unambiguous even when callers pass Expo's array form of `to`.
+    for (const to of typeof message.to === "string" ? [message.to] : message.to) {
+      try {
+        previews.push(
+          fitPushMessage(typeof message.to === "string" ? message : { ...message, to }),
+        );
+      } catch (error) {
+        result.errors.push(
+          error instanceof PushPreviewTooLargeError ? error.message : "Invalid Expo push payload",
+        );
+      }
+    }
+  }
+
+  for (const chunk of expo.chunkPushNotifications(previews)) {
     let tickets: ExpoPushTicket[];
     try {
       tickets = await expo.sendPushNotificationsAsync(chunk);
