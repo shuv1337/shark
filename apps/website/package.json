@@ -39,6 +39,7 @@
     "concurrently": "^9.2.1",
     "drizzle-kit": "^0.31.10",
     "esbuild": "^0.27.3",
+    "happy-dom": "^20.14.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router": "^8.3.0",

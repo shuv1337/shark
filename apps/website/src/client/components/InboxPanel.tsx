@@ -7,8 +7,9 @@ import {
   isInboxItemActive,
   isInboxItemDeliveryFailure,
 } from "@hark/contracts";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
+import { subscribeToInboxUpdates } from "../lib/inboxUpdates";
 
 const FILTER_LABELS: Record<InboxFilter, string> = {
   all: "All",
@@ -32,49 +33,50 @@ export function InboxPanel() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [markingRead, setMarkingRead] = useState(false);
+  const listRequest = useRef(0);
 
   const load = useCallback(
-    async (cursor?: string | null) => {
-      const page = await api.listInbox(filter, cursor);
-      setItems((current) => (cursor ? [...current, ...page.items] : page.items));
-      setNextCursor(page.nextCursor);
-      setUnresolvedCount(page.unresolvedCount);
-      setError(null);
+    async (cursor?: string | null, initial = false) => {
+      const request = ++listRequest.current;
+      setLoading(initial);
+      setRefreshing(!cursor && !initial);
+      setLoadingMore(Boolean(cursor));
+      try {
+        const page = await api.listInbox(filter, cursor);
+        // A push refresh or filter change supersedes any older page request.
+        if (request !== listRequest.current) return;
+        setItems((current) => (cursor ? [...current, ...page.items] : page.items));
+        setNextCursor(page.nextCursor);
+        setUnresolvedCount(page.unresolvedCount);
+        setError(null);
+      } catch (reason) {
+        if (request !== listRequest.current) return;
+        setError(reason instanceof Error ? reason.message : "Could not load your inbox");
+      } finally {
+        if (request === listRequest.current) {
+          setLoading(false);
+          setRefreshing(false);
+          setLoadingMore(false);
+        }
+      }
     },
     [filter],
   );
 
   useEffect(() => {
-    setLoading(true);
     setItems([]);
-    void load()
-      .catch((reason) =>
-        setError(reason instanceof Error ? reason.message : "Could not load your inbox"),
-      )
-      .finally(() => setLoading(false));
+    setNextCursor(null);
+    void load(undefined, true);
+    return () => {
+      listRequest.current++;
+    };
   }, [load]);
 
-  const refresh = async () => {
-    setRefreshing(true);
-    try {
-      await load();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not refresh your inbox");
-    } finally {
-      setRefreshing(false);
-    }
-  };
+  useEffect(() => subscribeToInboxUpdates(() => void load()), [load]);
 
   const loadMore = async () => {
-    if (!nextCursor || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      await load(nextCursor);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not load older items");
-    } finally {
-      setLoadingMore(false);
-    }
+    if (!nextCursor || loading || refreshing || loadingMore) return;
+    await load(nextCursor);
   };
 
   const openItem = async (id: string) => {
@@ -144,7 +146,7 @@ export function InboxPanel() {
           <button
             className="rounded-full border border-line px-3 py-1.5 text-xs font-medium text-ink-muted transition hover:bg-surface-hover disabled:opacity-50"
             disabled={refreshing}
-            onClick={() => void refresh()}
+            onClick={() => void load()}
             type="button"
           >
             {refreshing ? "Refreshing…" : "Refresh"}
@@ -202,7 +204,7 @@ export function InboxPanel() {
       {nextCursor ? (
         <button
           className="mt-4 w-full rounded-xl border border-line py-2.5 text-sm font-medium text-ink-muted transition hover:bg-surface-hover disabled:opacity-50"
-          disabled={loadingMore}
+          disabled={loading || refreshing || loadingMore}
           onClick={() => void loadMore()}
           type="button"
         >
