@@ -3,8 +3,9 @@ import { connect } from "node:http2";
 import type { LiveActivityProps } from "@hark/contracts";
 import { LIVE_ACTIVITY_NAME } from "@hark/contracts";
 import { env } from "../env";
+import { APNS_PAYLOAD_BYTE_LIMIT, fitPushPreview, pushJsonBytes } from "./push-preview";
 
-const MAX_APNS_PAYLOAD_BYTES = 4096;
+const MAX_APNS_PAYLOAD_BYTES = APNS_PAYLOAD_BYTE_LIMIT;
 const JWT_TTL_SECONDS = 50 * 60;
 
 export interface ApnsProviderConfig {
@@ -135,11 +136,19 @@ export function buildSilentNotificationPayload(
 }
 
 function encodeNotificationPayload(input: NotificationPayloadInput): Buffer {
-  const payload = Buffer.from(JSON.stringify(buildNotificationPayload(input)));
-  if (payload.byteLength > MAX_APNS_PAYLOAD_BYTES) {
-    throw new Error(`Notification APNs payload exceeds ${MAX_APNS_PAYLOAD_BYTES} bytes`);
-  }
-  return payload;
+  const preview = fitPushPreview(
+    input,
+    MAX_APNS_PAYLOAD_BYTES,
+    [
+      (candidate) => {
+        const data = { ...candidate.data };
+        delete data.url;
+        return { ...candidate, data };
+      },
+    ],
+    (candidate) => pushJsonBytes(buildNotificationPayload(candidate)),
+  );
+  return Buffer.from(JSON.stringify(buildNotificationPayload(preview)));
 }
 
 function encodeSilentNotificationPayload(input: SilentNotificationPayloadInput): Buffer {

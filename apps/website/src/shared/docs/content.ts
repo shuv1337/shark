@@ -213,6 +213,10 @@ export const DOC_CONTENT: DocSection[] = [
         id: "notification-payload",
         blocks: [
           {
+            kind: "p",
+            text: "Push previews may shorten long messages to fit delivery limits. If needed, images and then tap links are omitted from the push. The inbox keeps the complete notification or interaction prompt and its links.",
+          },
+          {
             kind: "table",
             variant: "field",
             caption: "Notification request fields",

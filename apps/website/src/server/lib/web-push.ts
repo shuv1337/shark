@@ -2,6 +2,11 @@ import type { WebPushSubscriptionInput } from "@hark/contracts";
 import webpush from "web-push";
 import type { webPushSubscription } from "../db/schema";
 import { env } from "../env";
+import {
+  fitPushPreview,
+  PushPreviewTooLargeError,
+  WEB_PUSH_PAYLOAD_BYTE_LIMIT,
+} from "./push-preview";
 import { decryptWebPushSubscription } from "./token";
 
 export interface WebPushPayload {
@@ -41,6 +46,27 @@ export async function sendWebPushNotifications(
 ): Promise<WebPushSendResult> {
   const result: WebPushSendResult = { accepted: 0, errors: [], staleSubscriptionIds: [] };
   if (subscriptions.length === 0) return result;
+  let serialized: string;
+  try {
+    const preview = fitPushPreview(payload, WEB_PUSH_PAYLOAD_BYTE_LIMIT, [
+      (candidate) => {
+        const next = { ...candidate };
+        delete next.imageUrl;
+        return next;
+      },
+      (candidate) => {
+        const next = { ...candidate };
+        delete next.url;
+        return next;
+      },
+    ]);
+    serialized = JSON.stringify(preview);
+  } catch (error) {
+    result.errors.push(
+      error instanceof PushPreviewTooLargeError ? error.message : "Invalid browser push payload",
+    );
+    return result;
+  }
   if (!configureVapid()) {
     result.errors.push("Browser push is not configured");
     return result;
@@ -58,7 +84,7 @@ export async function sendWebPushNotifications(
         return;
       }
       try {
-        await webpush.sendNotification(subscription, JSON.stringify(payload), {
+        await webpush.sendNotification(subscription, serialized, {
           TTL: 300,
           urgency: "high",
         });

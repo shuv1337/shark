@@ -6,9 +6,22 @@ process.env.DATABASE_URL = ":memory:";
 const sent: Array<Record<string, unknown>> = [];
 const webSent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 const macosSent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+const authState = vi.hoisted(() => ({ authenticated: false }));
 const billingTestState = vi.hoisted(() => ({
   pro: false,
   accountPerMinute: null as number | null,
+}));
+
+vi.mock("../auth", () => ({
+  auth: {
+    handler: () => new Response("not used"),
+    api: {
+      getSession: async () =>
+        authState.authenticated
+          ? { user: { id: "user_1", name: "Test User", email: "test@example.com", image: null } }
+          : null,
+    },
+  },
 }));
 
 vi.mock("../lib/billing", () => ({
@@ -138,6 +151,83 @@ async function post(token: string, body: unknown, idempotencyKey?: string) {
 }
 
 describe("POST /hooks/:token", () => {
+  it("fits an interaction push preview while retaining the complete webhook and inbox prompt", async () => {
+    const { eq } = await import("drizzle-orm");
+    const { hashInteractionResponseToken } = await import("../lib/token");
+    const { EXPO_MESSAGE_BYTE_BUDGET } = await import("../lib/push-preview");
+    const prompt = `${'💥\\"\u0001'.repeat(300)}done`;
+    const now = new Date();
+    await db.insert(schema.device).values({
+      id: "dev_hook_preview",
+      userId: "user_1",
+      expoPushToken: "ExponentPushToken[hook-preview]",
+      platform: "ios",
+      active: true,
+      interactionSchemaVersion: 1,
+      createdAt: now,
+      lastSeenAt: now,
+    });
+    const previousPro = billingTestState.pro;
+    billingTestState.pro = true;
+    sent.length = 0;
+    try {
+      const response = await post(TOKEN, {
+        title: "Release approval",
+        body: prompt,
+        deviceIds: ["dev_hook_preview"],
+        response: { type: "approval", expiresInSeconds: 300 },
+      });
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { eventId: string; delivered: number };
+      expect(body.delivered).toBe(1);
+      const [event] = await db.select().from(schema.event).where(eq(schema.event.id, body.eventId));
+      const [interaction] = await db
+        .select()
+        .from(schema.interaction)
+        .where(eq(schema.interaction.eventId, body.eventId));
+      expect(event).toMatchObject({ body: prompt, status: "accepted", deliveredCount: 1 });
+      expect(interaction).toMatchObject({ prompt, title: "Release approval", acceptedCount: 1 });
+      expect(sent).toHaveLength(1);
+      const preview = sent[0];
+      expect(Buffer.byteLength(JSON.stringify(preview), "utf8")).toBeLessThanOrEqual(
+        EXPO_MESSAGE_BYTE_BUDGET,
+      );
+      expect(preview?.body).not.toBe(prompt);
+      expect(preview?.body).toEqual(expect.stringMatching(/…$/));
+      expect(preview).toMatchObject({
+        to: "ExponentPushToken[hook-preview]",
+        title: "Release approval",
+        categoryId: "HARK_APPROVAL_V1",
+        data: {
+          eventId: body.eventId,
+          interactionId: interaction?.id,
+          actionDigest: interaction?.actionDigest,
+          responseToken: expect.any(String),
+        },
+      });
+      const responseToken =
+        (preview?.data as { responseToken: string } | undefined)?.responseToken ?? "";
+      expect(hashInteractionResponseToken(responseToken)).toBe(interaction?.responseTokenHash);
+      authState.authenticated = true;
+      const detail = await app.request(
+        `/api/inbox/${encodeURIComponent(`ibox:interaction:${interaction?.id}`)}`,
+      );
+      expect(detail.status).toBe(200);
+      expect(await detail.json()).toMatchObject({
+        item: {
+          title: "Release approval",
+          body: prompt,
+          imageUrl: "https://example.com/default.png",
+          url: "https://example.com/app",
+        },
+      });
+    } finally {
+      authState.authenticated = false;
+      billingTestState.pro = previousPro;
+      await db.delete(schema.device).where(eq(schema.device.id, "dev_hook_preview"));
+    }
+  });
+
   it("makes an existing webhook indistinguishable from unknown after allowlist removal", async () => {
     const { env } = await import("../env");
     const previous = [...env.ALLOWED_EMAILS];
