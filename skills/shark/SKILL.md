@@ -53,8 +53,8 @@ needs a stable URL it can call later.
 
 ## Capability Inventory
 
-- `sharkctl` authenticates and sends the requested notifications, interactions, activities, or
-  service configuration to SHark.
+- `sharkctl` authenticates and sends the requested notifications, interactions, activities,
+  permission-bridge setup, or service configuration to SHark.
 - `jq` validates and encodes values as JSON data. It must not generate shell source.
 - `curl` may POST only to a validated SHark webhook URL supplied through a secret.
 - `gh secret set` may write only the fixed webhook secret requested by the user, after confirming
@@ -227,6 +227,26 @@ A separate `notify` call is an independent inbox item; it does not correlate wit
 Activity, even when the title and requester match. If an update or end reports
 `MissingUpdateToken`, do not start a replacement merely to clear it. End the existing activity once
 the task is terminal; SHark records that state and can replay it when iOS registers the token late.
+
+## Approve Coding-Agent Permissions
+
+Install SHark permission bridges only when the user asked to approve Claude Code, Codex, or OpenCode
+tool permissions from their phone:
+
+```bash
+sharkctl permissions setup all
+sharkctl permissions doctor
+```
+
+Use `permissions setup claude`, `permissions setup codex`, or `permissions setup opencode` for one
+agent. After Codex setup, tell the user to open `/hooks` and trust the SHark hook. OpenCode's
+background connector requires macOS; Linux setup installs Claude and Codex and reports the skip.
+Uninstall with `sharkctl permissions uninstall all`.
+
+Default login already includes the required `notifications:send`, `interactions:create`, and
+`interactions:read` scopes. If setup reports missing scopes, authenticate again rather than
+narrowing login further. Do not write agent hook files by hand, do not inspect or print tokens, and
+do not send raw commands, file contents, or absolute paths through a SHark prompt.
 
 ## Create and Wire a Webhook Service
 

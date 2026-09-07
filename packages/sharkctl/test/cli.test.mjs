@@ -1139,6 +1139,96 @@ test("activity CLI rejects invalid progress and preserves no-delivery exit behav
   }
 });
 
+test("help lists permission bridge commands", async () => {
+  const result = await execute(["--help"]);
+  assert.match(result.body.help, /permissions setup/);
+  assert.match(result.body.help, /permissions uninstall/);
+  assert.match(result.body.help, /permissions doctor/);
+});
+
+test("permissions doctor reads scopes in process without printing token metadata", async () => {
+  const home = await mkdtemp(join(tmpdir(), "sharkctl-permissions-"));
+  const path = join(home, "config.json");
+  await writeFile(
+    path,
+    JSON.stringify({ token: "hark_file_fixture", apiUrl: "https://file.example.test" }),
+    { mode: 0o600 },
+  );
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const stdout = [];
+  const sensitivePrefix = "synthetic_prefix_must_not_escape";
+  globalThis.fetch = async (url, init) => {
+    assert.equal(String(url), "https://file.example.test/api/agent/auth/status");
+    assert.equal(init.headers.authorization, "Bearer hark_file_fixture");
+    return Response.json({
+      authenticated: true,
+      token: {
+        id: "synthetic_token_id",
+        name: "Synthetic connection",
+        prefix: sensitivePrefix,
+        scopes: ["notifications:send", "interactions:create"],
+      },
+    });
+  };
+  console.log = (value) => stdout.push(value);
+  try {
+    assert.equal(
+      await run(["permissions", "doctor"], {
+        HARK_TOKEN: "hark_environment_fixture",
+        HARK_API_URL: "https://environment.example.test",
+        HARK_CONFIG: path,
+        HOME: home,
+      }),
+      0,
+    );
+    const body = JSON.parse(stdout[0]);
+    assert.equal(body.authenticated, true);
+    assert.deepEqual(body.missingScopes, ["interactions:read"]);
+    assert.equal(body.token, undefined);
+    assert.equal(body.scopes, undefined);
+    assert.equal(stdout[0].includes(sensitivePrefix), false);
+    assert.deepEqual(body.installed, {
+      claude: false,
+      codex: false,
+      opencode: { v1: false, v2: false },
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("permission setup and doctor reject environment-only credentials", async () => {
+  const home = await mkdtemp(join(tmpdir(), "sharkctl-permissions-"));
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async () => {
+    requests += 1;
+    return Response.json({
+      authenticated: true,
+      token: { scopes: ["notifications:send", "interactions:create", "interactions:read"] },
+    });
+  };
+  const env = {
+    HOME: home,
+    HARK_CONFIG: join(home, "missing.json"),
+    HARK_TOKEN: "hark_environment_fixture",
+    HARK_API_URL: "https://environment.example.test",
+  };
+  try {
+    const doctor = await execute(["permissions", "doctor"], env);
+    assert.equal(doctor.body.authenticated, false);
+    assert.equal(requests, 0);
+    await assert.rejects(execute(["permissions", "setup", "claude"], env), /not authenticated/);
+    await assert.rejects(stat(join(home, ".claude", "settings.json")), { code: "ENOENT" });
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("rejects group-readable config files", async () => {
   const directory = await mkdtemp(join(tmpdir(), "sharkctl-"));
   const path = join(directory, "config.json");

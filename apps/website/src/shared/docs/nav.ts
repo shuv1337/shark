@@ -55,6 +55,7 @@ export const DOC_NAV = [
       { id: "cli-notify", label: "Send a notification" },
       { id: "cli-ask", label: "Ask a question" },
       { id: "cli-activity", label: "Drive a Live Activity" },
+      { id: "cli-permissions", label: "Approve agent permissions" },
       { id: "cli-scripting", label: "Scripting and exit codes" },
     ],
   },
