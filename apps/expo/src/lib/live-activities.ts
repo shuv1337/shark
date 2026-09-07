@@ -51,10 +51,20 @@ async function uploadUpdateToken(
 }
 
 /**
- * expo-widgets 57.0.6 keeps this native SharedObject as a normal runtime property even though its
- * TypeScript declaration marks it private. Keep this SDK-pinned escape hatch isolated and guarded.
+ * expo-widgets 57.0.17 exposes `getId()`. Older 57.0.x builds still keep the native SharedObject
+ * as a runtime property even though TypeScript marks it private. Prefer the public method, then
+ * fall back to that SDK-pinned escape hatch.
  */
 export function nativeActivityId(instance: LiveActivity): string | null {
+  const withPublicId = instance as LiveActivity & { getId?: () => string };
+  if (typeof withPublicId.getId === "function") {
+    try {
+      const id = withPublicId.getId();
+      if (typeof id === "string" && id.length > 0) return id;
+    } catch {
+      // Fall through to the private SharedObject property used by 57.0.6–57.0.16.
+    }
+  }
   const native = (instance as unknown as { nativeLiveActivity?: unknown }).nativeLiveActivity;
   if (!native || typeof native !== "object" || !("id" in native)) return null;
   const id = (native as { id?: unknown }).id;

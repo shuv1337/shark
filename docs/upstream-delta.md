@@ -22,6 +22,9 @@ changes.
 - Production uses the `shark-prod` deployment, attested immutable GHCR digests,
   1Password-fed secrets, exact-schema SQLite checkpoint validation, encrypted Restic snapshots,
   and operator promotion with no GitHub VM credential.
+- The `expo-widgets` patch is retargeted to the current SDK 57 patch line and keeps
+  `https://shark.shuv.dev/api/live-activity-interactions/` as the Live Activity response
+  endpoint. Do not copy Hark's `hark.ryan.ceo` URL from upstream patches.
 - Delivered notification withdrawal fans out silent commands to Expo, web push, and macOS.
   Upstream Hark is iOS-only. SHark also cancels a still-pending interaction, projects
   `withdrawn` / `withdraw_partial` through the durable inbox, and marks `inbox_item.readAt`
