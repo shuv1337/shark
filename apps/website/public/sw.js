@@ -1,3 +1,9 @@
+self.addEventListener("install", (event) => {
+  // This worker does not cache app assets, so new push handlers can take over
+  // without waiting for every dashboard tab to close.
+  event.waitUntil(self.skipWaiting());
+});
+
 self.addEventListener("push", (event) => {
   let payload = {};
   try {
@@ -5,6 +11,14 @@ self.addEventListener("push", (event) => {
   } catch {
     payload = { body: event.data?.text() };
   }
+
+  // Notify every open page, including tabs opened before the worker registered.
+  // Keep this independent of notification presentation or withdrawal failures.
+  event.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
+      for (const client of windows) client.postMessage({ type: "hark:inbox-updated" });
+    }),
+  );
 
   if (payload.command === "notification.withdraw") {
     event.waitUntil(withdrawPresentedNotifications(payload));
