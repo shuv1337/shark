@@ -116,6 +116,11 @@ export class Store {
   byKey(key) {
     return decode(this.db.prepare("SELECT * FROM items WHERE key=?").get(key));
   }
+  isKeyRetired(key) {
+    return Boolean(
+      this.db.prepare("SELECT 1 FROM retired_keys WHERE key_hash=?").get(hashKey(key)),
+    );
+  }
   insert({ key, tokenID, kind, data, state = "creating" }) {
     return this.transaction(() => {
       const existing = this.byKey(key);
@@ -126,8 +131,7 @@ export class Store {
           throw new BrokerError(1, "idempotency_conflict");
         return existing;
       }
-      if (this.db.prepare("SELECT 1 FROM retired_keys WHERE key_hash=?").get(hashKey(key)))
-        throw new BrokerError(1, "retired_idempotency_key");
+      if (this.isKeyRetired(key)) throw new BrokerError(1, "retired_idempotency_key");
       const id = randomUUID();
       const now = this.now();
       const encoded = stableJSON(data);
