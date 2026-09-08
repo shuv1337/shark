@@ -1,9 +1,10 @@
 # SHark Agent Reply Routing Plan
 
-Updated: **2026-09-07**. Status: **partially implemented; expanded for personal SSHuv v1**.
+Updated: **2026-09-08**. Status: **staged shuvcode broker implemented; SSHuv release gates open**.
 The original 2026-08-20 plan was added in `24d3f69` (#32). Phase 1 landed in `13e944f` (#33);
-the broker, deferred adapters, and completion integration remain unimplemented in the inspected
-source. The SSHuv requirements below are confirmed product requirements, not completed features.
+the approved staged shuvcode broker now exists in the isolated implementation workspace. Automatic
+lifecycle collection and the other required native adapters remain unimplemented. The SSHuv
+requirements below are confirmed product requirements, not completed features.
 Admission, existing-session access, cross-surface arbitration, and iOS handoff still require proof
 before their implementation contracts can be finalized. This is not blanket readiness to implement.
 
@@ -11,6 +12,63 @@ This refresh preserves the original deferred-reply reliability design, corrects 
 expiry guidance, and adds the SHark-side work and cross-repository gates needed by SSHuv.
 The SSHuv sections supersede the old one-adapter release order and any implication that SHark is
 the only user-input surface. Unresolved choices are explicit gates, not implicit scope reductions.
+
+### Implementation progress, 2026-09-08
+
+The subsequent user request authorizes implementation of this plan. It supersedes the historical
+plan-edit-only authorization recorded at the end of this document. Work is isolated in the
+`agent-reply-routing-20260907` Jujutsu workspace; unrelated primary-checkout edits are preserved.
+
+**Sequencing decision, 2026-09-08:** the user approved proceeding with the shuvcode-only reference
+broker after the installed-runtime/SHark proof. This supersedes the requirement to close Codex and
+Claude admission before creating the initial broker package/store. Their unsupported capabilities
+must fail closed. All three native agents, shared response arbitration, Herdr, and signed SSHuv
+handoff remain mandatory for the final release. The initial local API is versioned and limited to
+the proven shuvcode operations; it is not a claim that the common three-agent contract is final.
+
+- [x] Reverify Phase 1 source behavior and preserve the existing CLI contract.
+- [x] Inventory standard permission-hook and service locations on `shuvbot` and `shuvdev`
+  read-only; preserve existing non-SHark hooks. Effective-session inventory and migration remain open.
+- [x] Prepare a pure completion-content reference prototype with real-contract boundary fixtures;
+  it is not exported or integrated into a command. Phase 4 runtime integration remains open.
+- [x] Extract `sharkctl/client`, export the supported package subpaths, add protected file-only
+  configuration and notification/interaction helpers, and document the packaging change. The
+  independent extraction does not select an agent adapter or create broker storage.
+- [x] Implement the independently testable Phase 5 **candidate**: strict configured HTTPS prefix,
+  default-tap forwarding, existing detail fallback and action queue, and cold/listener callback
+  deduplication. Forwarding remains disabled without an operator-selected prefix. This does not
+  close the signed SSHuv handoff gate. See [candidate notes](docs/agent-reply-routing/ios-handoff.md).
+- [x] Build and test the shuvcode runtime candidate: opt-in session event retention, durable
+  question/permission receipts, exact reply retries, first-answer atomicity, and native TUI/HTTP
+  cooperation. Source, compiled-binary, and forced-restart results are recorded in the
+  [runtime candidate report](docs/agent-reply-routing/research/opencode-v2/runtime-candidate.md).
+  The user subsequently merged and deployed PR #364. The Mac artifact and elected service were
+  verified on 2026-09-08; effective event retention, other-host activation, and Herdr acceptance
+  remain open. No installed service was replaced by this implementation task.
+- [x] Prove SHark/shuvcode active-response arbitration and deferred queued execution against
+  the deployed Mac artifact: 11 integration cases and 21 prototype tests cover response loss,
+  restart, native desktop-first precedence, SHark cancellation races, and exact input replay.
+  See the [arbitration proof](docs/agent-reply-routing/arbitration-prototype/README.md).
+  This is a research seam without a broker store; it does not close the three-agent release gate.
+- [x] Implement the approved staged shuvcode-only broker: protected WAL outbox, exact creation/reply
+  recovery, active native arbitration, completion CLI, local API v1, queue controls, daemon, and
+  portable systemd/LaunchAgent lifecycle fixtures. See [broker documentation](packages/shark-broker/README.md).
+  Installed-runtime tests include seven actual broker SIGKILL boundaries and concurrent creation;
+  service activation, event collection, and other-agent support are not implied.
+- [ ] Close all three native-session, admission, restart/replay, and arbitration research gates.
+  Installed-runtime probes have found material gaps; see the
+  [implementation evidence ledger](docs/agent-reply-routing/README.md).
+- [ ] Extend the staged local seam to the proven common contract, add native lifecycle/cursor
+  collection and destination mappings, and complete all three production adapters after their gates close.
+- [ ] Complete the SSHuv-owned app/host integration, choose the HTTPS origin and enrollment policy,
+  and pass signed shuvtest-phone acceptance.
+- [ ] Install reviewed artifacts on participating hosts and complete operational acceptance.
+
+The staged broker package and shuvcode adapter are source implementations, not activated host services.
+No deployment, live notification, or existing user-session input was performed. Disposable local
+harness probes are recorded separately
+from production and physical-device acceptance. The original three-agent and delivery requirements
+remain in force; the research results are not permission to weaken them.
 
 ## Goal
 
@@ -961,7 +1019,7 @@ dependent implementation; do not treat them as permission to defer confirmed v1 
 
 | Decision/evidence | Required output | Blocks |
 | --- | --- | --- |
-| Three-agent existing-session/admission proof | Pinned versions, supported methods, identity, live/inactive behavior, request correlation, dedupe and ambiguity results for each agent | Broker schema and production adapters |
+| Three-agent existing-session/admission proof | Pinned versions, supported methods, identity, live/inactive behavior, request correlation, dedupe and ambiguity results for each agent | Common three-agent contract and remaining production adapters; staged shuvcode broker authorized separately |
 | Cross-surface arbitration | Authority/precedence, stale response UX, atomic admission/reconciliation and legacy-hook migration, including SHark response already stored while desktop wins | Native questions/approvals and reliable deferred replies |
 | Herdr passthrough and takeover UX | Exact requested surface, supported version, observer/controller behavior, simultaneous desktop/phone policy | SSHuv terminal acceptance |
 | Host enrollment and transport | Supported hosts, trusted pairing, access scopes, key custody/revocation, local bridge API and reconnect protocol | SSHuv host bridge and secure destination resolution |

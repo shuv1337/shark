@@ -1,0 +1,69 @@
+{
+  "observedAt": "2026-09-08T09:15:36.615000+00:00",
+  "mergeCommit": "b133e340e359eeb8df6fc15bb3cff55d6a6c3b6f",
+  "binaryVersion": "shuvcode v0.0.0-latest-b133e340",
+  "binarySha256": "f540afa9dcc215af828a3e22961ae9de8001dbf1f984de8d4d9958e96b7f253c",
+  "success": true,
+  "passed": 11,
+  "failed": 0,
+  "scenarios": [
+    {
+      "name": "a delayed SHark reply queues behind desktop work and executes once across response loss and restart",
+      "status": "passed"
+    },
+    {
+      "name": "a phone reply is admitted once and exact replay does not POST again",
+      "status": "passed"
+    },
+    {
+      "name": "desktop-first cancels the outstanding SHark prompt",
+      "status": "passed"
+    },
+    {
+      "name": "a stored SHark answer losing the native race remains visibly superseded",
+      "status": "passed"
+    },
+    {
+      "name": "lost HTTP response reconciles the committed native receipt",
+      "status": "passed"
+    },
+    {
+      "name": "permission decisions preserve once scope and reject a competing denial",
+      "status": "passed"
+    },
+    {
+      "name": "desktop denial supersedes an approval already stored in SHark",
+      "status": "passed"
+    },
+    {
+      "name": "a SHark response racing cancellation remains recoverable",
+      "status": "passed"
+    },
+    {
+      "name": "missing native receipts cannot cancel a valid SHark request or submit input",
+      "status": "passed"
+    },
+    {
+      "name": "simultaneous exact retries converge on the same native answer",
+      "status": "passed"
+    },
+    {
+      "name": "restart preserves accepted receipts and fences unavailable pending callbacks",
+      "status": "passed"
+    }
+  ],
+  "isolation": {
+    "nativeState": "fresh disposable directory",
+    "nativeNetwork": "macOS loopback only",
+    "sharkDatabase": "in-memory migrated SQLite",
+    "pushDelivery": "mocked",
+    "realNotifications": false,
+    "liveUserSessions": false
+  },
+  "limits": [
+    "No durable broker store or daemon",
+    "No physical phone or Herdr acceptance",
+    "No Codex or Claude adapter admission proof",
+    "Native question and permission admission does not prove tool completion"
+  ]
+}

@@ -1,0 +1,370 @@
+{
+  "schemaVersion": 1,
+  "runtimeVersion": "0.153.4",
+  "model": "credential-free synthetic loopback",
+  "rawEvidenceFile": "/tmp/shark-codex-probe-hRGYsY/full-evidence.json",
+  "rawEvidenceSha256": "9a299b1e63f06f2983b9557adc15bd1b9b2058b4d74af5ccb05619a81562befe",
+  "verdict": "blocked",
+  "checks": [
+    {
+      "id": "probe_completed",
+      "source": "observations[].name",
+      "observed": false,
+      "expected": false
+    },
+    {
+      "id": "active_rejoin",
+      "source": "observer.resumeActive.result.thread.status.type",
+      "observed": "active",
+      "expected": "active"
+    },
+    {
+      "id": "completion_subscription",
+      "source": "observer.completed.params.turn.status",
+      "observed": "completed",
+      "expected": "completed"
+    },
+    {
+      "id": "completed_delivery_not_deduplicated",
+      "source": "readAfterDuplicate.result.thread.turns[].items[].clientId",
+      "observed": 2,
+      "expected": 2
+    },
+    {
+      "id": "busy_delivery_not_deduplicated",
+      "source": "restart.readBeforeResume.result.thread.turns[].items[].clientId",
+      "observed": 2,
+      "expected": 2
+    },
+    {
+      "id": "queue_delivery_not_deduplicated",
+      "source": "queueList.result.data[].id",
+      "observed": 2,
+      "expected": 2
+    },
+    {
+      "id": "persisted_crash_delivery_found",
+      "source": "restart.readBeforeResume.result.thread.turns[].items[].clientId",
+      "observed": 1,
+      "expected": 1
+    },
+    {
+      "id": "queue_correlation_survives_restart",
+      "source": "restart.queueBeforeResume.result.data[0].clientUserMessageId",
+      "observed": "delivery_synthetic_crash_queue",
+      "expected": "delivery_synthetic_crash_queue"
+    },
+    {
+      "id": "stale_steer_rejected",
+      "source": "staleSteer.error.message",
+      "observed": true,
+      "expected": true
+    },
+    {
+      "id": "other_writer_rejected",
+      "source": "otherProcess.resumeActiveOwner.error.message",
+      "observed": true,
+      "expected": true
+    },
+    {
+      "id": "only_one_model_owner",
+      "source": "concurrentProcesses.heldModelCalls",
+      "observed": 1,
+      "expected": 1
+    },
+    {
+      "id": "question_shared_request_id",
+      "source": "nativeQuestionRequestIds",
+      "observed": true,
+      "expected": true
+    },
+    {
+      "id": "question_replayed_on_rejoin",
+      "source": "reconnect.pendingRequests[0].id",
+      "observed": 0,
+      "expected": 0
+    },
+    {
+      "id": "one_resolution_per_client",
+      "source": "resolutionEvents[].events[].params.requestId",
+      "observed": [1, 1, 1],
+      "expected": [1, 1, 1]
+    },
+    {
+      "id": "approval_replayed_on_rejoin",
+      "source": "approval_reconnect.request.id",
+      "observed": 1,
+      "expected": 1
+    },
+    {
+      "id": "turnsPage_cursor",
+      "source": "turnsPage.result.nextCursor",
+      "observed": "string",
+      "expected": "string"
+    },
+    {
+      "id": "itemsPage_cursor",
+      "source": "itemsPage.result.nextCursor",
+      "observed": "string",
+      "expected": "string"
+    },
+    {
+      "id": "timelinePage_cursor",
+      "source": "timelinePage.result.nextCursor",
+      "observed": "string",
+      "expected": "string"
+    },
+    {
+      "id": "ack_crash_iterations",
+      "source": "immediateAdmissionCrash[]",
+      "observed": 5,
+      "expected": 5
+    },
+    {
+      "id": "ack_crash_responses_received",
+      "source": "immediateAdmissionCrash[].acknowledgedTurnId",
+      "observed": 5,
+      "expected": 5
+    },
+    {
+      "id": "ack_crash_read_errors",
+      "source": "immediateAdmissionCrash[].error",
+      "observed": 0,
+      "expected": 0
+    },
+    {
+      "id": "ack_crash_matching_items",
+      "source": "immediateAdmissionCrash[].matchingItems.length",
+      "observed": [0, 0, 0, 0, 0],
+      "expected": [0, 0, 0, 0, 0]
+    },
+    {
+      "id": "shared_terminal_followup_visible",
+      "source": "terminal.followupVisible.sawUniqueInput",
+      "observed": true,
+      "expected": true
+    },
+    {
+      "id": "shared_terminal_followup_persisted",
+      "source": "terminal.readAfterFollowup.result.thread.turns[].items[].clientId",
+      "observed": 1,
+      "expected": 1
+    },
+    {
+      "id": "default_terminal_really_started",
+      "source": "defaultTerminal.started.heldModelCalls",
+      "observed": 1,
+      "expected": 1
+    },
+    {
+      "id": "default_proxy_unavailable",
+      "source": "defaultTerminal.proxy.exitCode",
+      "observed": 1,
+      "expected": 1
+    },
+    {
+      "id": "default_proxy_socket_missing",
+      "source": "defaultTerminal.proxy.diagnostic",
+      "observed": true,
+      "expected": true
+    },
+    {
+      "id": "default_terminal_writer_rejected",
+      "source": "defaultTerminal.otherProcessResume.error.message",
+      "observed": true,
+      "expected": true
+    },
+    {
+      "id": "temporary_daemon_cleanup",
+      "source": "syntheticDaemonStopped.exitCode",
+      "observed": 0,
+      "expected": 0
+    }
+  ],
+  "extracts": {
+    "duplicateCompletedItems": [
+      {
+        "turnId": "01a07e5c-8166-7c80-9ce4-31aaa2f7ce78",
+        "itemId": "01a07e5c-816f-7d13-9023-ea2e764469a4",
+        "clientId": "delivery_synthetic_first"
+      },
+      {
+        "turnId": "01a07e5c-81b5-7e60-9f5e-77df04241be3",
+        "itemId": "01a07e5c-81bb-7dd0-beab-8b0d9380dd06",
+        "clientId": "delivery_synthetic_first"
+      }
+    ],
+    "duplicateBusyItems": [
+      {
+        "turnId": "01a07e5c-81ce-7142-be80-53f893e343f3",
+        "itemId": "01a07e5c-8207-7ad1-a95a-da96aaa84163",
+        "clientId": "delivery_synthetic_second_client"
+      },
+      {
+        "turnId": "01a07e5c-81ce-7142-be80-53f893e343f3",
+        "itemId": "01a07e5c-8208-7c21-909d-059d84e69dd5",
+        "clientId": "delivery_synthetic_second_client"
+      }
+    ],
+    "duplicateQueue": [
+      {
+        "id": "01a07e5c-8204-72d2-b7c2-5955424829ac",
+        "clientUserMessageId": "delivery_synthetic_queue"
+      },
+      {
+        "id": "01a07e5c-8204-72d2-b7c2-5976c0f32cf7",
+        "clientUserMessageId": "delivery_synthetic_queue"
+      }
+    ],
+    "persistedCrashItem": [
+      {
+        "turnId": "01a07e5c-8382-7b81-b81d-12d66e31dbc3",
+        "itemId": "01a07e5c-8388-79a3-adca-2ea2ff0effec",
+        "clientId": "delivery_synthetic_crash"
+      }
+    ],
+    "persistedQueue": [
+      {
+        "id": "01a07e5c-83b6-7ec3-a001-f2bd82b330a5",
+        "clientUserMessageId": "delivery_synthetic_crash_queue"
+      }
+    ],
+    "activeQuestion": {
+      "method": "item/tool/requestUserInput",
+      "id": 0,
+      "params": {
+        "threadId": "01a07e5c-8156-7183-a9b9-7b66b43b10f1",
+        "turnId": "01a07e5c-8238-7cd1-8f7f-808b6f824aeb",
+        "itemId": "call_synthetic_7",
+        "questions": [
+          {
+            "id": "synthetic_q",
+            "header": "Probe",
+            "question": "Synthetic question?",
+            "isOther": true,
+            "isSecret": false,
+            "options": [
+              {
+                "label": "First",
+                "description": "Synthetic first answer"
+              },
+              {
+                "label": "Second",
+                "description": "Synthetic second answer"
+              }
+            ]
+          }
+        ],
+        "isBlocking": true,
+        "autoResolutionMs": null
+      }
+    },
+    "activeApproval": {
+      "method": "item/commandExecution/requestApproval",
+      "id": 1,
+      "params": {
+        "kind": "command",
+        "threadId": "01a07e5c-8156-7183-a9b9-7b66b43b10f1",
+        "turnId": "01a07e5c-833b-7982-8a55-519f2d9b58c2",
+        "itemId": "call_synthetic_9",
+        "startedAtMs": 1788826387278,
+        "environmentId": "local",
+        "reason": "Synthetic local protocol probe",
+        "command": "/bin/zsh -lc 'echo synthetic_approval'",
+        "cwd": "<RUNTIME>",
+        "commandActions": [
+          {
+            "type": "unknown",
+            "command": "echo synthetic_approval"
+          }
+        ],
+        "proposedExecpolicyAmendment": ["echo", "synthetic_approval"],
+        "availableDecisions": [
+          "accept",
+          {
+            "acceptWithExecpolicyAmendment": {
+              "execpolicy_amendment": ["echo", "synthetic_approval"]
+            }
+          },
+          "cancel"
+        ]
+      }
+    },
+    "staleSteerError": {
+      "code": -32600,
+      "message": "expected active turn id `synthetic_stale_turn` but found `01a07e5c-81ce-7142-be80-53f893e343f3`"
+    },
+    "otherWriterError": {
+      "code": -32600,
+      "message": "thread 01a07e5c-8156-7183-a9b9-7b66b43b10f1 already has an active writer"
+    },
+    "immediateCrashTurnIds": [
+      "01a07e5c-992e-7af2-bda0-de3d09709114",
+      "01a07e5c-99de-7771-962d-b90ae83c0bc0",
+      "01a07e5c-9a8e-7aa0-b543-91f3fd704288",
+      "01a07e5c-9b44-7eb2-8e07-0d4a7648ce89",
+      "01a07e5c-9bf3-7130-96f3-e97fd3e84fff"
+    ],
+    "queueAfterResumeCount": 0,
+    "snapshotAfterResume": {
+      "threadId": "01a07e5c-8156-7183-a9b9-7b66b43b10f1",
+      "source": "vscode",
+      "status": {
+        "type": "active",
+        "activeFlags": []
+      },
+      "turnStatuses": [
+        "completed",
+        "completed",
+        "completed",
+        "completed",
+        "completed",
+        "completed",
+        "completed",
+        "inProgress",
+        "inProgress"
+      ]
+    },
+    "remoteTerminal": {
+      "exitCode": null,
+      "thread": {
+        "id": "01a07e5c-9d36-7251-a830-f73a18c2e9c6",
+        "source": "vscode",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    "remoteTerminalFollowup": [
+      {
+        "turnId": "01a07e5c-9d8d-7962-9170-779515c30b20",
+        "itemId": "01a07e5c-9d93-7073-95b1-19556c696e92",
+        "clientId": "delivery_synthetic_terminal_followup"
+      }
+    ],
+    "defaultProxy": {
+      "exitCode": 1,
+      "diagnostic": "Error: failed to connect to socket at <RUNTIME>/.codex/app-server-control/app-server-control.sock\n\nCaused by:\n    No such file or directory (os error 2)\n"
+    },
+    "defaultTerminalLiveDiskProjection": {
+      "threadId": "01a07e5c-9e97-77a2-bdff-5d18530ea51d",
+      "source": "cli",
+      "status": {
+        "type": "notLoaded"
+      },
+      "turnStatuses": ["interrupted"]
+    },
+    "defaultTerminalWriterError": {
+      "code": -32600,
+      "message": "thread 01a07e5c-9e97-77a2-bdff-5d18530ea51d already has an active writer"
+    },
+    "defaultTerminalCompletedDiskProjection": {
+      "threadId": "01a07e5c-9e97-77a2-bdff-5d18530ea51d",
+      "source": "cli",
+      "status": {
+        "type": "notLoaded"
+      },
+      "turnStatuses": ["completed"]
+    }
+  }
+}

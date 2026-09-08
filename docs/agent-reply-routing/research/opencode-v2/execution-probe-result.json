@@ -1,0 +1,246 @@
+{
+  "observedAt": "2026-09-08T00:16:46.763Z",
+  "binary": "/Users/shuv/.bun/install/global/node_modules/shuvcode-darwin-arm64/bin/shuvcode",
+  "binarySha256": "b10d4f0ae990f9e01eef60d555793d1e39863a5e8794421c88e235e64972ab9c",
+  "version": "shuvcode v2.0.0-alpha-19",
+  "executionProbe": true,
+  "isolation": {
+    "freshXdgDirectories": true,
+    "freshConfig": true,
+    "inheritedCredentials": false,
+    "nonLoopbackNetworkDenied": true,
+    "externalModelExecution": false,
+    "syntheticModelTransport": true
+  },
+  "checks": [
+    {
+      "name": "installed-openapi",
+      "status": 200,
+      "routes": [
+        "/api/session",
+        "/api/session/stats",
+        "/api/session/import",
+        "/api/session/{sessionID}/export",
+        "/api/session/active",
+        "/api/session/{sessionID}",
+        "/api/session/{sessionID}/fork",
+        "/api/session/{sessionID}/agent",
+        "/api/session/{sessionID}/model",
+        "/api/session/{sessionID}/rename",
+        "/api/session/{sessionID}/move",
+        "/api/session/{sessionID}/prompt",
+        "/api/session/{sessionID}/command",
+        "/api/session/{sessionID}/skill",
+        "/api/session/{sessionID}/synthetic",
+        "/api/session/{sessionID}/shell",
+        "/api/session/{sessionID}/compact",
+        "/api/session/{sessionID}/wait",
+        "/api/session/{sessionID}/revert/stage",
+        "/api/session/{sessionID}/revert/clear",
+        "/api/session/{sessionID}/revert/commit",
+        "/api/session/{sessionID}/context",
+        "/api/session/{sessionID}/inbox",
+        "/api/session/{sessionID}/inbox/{inboxID}",
+        "/api/session/{sessionID}/inbox/{inboxID}/steer",
+        "/api/session/{sessionID}/inbox/{inboxID}/queue",
+        "/api/session/{sessionID}/instructions/entries",
+        "/api/session/{sessionID}/instructions/entries/{key}",
+        "/api/session/{sessionID}/tools",
+        "/api/session/{sessionID}/tools/calls",
+        "/api/session/{sessionID}/tools/calls/{callID}/reply",
+        "/api/session/{sessionID}/generate",
+        "/api/experimental/session/{sessionID}/log",
+        "/api/session/{sessionID}/interrupt",
+        "/api/session/{sessionID}/background",
+        "/api/session/{sessionID}/message/{messageID}",
+        "/api/session/{sessionID}/environment",
+        "/api/session/{sessionID}/view",
+        "/api/session/{sessionID}/message",
+        "/api/form/request",
+        "/api/session/{sessionID}/form",
+        "/api/session/{sessionID}/form/{formID}",
+        "/api/session/{sessionID}/form/{formID}/state",
+        "/api/session/{sessionID}/form/{formID}/reply",
+        "/api/session/{sessionID}/form/{formID}/cancel",
+        "/api/permission/request",
+        "/api/permission/saved",
+        "/api/permission/saved/{id}",
+        "/api/session/{sessionID}/permission",
+        "/api/session/{sessionID}/permission/{requestID}",
+        "/api/session/{sessionID}/permission/{requestID}/reply",
+        "/api/event",
+        "/api/experimental/session/{sessionID}/terminal/read",
+        "/api/experimental/session/{sessionID}/terminal"
+      ]
+    },
+    {
+      "name": "create-disposable-session",
+      "status": 200,
+      "sessionId": "ses_shark_probe_a"
+    },
+    {
+      "name": "second-client-discovery",
+      "status": 200,
+      "found": true
+    },
+    {
+      "name": "definitive-missing",
+      "status": 404,
+      "error": "SessionNotFoundError"
+    },
+    {
+      "name": "admit-only",
+      "status": 200,
+      "id": "msg_shark_probe_delivery_1",
+      "delivery": "queue",
+      "responseKeys": ["id", "sessionID", "timeCreated", "type", "payload", "delivery"]
+    },
+    {
+      "name": "exact-duplicate",
+      "status": 200,
+      "sameAdmission": true
+    },
+    {
+      "name": "changed-payload-reuse-first-wins",
+      "status": 200,
+      "originalPayloadRetained": true
+    },
+    {
+      "name": "changed-delivery-first-wins",
+      "status": 200,
+      "originalDeliveryRetained": true
+    },
+    {
+      "name": "cross-session-id-conflict",
+      "status": 409,
+      "error": "ConflictError"
+    },
+    {
+      "name": "durable-queue",
+      "status": 200,
+      "count": 1,
+      "route": "/inbox"
+    },
+    {
+      "name": "admit-only-is-inactive",
+      "status": 200,
+      "active": false
+    },
+    {
+      "name": "missing-prompt",
+      "status": 404,
+      "error": "SessionNotFoundError"
+    },
+    {
+      "name": "durable-log",
+      "status": 200,
+      "events": [
+        {
+          "type": "log.synced",
+          "seq": 1
+        }
+      ]
+    },
+    {
+      "name": "form-create",
+      "status": 200,
+      "formId": "frm_shark_probe_race"
+    },
+    {
+      "name": "form-competing-replies",
+      "statuses": [204, 409],
+      "errors": [null, "FormAlreadySettledError"],
+      "state": "answered",
+      "winner": "desktop"
+    },
+    {
+      "name": "form-late-reply",
+      "status": 409,
+      "error": "FormAlreadySettledError"
+    },
+    {
+      "name": "permission-evaluate",
+      "status": 200,
+      "effect": "ask"
+    },
+    {
+      "name": "permission-competing-replies",
+      "statuses": [204, 404],
+      "errors": [null, "PermissionNotFoundError"],
+      "postReplyStatus": 404
+    },
+    {
+      "name": "lost-admission-response",
+      "clientOutcome": "unknown",
+      "upstreamStatus": 200
+    },
+    {
+      "name": "restart-and-exact-replay",
+      "status": 200,
+      "sameAdmission": true
+    },
+    {
+      "name": "lost-response-replay-after-crash",
+      "status": 200,
+      "sameAdmission": true
+    },
+    {
+      "name": "restart-queue-count",
+      "status": 200,
+      "count": 2
+    },
+    {
+      "name": "form-state-after-process-crash",
+      "answeredStatus": 404,
+      "answeredError": "FormNotFoundError",
+      "pendingStatus": 404,
+      "pendingError": "FormNotFoundError"
+    },
+    {
+      "name": "wake-synthetic-execution",
+      "status": 200
+    }
+  ],
+  "result": "failed",
+  "failure": {
+    "name": "Error",
+    "message": "Timed out: loopback synthetic model request"
+  },
+  "executionDiagnostic": {
+    "status": 200,
+    "messages": [
+      {
+        "type": "user",
+        "id": "msg_shark_probe_running_1"
+      }
+    ]
+  },
+  "logDiagnostic": {
+    "status": 200,
+    "frames": [
+      {
+        "type": "log.synced",
+        "seq": 4
+      }
+    ]
+  },
+  "persistedEventRows": 0,
+  "requestDiagnostics": [
+    {
+      "kind": "permission",
+      "status": 200,
+      "count": 0
+    },
+    {
+      "kind": "form",
+      "status": 200,
+      "count": 0
+    },
+    {
+      "kind": "inbox",
+      "status": 200,
+      "count": 0
+    }
+  ],
+  "stderrBytes": 2662
+}

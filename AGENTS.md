@@ -7,6 +7,7 @@ SHark is a pnpm monorepo for a self-hosted iPhone notification service:
 - `apps/website/`: Hono server plus web dashboard.
 - `apps/expo/`: Expo/iOS client and widgets.
 - `packages/sharkctl/`: Node.js 22+ command-line client.
+- `packages/shark-broker/`: private Node.js 22.13+ durable host reply broker (`sharkd`).
 - `packages/contracts/`: shared API contracts.
 - `packages/website-runtime/`: website runtime support.
 - `skills/shark/`: installable agent skill.
@@ -29,6 +30,8 @@ Run the narrowest relevant check first, then broaden when practical:
 ```sh
 pnpm --filter sharkctl test
 pnpm --filter sharkctl build
+pnpm --filter @hark/shark-broker test
+pnpm --filter @hark/shark-broker build
 pnpm typecheck
 pnpm test
 pnpm lint
