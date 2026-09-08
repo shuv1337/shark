@@ -246,6 +246,12 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@22.20.1)(happy-dom@20.14.0)(vite@8.1.5(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(tsx@4.23.1)(yaml@2.9.0))
 
+  packages/shark-broker:
+    dependencies:
+      sharkctl:
+        specifier: workspace:*
+        version: link:../sharkctl
+
   packages/sharkctl: {}
 
   packages/website-runtime:

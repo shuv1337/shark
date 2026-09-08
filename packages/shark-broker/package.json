@@ -1,0 +1,31 @@
+{
+  "name": "@hark/shark-broker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Private durable SHark reply broker for verified host adapters",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "bin": {
+    "sharkd": "bin/sharkd.mjs"
+  },
+  "exports": {
+    ".": "./src/index.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "dependencies": {
+    "sharkctl": "workspace:*"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "build": "node scripts/check.mjs",
+    "typecheck": "pnpm build"
+  }
+}

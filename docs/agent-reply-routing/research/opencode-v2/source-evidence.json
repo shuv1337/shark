@@ -1,0 +1,106 @@
+{
+  "sourceCommit": "6829c0e589f73ed105a60b002b2535aed04847d3",
+  "releaseUrl": "https://github.com/Latitudes-Dev/shuvcode/releases/tag/v2.0.0-alpha-19",
+  "releasePublishedAt": "2026-09-02T21:57:08Z",
+  "staleLocalCheckout": {
+    "path": "/Volumes/shuvbot-repos/shuvcode",
+    "commit": "31e460ecde896d60378d54f4d3381c9df1681e4a"
+  },
+  "sources": [
+    {
+      "path": "packages/core/src/bus.ts",
+      "url": "https://github.com/Latitudes-Dev/shuvcode/blob/6829c0e589f73ed105a60b002b2535aed04847d3/packages/core/src/bus.ts",
+      "sha256": "bd8be4fe40f915ca8b0a2fa470e00cce1b78d57438d4987ea810faa27d53c489"
+    },
+    {
+      "path": "packages/core/src/session/inbox.ts",
+      "url": "https://github.com/Latitudes-Dev/shuvcode/blob/6829c0e589f73ed105a60b002b2535aed04847d3/packages/core/src/session/inbox.ts",
+      "sha256": "bccda86dc6f4fe67edd4efcc3df65ce43d4530be7f058c1ec8a65d1c04f6aa43"
+    },
+    {
+      "path": "packages/core/src/session/session.ts",
+      "url": "https://github.com/Latitudes-Dev/shuvcode/blob/6829c0e589f73ed105a60b002b2535aed04847d3/packages/core/src/session/session.ts",
+      "sha256": "314f4a0eb21b4937e077c8623c053b413bd968c32ca6d4aa193ca832408073dd"
+    },
+    {
+      "path": "packages/core/src/session/execution.ts",
+      "url": "https://github.com/Latitudes-Dev/shuvcode/blob/6829c0e589f73ed105a60b002b2535aed04847d3/packages/core/src/session/execution.ts",
+      "sha256": "2c474c034b05b22dc0edfdce38378135aafeb9ab269449163ff19d2c1b27d420"
+    },
+    {
+      "path": "packages/core/src/session/run-coordinator.ts",
+      "url": "https://github.com/Latitudes-Dev/shuvcode/blob/6829c0e589f73ed105a60b002b2535aed04847d3/packages/core/src/session/run-coordinator.ts",
+      "sha256": "f29cee9153b0fc07a864d1f373607077bc56694192221adfc2c8f9acdd134135"
+    },
+    {
+      "path": "packages/core/src/form.ts",
+      "url": "https://github.com/Latitudes-Dev/shuvcode/blob/6829c0e589f73ed105a60b002b2535aed04847d3/packages/core/src/form.ts",
+      "sha256": "39f21b29e0139abaf22ef33b200cd6d75dd6f19a8b87048c4e4e06375aedc1ca"
+    },
+    {
+      "path": "packages/core/src/permission.ts",
+      "url": "https://github.com/Latitudes-Dev/shuvcode/blob/6829c0e589f73ed105a60b002b2535aed04847d3/packages/core/src/permission.ts",
+      "sha256": "5dcd7398820d6b124d27a3575dd74452862eac8f05b015be30a0e43daad6220e"
+    },
+    {
+      "path": "packages/protocol/src/groups/session.ts",
+      "url": "https://github.com/Latitudes-Dev/shuvcode/blob/6829c0e589f73ed105a60b002b2535aed04847d3/packages/protocol/src/groups/session.ts",
+      "sha256": "df8c5edb24af05cbff3ab0ce31005d7749ca9583c8eecca2d4bbcfc8dac7c851"
+    },
+    {
+      "path": "packages/protocol/src/groups/form.ts",
+      "url": "https://github.com/Latitudes-Dev/shuvcode/blob/6829c0e589f73ed105a60b002b2535aed04847d3/packages/protocol/src/groups/form.ts",
+      "sha256": "4f49ab7b9f739ee18ce5ccde3c8ba9858ca75279079c560ec66256bafdbd8401"
+    },
+    {
+      "path": "packages/schema/src/form.ts",
+      "url": "https://github.com/Latitudes-Dev/shuvcode/blob/6829c0e589f73ed105a60b002b2535aed04847d3/packages/schema/src/form.ts",
+      "sha256": "0c8c7b55d3fb74305e1b1799f442895994493a5d0c4b550857a862d02c5ec233"
+    },
+    {
+      "path": "packages/schema/src/session-event.ts",
+      "url": "https://github.com/Latitudes-Dev/shuvcode/blob/6829c0e589f73ed105a60b002b2535aed04847d3/packages/schema/src/session-event.ts",
+      "sha256": "aefa3037bf717d77d504de1cb4eeb44e6d7dfe58474028844c8f810a837d884e"
+    },
+    {
+      "path": "packages/schema/src/config.ts",
+      "url": "https://github.com/Latitudes-Dev/shuvcode/blob/6829c0e589f73ed105a60b002b2535aed04847d3/packages/schema/src/config.ts",
+      "sha256": "b727f90454183b625c4f41909bf1005e7f5099e551e4689768fed5b9eb8b4fe6"
+    },
+    {
+      "path": "packages/cli/src/env.ts",
+      "url": "https://github.com/Latitudes-Dev/shuvcode/blob/6829c0e589f73ed105a60b002b2535aed04847d3/packages/cli/src/env.ts",
+      "sha256": "04055e533068daff42c6373266042de7b30831e367e5617837c474828fac53db"
+    },
+    {
+      "path": "packages/cli/src/server-process.ts",
+      "url": "https://github.com/Latitudes-Dev/shuvcode/blob/6829c0e589f73ed105a60b002b2535aed04847d3/packages/cli/src/server-process.ts",
+      "sha256": "a8c99f223669be4350c73eebad18ba2588040864136769bae174a55e25bf2ba3"
+    },
+    {
+      "path": "packages/cli/src/services/standalone.ts",
+      "url": "https://github.com/Latitudes-Dev/shuvcode/blob/6829c0e589f73ed105a60b002b2535aed04847d3/packages/cli/src/services/standalone.ts",
+      "sha256": "12baae79f7dc6370f24b7176a52d750f3b916a3d9c4c98085c811254c24007de"
+    },
+    {
+      "path": "packages/cli/src/services/service-config.ts",
+      "url": "https://github.com/Latitudes-Dev/shuvcode/blob/6829c0e589f73ed105a60b002b2535aed04847d3/packages/cli/src/services/service-config.ts",
+      "sha256": "fcf1b29134d8a2783a831cd804f52074a6d964d5a19866d4d9aead8169fcb64b"
+    },
+    {
+      "path": "packages/client/src/effect/service.ts",
+      "url": "https://github.com/Latitudes-Dev/shuvcode/blob/6829c0e589f73ed105a60b002b2535aed04847d3/packages/client/src/effect/service.ts",
+      "sha256": "00b089645605f85c1e98c109cf95c8270ec85c2c6e93bf51e887871ec0057fb8"
+    },
+    {
+      "path": "packages/server/src/options.ts",
+      "url": "https://github.com/Latitudes-Dev/shuvcode/blob/6829c0e589f73ed105a60b002b2535aed04847d3/packages/server/src/options.ts",
+      "sha256": "cbaa81210373c140aade4f35a8a64a3789e3c712b56ac415e6f3d09208643616"
+    },
+    {
+      "path": "packages/server/src/routes.ts",
+      "url": "https://github.com/Latitudes-Dev/shuvcode/blob/6829c0e589f73ed105a60b002b2535aed04847d3/packages/server/src/routes.ts",
+      "sha256": "ca2cd5ca10358a93b2e1fe9142c8eb3daa5431279e1fb5b46aa09a19921d121a"
+    }
+  ]
+}

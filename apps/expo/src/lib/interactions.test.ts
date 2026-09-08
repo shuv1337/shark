@@ -105,6 +105,7 @@ afterEach(async () => {
   state.submissions.length = 0;
   await clearInteractionResponses();
   state.store.clear();
+  vi.mocked(Linking.openURL).mockReset();
 });
 
 describe("interaction notification categories", () => {
@@ -125,6 +126,75 @@ describe("interaction notification categories", () => {
 });
 
 describe("notification tap routing", () => {
+  const sshuvPrefix = "https://app.example.test/conversation/v1/";
+  const sshuvUrl = `${sshuvPrefix}synthetic_reference_1234567890`;
+  const defaultResponse = (url: string) =>
+    ({
+      actionIdentifier: "expo.modules.notifications.actions.DEFAULT",
+      notification: {
+        date: Date.now(),
+        request: {
+          content: {
+            title: "Synthetic task",
+            body: "Ready",
+            data: { eventId: "evt_synthetic", url },
+          },
+        },
+      },
+    }) as never;
+
+  it("forwards an explicitly configured SSHuv default tap before opening detail", async () => {
+    vi.mocked(Linking.openURL).mockResolvedValue(undefined);
+    const detail = vi.fn();
+    await handleNotificationResponse(defaultResponse(sshuvUrl), detail, sshuvPrefix);
+    expect(Linking.openURL).toHaveBeenCalledWith(sshuvUrl);
+    expect(detail).not.toHaveBeenCalled();
+    expect(state.submissions).toHaveLength(0);
+  });
+
+  it("keeps a durable detail fallback when forwarding fails", async () => {
+    vi.mocked(Linking.openURL).mockRejectedValue(new Error("synthetic unavailable app"));
+    const detail = vi.fn();
+    await handleNotificationResponse(defaultResponse(sshuvUrl), detail, sshuvPrefix);
+    expect(Linking.openURL).toHaveBeenCalledTimes(1);
+    expect(detail).toHaveBeenCalledWith(expect.objectContaining({ eventId: "evt_synthetic" }));
+  });
+
+  it.each([
+    `${sshuvUrl}?command=approve`,
+    sshuvUrl.replace("app.example.test", "other.example.test"),
+    sshuvUrl.replace("/v1/", "/v2/"),
+  ])("keeps invalid or untrusted SSHuv destinations inside SHark: %s", async (url) => {
+    const detail = vi.fn();
+    await handleNotificationResponse(defaultResponse(url), detail, sshuvPrefix);
+    expect(Linking.openURL).not.toHaveBeenCalled();
+    expect(detail).toHaveBeenCalledTimes(1);
+  });
+
+  it("never forwards an approval action even when its notification has an SSHuv URL", async () => {
+    state.store.set(DEVICE_ID_KEY, "dev_synthetic");
+    await handleNotificationResponse(
+      {
+        actionIdentifier: "HARK_APPROVE",
+        notification: {
+          request: {
+            content: {
+              data: {
+                interactionId: "int_synthetic",
+                actionDigest: DIGEST,
+                url: sshuvUrl,
+              },
+            },
+          },
+        },
+      } as never,
+      vi.fn(),
+      sshuvPrefix,
+    );
+    expect(Linking.openURL).not.toHaveBeenCalled();
+    expect(state.submissions[0]?.input.action).toBe("approve");
+  });
+
   it("opens the durable in-app detail before an external rich link", async () => {
     const opened: Array<{ eventId: string | null }> = [];
     await handleNotificationResponse(
