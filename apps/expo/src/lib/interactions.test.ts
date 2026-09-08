@@ -195,6 +195,50 @@ describe("notification tap routing", () => {
     expect(state.submissions[0]?.input.action).toBe("approve");
   });
 
+  const urlOnlyResponse = (url: string) =>
+    ({
+      actionIdentifier: "expo.modules.notifications.actions.DEFAULT",
+      notification: { request: { content: { data: { url } } } },
+    }) as never;
+
+  it.each([sshuvPrefix, "invalid-prefix"])(
+    "blocks untrusted URL-only taps when a prefix is configured: %s",
+    async (prefix) => {
+      vi.mocked(Linking.openURL).mockResolvedValue(undefined);
+      const detail = vi.fn();
+      await handleNotificationResponse(
+        urlOnlyResponse("https://other.example.test/untrusted"),
+        detail,
+        prefix,
+      );
+      expect(Linking.openURL).not.toHaveBeenCalled();
+      expect(detail).not.toHaveBeenCalled();
+    },
+  );
+
+  it("blocks untrusted taps without a detail callback when a prefix is configured", async () => {
+    vi.mocked(Linking.openURL).mockResolvedValue(undefined);
+    await handleNotificationResponse(
+      defaultResponse("https://other.example.test/untrusted"),
+      undefined,
+      sshuvPrefix,
+    );
+    expect(Linking.openURL).not.toHaveBeenCalled();
+  });
+
+  it("preserves legacy URL-only taps when SSHuv forwarding is disabled", async () => {
+    vi.mocked(Linking.openURL).mockResolvedValue(undefined);
+    const url = "https://example.test/legacy";
+    await handleNotificationResponse(urlOnlyResponse(url), undefined, "");
+    expect(Linking.openURL).toHaveBeenCalledWith(url);
+  });
+
+  it("forwards a valid URL-only SSHuv tap without requiring notification detail", async () => {
+    vi.mocked(Linking.openURL).mockResolvedValue(undefined);
+    await handleNotificationResponse(urlOnlyResponse(sshuvUrl), undefined, sshuvPrefix);
+    expect(Linking.openURL).toHaveBeenCalledWith(sshuvUrl);
+  });
+
   it("opens the durable in-app detail before an external rich link", async () => {
     const opened: Array<{ eventId: string | null }> = [];
     await handleNotificationResponse(

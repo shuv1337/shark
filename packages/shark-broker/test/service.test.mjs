@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { runDaemon } from "../src/daemon.mjs";
 import { ServiceManager, serviceDefinition } from "../src/service.mjs";
 import { fixture } from "./fixture.mjs";
+
+test("native executable lookup resolves Node without an injected process path", {
+  skip: !["darwin", "linux"].includes(process.platform),
+}, async () => {
+  const manager = new ServiceManager();
+  assert.equal(await manager.actualExecutable(process.pid), await realpath(process.execPath));
+});
 
 test("service definitions quote absolute paths and clear ambient credentials", () => {
   const args = {

@@ -232,7 +232,8 @@ export async function handleNotificationResponse(
       onOpenDetail(detail);
       return;
     }
-    if (data?.url && !destination) await Linking.openURL(data.url).catch(() => {});
+    // Configured SSHuv routing must fail closed even without a detail fallback.
+    if (data?.url && !sshuvLinkPrefix) await Linking.openURL(data.url).catch(() => {});
     return;
   }
   if (!data?.interactionId || !data.actionDigest) return;

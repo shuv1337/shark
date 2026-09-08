@@ -518,7 +518,10 @@ export class Broker {
         lastError: reason,
         data: reply ? { reply } : {},
       });
-      if (!row.data.failureFor) {
+      const failureKey = `sharkd:failure:${row.id}`;
+      // A pruned recovery notice still counts as issued. Its tombstone also
+      // covers failed items created before this check, without a new row flag.
+      if (!row.data.failureFor && !this.store.isKeyRetired(failureKey)) {
         const payload = {
           title: "SHark reply needs recovery",
           body: "A reply could not be admitted by its agent. Review the host's sharkd recovery queue.",
@@ -526,7 +529,7 @@ export class Broker {
         };
         const intent = { version: 1, kind: "failure", source: row.id, payload };
         this.store.insert({
-          key: `sharkd:failure:${row.id}`,
+          key: failureKey,
           tokenID: row.tokenID,
           kind: "notification",
           data: {
