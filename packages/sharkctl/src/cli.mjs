@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { chmod, mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
+import { publicRequest, RequestError, request } from "./client.mjs";
 import { REQUIRED_PERMISSION_SCOPES, sharkEnvironment } from "./permissions/ask.mjs";
 import { main as permissionsMain } from "./permissions/cli.mjs";
 
@@ -20,13 +21,7 @@ const DEFAULT_SCOPES = [
 const TERMINAL = new Set(["approved", "denied", "yes", "no", "replied", "canceled", "expired"]);
 
 export class UsageError extends Error {}
-export class RequestError extends Error {
-  constructor(message, status, body) {
-    super(message);
-    this.status = status;
-    this.body = body;
-  }
-}
+export { RequestError } from "./client.mjs";
 
 export function parseDuration(value) {
   const match = String(value).match(/^(\d+(?:\.\d+)?)(s|m|h|d)?$/);
@@ -230,44 +225,6 @@ export function openBrowser(url) {
   });
   child.on("error", () => {});
   child.unref();
-}
-
-async function request(config, path, init = {}) {
-  let response;
-  try {
-    response = await fetch(`${String(config.apiUrl).replace(/\/$/, "")}${path}`, {
-      ...init,
-      headers: {
-        authorization: `Bearer ${config.token}`,
-        "content-type": "application/json",
-        ...init.headers,
-      },
-    });
-  } catch (error) {
-    throw new RequestError(error instanceof Error ? error.message : "Network request failed", 0);
-  }
-  const body = await response
-    .json()
-    .catch(() => ({ error: `Request failed (${response.status})` }));
-  if (!response.ok) throw new RequestError(body.error ?? "Request failed", response.status, body);
-  return body;
-}
-
-async function publicRequest(apiUrl, path, init = {}) {
-  let response;
-  try {
-    response = await fetch(`${String(apiUrl).replace(/\/$/, "")}${path}`, {
-      ...init,
-      headers: { "content-type": "application/json", ...init.headers },
-    });
-  } catch (error) {
-    throw new RequestError(error instanceof Error ? error.message : "Network request failed", 0);
-  }
-  const body = await response
-    .json()
-    .catch(() => ({ error: `Request failed (${response.status})` }));
-  if (!response.ok) throw new RequestError(body.error ?? "Request failed", response.status, body);
-  return body;
 }
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));

@@ -56,6 +56,29 @@ Use repeatable `--scope`, `--client-name`, and `--expires-in` to narrow or label
 suppresses browser launch; `--open` explicitly enables it in non-interactive environments. `--json`
 keeps stdout to one machine-readable object while browser instructions remain on stderr.
 
+## Programmatic client
+
+`sharkctl/client` is the only supported code import; `sharkctl/package.json` is also exported.
+Deep imports into `sharkctl/src/` are unsupported and no longer resolve through the package's
+exports map. The command-line entry point and its environment/config precedence are unchanged.
+
+The client exports `RequestError`, `request`, `publicRequest`, `loadFileConfig`, `getAuthStatus`,
+`listDevices`, `createNotification`, `createInteraction`, `getInteraction`, and `cancelInteraction`.
+Creation helpers accept `{ idempotencyKey, signal }`; other helpers accept `{ signal }`.
+They return the server's JSON without inventing delivery guarantees or retrying a mutation.
+Callers must validate response shapes and reconcile ambiguous results before retrying.
+
+For supervised services, `loadFileConfig(absolutePath)` reads an explicit regular, non-symlink
+mode-0600 JSON file containing `token` and `apiUrl`. It ignores `HARK_TOKEN` and `HARK_API_URL` and
+rejects a different ambient `HARK_CONFIG`. The API URL must be an HTTPS origin without user info,
+query, fragment, or path; HTTP loopback origins are allowed for local tests. The optional `tokenId`
+is config metadata, not proof of authenticated identity: call `getAuthStatus` before registering
+work and persist the server's identity. Config files are limited to 64 KiB.
+
+Client results and `RequestError.body` can contain private data. Do not log config objects, tokens,
+response bodies, or raw remote error messages. Libraries expose these to their trusted caller;
+the interactive CLI continues to apply its existing output rules.
+
 ## notify
 
 `sharkctl notify <body>` sends a one-shot push to your registered iPhones. `--title` sets the sender
