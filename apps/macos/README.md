@@ -30,3 +30,6 @@ read. The detail keeps the complete selectable message, current reply/approval c
 explicit **Open in Browser** button for an included HTTP(S) link; clicking the row never opens the
 link automatically. Cached details remain readable while offline, with response controls disabled
 until the inbox refreshes successfully.
+
+Read tracking is best effort: a transient failure while marking an item read does not disable an
+otherwise ready inbox. Older refreshes cannot overwrite a successfully submitted response.

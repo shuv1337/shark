@@ -147,7 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             let actionDigest
         else {
             await Self.store?.refresh()
-            if let urlValue, let url = URL(string: urlValue) {
+            if let url = NotificationLink.browserURL(from: urlValue) {
                 NSWorkspace.shared.open(url)
             }
             return

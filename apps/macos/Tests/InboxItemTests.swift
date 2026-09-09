@@ -20,8 +20,10 @@ final class InboxItemTests: XCTestCase {
             nil, "", "/relative", "https://", "not a URL",
             "file:///tmp/report.html", "javascript:alert(1)", "shuv://run-command",
             "https://user:password@example.test/",
+            "https://user@example.test/", "https://example.test@evil.com/",
         ] {
             XCTAssertNil(item(url: value).browserURL)
+            XCTAssertNil(NotificationLink.browserURL(from: value))
         }
     }
 

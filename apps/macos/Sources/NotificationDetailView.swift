@@ -15,8 +15,7 @@ struct NotificationDetailView: View {
     private var item: InboxItem { currentItem ?? initialItem }
 
     private var canRespond: Bool {
-        guard case .ready = store.state else { return false }
-        return currentItem?.needsAction == true && !store.isSubmitting
+        store.canRespond(to: initialItem)
     }
 
     var body: some View {

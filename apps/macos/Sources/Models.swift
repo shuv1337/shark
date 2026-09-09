@@ -50,8 +50,14 @@ struct InboxItem: Codable, Equatable, Identifiable {
     let action: InboxAction?
 
     var browserURL: URL? {
-        guard let url,
-              let components = URLComponents(string: url.trimmingCharacters(in: .whitespacesAndNewlines)),
+        NotificationLink.browserURL(from: url)
+    }
+}
+
+enum NotificationLink {
+    static func browserURL(from value: String?) -> URL? {
+        guard let value,
+              let components = URLComponents(string: value.trimmingCharacters(in: .whitespacesAndNewlines)),
               let scheme = components.scheme?.lowercased(),
               ["http", "https"].contains(scheme),
               let host = components.host, !host.isEmpty,
