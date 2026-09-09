@@ -24,3 +24,9 @@ At runtime, choose **Connect to SHark**, finish the device-code flow in the brow
 notifications. The scoped bearer token is stored in Keychain. The server remains authoritative for
 inbox and interaction state; pushes trigger a refresh, and repeated action attempts are shown as
 already handled instead of being submitted twice.
+
+Click a notification's title or preview to open its full detail. Opening an unread item marks it
+read. The detail keeps the complete selectable message, current reply/approval controls, and an
+explicit **Open in Browser** button for an included HTTP(S) link; clicking the row never opens the
+link automatically. Cached details remain readable while offline, with response controls disabled
+until the inbox refreshes successfully.

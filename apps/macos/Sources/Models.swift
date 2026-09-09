@@ -48,6 +48,17 @@ struct InboxItem: Codable, Equatable, Identifiable {
     let occurredAt: Date
     let updatedAt: Date
     let action: InboxAction?
+
+    var browserURL: URL? {
+        guard let url,
+              let components = URLComponents(string: url.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let scheme = components.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              let host = components.host, !host.isEmpty,
+              components.user == nil, components.password == nil
+        else { return nil }
+        return components.url
+    }
 }
 
 struct MacSnapshot: Codable, Equatable {
