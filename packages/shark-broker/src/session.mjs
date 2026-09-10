@@ -7,6 +7,7 @@ export function validateSession(value) {
   requireValue(value && typeof value === "object" && !Array.isArray(value), "session_reference");
   requireValue(Buffer.byteLength(stableJSON(value)) <= 65_536, "session_reference_size");
   requireValue(value.version === 1, "session_version");
+  if (value.harness === "codex") return validateCodexSession(value);
   if (value.harness !== "opencode-v2") throw new BrokerError(2, "unsupported_harness");
   requireValue(
     typeof value.sessionId === "string" &&
@@ -80,3 +81,32 @@ export function validateSession(value) {
   };
 }
 export const loadSession = async (file) => validateSession(await protectedJSON(file));
+
+function validateCodexSession(value) {
+  const absolute = (v) =>
+    typeof v === "string" && path.isAbsolute(v) && v.length <= 4096 && !v.includes("\0");
+  requireValue(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.sessionId ?? ""),
+    "session_id",
+  );
+  requireValue(value.cwd === undefined || absolute(value.cwd), "session_cwd");
+  requireValue(
+    value.generation === undefined ||
+      (Number.isSafeInteger(value.generation) && value.generation >= 0),
+    "session_generation",
+  );
+  requireValue(
+    Object.keys(value).every((k) =>
+      ["version", "harness", "sessionId", "cwd", "generation", "adapterData"].includes(k),
+    ),
+    "session_fields",
+  );
+  const data = value.adapterData;
+  requireValue(data && typeof data === "object" && !Array.isArray(data), "adapter_data");
+  requireValue(
+    Object.keys(data).every((k) => ["socketPath"].includes(k)),
+    "adapter_fields",
+  );
+  requireValue(absolute(data.socketPath), "codex_owner_path");
+  return { ...value, adapterData: { ...data } };
+}

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { OpenCodeAdapter } from "./adapters/opencode-v2.mjs";
+import { AdapterRouter } from "./adapters/index.mjs";
 import { completion, expiry, selectDevices, text } from "./content.mjs";
 import { BrokerError, requireValue } from "./errors.mjs";
 import { digest } from "./json.mjs";
@@ -36,13 +36,16 @@ export class Broker {
     store,
     config,
     api = sharkClient(config),
-    adapter = new OpenCodeAdapter(),
+    adapter = new AdapterRouter(),
     now = Date.now,
     random = Math.random,
     checkpoint = async () => {},
   }) {
     Object.assign(this, { store, config, api, adapter, now, random, checkpoint });
     this.owner = randomUUID();
+  }
+  adapterFor(session) {
+    return this.adapter.forSession ? this.adapter.forSession(session) : this.adapter;
   }
   async identity() {
     try {
@@ -127,7 +130,7 @@ export class Broker {
       intent,
       ref,
       makePayload: async (bound) => {
-        const receipt = await this.adapter.receipt(bound, nativeRequest);
+        const receipt = await this.adapterFor(bound).receipt(bound, nativeRequest);
         if (
           !receipt ||
           receipt.request?.sessionID !== bound.sessionId ||
@@ -198,7 +201,7 @@ export class Broker {
     }
     let session;
     if (ref) {
-      const probe = await this.adapter.probe(ref);
+      const probe = await this.adapterFor(ref).probe(ref);
       if (probe.status !== "available")
         throw new BrokerError(probe.status === "missing" ? 4 : 6, "session_unavailable");
       session = probe.session;
@@ -345,7 +348,7 @@ export class Broker {
   }
   async poll(row) {
     if (row.kind === "active") {
-      const state = await this.adapter.activeState(
+      const state = await this.adapterFor(row.data.session).activeState(
         row.data.session,
         row.data.active,
         row.data.nativeInput,
@@ -365,7 +368,7 @@ export class Broker {
         return this.cancel(row);
       }
     } else if (this.now() >= row.data.nextProbeAt) {
-      const probe = await this.adapter.probe(row.data.session);
+      const probe = await this.adapterFor(row.data.session).probe(row.data.session);
       row = this.store.update(row.id, this.owner, { data: { nextProbeAt: this.now() + 900_000 } });
       if (probe.status === "missing") {
         row = this.store.update(row.id, this.owner, {
@@ -480,16 +483,27 @@ export class Broker {
   async deliver(row) {
     row = this.store.update(row.id, this.owner, { state: "delivering" });
     await this.checkpoint("before_admission", row);
+    const adapter = this.adapterFor(row.data.session);
     const result =
       row.kind === "active"
-        ? await this.adapter.answer(row.data.session, row.data.active, row.data.nativeInput)
-        : await this.adapter.deliver(row.data.session, row.data.nativeInput);
+        ? await adapter.answer(row.data.session, row.data.active, row.data.nativeInput)
+        : adapter.retrySafe === false && row.data.nativeAttempted
+          ? await adapter.reconcile(row.data.session, row.data.nativeInput)
+          : await adapter.deliver(row.data.session, row.data.nativeInput, {
+              beforeSend: async () => {
+                row = this.store.update(row.id, this.owner, { data: { nativeAttempted: true } });
+                await this.checkpoint("codex_before_submit", row);
+              },
+            });
     await this.checkpoint("after_admission", row);
     if (result.status === "accepted")
       return this.store.update(row.id, this.owner, {
         state: "delivered",
         lastError: null,
-        data: { admission: "accepted" },
+        data: {
+          admission: "accepted",
+          ...(result.receipt ? { nativeReceipt: result.receipt } : {}),
+        },
       });
     if (["superseded", "stale"].includes(result.status))
       return this.store.update(row.id, this.owner, {
@@ -502,6 +516,8 @@ export class Broker {
         row,
         result.status === "missing" ? "session_missing" : "native_input_conflict",
       );
+    if (adapter.retrySafe === false && row.data.nativeAttempted)
+      return this.fail(row, "codex_admission_unknown", undefined, "unknown");
     const attempts = (row.data.attempts ?? 0) + 1;
     if (attempts > RETRY.length) return this.fail(row, "native_admission_unconfirmed");
     return this.store.update(row.id, this.owner, {
@@ -511,14 +527,17 @@ export class Broker {
       data: { attempts },
     });
   }
-  fail(row, reason, reply) {
+  fail(row, reason, reply, state = "failed") {
     return this.store.transaction(() => {
       const failed = this.store.update(row.id, this.owner, {
-        state: "failed",
+        state,
         lastError: reason,
-        data: reply ? { reply } : {},
+        data: {
+          ...(reply ? { reply } : {}),
+          ...(row.data.nativeAttempted ? { recoveryNoticeCreated: true } : {}),
+        },
       });
-      if (!row.data.failureFor) {
+      if (!row.data.failureFor && !(row.data.nativeAttempted && row.data.recoveryNoticeCreated)) {
         const payload = {
           title: "SHark reply needs recovery",
           body: "A reply could not be admitted by its agent. Review the host's sharkd recovery queue.",
@@ -554,8 +573,9 @@ export class Broker {
       if (FINAL_STATES.has(row.state)) throw new BrokerError(4, "queue_item_terminal");
       if (["conflict", "rejected"].includes(row.state))
         throw new BrokerError(1, "retry_original_registration_required");
-      const state =
-        row.state === "failed"
+      const state = row.data.nativeAttempted
+        ? "ready"
+        : row.state === "failed"
           ? row.data.nativeInput
             ? "ready"
             : "creating"
