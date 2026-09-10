@@ -1,4 +1,5 @@
 import { BrokerError } from "../errors.mjs";
+import { stableJSON } from "../json.mjs";
 import { validateSession } from "../session.mjs";
 import { connectCodex } from "./codex-rpc.mjs";
 
@@ -72,17 +73,20 @@ export class CodexAdapter {
         !(result.nextCursor === null || typeof result.nextCursor === "string")
       )
         throw new BrokerError(6, "codex_history_incomplete");
+      if (result.nextCursor !== null) {
+        if (!result.nextCursor || seen.has(result.nextCursor))
+          throw new BrokerError(6, "codex_history_incomplete");
+        seen.add(result.nextCursor);
+      }
       yield* result.data;
       if (result.nextCursor === null) return;
-      if (!result.nextCursor || seen.has(result.nextCursor)) break;
-      seen.add(result.nextCursor);
       cursor = result.nextCursor;
     }
     throw new BrokerError(6, "codex_history_incomplete");
   }
   async readback(rpc, session, input) {
     const params = { threadId: session.sessionId };
-    const messages = [];
+    const rawMessages = [];
     for await (const turn of this.pages(rpc, "thread/turns/list", {
       ...params,
       itemsView: "full",
@@ -91,15 +95,39 @@ export class CodexAdapter {
         return unknown("codex_history_incomplete");
       for (const item of turn.items)
         if (item.type === "userMessage" && item.clientId === input.id)
-          messages.push({ turnId: turn.id, itemId: item.id, content: item.content });
-      if (messages.length > 1) return { status: "conflict" };
+          rawMessages.push({ turnId: turn.id, itemId: item.id, content: item.content });
+    }
+    const messages = [];
+    const messagesByIdentity = new Map();
+    let conflictingDuplicate = false;
+    for (const message of rawMessages) {
+      const identity = `${message.turnId}\u0000${message.itemId}`;
+      const previous = messagesByIdentity.get(identity);
+      if (previous) {
+        if (stableJSON(previous.content) !== stableJSON(message.content))
+          conflictingDuplicate = true;
+      } else {
+        messagesByIdentity.set(identity, message);
+        messages.push(message);
+      }
+    }
+    const rawQueue = [];
+    for await (const entry of this.pages(rpc, "thread/queue/list", params)) {
+      if (entry.clientUserMessageId === input.id) rawQueue.push(entry);
     }
     const queue = [];
-    for await (const entry of this.pages(rpc, "thread/queue/list", params)) {
-      if (entry.clientUserMessageId === input.id) queue.push(entry);
-      if (queue.length > 1) return { status: "conflict" };
+    const queueByIdentity = new Map();
+    for (const entry of rawQueue) {
+      const previous = queueByIdentity.get(entry.id);
+      if (previous) {
+        if (stableJSON(previous.input) !== stableJSON(entry.input)) conflictingDuplicate = true;
+      } else {
+        queueByIdentity.set(entry.id, entry);
+        queue.push(entry);
+      }
     }
     if (
+      conflictingDuplicate ||
       messages.length > 1 ||
       queue.length > 1 ||
       messages.some((item) => !exactText(item.content, input.text)) ||

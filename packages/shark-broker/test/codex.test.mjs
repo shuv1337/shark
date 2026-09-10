@@ -52,7 +52,10 @@ function native() {
         });
         return { queuedSubmission: state.queue.at(-1) };
       }
-      if (method === "thread/queue/list") return { data: state.queue, nextCursor: null };
+      if (method === "thread/queue/list") {
+        if (state.queueHistory) return state.queueHistory(params);
+        return { data: state.queue, nextCursor: null };
+      }
       if (method === "thread/turns/list") {
         if (state.history) return state.history(params);
         return {
@@ -189,6 +192,54 @@ test("Codex history pagination checks all pages; conflicting/duplicate IDs are n
   assert.equal(state.sends, 0);
 });
 
+test("Codex pre-send scan finds an exact queued delivery on a later page", async () => {
+  const { adapter, state } = native();
+  const queued = {
+    id: "queue-page-2",
+    clientUserMessageId: input.id,
+    input: [{ type: "text", text: input.text, text_elements: [] }],
+  };
+  state.queueHistory = ({ cursor }) => ({
+    data: cursor ? [queued] : [{ id: "other-queue", clientUserMessageId: "other", input: [] }],
+    nextCursor: cursor ? null : "queue-page-2",
+  });
+  const result = await adapter.deliver(codexSession, input, { beforeSend: async () => {} });
+  assert.equal(result.status, "accepted");
+  assert.deepEqual(result.receipt, {
+    threadId: codexSession.sessionId,
+    clientId: input.id,
+    queueId: queued.id,
+    location: "queue",
+  });
+  assert.equal(state.sends, 0);
+});
+
+test("Codex readback deduplicates an identical history item but conflicts on changed content", async () => {
+  const { adapter, state } = native();
+  const item = {
+    type: "userMessage",
+    id: "item-repeat",
+    clientId: input.id,
+    content: [{ type: "text", text: input.text }],
+  };
+  state.history = ({ cursor }) => ({
+    data: [{ id: "turn-repeat", itemsView: "full", items: [item] }],
+    nextCursor: cursor ? null : "page-2",
+  });
+  assert.equal((await adapter.reconcile(codexSession, input)).status, "accepted");
+  state.history = ({ cursor }) => ({
+    data: [
+      {
+        id: "turn-repeat",
+        itemsView: "full",
+        items: [{ ...item, content: [{ type: "text", text: "changed" }] }],
+      },
+    ],
+    nextCursor: cursor ? null : "page-2",
+  });
+  assert.equal((await adapter.reconcile(codexSession, input)).status, "conflict");
+});
+
 test("Codex incomplete or looping history never produces a positive receipt", async () => {
   const { adapter, state } = native();
   for (const result of [
@@ -199,6 +250,24 @@ test("Codex incomplete or looping history never produces a positive receipt", as
     state.history = () => result;
     assert.equal((await adapter.reconcile(codexSession, input)).status, "unknown");
   }
+  state.history = () => ({
+    data: [
+      {
+        id: "turn-with-match",
+        itemsView: "full",
+        items: [
+          {
+            type: "userMessage",
+            id: "item-loop",
+            clientId: input.id,
+            content: [{ type: "text", text: input.text }],
+          },
+        ],
+      },
+    ],
+    nextCursor: "loop",
+  });
+  assert.equal((await adapter.reconcile(codexSession, input)).status, "unknown");
 });
 
 test("broker recovers a Codex reply after crash without a second queue insertion", async (t) => {
