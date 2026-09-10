@@ -1,5 +1,11 @@
 # Agent reply routing implementation evidence
 
+Follow-up 2026-09-09: [Codex completion replies](codex-completion-replies.md) now have a native
+Unix-socket adapter, durable send-attempt tracking, and read-only ambiguity recovery. Portable
+regressions and disposable installed-runtime cases cover idle, busy, and broker-restart behavior.
+This does not close live Codex approvals, automatic owner enrollment, or physical acceptance.
+The historical staging report below describes the original shuvcode-only implementation.
+
 Work date: 2026-09-07 America/Los_Angeles. Source base: `faf3d9e4`, with the current SSHuv planning
 changes captured before implementation. The implementation lives in the isolated Jujutsu workspace
 `agent-reply-routing-20260907`. The plan's original guarantees remain requirements.
