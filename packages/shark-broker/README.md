@@ -5,8 +5,10 @@ JavaScript API. It persists completion notices, deferred questions, native activ
 reply delivery intents, and recovery state before remote mutations. It shares `sharkctl/client`;
 SHark's server API and token boundaries are unchanged.
 
-This is the staged **shuvcode/OpenCode v2 reference broker**, authorized on 2026-09-08. Codex and
-Claude references fail closed. All three native agents, lifecycle collection, Herdr, SSHuv transport,
+This broker supports **shuvcode/OpenCode v2** and **Codex completion replies**.
+[Codex setup and recovery](../../docs/agent-reply-routing/codex-completion-replies.md) requires an
+existing reachable native owner and preserves uncertain sends without resubmitting them. Codex
+active requests and Claude references fail closed. All three native agents, lifecycle collection, Herdr, SSHuv transport,
 and signed phone handoff remain required for the final SSHuv release. No service is installed by
 building or importing this package. The [evidence ledger](../../docs/agent-reply-routing/README.md)
 separates local verification from deployment and physical acceptance.
@@ -109,7 +111,7 @@ Native HTTP 200 is checked against the full input receipt; changed payloads are 
 
 `sharkd run` polls persisted work; `run --once` performs one pass. Deferred polls use 45 seconds with
 10% jitter, active requests two seconds, and pending deferred session probes fifteen minutes.
-Network failures back off to fifteen minutes. Native admission uncertainty retries with the same
+Network failures back off to fifteen minutes. For shuvcode, native admission uncertainty retries with the same
 persisted input after 5 seconds, 30 seconds, 2 minutes, 10 minutes, and 1 hour, then enters `failed` and
 atomically enqueues one plain recovery notice. Failure notices do not recursively generate notices.
 
@@ -127,7 +129,8 @@ sharkd queue retry LOCAL_ID
 sharkd queue discard LOCAL_ID
 ```
 
-Only `queue show` prints protected stored content. Retry preserves the input/key/owner; a rejected
+Only `queue show` prints protected stored content. Attempted Codex sends use read-only reconciliation
+on retry and remain unknown when no exact receipt is found. Retry preserves the input/key/owner; a rejected
 registration requires the original registration command, not a replacement intent. Discard reconciles
 and cancels still-answerable interactions first; an uncertain outcome stays tracked. Terminal payloads
 are removed after seven days. Hashed retired-key tombstones remain to prevent delayed duplicate

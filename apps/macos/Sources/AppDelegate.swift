@@ -7,7 +7,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     weak static var store: CompanionStore?
     private var companionWindow: NSWindow?
 
+    static var isRunningUnitTests: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        #else
+        false
+        #endif
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !Self.isRunningUnitTests else { return }
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         center.setNotificationCategories(Self.categories)
@@ -82,11 +91,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         let userInfo = notification.request.content.userInfo
-        if NotificationWithdrawal.eventId(fromRemoteNotification: userInfo) != nil {
+        if let eventId = NotificationWithdrawal.eventId(fromRemoteNotification: userInfo) {
             Task { @MainActor in
-                if let eventId = NotificationWithdrawal.eventId(fromRemoteNotification: userInfo) {
-                    await Self.removeDeliveredNotifications(for: eventId)
-                }
+                await Self.removeDeliveredNotifications(for: eventId)
                 await Self.store?.refresh()
             }
             return []
@@ -140,7 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             let actionDigest
         else {
             await Self.store?.refresh()
-            if let urlValue, let url = URL(string: urlValue) {
+            if let url = NotificationLink.browserURL(from: urlValue) {
                 NSWorkspace.shared.open(url)
             }
             return

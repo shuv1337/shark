@@ -9,7 +9,7 @@ import { loadSession } from "./session.mjs";
 import { Store } from "./store.mjs";
 
 const entry = fileURLToPath(new URL("../bin/sharkd.mjs", import.meta.url));
-const HELP = `sharkd — private SHark reply broker\n\nCommands:\n  turn complete --summary TEXT [--question TEXT --session-ref-file PATH] --idempotency-key KEY\n  request register --session-ref-file PATH --kind form|permission --request-id ID --prompt TEXT --idempotency-key KEY\n  run [--once]\n  status\n  queue list|show|retry|discard [ID]\n  service install|status|restart|uninstall\n\nOptions: --config ABSOLUTE_PATH --database ABSOLUTE_PATH --title TEXT --expires-in DURATION\nUse turn complete --stdin for a bounded JSON object; command flags override its content.\nOnly queue show prints stored content. Native session references and credentials stay on the host.\n`;
+const HELP = `sharkd — private SHark reply broker\n\nCommands:\n  turn complete --summary TEXT [--question TEXT --session-ref-file PATH] --idempotency-key KEY\n  request register --session-ref-file PATH --kind form|permission --request-id ID --prompt TEXT --idempotency-key KEY\n  run [--once]\n  status\n  queue list|show|retry|discard [ID]\n  service install|status|restart|uninstall\n\nOptions: --config ABSOLUTE_PATH --database ABSOLUTE_PATH --title TEXT --expires-in DURATION\nUse turn complete --stdin for a bounded JSON object; command flags override its content.\nCompletion reply harnesses: opencode-v2, codex (existing native Unix-socket owner).\nCodex queue retry reconciles attempted sends without resubmitting them.\nOnly queue show prints stored content. Native session references and credentials stay on the host.\n`;
 
 export function parseArgs(argv) {
   const positionals = [];

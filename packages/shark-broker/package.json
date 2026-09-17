@@ -21,7 +21,8 @@
     "README.md"
   ],
   "dependencies": {
-    "sharkctl": "workspace:*"
+    "sharkctl": "workspace:*",
+    "ws": "8.21.3"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
