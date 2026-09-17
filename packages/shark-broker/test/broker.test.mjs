@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { createFailure } from "../src/shark.mjs";
+import { RETAIN_MS } from "../src/store.mjs";
 import { completion, fixture, requestError } from "./fixture.mjs";
 
 test("completion returns pending, explicitly targets reply-capable devices, and routes the stored reply once", async (t) => {
@@ -248,6 +249,94 @@ test("delivery backoff retains one ID and emits one non-recursive failure outbox
   assert.equal(f.native.size, 1);
   assert.equal(f.store.get(row.id).data.deliveryID, deliveryID);
 });
+
+test("retry after pruning a recovery notice stays failed without reissuing the notice or blocking work", async (t) => {
+  const f = await fixture(t);
+  const broker = f.broker();
+  const registered = await broker.register(completion());
+  const deliver = f.adapter.deliver;
+  f.adapter.deliver = async () => ({ status: "missing" });
+  f.answer(registered.id);
+  f.advance(45_000);
+  await broker.tick();
+  assert.equal(f.store.get(registered.id).state, "failed");
+  const deliveryID = f.store.get(registered.id).data.deliveryID;
+  await broker.tick();
+  const failureKey = `sharkd:failure:${registered.id}`;
+  assert.equal(f.store.byKey(failureKey).state, "delivered");
+  assert.equal((await broker.retry(registered.id)).state, "failed");
+  assert.equal(f.state.createCalls, 2);
+
+  f.advance(RETAIN_MS + 1);
+  assert.equal(f.store.prune(), 1);
+  assert.equal(f.store.byKey(failureKey), undefined);
+  // Reopen the database: existing failed rows have no source-side notice flag.
+  const store = await f.open();
+  const recovered = f.broker({ store });
+  assert.equal((await recovered.retry(registered.id)).state, "failed");
+  assert.equal((await recovered.retry(registered.id)).state, "failed");
+  await recovered.tick();
+  assert.equal(f.state.createCalls, 2);
+  assert.equal(store.byKey(failureKey), undefined);
+
+  f.adapter.deliver = deliver;
+  const next = await recovered.register(completion("later-turn"));
+  f.answer(next.id);
+  f.advance(45_000);
+  await recovered.tick();
+  assert.equal(store.get(next.id).state, "delivered");
+  assert.equal((await recovered.retry(registered.id)).state, "delivered");
+  assert.equal(store.get(registered.id).data.deliveryID, deliveryID);
+});
+
+for (const [kind, status, expectedKind, expectedPayload] of [
+  ["permission", "approved", "approval", { reply: "once" }],
+  ["permission", "denied", "approval", { reply: "reject" }],
+  ["form", "yes", "yes_no", { answer: { continue: true } }],
+  ["form", "no", "yes_no", { answer: { continue: false } }],
+]) {
+  test(`active ${status} maps the phone response and preserves it through an uncertain admission`, async (t) => {
+    const f = await fixture(t);
+    const admissions = [];
+    f.adapter.receipt = async (ref, target) => ({
+      request: {
+        id: target.id,
+        sessionID: ref.sessionId,
+        ...(kind === "form" ? { fields: [{ key: "continue", type: "boolean" }] } : {}),
+      },
+      state: { status: "pending" },
+      available: true,
+    });
+    f.adapter.activeState = async () => ({ status: "pending" });
+    f.adapter.answer = async (_ref, _target, input) => {
+      admissions.push(structuredClone(input));
+      return { status: admissions.length === 1 ? "unknown" : "accepted" };
+    };
+    const broker = f.broker();
+    const registered = await broker.registerActive({
+      session: completion().session,
+      kind,
+      requestID: "synthetic-request",
+      prompt: "Continue?",
+      idempotencyKey: `active-${status}`,
+    });
+    const row = f.store.get(registered.id);
+    assert.equal(row.data.payload.kind, expectedKind);
+    f.remote.get(row.data.serverID).status = status;
+    f.advance(2000);
+    await broker.tick();
+    assert.equal(f.store.get(row.id).state, "ready");
+    assert.deepEqual(admissions[0].payload, expectedPayload);
+    assert.ok(admissions[0].responseID);
+    f.advance(5000);
+    await broker.tick();
+    await broker.tick();
+    assert.equal(f.store.get(row.id).state, "delivered");
+    assert.equal(admissions.length, 2);
+    assert.deepEqual(admissions[1], admissions[0]);
+    assert.equal(f.state.deliverCalls, 0);
+  });
+}
 
 test("a replied cancel race with a missing target is retained for manual recovery", async (t) => {
   const f = await fixture(t);
