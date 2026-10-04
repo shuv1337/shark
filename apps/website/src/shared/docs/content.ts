@@ -996,6 +996,7 @@ sharkctl activity end deploy --status "Shipped" --progress 1 --dismiss-after 45s
             items: [
               "`--replace` takes the device slot and the key, ending whatever blocks them, so a fixed-key start works on every run.",
               "`--if-sequence` rejects stale writes: the update only applies if the activity is still at that sequence.",
+              "The first `activity update` after start can return `accepted: 0` and `MissingUpdateToken` until iOS registers the update token. Retry that update, or send `notify` with the same status when the phone needs the progress immediately.",
               "`--style` selects `standard`, `ring`, `hero`, `terminal`, or `steps`, and can change mid-flight on `update`.",
               "`activity get <id|key>` reads current state; `activity list` shows recent activities.",
             ],
