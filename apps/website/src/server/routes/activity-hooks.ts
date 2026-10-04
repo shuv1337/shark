@@ -183,6 +183,10 @@ function response(row: ActivityRow, result?: DeliveryResult, extras: Record<stri
   };
 }
 
+function terminalActivityResponse(row: ActivityRow) {
+  return { ...response(row), ok: false as const, error: "Live Activity is already terminal" };
+}
+
 async function eligibleDevices(
   service: ServiceRow,
   owner: UserRow,
@@ -532,7 +536,7 @@ export const activityHooksRoute = new Hono()
     const current = await ownedActivity(service.id, c.req.param("identifier"));
     if (!current) return c.json({ ok: false, error: "Live Activity not found" }, 404);
     if (!["starting", "active", "partial"].includes(current.status)) {
-      return c.json({ ok: false, error: "Live Activity is already terminal" }, 409);
+      return c.json(terminalActivityResponse(current), 409);
     }
     if (parsed.data.ifSequence !== undefined && parsed.data.ifSequence !== current.sequence) {
       return c.json({ ...response(current), ok: false, error: "Sequence conflict" }, 409);
@@ -709,7 +713,7 @@ export const activityHooksRoute = new Hono()
     const current = await ownedActivity(service.id, c.req.param("identifier"));
     if (!current) return c.json({ ok: false, error: "Live Activity not found" }, 404);
     if (!["starting", "active", "partial"].includes(current.status)) {
-      return c.json({ ok: false, error: "Live Activity is already terminal" }, 409);
+      return c.json(terminalActivityResponse(current), 409);
     }
     if (parsed.data.ifSequence !== undefined && parsed.data.ifSequence !== current.sequence) {
       return c.json({ ...response(current), ok: false, error: "Sequence conflict" }, 409);

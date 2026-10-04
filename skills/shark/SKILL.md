@@ -227,6 +227,12 @@ A separate `notify` call is an independent inbox item; it does not correlate wit
 Activity, even when the title and requester match. If an update or end reports
 `MissingUpdateToken`, do not start a replacement merely to clear it. End the existing activity once
 the task is terminal; SHark records that state and can replay it when iOS registers the token late.
+If an update or end reports `Live Activity is already terminal`, read the following stderr line:
+`status=<ended|expired|failed> endedAt=<iso-or-null> expiresAt=<iso>`. SHark does not end an
+activity on a short timer. `expired` means `expiresAt` has passed. `ended` means an explicit end, a
+`--replace` takeover, or a resolved interactive prompt. `failed` means a later update found no
+retryable device delivery. When the task is still running, the status is `ended` or `failed`, and
+`expiresAt` is still in the future, restart with the same `--key` and `--replace`.
 
 ## Approve Coding-Agent Permissions
 

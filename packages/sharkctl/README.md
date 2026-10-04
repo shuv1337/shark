@@ -38,7 +38,10 @@ Treat every successful `activity start` as an obligation to issue `activity end`
 failure, cancellation, or cleanup. Keep the returned activity ID or use a stable key, and give the
 end request a stable idempotency key when it may be retried. Sending a normal notification does not
 end or correlate with an activity. If an end initially reports `MissingUpdateToken`, SHark retains
-the terminal state and replays it when iOS registers the activity update token late.
+the terminal state and replays it when iOS registers the activity update token late. If an update or
+end reports `Live Activity is already terminal`, stderr also prints `status`, `endedAt`, and
+`expiresAt`. Restart with the same `--key` and `--replace` only when the task is still running, the
+status is `ended` or `failed`, and `expiresAt` is still in the future.
 
 The upstream `harkctl` package is not the SHark fork. Existing SHark credentials remain usable
 because `sharkctl` deliberately reads the same protected `hark` config file during the rename.

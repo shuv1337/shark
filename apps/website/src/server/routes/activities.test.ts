@@ -620,14 +620,24 @@ describe("Live Activity agent routes", () => {
       activity: { status: "ended", sequence: 1, props: { status: "Complete", progress: 1 } },
     });
     expect(apnsCalls.at(-1)).toMatchObject({ priority: 10, input: { event: "end" } });
-    expect(
-      (
-        await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
-          method: "POST",
-          body: JSON.stringify({}),
-        })
-      ).status,
-    ).toBe(409);
+    const duplicateEnd = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    expect(duplicateEnd.status).toBe(409);
+    expect(await duplicateEnd.json()).toMatchObject({
+      error: "Live Activity is already terminal",
+      activity: { status: "ended", endedAt: expect.any(String), expiresAt: expect.any(String) },
+    });
+    const update = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "Still running" }),
+    });
+    expect(update.status).toBe(409);
+    expect(await update.json()).toMatchObject({
+      error: "Live Activity is already terminal",
+      activity: { status: "ended", endedAt: expect.any(String), expiresAt: expect.any(String) },
+    });
   });
 
   it("releases the device lock when an end push is rejected", async () => {

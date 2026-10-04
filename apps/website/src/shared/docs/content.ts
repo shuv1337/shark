@@ -630,7 +630,7 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
             items: [
               "Pass `null` for `detail` or `progress` to clear the field.",
               "Pass `ifSequence` to make the write conditional. A mismatch returns `409 Sequence conflict` along with the current state so you can reconcile.",
-              "Updating an activity that has already ended or expired returns `409 Live Activity is already terminal`.",
+              "Updating or ending an activity whose status is `ended`, `expired`, or `failed` returns `409 Live Activity is already terminal` with that `status`, `endedAt`, and `expiresAt`. Agent responses nest them on `activity`; webhook responses place them beside `error`. The row stays updatable until an explicit end, a replace takeover, a non-retryable delivery failure, or its expiry.",
             ],
           },
         ],

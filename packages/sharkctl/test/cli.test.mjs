@@ -1102,6 +1102,47 @@ test("activity update and end send sequence preconditions", async () => {
   }
 });
 
+test("activity update prints the terminal status when the server activity is already terminal", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const stdout = [];
+  const stderr = [];
+  globalThis.fetch = async () =>
+    Response.json(
+      {
+        error: "Live Activity is already terminal",
+        activity: {
+          id: "act_ended",
+          status: "ended",
+          endedAt: "2026-08-28T12:10:00.000Z",
+          expiresAt: "2026-08-28T20:00:00.000Z",
+          props: { title: "should-not-print" },
+        },
+      },
+      { status: 409 },
+    );
+  console.log = (value) => stdout.push(value);
+  console.error = (value) => stderr.push(value);
+  try {
+    const code = await run(["activity", "update", "act_ended", "--status", "Testing"], {
+      HARK_TOKEN: "hark_test",
+      HARK_API_URL: "https://example.test",
+    });
+    assert.equal(code, 1);
+    assert.deepEqual(stdout, []);
+    assert.deepEqual(stderr, [
+      "Live Activity is already terminal",
+      "status=ended endedAt=2026-08-28T12:10:00.000Z expiresAt=2026-08-28T20:00:00.000Z",
+    ]);
+    assert.equal(stderr.join("\n").includes("should-not-print"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    console.error = originalError;
+  }
+});
+
 test("activity CLI rejects invalid progress and preserves no-delivery exit behavior", async () => {
   await assert.rejects(
     execute(["activity", "start", "--title", "Task", "--status", "Run", "--progress", "2"], {

@@ -23,6 +23,17 @@ const TERMINAL = new Set(["approved", "denied", "yes", "no", "replied", "cancele
 export class UsageError extends Error {}
 export { RequestError } from "./client.mjs";
 
+/** stderr detail for a 409 whose body already names the terminal activity. */
+export function liveActivityTerminalDetail(error) {
+  if (!(error instanceof RequestError)) return null;
+  if (error.body?.error !== "Live Activity is already terminal") return null;
+  const activity = error.body.activity;
+  if (!activity || typeof activity !== "object" || typeof activity.status !== "string") return null;
+  const endedAt = typeof activity.endedAt === "string" ? activity.endedAt : "null";
+  const expiresAt = typeof activity.expiresAt === "string" ? activity.expiresAt : "null";
+  return `status=${activity.status} endedAt=${endedAt} expiresAt=${expiresAt}`;
+}
+
 export function parseDuration(value) {
   const match = String(value).match(/^(\d+(?:\.\d+)?)(s|m|h|d)?$/);
   if (!match) throw new UsageError(`Invalid duration: ${value}`);
@@ -748,6 +759,8 @@ export async function run(argv, env = process.env, overrides = {}) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected error";
     console.error(message);
+    const terminalDetail = liveActivityTerminalDetail(error);
+    if (terminalDetail) console.error(terminalDetail);
     if (error instanceof UsageError) return 2;
     if (error instanceof RequestError) {
       if (error.body?.error === "access_denied") return 5;

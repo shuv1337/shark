@@ -314,6 +314,25 @@ describe("Live Activity webhook routes", () => {
         priority: 10,
         input: { event: "end", dismissalDate: 1_784_984_430 },
       });
+      const terminal = await activityRequest(TOKEN, `/${startBody.activityId}`, "PATCH", {
+        status: "Still running",
+      });
+      expect(terminal.status).toBe(409);
+      expect(await terminal.json()).toMatchObject({
+        ok: false,
+        error: "Live Activity is already terminal",
+        status: "ended",
+        endedAt: "2026-07-25T13:00:00.000Z",
+        expiresAt: "2026-07-25T20:00:00.000Z",
+      });
+      const terminalEnd = await activityRequest(TOKEN, `/${startBody.activityId}/end`, "POST", {});
+      expect(terminalEnd.status).toBe(409);
+      expect(await terminalEnd.json()).toMatchObject({
+        ok: false,
+        error: "Live Activity is already terminal",
+        status: "ended",
+        endedAt: "2026-07-25T13:00:00.000Z",
+      });
       expect(
         (
           await app.request("/api/live-activity/update-token", {
