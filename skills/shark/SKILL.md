@@ -245,7 +245,7 @@ existing activity in place. Do not start a replacement to clear `MissingUpdateTo
 remains when `accepted` is `0` and `updateTokenPending` is absent, including `activity start` with
 no delivery and a real APNs rejection. Once APNs rejects a registered update token (for example
 `Unregistered` after the activity is dismissed on the phone), later updates and ends keep reporting
-that reason and exit `7` until the phone registers a new token.
+that reason and, when no other device accepts, exit `7` until the phone registers a new token.
 
 A `partial` activity is still live. Keep updating it, and end it when the task is finished. Before
 a progress update, run `activity get <id|key>` and continue only while `.activity.status` is

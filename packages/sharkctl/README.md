@@ -157,7 +157,7 @@ props. An end with the same message stays terminal and is replayed when the toke
 start a replacement activity to clear the error. `activity start` with no delivery, and a real APNs
 rejection (`accepted: 0` without `updateTokenPending`), still exit 7. Once APNs rejects a registered
 update token (for example `Unregistered` after the activity is dismissed on the phone), later
-updates and ends keep reporting that reason and exit 7 until the phone registers a new token.
+updates and ends keep reporting that reason and, when no other device accepts, exit 7 until the phone registers a new token.
 
 A `partial` activity is still live: keep updating it, and end it on the terminal path. A failed
 sibling delivery does not pin the activity in `partial` after the remaining devices accept. Before
