@@ -1102,6 +1102,76 @@ test("activity update and end send sequence preconditions", async () => {
   }
 });
 
+test("activity update accepts status alone and status with progress", async () => {
+  const originalFetch = globalThis.fetch;
+  const bodies = [];
+  globalThis.fetch = async (_url, init) => {
+    bodies.push(JSON.parse(init.body));
+    return Response.json({ accepted: 1, failed: 0, activity: { id: "act_1", sequence: 1 } });
+  };
+  try {
+    const statusOnly = await execute(["activity", "update", "act_1", "--status", "Testing"], {
+      HARK_TOKEN: "hark_test",
+      HARK_API_URL: "https://example.test",
+    });
+    const withProgress = await execute(
+      ["activity", "update", "release-main", "--status", "Testing", "--progress", "0.7"],
+      { HARK_TOKEN: "hark_test", HARK_API_URL: "https://example.test" },
+    );
+    assert.equal(statusOnly.exitCode, 0);
+    assert.equal(withProgress.exitCode, 0);
+    assert.deepEqual(bodies, [{ status: "Testing" }, { status: "Testing", progress: 0.7 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("activity update explains a rejected field and an empty update", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const stderr = [];
+  globalThis.fetch = async () =>
+    Response.json(
+      {
+        error: "Invalid Live Activity update",
+        issues: [
+          { path: ["status"], message: "Too small: expected string to have >=1 characters" },
+          { path: [], message: "At least one activity field is required" },
+          { message: "   " },
+        ],
+      },
+      { status: 400 },
+    );
+  console.log = () => {};
+  console.error = (value) => stderr.push(value);
+  try {
+    const code = await run(["activity", "update", "act_1", "--status", "Testing"], {
+      HARK_TOKEN: "hark_test",
+      HARK_API_URL: "https://example.test",
+    });
+    assert.equal(code, 1);
+    assert.equal(
+      stderr.join("\n"),
+      [
+        "Invalid Live Activity update",
+        "status: Too small: expected string to have >=1 characters",
+        "At least one activity field is required",
+      ].join("\n"),
+    );
+    await assert.rejects(
+      execute(["activity", "update", "act_1", "--if-sequence", "1"], { HARK_TOKEN: "hark_test" }),
+      /activity update requires a change/,
+    );
+    const usage = await run(["activity", "update", "act_1"], { HARK_TOKEN: "hark_test" });
+    assert.equal(usage, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    console.error = originalError;
+  }
+});
+
 test("activity CLI rejects invalid progress and preserves no-delivery exit behavior", async () => {
   await assert.rejects(
     execute(["activity", "start", "--title", "Task", "--status", "Run", "--progress", "2"], {
@@ -1144,6 +1214,7 @@ test("help lists permission bridge commands", async () => {
   assert.match(result.body.help, /permissions setup/);
   assert.match(result.body.help, /permissions uninstall/);
   assert.match(result.body.help, /permissions doctor/);
+  assert.match(result.body.help, /--status alone is a valid update/);
 });
 
 test("permissions doctor reads scopes in process without printing token metadata", async () => {

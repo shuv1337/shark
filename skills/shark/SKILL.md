@@ -215,6 +215,12 @@ sharkctl activity end deploy-main \
   --status "Shipped" --progress 1 --dismiss-after 45s
 ```
 
+`activity update` merges a partial body. `--status` alone is a complete update, and so is
+`--status` together with `--progress` (`0` through `1`). Send at least one changed field other
+than `--if-sequence` (`--title`, `--status`, `--detail`, `--progress`, `--symbol`, `--privacy`,
+`--accent-color`, `--style`, or `--stale-after`). A rejected update prints the invalid field and
+the reason on stderr; it still exits `1`.
+
 Styles are `standard`, `ring`, `hero`, `terminal`, and `steps`. Use `--replace` for a fixed-key task
 that should take the device slot on each run. Use the returned sequence with `--if-sequence` to
 reject stale writes. Prefer meaningful updates over tight progress loops. iOS may suppress fresh

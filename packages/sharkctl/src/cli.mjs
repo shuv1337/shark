@@ -397,7 +397,11 @@ not end the prompt: it stays answerable on the phone until it expires, and
 sharkctl interaction wait <id> resumes waiting at any time.
 
 Authentication: run sharkctl auth login, or set HARK_TOKEN for an advanced manual setup.
-Tokens are never accepted as command arguments.`;
+Tokens are never accepted as command arguments.
+
+activity update merges only the fields you pass. --status alone is a valid update, as is
+--status together with --progress. At least one field other than --if-sequence is required.
+When the service rejects an update, the error names the invalid field.`;
 }
 
 export async function execute(argv, env = process.env, overrides = {}) {
@@ -570,6 +574,11 @@ export async function execute(argv, env = process.env, overrides = {}) {
         : {}),
       ...(ifSequence !== undefined ? { ifSequence } : {}),
     };
+    if (!Object.keys(payload).some((key) => key !== "ifSequence")) {
+      throw new UsageError(
+        "activity update requires a change such as --status, --detail, or --progress",
+      );
+    }
     const body = await request(config, `/api/agent/activities/${encodeURIComponent(identifier)}`, {
       method: "PATCH",
       headers: options["idempotency-key"]
@@ -739,6 +748,34 @@ export async function execute(argv, env = process.env, overrides = {}) {
   throw new UsageError("Unknown command. Run sharkctl --help.");
 }
 
+function validationIssueLine(issue) {
+  if (!issue || typeof issue !== "object") return "";
+  const path = Array.isArray(issue.path)
+    ? issue.path
+        .filter((part) => typeof part === "string" || typeof part === "number")
+        .map(String)
+        .join(".")
+    : "";
+  const message =
+    typeof issue.message === "string" ? issue.message.replace(/\s+/g, " ").trim() : "";
+  if (!message) return "";
+  const line = path ? `${path}: ${message}` : message;
+  return line.length > 200 ? `${line.slice(0, 197)}...` : line;
+}
+
+/** Append schema issues from a rejected response so a 400 names the invalid field. */
+function formatRequestError(error) {
+  const message = error instanceof Error ? error.message : "Unexpected error";
+  if (!(error instanceof RequestError) || !Array.isArray(error.body?.issues)) return message;
+  const lines = [];
+  for (const issue of error.body.issues) {
+    if (lines.length >= 8) break;
+    const line = validationIssueLine(issue);
+    if (line) lines.push(line);
+  }
+  return lines.length > 0 ? `${message}\n${lines.join("\n")}` : message;
+}
+
 export async function run(argv, env = process.env, overrides = {}) {
   try {
     const result = await execute(argv, env, overrides);
@@ -746,7 +783,7 @@ export async function run(argv, env = process.env, overrides = {}) {
     else console.log(JSON.stringify(result.body));
     return result.exitCode;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected error";
+    const message = formatRequestError(error);
     console.error(message);
     if (error instanceof UsageError) return 2;
     if (error instanceof RequestError) {
