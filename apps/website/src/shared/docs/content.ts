@@ -994,6 +994,7 @@ sharkctl activity end deploy --status "Shipped" --progress 1 --dismiss-after 45s
               "`--if-sequence` rejects stale writes: the update only applies if the activity is still at that sequence.",
               "`--style` selects `standard`, `ring`, `hero`, `terminal`, or `steps`, and can change mid-flight on `update`.",
               "`activity get <id|key>` reads current state; `activity list` shows recent activities.",
+              'An update immediately after start can return `accepted: 0` and `message: "MissingUpdateToken"` (exit `7`) until the phone registers the activity update token. Start does not return that token. Retry with the sequence from the failed response and a new idempotency key. A failed update is not replayed; an end with the same message is, once iOS registers the token.',
             ],
           },
         ],
