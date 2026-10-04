@@ -739,6 +739,43 @@ export async function execute(argv, env = process.env, overrides = {}) {
   throw new UsageError("Unknown command. Run sharkctl --help.");
 }
 
+const MAX_VALIDATION_ISSUES = 8;
+const MAX_VALIDATION_TEXT = 160;
+
+function validationText(value) {
+  if (typeof value !== "string" && typeof value !== "number") return "";
+  return String(value)
+    .replace(/[\r\n]+/g, " ")
+    .trim()
+    .slice(0, MAX_VALIDATION_TEXT);
+}
+
+// Zod issues can echo the submitted value in fields other than path and message.
+function validationIssueLine(issue) {
+  if (!issue || typeof issue !== "object") return "";
+  const message = validationText(issue.message);
+  if (!message) return "";
+  const path = Array.isArray(issue.path)
+    ? issue.path
+        .map(validationText)
+        .filter((segment) => segment.length > 0)
+        .join(".")
+    : "";
+  return path ? `${path}: ${message}` : message;
+}
+
+export function formatRequestError(error) {
+  const message = error instanceof Error ? error.message : "Unexpected error";
+  if (!(error instanceof RequestError) || !Array.isArray(error.body?.issues)) return message;
+  const lines = [];
+  for (const issue of error.body.issues) {
+    if (lines.length >= MAX_VALIDATION_ISSUES) break;
+    const line = validationIssueLine(issue);
+    if (line) lines.push(line);
+  }
+  return lines.length > 0 ? `${message}\n${lines.join("\n")}` : message;
+}
+
 export async function run(argv, env = process.env, overrides = {}) {
   try {
     const result = await execute(argv, env, overrides);
@@ -746,7 +783,7 @@ export async function run(argv, env = process.env, overrides = {}) {
     else console.log(JSON.stringify(result.body));
     return result.exitCode;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected error";
+    const message = formatRequestError(error);
     console.error(message);
     if (error instanceof UsageError) return 2;
     if (error instanceof RequestError) {

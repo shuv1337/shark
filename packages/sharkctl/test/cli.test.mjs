@@ -3,7 +3,14 @@ import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { execute, parseArgs, parseDuration, run } from "../src/cli.mjs";
+import {
+  execute,
+  formatRequestError,
+  parseArgs,
+  parseDuration,
+  RequestError,
+  run,
+} from "../src/cli.mjs";
 
 test("parses repeatable devices and notify ask options", () => {
   const parsed = parseArgs([
@@ -1100,6 +1107,87 @@ test("activity update and end send sequence preconditions", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("activity end prints field-level validation and keeps the identifier out of it", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const stdout = [];
+  const stderr = [];
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), body: JSON.parse(init.body) });
+    return Response.json(
+      {
+        error: "Invalid Live Activity end",
+        issues: [
+          {
+            path: ["progress"],
+            message: "Number must be less than or equal to 1",
+            received: "hark_should_not_print",
+          },
+          { path: ["symbol"], message: "Invalid option" },
+          { path: [], message: "object-level constraint" },
+          { path: ["detail"], message: "too long\nnext line" },
+          "ignore me",
+          { path: ["status"], message: { leaked: "hark_nested" } },
+        ],
+      },
+      { status: 400 },
+    );
+  };
+  console.log = (value) => stdout.push(value);
+  console.error = (value) => stderr.push(value);
+  try {
+    const code = await run(
+      ["activity", "end", "deploy-main", "--status", "Shipped", "--progress", "2"],
+      { HARK_TOKEN: "hark_test", HARK_API_URL: "https://example.test" },
+    );
+    assert.equal(code, 1);
+    assert.equal(stdout.length, 0);
+    assert.equal(stderr.length, 1);
+    assert.equal(
+      stderr[0],
+      [
+        "Invalid Live Activity end",
+        "progress: Number must be less than or equal to 1",
+        "symbol: Invalid option",
+        "object-level constraint",
+        "detail: too long next line",
+      ].join("\n"),
+    );
+    assert.equal(stderr[0].includes("hark_should_not_print"), false);
+    assert.equal(stderr[0].includes("hark_nested"), false);
+    assert.match(calls[0].url, /\/api\/agent\/activities\/deploy-main\/end$/);
+    assert.equal(calls[0].body.status, "Shipped");
+
+    calls.length = 0;
+    stderr.length = 0;
+    const byKey = await run(["activity", "end", "--key", "release-main"], {
+      HARK_TOKEN: "hark_test",
+      HARK_API_URL: "https://example.test",
+    });
+    assert.equal(byKey, 1);
+    assert.match(calls[0].url, /\/api\/agent\/activities\/release-main\/end$/);
+    assert.match(stderr[0], /^Invalid Live Activity end\nprogress:/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    console.error = originalError;
+  }
+});
+
+test("request errors without field issues stay a single line", () => {
+  const error = new RequestError("Live Activity not found", 404, {
+    error: "Live Activity not found",
+  });
+  assert.equal(formatRequestError(error), "Live Activity not found");
+  assert.equal(formatRequestError(new Error("Unexpected error")), "Unexpected error");
+  assert.equal(
+    formatRequestError(new RequestError("Invalid Live Activity end", 400, { issues: "nope" })),
+    "Invalid Live Activity end",
+  );
 });
 
 test("activity CLI rejects invalid progress and preserves no-delivery exit behavior", async () => {
