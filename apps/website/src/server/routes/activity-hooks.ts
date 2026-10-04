@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import {
   LIVE_ACTIVITY_DEFAULT_STALE_AFTER_SECONDS,
+  LIVE_ACTIVITY_END_FIELDS,
   LIVE_ACTIVITY_SCHEMA_VERSION,
+  LIVE_ACTIVITY_UPDATE_FIELDS,
   type LiveActivityProps,
   liveActivityEndSchema,
   liveActivityPropsSchema,
@@ -30,8 +32,11 @@ import {
   dispatchLiveActivity,
   expireLiveActivity,
   findBlockingDeliveries,
+  invalidLiveActivityBody,
   liveKeyedActivity,
+  operationUpdateTokenPending,
   replaceBlockingDeliveries,
+  terminalLiveActivityConflict,
   toLiveActivityDto,
   trackActivityOutcome,
 } from "./activities";
@@ -164,6 +169,35 @@ async function enforceRateLimit(service: ServiceRow, owner: UserRow) {
     return { error: "Account rate limit exceeded", retryAfterSeconds: 60 as const };
   }
   return null;
+}
+
+function pendingTokenAck(result: { updateTokenPending: boolean }) {
+  return result.updateTokenPending
+    ? { updateTokenPending: true as const, message: "MissingUpdateToken" }
+    : {};
+}
+
+async function idempotentAck(operation: {
+  id: string;
+  event: string;
+  acceptedCount: number;
+  failedCount: number;
+}) {
+  return (await operationUpdateTokenPending(operation))
+    ? { updateTokenPending: true as const, message: "MissingUpdateToken" }
+    : {};
+}
+
+function terminalWebhookConflict(row: ActivityRow) {
+  const conflict = terminalLiveActivityConflict(row);
+  return {
+    ok: false as const,
+    error: conflict.error,
+    ...(conflict.status ? { status: conflict.status } : {}),
+    endedAt: conflict.endedAt,
+    expiresAt: conflict.expiresAt,
+    diagnostic: conflict.diagnostic,
+  };
 }
 
 function response(row: ActivityRow, result?: DeliveryResult, extras: Record<string, unknown> = {}) {
@@ -499,10 +533,19 @@ export const activityHooksRoute = new Hono()
     const authenticated = await authenticate(c.req.param("token"));
     if (!authenticated) return c.json({ ok: false, error: "Unknown webhook" }, 404);
     const { service, owner } = authenticated;
-    const parsed = liveActivityUpdateSchema.safeParse(await c.req.json().catch(() => null));
+    const body = await c.req.json().catch(() => null);
+    const parsed = liveActivityUpdateSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
-        { ok: false, error: "Invalid Live Activity update", issues: parsed.error.issues },
+        {
+          ok: false,
+          ...invalidLiveActivityBody(
+            "Invalid Live Activity update",
+            parsed.error.issues,
+            body,
+            LIVE_ACTIVITY_UPDATE_FIELDS,
+          ),
+        },
         400,
       );
     }
@@ -525,14 +568,14 @@ export const activityHooksRoute = new Hono()
             failed: replay.operation.failedCount,
             errors: [],
           },
-          { idempotent: true },
+          { idempotent: true, ...(await idempotentAck(replay.operation)) },
         ),
       );
     }
     const current = await ownedActivity(service.id, c.req.param("identifier"));
     if (!current) return c.json({ ok: false, error: "Live Activity not found" }, 404);
     if (!["starting", "active", "partial"].includes(current.status)) {
-      return c.json({ ok: false, error: "Live Activity is already terminal" }, 409);
+      return c.json(terminalWebhookConflict(current), 409);
     }
     if (parsed.data.ifSequence !== undefined && parsed.data.ifSequence !== current.sequence) {
       return c.json({ ...response(current), ok: false, error: "Sequence conflict" }, 409);
@@ -628,7 +671,7 @@ export const activityHooksRoute = new Hono()
               failed: raced.operation.failedCount,
               errors: [],
             },
-            { idempotent: true },
+            { idempotent: true, ...(await idempotentAck(raced.operation)) },
           ),
         );
       }
@@ -670,16 +713,25 @@ export const activityHooksRoute = new Hono()
       .set({ acceptedCount: result.accepted, failedCount: result.failed })
       .where(eq(liveActivityOperation.id, operationId));
     if (result.accepted > 0) await trackNotification(service.userId, operationId);
-    return c.json(response(updated ?? row, result));
+    return c.json(response(updated ?? row, result, pendingTokenAck(result)));
   })
   .post("/:token/live-activities/:identifier/end", async (c) => {
     const authenticated = await authenticate(c.req.param("token"));
     if (!authenticated) return c.json({ ok: false, error: "Unknown webhook" }, 404);
     const { service, owner } = authenticated;
-    const parsed = liveActivityEndSchema.safeParse(await c.req.json().catch(() => ({})));
+    const body = await c.req.json().catch(() => ({}));
+    const parsed = liveActivityEndSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
-        { ok: false, error: "Invalid Live Activity end", issues: parsed.error.issues },
+        {
+          ok: false,
+          ...invalidLiveActivityBody(
+            "Invalid Live Activity end",
+            parsed.error.issues,
+            body,
+            LIVE_ACTIVITY_END_FIELDS,
+          ),
+        },
         400,
       );
     }
@@ -702,14 +754,14 @@ export const activityHooksRoute = new Hono()
             failed: replay.operation.failedCount,
             errors: [],
           },
-          { idempotent: true },
+          { idempotent: true, ...(await idempotentAck(replay.operation)) },
         ),
       );
     }
     const current = await ownedActivity(service.id, c.req.param("identifier"));
     if (!current) return c.json({ ok: false, error: "Live Activity not found" }, 404);
     if (!["starting", "active", "partial"].includes(current.status)) {
-      return c.json({ ok: false, error: "Live Activity is already terminal" }, 409);
+      return c.json(terminalWebhookConflict(current), 409);
     }
     if (parsed.data.ifSequence !== undefined && parsed.data.ifSequence !== current.sequence) {
       return c.json({ ...response(current), ok: false, error: "Sequence conflict" }, 409);
@@ -794,7 +846,7 @@ export const activityHooksRoute = new Hono()
               failed: raced.operation.failedCount,
               errors: [],
             },
-            { idempotent: true },
+            { idempotent: true, ...(await idempotentAck(raced.operation)) },
           ),
         );
       }
@@ -822,5 +874,5 @@ export const activityHooksRoute = new Hono()
       .set({ acceptedCount: result.accepted, failedCount: result.failed })
       .where(eq(liveActivityOperation.id, operationId));
     if (result.accepted > 0) await trackNotification(service.userId, operationId);
-    return c.json(response(updated ?? row, result));
+    return c.json(response(updated ?? row, result, pendingTokenAck(result)));
   });

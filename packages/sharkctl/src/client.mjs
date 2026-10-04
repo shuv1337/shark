@@ -10,6 +10,22 @@ export class RequestError extends Error {
   }
 }
 
+const TERMINAL_LIVE_ACTIVITY_STATUSES = new Set(["failed", "ended", "expired"]);
+
+function terminalLiveActivityStatus(body) {
+  if (body?.error !== "Live Activity is already terminal") return undefined;
+  const candidates = [body.activity?.status, body.status];
+  return candidates.find(
+    (status) => typeof status === "string" && TERMINAL_LIVE_ACTIVITY_STATUSES.has(status),
+  );
+}
+
+function requestErrorMessage(body) {
+  const message = body.error ?? "Request failed";
+  const status = terminalLiveActivityStatus(body);
+  return status ? `${message} (${status})` : message;
+}
+
 // Unlike the interactive CLI loader, service credentials never come from the
 // environment. Read through one descriptor so validation covers the file used.
 export async function loadFileConfig(path, env = process.env) {
@@ -92,7 +108,7 @@ export async function request(config, path, init = {}) {
   const body = await response
     .json()
     .catch(() => ({ error: `Request failed (${response.status})` }));
-  if (!response.ok) throw new RequestError(body.error ?? "Request failed", response.status, body);
+  if (!response.ok) throw new RequestError(requestErrorMessage(body), response.status, body);
   return body;
 }
 
@@ -109,7 +125,7 @@ export async function publicRequest(apiUrl, path, init = {}) {
   const body = await response
     .json()
     .catch(() => ({ error: `Request failed (${response.status})` }));
-  if (!response.ok) throw new RequestError(body.error ?? "Request failed", response.status, body);
+  if (!response.ok) throw new RequestError(requestErrorMessage(body), response.status, body);
   return body;
 }
 

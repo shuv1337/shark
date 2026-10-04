@@ -24,7 +24,7 @@ import { newId } from "../lib/id";
 import { buildWelcomePushMessages, sendPushMessages } from "../lib/push";
 import { encryptLiveActivityToken } from "../lib/token";
 import { type AuthedEnv, requireAuth } from "../middleware";
-import { replayLateTerminalDelivery } from "./activities";
+import { replayLateTerminalDelivery, unsentTerminalDelivery } from "./activities";
 
 function toDto(row: typeof device.$inferSelect): DeviceDto {
   return {
@@ -167,7 +167,7 @@ export const devicesRoute = new Hono<AuthedEnv>()
         eq(liveActivity.status, "ended"),
         eq(liveActivityDelivery.status, "ended"),
         eq(liveActivityDelivery.lastEvent, "end"),
-        eq(liveActivityDelivery.lastApnsReason, "MissingUpdateToken"),
+        unsentTerminalDelivery(),
         isNull(liveActivityDelivery.updateTokenCiphertext),
       );
       const candidateWhere = [

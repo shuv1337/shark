@@ -220,6 +220,13 @@ that should take the device slot on each run. Use the returned sequence with `--
 reject stale writes. Prefer meaningful updates over tight progress loops. iOS may suppress fresh
 activity starts less than about one minute apart; update the current activity instead.
 
+`activity update` merges only the fields you pass. `--status` alone is a complete update, and so is
+`--status` with `--progress` (`0` through `1`). Send at least one field other than `--if-sequence`:
+`--title`, `--status`, `--detail`, `--progress`, `--symbol`, `--privacy`, `--accent-color`,
+`--style`, or `--stale-after`. An empty update fails locally and exits `2`. A rejected update or
+end prints up to eight `path: message` lines on stderr and exits `1`. Those lines do not echo
+submitted values. An unrecognized key is printed once, after the schema lines.
+
 Starting an activity creates a lifecycle obligation. Retain its returned `.activity.id` or use a
 stable `--key`, then call `activity end` on every terminal path: success, failure, cancellation, and
 agent cleanup. Give the end request its own stable `--idempotency-key` so cleanup can be retried.
@@ -227,13 +234,32 @@ A separate `notify` call is an independent inbox item; it does not correlate wit
 Activity, even when the title and requester match.
 
 `activity start` does not return an update token, and none can be passed on update or end. iOS
-creates it after start and the app registers it with the server. An update before that registration
-returns `accepted: 0`, `message: "MissingUpdateToken"`, and exit `7` while the activity stays
-active. The write still advances `.activity.sequence`. Retry after the phone registers, with
-`--if-sequence` set to the sequence in that response and a new idempotency key if the failed
-attempt used one. There is no fixed wait that guarantees registration, and a failed update is not
-pushed later on its own. If an end reports `MissingUpdateToken`, do not start a replacement merely
-to clear it. SHark records the terminal state and replays that end when the token arrives.
+creates it after start and the app registers it with the server. An update or end before that
+registration stores the requested state and exits `0`. The response sets `updateTokenPending` to
+true, `message` to `MissingUpdateToken`, and leaves `accepted` at `0` until APNs takes the push.
+The write still advances `.activity.sequence`, so a later update uses that sequence or omits
+`--if-sequence`. Replaying the same idempotency key returns this stored result, including
+`updateTokenPending`. A stored update is not pushed later by itself; the next update or end that
+has a token sends the stored props. A stored end is replayed when the token arrives. Leave the
+existing activity in place. Do not start a replacement to clear `MissingUpdateToken`. Exit `7`
+remains when `accepted` is `0` and `updateTokenPending` is absent, including `activity start` with
+no delivery and a real APNs rejection. Once APNs rejects a registered update token (for example
+`Unregistered` after the activity is dismissed on the phone), later updates and ends keep reporting
+that reason and, when no other device accepts, exit `7` until the phone registers a new token.
+
+A `partial` activity is still live. Keep updating it, and end it when the task is finished. Before
+a progress update, run `activity get <id|key>` and continue only while `.activity.status` is
+`starting`, `active`, or `partial`.
+
+If an update or end reports `Live Activity is already terminal (<status>)`, the next stderr line is
+`status=<ended|expired|failed> endedAt=<iso-or-null> expiresAt=<iso-or-null>`. SHark does not end
+an activity on a short timer. `expired` means `expiresAt` has passed. `ended` means an explicit
+end, a `--replace` takeover, or a resolved interactive prompt. `failed` means no device accepted
+the start (that `activity start` exited `7`), or a later update found no retryable device delivery.
+When the task is still running, the status is `ended` or `failed`, and `expiresAt` is still in the
+future, restart with the same `--key` and `--replace`. If the restarted start itself exits `7`, do
+not restart again: no device accepted it. Check `sharkctl devices list` and the start `message`
+instead.
 
 ## Approve Coding-Agent Permissions
 

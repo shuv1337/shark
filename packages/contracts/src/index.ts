@@ -493,22 +493,25 @@ export const liveActivityStartSchema = z
   });
 export type LiveActivityStartInput = z.infer<typeof liveActivityStartSchema>;
 
-export const liveActivityUpdateSchema = z
-  .object({
-    title: z.string().trim().min(1).max(80).optional(),
-    status: z.string().trim().min(1).max(60).optional(),
-    detail: z.string().trim().min(1).max(240).nullable().optional(),
-    progress: z.number().min(0).max(1).nullable().optional(),
-    symbol: liveActivitySymbolSchema.optional(),
-    privacyMode: liveActivityPrivacyModeSchema.optional(),
-    accentColor: liveActivityAccentColorSchema.optional(),
-    style: liveActivityStyleSchema.optional(),
-    staleAfterSeconds: z.number().int().min(0).max(28_800).optional(),
-    ifSequence: z.number().int().nonnegative().optional(),
-  })
+const liveActivityUpdateObject = z.object({
+  title: z.string().trim().min(1).max(80).optional(),
+  status: z.string().trim().min(1).max(60).optional(),
+  detail: z.string().trim().min(1).max(240).nullable().optional(),
+  progress: z.number().min(0).max(1).nullable().optional(),
+  symbol: liveActivitySymbolSchema.optional(),
+  privacyMode: liveActivityPrivacyModeSchema.optional(),
+  accentColor: liveActivityAccentColorSchema.optional(),
+  style: liveActivityStyleSchema.optional(),
+  staleAfterSeconds: z.number().int().min(0).max(28_800).optional(),
+  ifSequence: z.number().int().nonnegative().optional(),
+});
+
+export const LIVE_ACTIVITY_UPDATE_FIELDS = Object.keys(liveActivityUpdateObject.shape);
+
+export const liveActivityUpdateSchema = liveActivityUpdateObject
   .refine(
     (input) => Object.keys(input).some((key) => key !== "ifSequence"),
-    "At least one activity field is required",
+    "At least one of title, status, detail, progress, symbol, privacyMode, accentColor, style, or staleAfterSeconds is required",
   )
   .superRefine((value, context) => {
     if (value.style === "approval") {
@@ -521,7 +524,7 @@ export const liveActivityUpdateSchema = z
   });
 export type LiveActivityUpdateInput = z.infer<typeof liveActivityUpdateSchema>;
 
-export const liveActivityEndSchema = z.object({
+const liveActivityEndObject = z.object({
   status: z.string().trim().min(1).max(60).default("Complete"),
   detail: z.string().trim().min(1).max(240).nullable().optional(),
   progress: z.number().min(0).max(1).nullable().optional(),
@@ -530,7 +533,43 @@ export const liveActivityEndSchema = z.object({
   dismissAfterSeconds: z.number().int().min(0).max(14_400).default(0),
   ifSequence: z.number().int().nonnegative().optional(),
 });
+
+export const LIVE_ACTIVITY_END_FIELDS = Object.keys(liveActivityEndObject.shape);
+export const liveActivityEndSchema = liveActivityEndObject;
 export type LiveActivityEndInput = z.infer<typeof liveActivityEndSchema>;
+
+type LiveActivityIssue = { path?: ReadonlyArray<PropertyKey>; message?: string };
+
+/** Names rejected fields, including unrecognized keys Zod would otherwise strip. */
+export function liveActivityRequestDiagnostic(
+  issues: readonly LiveActivityIssue[],
+  value: unknown,
+  allowedFields: readonly string[],
+): string {
+  const allowed = new Set(allowedFields);
+  const unrecognized =
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? Object.keys(value)
+          .filter((key) => !allowed.has(key))
+          .slice(0, 20)
+      : [];
+  const parts = issues.slice(0, 20).map((issue) => {
+    const field = (issue.path ?? [])
+      .map(String)
+      .filter((part) => part.length > 0)
+      .join(".");
+    const message = issue.message ?? "rejected";
+    return field ? `rejected field ${field}: ${message}` : `rejected request: ${message}`;
+  });
+  for (const key of unrecognized) parts.push(`rejected field ${key}: unrecognized`);
+  const diagnostic = parts.join("; ");
+  return diagnostic.length > 500 ? `${diagnostic.slice(0, 497)}...` : diagnostic;
+}
+
+/** Names the lifecycle state that rejected an update or end. */
+export function liveActivityStateDiagnostic(status: string): string {
+  return `rejected state: ${status}`;
+}
 
 export const apnsEnvironmentSchema = z.enum(["sandbox", "production"]);
 export type ApnsEnvironment = z.infer<typeof apnsEnvironmentSchema>;
@@ -593,6 +632,12 @@ export interface LiveActivityMutationResponse {
   replaced?: number;
   idempotent?: boolean;
   message?: string;
+  /**
+   * The update or end was stored, and every delivery is waiting for the device
+   * to register its per-activity update token. `accepted` stays 0 until APNs
+   * takes the push. A stored end is replayed when that token arrives.
+   */
+  updateTokenPending?: boolean;
 }
 
 export type LiveActivityWebhookResponse =
@@ -611,13 +656,25 @@ export type LiveActivityWebhookResponse =
       replaced?: number;
       idempotent?: boolean;
       message?: string;
+      /**
+       * The update or end was stored, and every delivery is waiting for the device
+       * to register its per-activity update token. `accepted` stays 0 until APNs
+       * takes the push. A stored end is replayed when that token arrives.
+       */
+      updateTokenPending?: boolean;
     }
   | {
       ok: false;
       error: string;
       code?: "ACTIVE_ACTIVITY_CONFLICT";
       activityId?: string;
+      /** Lifecycle status when an update or end finds the activity already terminal. */
+      status?: LiveActivityStatus;
+      endedAt?: string | null;
+      expiresAt?: string;
       issues?: unknown;
+      /** Field or lifecycle state that caused the rejection. */
+      diagnostic?: string;
       retryAfterSeconds?: number;
     };
 

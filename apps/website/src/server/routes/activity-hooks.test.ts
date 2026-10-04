@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 process.env.NODE_ENV = "test";
@@ -5,6 +6,9 @@ process.env.DATABASE_URL = ":memory:";
 
 const authState = vi.hoisted(() => ({ userId: "hook_activity_user" as string | null }));
 const apnsCalls = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+const apnsState = vi.hoisted(() => ({
+  rejection: null as { status: number; reason: string | null } | null,
+}));
 const billingState = vi.hoisted(() => ({ pro: true }));
 
 vi.mock("../auth", () => ({
@@ -53,6 +57,7 @@ vi.mock("../lib/apns", () => ({
     priority: number,
   ) => {
     apnsCalls.push({ token, environment, input, priority });
+    if (apnsState.rejection) return { ...apnsState.rejection, apnsId: null, accepted: false };
     return { status: 200, apnsId: `hook-apns-${apnsCalls.length}`, reason: null, accepted: true };
   },
 }));
@@ -118,6 +123,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   authState.userId = "hook_activity_user";
   apnsCalls.length = 0;
+  apnsState.rejection = null;
   billingState.pro = true;
   await db.delete(schema.liveActivity);
 });
@@ -314,6 +320,28 @@ describe("Live Activity webhook routes", () => {
         priority: 10,
         input: { event: "end", dismissalDate: 1_784_984_430 },
       });
+      const terminal = await activityRequest(TOKEN, `/${startBody.activityId}`, "PATCH", {
+        status: "Still running",
+      });
+      expect(terminal.status).toBe(409);
+      expect(await terminal.json()).toMatchObject({
+        ok: false,
+        error: "Live Activity is already terminal (ended)",
+        status: "ended",
+        endedAt: "2026-07-25T13:00:00.000Z",
+        expiresAt: "2026-07-25T20:00:00.000Z",
+        diagnostic: "rejected state: ended",
+      });
+      const terminalEnd = await activityRequest(TOKEN, `/${startBody.activityId}/end`, "POST", {});
+      expect(terminalEnd.status).toBe(409);
+      expect(await terminalEnd.json()).toMatchObject({
+        ok: false,
+        error: "Live Activity is already terminal (ended)",
+        status: "ended",
+        endedAt: "2026-07-25T13:00:00.000Z",
+        expiresAt: "2026-07-25T20:00:00.000Z",
+        diagnostic: "rejected state: ended",
+      });
       expect(
         (
           await app.request("/api/live-activity/update-token", {
@@ -345,15 +373,36 @@ describe("Live Activity webhook routes", () => {
     ).attributes;
 
     apnsCalls.length = 0;
-    const ended = await activityRequest(TOKEN, `/${startBody.activityId}/end`, "POST", {
-      status: "Complete",
-      progress: 1,
-    });
+    const endPayload = { status: "Complete", progress: 1 };
+    const ended = await activityRequest(
+      TOKEN,
+      `/${startBody.activityId}/end`,
+      "POST",
+      endPayload,
+      "late-webhook-end",
+    );
     expect(await ended.json()).toMatchObject({
       ok: true,
       status: "ended",
       accepted: 0,
       failed: 1,
+      message: "MissingUpdateToken",
+      updateTokenPending: true,
+    });
+    const replay = await activityRequest(
+      TOKEN,
+      `/${startBody.activityId}/end`,
+      "POST",
+      endPayload,
+      "late-webhook-end",
+    );
+    expect(await replay.json()).toMatchObject({
+      ok: true,
+      idempotent: true,
+      accepted: 0,
+      failed: 1,
+      message: "MissingUpdateToken",
+      updateTokenPending: true,
     });
 
     authState.userId = null;
@@ -656,5 +705,140 @@ describe("Live Activity webhook routes", () => {
         })
       ).status,
     ).toBe(404);
+  });
+
+  it("names the terminal status when a webhook update or end is rejected", async () => {
+    const started = await start();
+    const startBody = (await started.json()) as { activityId: string };
+    expect(
+      (
+        await activityRequest(TOKEN, `/${startBody.activityId}/end`, "POST", {
+          status: "Complete",
+        })
+      ).status,
+    ).toBe(200);
+    const update = await activityRequest(TOKEN, `/${startBody.activityId}`, "PATCH", {
+      status: "Pushing",
+      progress: 0.4,
+    });
+    expect(update.status).toBe(409);
+    expect(await update.json()).toMatchObject({
+      ok: false,
+      error: "Live Activity is already terminal (ended)",
+      status: "ended",
+      endedAt: expect.any(String),
+      expiresAt: expect.any(String),
+      diagnostic: "rejected state: ended",
+    });
+    const end = await activityRequest(TOKEN, `/${startBody.activityId}/end`, "POST", {});
+    expect(end.status).toBe(409);
+    expect(await end.json()).toMatchObject({
+      ok: false,
+      error: "Live Activity is already terminal (ended)",
+      status: "ended",
+    });
+  });
+
+  it("names the rejected webhook field and still updates a partial activity", async () => {
+    const created = await start();
+    const body = (await created.json()) as { activityId: string };
+    const invalid = await activityRequest(TOKEN, `/${body.activityId}`, "PATCH", {
+      progress: "0.7",
+      activity: { status: "partial" },
+    });
+    expect(invalid.status).toBe(400);
+    const invalidBody = (await invalid.json()) as { diagnostic: string };
+    expect(invalidBody).toMatchObject({
+      ok: false,
+      error: "Invalid Live Activity update",
+    });
+    expect(invalidBody.diagnostic).toContain("rejected field progress");
+    expect(invalidBody.diagnostic).toContain("rejected field activity: unrecognized");
+
+    await db
+      .update(schema.liveActivity)
+      .set({ status: "partial" })
+      .where(eq(schema.liveActivity.id, body.activityId));
+    const updated = await activityRequest(TOKEN, `/${body.activityId}`, "PATCH", {
+      status: "Testing",
+    });
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toMatchObject({
+      ok: true,
+      status: "partial",
+      state: { status: "Testing" },
+    });
+
+    const ended = await activityRequest(TOKEN, `/${body.activityId}/end`, "POST", {
+      status: "Stopped",
+    });
+    expect(ended.status).toBe(200);
+    const again = await activityRequest(TOKEN, `/${body.activityId}`, "PATCH", { status: "Later" });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toMatchObject({
+      ok: false,
+      error: "Live Activity is already terminal (ended)",
+      diagnostic: "rejected state: ended",
+      status: "ended",
+      endedAt: expect.any(String),
+      expiresAt: expect.any(String),
+    });
+  });
+
+  it("omits updateTokenPending when a sibling webhook push is rejected without a reason", async () => {
+    const now = new Date();
+    await db.insert(schema.device).values({
+      id: "hook_activity_device_2",
+      userId: "hook_activity_user",
+      expoPushToken: "ExponentPushToken[hook-activity-2]",
+      platform: "ios",
+      active: true,
+      liveActivityPushToStartTokenCiphertext: encryptLiveActivityToken("bb".repeat(32)),
+      liveActivityTokenEnvironment: "sandbox",
+      liveActivitySchemaVersion: 1,
+      liveActivityTokenUpdatedAt: now,
+      createdAt: now,
+      lastSeenAt: now,
+    });
+    try {
+      const started = await activityRequest(TOKEN, "", "POST", {
+        title: "Deploy #185",
+        status: "Building",
+        deviceIds: ["hook_activity_device", "hook_activity_device_2"],
+      });
+      const startBody = (await started.json()) as { activityId: string };
+      const registered = await app.request("/api/devices/live-activity/update-token", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          deviceId: "hook_activity_device",
+          activityId: startBody.activityId,
+          nativeActivityId: "native-hook-reasonless",
+          updateToken: "cd".repeat(32),
+          environment: "sandbox",
+          schemaVersion: 1,
+        }),
+      });
+      expect(registered.status).toBe(200);
+
+      apnsState.rejection = { status: 500, reason: null };
+      for (const [path, method, key] of [
+        [`/${startBody.activityId}`, "PATCH", "reasonless-hook-update"],
+        [`/${startBody.activityId}/end`, "POST", "reasonless-hook-end"],
+      ] as const) {
+        const first = await activityRequest(TOKEN, path, method, { status: "Rejected" }, key);
+        expect(first.status).toBe(200);
+        const firstBody = (await first.json()) as { updateTokenPending?: boolean };
+        expect(firstBody).toMatchObject({ ok: true, accepted: 0, failed: 2 });
+        expect(firstBody.updateTokenPending).toBeUndefined();
+        const replay = await activityRequest(TOKEN, path, method, { status: "Rejected" }, key);
+        const replayBody = (await replay.json()) as { updateTokenPending?: boolean };
+        expect(replayBody).toMatchObject({ ok: true, idempotent: true, accepted: 0, failed: 2 });
+        expect(replayBody.updateTokenPending).toBeUndefined();
+      }
+    } finally {
+      await db.delete(schema.liveActivity);
+      await db.delete(schema.device).where(eq(schema.device.id, "hook_activity_device_2"));
+    }
   });
 });

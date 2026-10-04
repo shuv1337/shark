@@ -1,3 +1,4 @@
+import { and, eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 process.env.NODE_ENV = "test";
@@ -5,7 +6,10 @@ process.env.DATABASE_URL = ":memory:";
 
 const authState = vi.hoisted(() => ({ userId: "activity_user_1" as string | null }));
 const apnsCalls = vi.hoisted(() => [] as Array<Record<string, unknown>>);
-const apnsState = vi.hoisted(() => ({ rejectEvent: null as string | null }));
+const apnsState = vi.hoisted(() => ({
+  rejectEvent: null as string | null,
+  rejection: { status: 503, reason: "Unavailable" as string | null },
+}));
 const billingState = vi.hoisted(() => ({ pro: true, serviceRate: 1000, accountRate: 1000 }));
 
 vi.mock("../auth", () => ({
@@ -55,7 +59,7 @@ vi.mock("../lib/apns", () => ({
   ) => {
     apnsCalls.push({ token, environment, input, priority });
     if (input.event === apnsState.rejectEvent) {
-      return { status: 503, apnsId: null, reason: "Unavailable", accepted: false };
+      return { ...apnsState.rejection, apnsId: null, accepted: false };
     }
     return { status: 200, apnsId: `apns-${apnsCalls.length}`, reason: null, accepted: true };
   },
@@ -179,6 +183,7 @@ beforeEach(async () => {
   billingState.accountRate = 1000;
   apnsCalls.length = 0;
   apnsState.rejectEvent = null;
+  apnsState.rejection = { status: 503, reason: "Unavailable" };
   await db.delete(schema.liveActivity);
   const { eq } = await import("drizzle-orm");
   await db
@@ -620,14 +625,30 @@ describe("Live Activity agent routes", () => {
       activity: { status: "ended", sequence: 1, props: { status: "Complete", progress: 1 } },
     });
     expect(apnsCalls.at(-1)).toMatchObject({ priority: 10, input: { event: "end" } });
-    expect(
-      (
-        await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
-          method: "POST",
-          body: JSON.stringify({}),
-        })
-      ).status,
-    ).toBe(409);
+    const duplicateEnd = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    expect(duplicateEnd.status).toBe(409);
+    expect(await duplicateEnd.json()).toMatchObject({
+      error: "Live Activity is already terminal (ended)",
+      status: "ended",
+      endedAt: expect.any(String),
+      expiresAt: expect.any(String),
+      diagnostic: "rejected state: ended",
+      activity: { status: "ended", endedAt: expect.any(String), expiresAt: expect.any(String) },
+    });
+    const update = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "Still running" }),
+    });
+    expect(update.status).toBe(409);
+    expect(await update.json()).toMatchObject({
+      error: "Live Activity is already terminal (ended)",
+      status: "ended",
+      diagnostic: "rejected state: ended",
+      activity: { status: "ended" },
+    });
   });
 
   it("releases the device lock when an end push is rejected", async () => {
@@ -643,11 +664,13 @@ describe("Live Activity agent routes", () => {
       method: "POST",
       body: JSON.stringify({}),
     });
-    expect(await ended.json()).toMatchObject({
+    const endedBody = (await ended.json()) as { updateTokenPending?: boolean };
+    expect(endedBody).toMatchObject({
       accepted: 0,
       failed: 1,
       activity: { status: "ended" },
     });
+    expect(endedBody.updateTokenPending).toBeUndefined();
     apnsState.rejectEvent = null;
     const replacement = await start({
       title: "Replacement",
@@ -666,15 +689,31 @@ describe("Live Activity agent routes", () => {
     const body = (await created.json()) as { activity: { id: string } };
 
     apnsCalls.length = 0;
+    const payload = { status: "Complete", progress: 1, dismissAfterSeconds: 30 };
     const ended = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
       method: "POST",
-      body: JSON.stringify({ status: "Complete", progress: 1, dismissAfterSeconds: 30 }),
+      headers: { "Idempotency-Key": "late-end" },
+      body: JSON.stringify(payload),
     });
     expect(await ended.json()).toMatchObject({
       accepted: 0,
       failed: 1,
       activity: { status: "ended", props: { status: "Complete", progress: 1 } },
       message: "MissingUpdateToken",
+      updateTokenPending: true,
+    });
+    const replay = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+      method: "POST",
+      headers: { "Idempotency-Key": "late-end" },
+      body: JSON.stringify(payload),
+    });
+    expect(await replay.json()).toMatchObject({
+      accepted: 0,
+      failed: 1,
+      idempotent: true,
+      message: "MissingUpdateToken",
+      updateTokenPending: true,
+      activity: { status: "ended" },
     });
 
     const registered = await app.request("/api/devices/live-activity/update-token", {
@@ -730,6 +769,19 @@ describe("Live Activity agent routes", () => {
       lastApnsReason: null,
     });
     expect(operation).toMatchObject({ event: "end", acceptedCount: 1, failedCount: 0 });
+    const settled = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+      method: "POST",
+      headers: { "Idempotency-Key": "late-end" },
+      body: JSON.stringify(payload),
+    });
+    const settledBody = (await settled.json()) as { updateTokenPending?: boolean };
+    expect(settledBody).toMatchObject({
+      accepted: 1,
+      failed: 0,
+      idempotent: true,
+      activity: { status: "ended" },
+    });
+    expect(settledBody.updateTokenPending).toBeUndefined();
   });
 
   it("revokes Live Activity capability atomically when device ownership changes", async () => {
@@ -791,5 +843,555 @@ describe("Live Activity agent routes", () => {
     });
     expect(await update.json()).toMatchObject({ accepted: 0, activity: { status: "failed" } });
     expect(apnsCalls).toHaveLength(0);
+  });
+
+  it("does not fan an end out to a delivery revoked by an ownership change", async () => {
+    const created = await start({
+      title: "Transferred end",
+      status: "Running",
+      deviceIds: ["activity_dev_2"],
+    });
+    const body = (await created.json()) as { activity: { id: string } };
+    await registerUpdateToken(
+      body.activity.id,
+      "native-transfer-end",
+      "ab".repeat(32),
+      "activity_dev_2",
+    );
+
+    authState.userId = "activity_user_2";
+    const transfer = await app.request("/api/devices", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        expoPushToken: "ExponentPushToken[activity-2]",
+        platform: "ios",
+        deviceName: "Transferred phone",
+      }),
+    });
+    expect(transfer.status).toBe(201);
+    authState.userId = "activity_user_1";
+
+    apnsCalls.length = 0;
+    const ended = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+      method: "POST",
+      headers: { "Idempotency-Key": "transferred-end" },
+      body: JSON.stringify({ status: "Stopped" }),
+    });
+    expect(ended.status).toBe(200);
+    const endedBody = (await ended.json()) as { message?: string; updateTokenPending?: boolean };
+    expect(endedBody).toMatchObject({ accepted: 0, failed: 0, activity: { status: "ended" } });
+    expect(endedBody.message).toBeUndefined();
+    expect(endedBody.updateTokenPending).toBeUndefined();
+    const replay = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+      method: "POST",
+      headers: { "Idempotency-Key": "transferred-end" },
+      body: JSON.stringify({ status: "Stopped" }),
+    });
+    const replayBody = (await replay.json()) as { updateTokenPending?: boolean };
+    expect(replayBody).toMatchObject({ accepted: 0, failed: 0, idempotent: true });
+    expect(replayBody.updateTokenPending).toBeUndefined();
+    expect(apnsCalls).toHaveLength(0);
+    const delivery = db
+      .select()
+      .from(schema.liveActivityDelivery)
+      .where(eq(schema.liveActivityDelivery.activityId, body.activity.id))
+      .get();
+    expect(delivery).toMatchObject({
+      status: "failed",
+      updateTokenCiphertext: null,
+      lastApnsReason: "OwnerChanged",
+    });
+  });
+
+  it("acknowledges a stored update that is waiting on the update token", async () => {
+    const created = await start({
+      title: "Pending update",
+      status: "Running",
+      deviceIds: ["activity_dev_1"],
+    });
+    const body = (await created.json()) as { activity: { id: string; sequence: number } };
+    const payload = { status: "Testing", progress: 0.4 };
+    const updated = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      headers: { "Idempotency-Key": "pending-update" },
+      body: JSON.stringify(payload),
+    });
+    expect(await updated.json()).toMatchObject({
+      accepted: 0,
+      failed: 1,
+      message: "MissingUpdateToken",
+      updateTokenPending: true,
+      activity: {
+        status: "active",
+        sequence: body.activity.sequence + 1,
+        props: payload,
+      },
+    });
+    const replay = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      headers: { "Idempotency-Key": "pending-update" },
+      body: JSON.stringify(payload),
+    });
+    expect(await replay.json()).toMatchObject({
+      accepted: 0,
+      failed: 1,
+      idempotent: true,
+      message: "MissingUpdateToken",
+      updateTokenPending: true,
+      activity: { props: payload },
+    });
+    expect(apnsCalls).toHaveLength(1);
+    expect(apnsCalls[0]).toMatchObject({ input: { event: "start" } });
+  });
+
+  it("keeps updating and ending an activity left partial by MissingUpdateToken", async () => {
+    const created = await start({
+      title: "Partial",
+      status: "Starting",
+      deviceIds: ["activity_dev_1", "activity_dev_2"],
+    });
+    const body = (await created.json()) as { activity: { id: string } };
+    await registerUpdateToken(
+      body.activity.id,
+      "native-partial",
+      "ab".repeat(32),
+      "activity_dev_1",
+    );
+
+    const first = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "Halfway", progress: 0.4 }),
+    });
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as { updateTokenPending?: boolean };
+    expect(firstBody).toMatchObject({
+      accepted: 1,
+      failed: 1,
+      message: "MissingUpdateToken",
+      activity: { status: "partial", props: { status: "Halfway", progress: 0.4 } },
+    });
+    expect(firstBody.updateTokenPending).toBeUndefined();
+
+    const second = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "Still going", progress: 0.6 }),
+    });
+    expect(second.status).toBe(200);
+    expect(await second.json()).toMatchObject({
+      accepted: 1,
+      failed: 1,
+      activity: { status: "partial", props: { status: "Still going", progress: 0.6 } },
+    });
+
+    const ended = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+      method: "POST",
+      body: JSON.stringify({ status: "Stopped" }),
+    });
+    expect(ended.status).toBe(200);
+    expect(await ended.json()).toMatchObject({
+      activity: { status: "ended", props: { status: "Stopped" } },
+    });
+  });
+
+  it("lets a partial activity return to active when only a failed delivery remains", async () => {
+    const created = await start({
+      title: "Recover",
+      status: "Starting",
+      deviceIds: ["activity_dev_1", "activity_dev_2"],
+    });
+    const body = (await created.json()) as { activity: { id: string } };
+    await registerUpdateToken(
+      body.activity.id,
+      "native-recover",
+      "cd".repeat(32),
+      "activity_dev_1",
+    );
+    await db
+      .update(schema.liveActivity)
+      .set({ status: "partial" })
+      .where(eq(schema.liveActivity.id, body.activity.id));
+    await db
+      .update(schema.liveActivityDelivery)
+      .set({ status: "failed", updateTokenCiphertext: null })
+      .where(
+        and(
+          eq(schema.liveActivityDelivery.activityId, body.activity.id),
+          eq(schema.liveActivityDelivery.deviceId, "activity_dev_2"),
+        ),
+      );
+
+    const updated = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "Recovered" }),
+    });
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toMatchObject({
+      accepted: 1,
+      failed: 0,
+      activity: { status: "active", props: { status: "Recovered" } },
+    });
+
+    const ended = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+      method: "POST",
+      body: JSON.stringify({ status: "Done" }),
+    });
+    expect(ended.status).toBe(200);
+    expect(await ended.json()).toMatchObject({ activity: { status: "ended" } });
+  });
+
+  it("sets updateTokenPending when a partial activity has only MissingUpdateToken failures", async () => {
+    const created = await start({
+      title: "Partial token",
+      status: "Starting",
+      deviceIds: ["activity_dev_1", "activity_dev_2"],
+    });
+    const body = (await created.json()) as { activity: { id: string } };
+    await registerUpdateToken(
+      body.activity.id,
+      "native-partial-token",
+      "ab".repeat(32),
+      "activity_dev_1",
+    );
+
+    const mixed = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "Halfway" }),
+    });
+    const mixedBody = (await mixed.json()) as { updateTokenPending?: boolean };
+    expect(mixedBody).toMatchObject({
+      accepted: 1,
+      failed: 1,
+      message: "MissingUpdateToken",
+      activity: { status: "partial" },
+    });
+    expect(mixedBody.updateTokenPending).toBeUndefined();
+
+    await db
+      .update(schema.liveActivityDelivery)
+      .set({ status: "failed" })
+      .where(
+        and(
+          eq(schema.liveActivityDelivery.activityId, body.activity.id),
+          eq(schema.liveActivityDelivery.deviceId, "activity_dev_1"),
+        ),
+      );
+
+    const waiting = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "Still waiting" }),
+    });
+    expect(await waiting.json()).toMatchObject({
+      accepted: 0,
+      failed: 1,
+      message: "MissingUpdateToken",
+      updateTokenPending: true,
+      activity: { status: "partial", props: { status: "Still waiting" } },
+    });
+
+    await registerUpdateToken(
+      body.activity.id,
+      "native-partial-token-2",
+      "ef".repeat(32),
+      "activity_dev_2",
+    );
+    apnsState.rejectEvent = "update";
+    const rejected = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "Rejected" }),
+    });
+    const rejectedBody = (await rejected.json()) as { updateTokenPending?: boolean };
+    expect(rejectedBody).toMatchObject({
+      accepted: 0,
+      failed: 1,
+      message: "Unavailable",
+      activity: { status: "partial" },
+    });
+    expect(rejectedBody.updateTokenPending).toBeUndefined();
+  });
+
+  it("omits updateTokenPending when a sibling push is rejected without a reason", async () => {
+    const created = await start({
+      title: "Reasonless rejection",
+      status: "Starting",
+      deviceIds: ["activity_dev_1", "activity_dev_2"],
+    });
+    const body = (await created.json()) as { activity: { id: string } };
+    await registerUpdateToken(
+      body.activity.id,
+      "native-reasonless",
+      "ab".repeat(32),
+      "activity_dev_1",
+    );
+    apnsState.rejection = { status: 500, reason: null };
+
+    for (const { event, request } of [
+      {
+        event: "update",
+        request: (key: string) =>
+          agent(`/${body.activity.id}`, WRITE_SECRET, {
+            method: "PATCH",
+            headers: { "Idempotency-Key": key },
+            body: JSON.stringify({ status: "Rejected" }),
+          }),
+      },
+      {
+        event: "end",
+        request: (key: string) =>
+          agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+            method: "POST",
+            headers: { "Idempotency-Key": key },
+            body: JSON.stringify({ status: "Stopped" }),
+          }),
+      },
+    ]) {
+      apnsState.rejectEvent = event;
+      const first = await request(`reasonless-${event}`);
+      expect(first.status).toBe(200);
+      const firstBody = (await first.json()) as { updateTokenPending?: boolean };
+      expect(firstBody).toMatchObject({ accepted: 0, failed: 2, message: "MissingUpdateToken" });
+      expect(firstBody.updateTokenPending).toBeUndefined();
+      const replay = await request(`reasonless-${event}`);
+      const replayBody = (await replay.json()) as { updateTokenPending?: boolean };
+      expect(replayBody).toMatchObject({ accepted: 0, failed: 2, idempotent: true });
+      expect(replayBody.updateTokenPending).toBeUndefined();
+    }
+  });
+
+  it("keeps reporting an update token APNs invalidated until a new one registers", async () => {
+    const created = await start({
+      title: "Invalidated token",
+      status: "Starting",
+      deviceIds: ["activity_dev_1"],
+    });
+    const body = (await created.json()) as { activity: { id: string } };
+    const update = (status: string, key?: string) =>
+      agent(`/${body.activity.id}`, WRITE_SECRET, {
+        method: "PATCH",
+        headers: key ? { "Idempotency-Key": key } : undefined,
+        body: JSON.stringify({ status }),
+      });
+
+    expect(await (await update("Before the token")).json()).toMatchObject({
+      accepted: 0,
+      failed: 1,
+      message: "MissingUpdateToken",
+      updateTokenPending: true,
+    });
+
+    await registerUpdateToken(body.activity.id, "native-invalidated", "12".repeat(32));
+    apnsState.rejectEvent = "update";
+    apnsState.rejection = { status: 410, reason: "Unregistered" };
+    const rejectedBody = (await (await update("Dismissed")).json()) as {
+      updateTokenPending?: boolean;
+    };
+    expect(rejectedBody).toMatchObject({ accepted: 0, failed: 1, message: "Unregistered" });
+    expect(rejectedBody.updateTokenPending).toBeUndefined();
+
+    apnsState.rejectEvent = null;
+    apnsCalls.length = 0;
+    const laterBody = (await (await update("Still dismissed", "invalidated-update")).json()) as {
+      updateTokenPending?: boolean;
+    };
+    expect(laterBody).toMatchObject({
+      accepted: 0,
+      failed: 1,
+      message: "Unregistered",
+      activity: { status: "active" },
+    });
+    expect(laterBody.updateTokenPending).toBeUndefined();
+    const replayBody = (await (await update("Still dismissed", "invalidated-update")).json()) as {
+      updateTokenPending?: boolean;
+    };
+    expect(replayBody).toMatchObject({ accepted: 0, failed: 1, idempotent: true });
+    expect(replayBody.updateTokenPending).toBeUndefined();
+    expect(apnsCalls).toHaveLength(0);
+
+    expect(
+      (await registerUpdateToken(undefined, "native-invalidated", "34".repeat(32))).status,
+    ).toBe(200);
+    expect(await (await update("Back")).json()).toMatchObject({
+      accepted: 1,
+      failed: 0,
+      activity: { status: "active" },
+    });
+    expect(apnsCalls.at(-1)).toMatchObject({ token: "34".repeat(32), input: { event: "update" } });
+
+    apnsState.rejectEvent = "update";
+    await update("Dismissed again");
+    apnsState.rejectEvent = null;
+    apnsCalls.length = 0;
+    const end = () =>
+      agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+        method: "POST",
+        headers: { "Idempotency-Key": "invalidated-end" },
+        body: JSON.stringify({ status: "Complete" }),
+      });
+    const endedBody = (await (await end()).json()) as { updateTokenPending?: boolean };
+    expect(endedBody).toMatchObject({
+      accepted: 0,
+      failed: 1,
+      message: "Unregistered",
+      activity: { status: "ended" },
+    });
+    expect(endedBody.updateTokenPending).toBeUndefined();
+    const endReplayBody = (await (await end()).json()) as { updateTokenPending?: boolean };
+    expect(endReplayBody).toMatchObject({ accepted: 0, failed: 1, idempotent: true });
+    expect(endReplayBody.updateTokenPending).toBeUndefined();
+    expect(apnsCalls).toHaveLength(0);
+
+    // The stored end never reached APNs, so a rotated token still replays it.
+    const rotated = await registerUpdateToken(undefined, "native-invalidated", "56".repeat(32));
+    expect(rotated.status).toBe(200);
+    expect(await rotated.json()).toMatchObject({ replayedTerminal: true });
+    expect(apnsCalls).toHaveLength(1);
+    expect(apnsCalls[0]).toMatchObject({
+      token: "56".repeat(32),
+      input: { event: "end", props: { status: "Complete" } },
+    });
+  });
+
+  it("does not replay an end that APNs itself rejected as unregistered", async () => {
+    const created = await start({
+      title: "Rejected end",
+      status: "Running",
+      deviceIds: ["activity_dev_1"],
+    });
+    const body = (await created.json()) as { activity: { id: string } };
+    await registerUpdateToken(body.activity.id, "native-rejected-end", "12".repeat(32));
+    apnsState.rejectEvent = "end";
+    apnsState.rejection = { status: 410, reason: "Unregistered" };
+    const ended = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+      method: "POST",
+      body: JSON.stringify({ status: "Complete" }),
+    });
+    const endedBody = (await ended.json()) as { updateTokenPending?: boolean };
+    expect(endedBody).toMatchObject({ accepted: 0, failed: 1, message: "Unregistered" });
+    expect(endedBody.updateTokenPending).toBeUndefined();
+
+    apnsState.rejectEvent = null;
+    apnsCalls.length = 0;
+    const late = await registerUpdateToken(undefined, "native-rejected-end", "34".repeat(32));
+    expect(late.status).toBe(404);
+    expect(apnsCalls).toHaveLength(0);
+  });
+
+  it("names the rejected update field and the terminal state", async () => {
+    const created = await start({
+      title: "Diagnose",
+      status: "Starting",
+      deviceIds: ["activity_dev_1"],
+    });
+    const body = (await created.json()) as { activity: { id: string } };
+    const invalid = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ progress: "0.7", activity: { status: "partial" } }),
+    });
+    expect(invalid.status).toBe(400);
+    const invalidBody = (await invalid.json()) as {
+      error: string;
+      diagnostic: string;
+      issues: unknown;
+    };
+    expect(invalidBody.error).toBe("Invalid Live Activity update");
+    expect(invalidBody.diagnostic).toContain("rejected field progress");
+    expect(invalidBody.diagnostic).toContain("rejected field activity: unrecognized");
+    expect(invalidBody.issues).toEqual(expect.any(Array));
+
+    const ended = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    expect(ended.status).toBe(200);
+    const again = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "Later" }),
+    });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toMatchObject({
+      error: "Live Activity is already terminal (ended)",
+      status: "ended",
+      diagnostic: "rejected state: ended",
+      endedAt: expect.any(String),
+      expiresAt: expect.any(String),
+    });
+  });
+
+  it("names the lifecycle status when a progress update hits a terminal activity", async () => {
+    const created = await start({
+      title: "Commit",
+      status: "Running",
+      key: "commit-main",
+      deviceIds: ["activity_dev_1"],
+    });
+    const body = (await created.json()) as { activity: { id: string } };
+    const ended = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+      method: "POST",
+      body: JSON.stringify({ status: "Complete" }),
+    });
+    expect(ended.status).toBe(200);
+    const update = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "Pushing", progress: 0.4 }),
+    });
+    expect(update.status).toBe(409);
+    expect(await update.json()).toMatchObject({
+      error: "Live Activity is already terminal (ended)",
+      status: "ended",
+      activity: { id: body.activity.id, status: "ended" },
+    });
+
+    const failedStart = await start({
+      title: "Push",
+      status: "Running",
+      key: "push-main",
+      deviceIds: ["activity_dev_1"],
+    });
+    const failedBody = (await failedStart.json()) as { activity: { id: string } };
+    await db
+      .update(schema.liveActivity)
+      .set({ status: "failed" })
+      .where(eq(schema.liveActivity.id, failedBody.activity.id));
+    const failedUpdate = await agent(`/${failedBody.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "Pushing", progress: 0.6 }),
+    });
+    expect(failedUpdate.status).toBe(409);
+    expect(await failedUpdate.json()).toMatchObject({
+      error: "Live Activity is already terminal (failed)",
+      status: "failed",
+      activity: { id: failedBody.activity.id, status: "failed" },
+    });
+  });
+
+  it("names expiry when a progress update arrives after expiresAt", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-13T12:00:00.000Z"));
+    try {
+      const created = await start({
+        title: "Commit",
+        status: "Running",
+        key: "commit-expiry",
+        deviceIds: ["activity_dev_1"],
+        expiresInSeconds: 60,
+      });
+      expect(created.status).toBe(201);
+      const body = (await created.json()) as { activity: { id: string } };
+      vi.setSystemTime(new Date("2026-08-13T12:02:00.000Z"));
+      const update = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "Pushing", progress: 0.8 }),
+      });
+      expect(update.status).toBe(409);
+      expect(await update.json()).toMatchObject({
+        error: "Live Activity is already terminal (expired)",
+        status: "expired",
+        endedAt: expect.any(String),
+        expiresAt: "2026-08-13T12:01:00.000Z",
+        activity: { id: body.activity.id, status: "expired" },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
