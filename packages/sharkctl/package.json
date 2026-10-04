@@ -17,6 +17,10 @@
     "cli"
   ],
   "type": "module",
+  "exports": {
+    "./client": "./src/client.mjs",
+    "./package.json": "./package.json"
+  },
   "bin": {
     "sharkctl": "bin/sharkctl.mjs"
   },
@@ -32,7 +36,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "node --check src/cli.mjs && node --check bin/sharkctl.mjs && node --check src/permissions/cli.mjs && node --check src/permissions/ask.mjs && node --check src/permissions/hook.mjs && node --check src/permissions/install.mjs && node --check src/permissions/opencode-service.mjs && node --check src/permissions/opencode-v1.mjs && node --check src/permissions/opencode-v2.mjs",
+    "build": "node --check src/client.mjs && node --check src/cli.mjs && node --check bin/sharkctl.mjs && node --check src/permissions/cli.mjs && node --check src/permissions/ask.mjs && node --check src/permissions/hook.mjs && node --check src/permissions/install.mjs && node --check src/permissions/opencode-service.mjs && node --check src/permissions/opencode-v1.mjs && node --check src/permissions/opencode-v2.mjs",
     "typecheck": "pnpm build",
     "test": "node --test",
     "prepublishOnly": "pnpm test && pnpm build"

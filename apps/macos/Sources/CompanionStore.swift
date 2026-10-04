@@ -32,6 +32,7 @@ final class CompanionStore: ObservableObject {
     private var authorizationTask: Task<Void, Never>?
     private var lastAPNsToken: String?
     private var lastAPNsEnvironment: String?
+    private var snapshotGeneration = 0
 
     private enum Keys {
         static let snapshot = "shark.macos.last-snapshot"
@@ -68,6 +69,11 @@ final class CompanionStore: ObservableObject {
     }
 
     var isSignedIn: Bool { accessToken != nil }
+
+    func canRespond(to item: InboxItem) -> Bool {
+        guard case .ready(let snapshot) = state, !isSubmitting else { return false }
+        return snapshot.items.first { $0.id == item.id }?.needsAction == true
+    }
 
     func start() async {
         guard accessToken != nil else {
@@ -128,19 +134,29 @@ final class CompanionStore: ObservableObject {
     }
 
     func refresh() async {
+        await refresh(preservingReadyStateOnFailure: false)
+    }
+
+    private func refresh(preservingReadyStateOnFailure: Bool) async {
         guard let accessToken else {
             state = .signedOut
             return
         }
+        snapshotGeneration += 1
+        let generation = snapshotGeneration
         if lastSnapshot == nil { state = .loading }
         do {
             let snapshot = try await client.fetchSnapshot(accessToken)
+            guard generation == snapshotGeneration, self.accessToken == accessToken else { return }
             save(snapshot)
             state = .ready(snapshot)
         } catch let error as APIError where error.statusCode == 401 {
+            guard generation == snapshotGeneration, self.accessToken == accessToken else { return }
             clearLocalCredentials()
             state = .signedOut
         } catch {
+            guard generation == snapshotGeneration, self.accessToken == accessToken else { return }
+            if preservingReadyStateOnFailure, case .ready = state { return }
             state = lastSnapshot.map { .stale($0, message(for: error)) } ?? .failed(message(for: error))
         }
     }
@@ -169,21 +185,35 @@ final class CompanionStore: ObservableObject {
                 action,
                 actionDigest
             )
+            guard self.accessToken == accessToken else { return }
+            // Reads started before or during the action cannot undo its committed snapshot.
+            snapshotGeneration += 1
             save(response.snapshot)
             state = .ready(response.snapshot)
             notice = "Response sent."
         } catch let error as APIError where error.statusCode == 409 {
+            guard self.accessToken == accessToken else { return }
             notice = "Already handled on another device."
             await refresh()
         } catch {
+            guard self.accessToken == accessToken else { return }
             notice = message(for: error)
         }
     }
 
     func markRead(_ item: InboxItem) async {
-        guard let accessToken else { return }
-        try? await client.markRead(accessToken, item.id)
-        await refresh()
+        guard item.readAt == nil, let accessToken else { return }
+        do {
+            try await client.markRead(accessToken, item.id)
+            guard self.accessToken == accessToken else { return }
+            await refresh(preservingReadyStateOnFailure: true)
+        } catch let error as APIError where error.statusCode == 401 {
+            guard self.accessToken == accessToken else { return }
+            clearLocalCredentials()
+            state = .signedOut
+        } catch {
+            // Read tracking is best effort; a failed acknowledgement must not disable replies.
+        }
     }
 
     func registerDevice(apnsToken: String, environment: String) async {
@@ -243,6 +273,7 @@ final class CompanionStore: ObservableObject {
     }
 
     private func clearLocalCredentials() {
+        snapshotGeneration += 1
         vault.delete()
         accessToken = nil
         lastSnapshot = nil

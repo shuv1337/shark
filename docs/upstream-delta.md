@@ -40,13 +40,32 @@ changes.
   Live Activity keyed on the flag or `stdin.presentation === "live_activity"`). Upstream Hark
   defaults the expiry to 15 minutes in that case. Explicit expiry still wins, `--poll` behavior is
   unchanged, and a stderr warning fires when the wait timeout exceeds the effective expiry.
+- The supported `sharkctl/client` import shares the CLI's request/error primitives with local
+  integrations. The package exports only `./client` and `./package.json`; previously possible,
+  unsupported deep source imports are no longer externally resolvable. The CLI executable is
+  unchanged. A separate protected-file loader ignores ambient token/API overrides, rejects a
+  conflicting `HARK_CONFIG`, and requires an explicit mode-0600 config and HTTPS origin (HTTP
+  loopback is allowed for local testing). Interactive CLI config precedence is unchanged.
+- SHark iOS optionally forwards default notification taps to an operator-configured SSHuv HTTPS
+  prefix ending in `/v1/`, with a bounded opaque reference. It is disabled without that build
+  setting. Other notification taps keep inbox-first routing, and action responses keep the durable
+  reply queue. Cold/warm duplicate default-tap callbacks are coalesced. See
+  [the handoff candidate and physical gates](agent-reply-routing/ios-handoff.md).
+
+- The private `@hark/shark-broker` package adds `sharkd`, a versioned trusted local API, protected
+  SQLite outbox/recovery, and user-service definitions. Its staged adapter supports the verified
+  shuvcode/OpenCode v2 protocol only; Codex/Claude fail closed. This adds no harness-aware server
+  state and changes no SHark API or credential boundary. See [broker setup and limits](../packages/shark-broker/README.md).
 
 ## CLI and compatibility names
 
 `sharkctl` is the canonical fork CLI and package. Keep `HARK_*`, `@hark/*`, the `hark` config
 directory, SQLite names, token prefixes and hash-domain strings, notification category IDs,
 `HarkAgentActivity`, webhook routes, DTOs, migrations, and `Hark-Callbacks/1` stable unless a
-separate migration explicitly changes them. These are protocol or persistence identities, not
+separate migration explicitly changes them. Also pin the HTTP 400 `Invalid device selection`
+error literal: the broker permits device-selection replacement only for that exact pre-insertion
+rejection. Its fixture must be updated deliberately if upstream wording changes.
+These are protocol or persistence identities, not
 visible incomplete branding.
 
 ## Upstream review

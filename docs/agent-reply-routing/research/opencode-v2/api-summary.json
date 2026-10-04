@@ -1,0 +1,424 @@
+{
+  "info": {
+    "title": "opencode HttpApi",
+    "version": "0.0.1",
+    "description": "Experimental HttpApi surface for selected instance routes."
+  },
+  "openapiSha256": "feb4e58b6c876151b4bc4e6b65cb47af32a56a754fdb0d807925a222f813d2cb",
+  "paths": {
+    "/api/session": {
+      "get": {
+        "operationId": "v2.session.list",
+        "description": "Retrieve sessions in the requested order. Items keep that order across pages; use cursor.next or cursor.previous to move through the ordered list.",
+        "responseStatuses": ["200", "400", "401"]
+      },
+      "post": {
+        "operationId": "v2.session.create",
+        "description": "Create a session at the requested location.",
+        "responseStatuses": ["200", "400", "401"]
+      }
+    },
+    "/api/session/stats": {
+      "get": {
+        "operationId": "v2.session.stats",
+        "description": "Aggregate local session activity, usage, and tool reliability for a time range.",
+        "responseStatuses": ["200", "400", "401"]
+      }
+    },
+    "/api/session/import": {
+      "post": {
+        "operationId": "v2.session.import",
+        "description": "Import a projected session transcript at the requested location. If parentID is supplied, the parent session must already exist; import parents before children.",
+        "responseStatuses": ["200", "400", "401", "404", "409"]
+      }
+    },
+    "/api/session/{sessionID}/export": {
+      "get": {
+        "operationId": "v2.session.export",
+        "description": "Export a complete projected session transcript.",
+        "responseStatuses": ["200", "400", "401", "404", "500"]
+      }
+    },
+    "/api/session/active": {
+      "get": {
+        "operationId": "v2.session.active",
+        "description": "Retrieve foreground Session drains currently owned by this OpenCode process. Sessions absent from the result are inactive.",
+        "responseStatuses": ["200", "400", "401"]
+      }
+    },
+    "/api/session/{sessionID}": {
+      "get": {
+        "operationId": "v2.session.get",
+        "description": "Retrieve a session by ID.",
+        "responseStatuses": ["200", "400", "401", "404"]
+      },
+      "delete": {
+        "operationId": "v2.session.remove",
+        "description": "Delete a session and its child sessions.",
+        "responseStatuses": ["204", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/fork": {
+      "post": {
+        "operationId": "v2.session.fork",
+        "description": "Create a child session by copying projected history through or before a message boundary.",
+        "responseStatuses": ["200", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/agent": {
+      "post": {
+        "operationId": "v2.session.switchAgent",
+        "description": "Switch the agent used by subsequent provider turns.",
+        "responseStatuses": ["204", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/model": {
+      "post": {
+        "operationId": "v2.session.switchModel",
+        "description": "Switch the model used by subsequent provider turns.",
+        "responseStatuses": ["204", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/rename": {
+      "post": {
+        "operationId": "v2.session.rename",
+        "description": "Update the session title.",
+        "responseStatuses": ["204", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/move": {
+      "post": {
+        "operationId": "v2.session.move",
+        "description": "Move a session to another project directory, optionally transferring local changes.",
+        "responseStatuses": ["204", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/prompt": {
+      "post": {
+        "operationId": "v2.session.prompt",
+        "description": "Durably admit one session input and schedule agent-loop execution unless resume is false.",
+        "responseStatuses": ["200", "400", "401", "404", "409"]
+      }
+    },
+    "/api/session/{sessionID}/command": {
+      "post": {
+        "operationId": "v2.session.command",
+        "description": "Execute a slash command callback immediately.",
+        "responseStatuses": ["204", "400", "401", "404", "500"]
+      }
+    },
+    "/api/session/{sessionID}/skill": {
+      "post": {
+        "operationId": "v2.session.skill",
+        "description": "Activate a skill for a session by appending a skill message and resuming execution.",
+        "responseStatuses": ["204", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/synthetic": {
+      "post": {
+        "operationId": "v2.session.synthetic",
+        "description": "Durably admit synthetic session input and schedule execution unless resume is false.",
+        "responseStatuses": ["200", "400", "401", "404", "409"]
+      }
+    },
+    "/api/session/{sessionID}/shell": {
+      "post": {
+        "operationId": "v2.session.shell",
+        "description": "Execute one shell command in the session's working directory. Emits a shell.started event before execution and a shell.ended event with the merged output after.",
+        "responseStatuses": ["204", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/compact": {
+      "post": {
+        "operationId": "v2.session.compact",
+        "description": "Durably admit a session compaction request. Steers by default: it runs at the next step boundary instead of waiting behind queued prompts.",
+        "responseStatuses": ["200", "400", "401", "404", "409"]
+      }
+    },
+    "/api/session/{sessionID}/wait": {
+      "post": {
+        "operationId": "v2.session.wait",
+        "description": "Wait for a session agent loop to become idle.",
+        "responseStatuses": ["204", "400", "401", "404", "503"]
+      }
+    },
+    "/api/session/{sessionID}/revert/stage": {
+      "post": {
+        "operationId": "v2.session.revert.stage",
+        "description": "Stage or move a reversible session boundary and optionally apply its file changes.",
+        "responseStatuses": ["200", "400", "401", "404", "409", "500"]
+      }
+    },
+    "/api/session/{sessionID}/revert/clear": {
+      "post": {
+        "operationId": "v2.session.revert.clear",
+        "responseStatuses": ["204", "400", "401", "404", "409", "500"]
+      }
+    },
+    "/api/session/{sessionID}/revert/commit": {
+      "post": {
+        "operationId": "v2.session.revert.commit",
+        "responseStatuses": ["204", "400", "401", "404", "409"]
+      }
+    },
+    "/api/session/{sessionID}/context": {
+      "get": {
+        "operationId": "v2.session.context",
+        "description": "Retrieve the active context messages for a session (all messages after the last compaction).",
+        "responseStatuses": ["200", "400", "401", "404", "500"]
+      }
+    },
+    "/api/session/{sessionID}/inbox": {
+      "get": {
+        "operationId": "v2.session.inbox.list",
+        "description": "List durable enqueued session work not yet delivered, ordered by enqueue sequence. Includes user, synthetic, compaction, and move items.",
+        "responseStatuses": ["200", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/inbox/{inboxID}": {
+      "delete": {
+        "operationId": "v2.session.inbox.cancel",
+        "description": "Cancel an inbox item that has not yet been delivered.",
+        "responseStatuses": ["204", "400", "401", "404", "409"]
+      }
+    },
+    "/api/session/{sessionID}/inbox/{inboxID}/steer": {
+      "post": {
+        "operationId": "v2.session.inbox.steer",
+        "description": "Change a queued inbox item to steer delivery and wake session execution.",
+        "responseStatuses": ["204", "400", "401", "404", "409"]
+      }
+    },
+    "/api/session/{sessionID}/inbox/{inboxID}/queue": {
+      "post": {
+        "operationId": "v2.session.inbox.queue",
+        "description": "Change a steered inbox item to queued delivery.",
+        "responseStatuses": ["204", "400", "401", "404", "409"]
+      }
+    },
+    "/api/session/{sessionID}/instructions/entries": {
+      "get": {
+        "operationId": "v2.session.instructions.entry.list",
+        "description": "List API-managed instruction entries attached to the session.",
+        "responseStatuses": ["200", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/instructions/entries/{key}": {
+      "put": {
+        "operationId": "v2.session.instructions.entry.put",
+        "description": "Attach or replace one durable instruction entry. Changes announce as updates at the next step boundary.",
+        "responseStatuses": ["204", "400", "401", "404", "413"]
+      },
+      "delete": {
+        "operationId": "v2.session.instructions.entry.remove",
+        "description": "Remove one instruction entry; the removal is announced to the model at the next step boundary.",
+        "responseStatuses": ["204", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/tools": {
+      "put": {
+        "operationId": "v2.session.tools.put",
+        "description": "Replace the session-scoped dynamic tool set. These tools are visible only to this session; invocations dispatch to the registering client as session.tool.dynamic.requested events and settle through the reply endpoint. Registrations are durable and survive resume.",
+        "responseStatuses": ["204", "400", "401", "404"]
+      },
+      "get": {
+        "operationId": "v2.session.tools.list",
+        "description": "List the session-scoped dynamic tool definitions registered for this session.",
+        "responseStatuses": ["200", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/tools/calls": {
+      "get": {
+        "operationId": "v2.session.tools.calls",
+        "description": "List in-flight dynamic tool invocations awaiting a client reply. A re-attaching client uses this to recover calls dispatched while it was disconnected.",
+        "responseStatuses": ["200", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/tools/calls/{callID}/reply": {
+      "post": {
+        "operationId": "v2.session.tools.reply",
+        "description": "Settle one pending dynamic tool invocation with the owning client's result; the model receives it as the tool output.",
+        "responseStatuses": ["204", "400", "401", "404", "409"]
+      }
+    },
+    "/api/session/{sessionID}/generate": {
+      "post": {
+        "operationId": "v2.session.generate",
+        "description": "Generate transient text from the current session context without mutating session history.",
+        "responseStatuses": ["200", "400", "401", "404", "503"]
+      }
+    },
+    "/api/experimental/session/{sessionID}/log": {
+      "get": {
+        "operationId": "v2.session.log",
+        "description": "Experimental durable session event log. Reads events after an exclusive aggregate sequence and continues with live events when follow=true.",
+        "responseStatuses": ["200", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/interrupt": {
+      "post": {
+        "operationId": "v2.session.interrupt",
+        "description": "Interrupt active execution owned by this OpenCode process. Returns interrupted=true when an active execution was interrupted and false for the idle no-op. When continue=true, execution resumes pending steering input and next-in-line control items (manual compaction, moves) while queued prompts remain parked.",
+        "responseStatuses": ["200", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/background": {
+      "post": {
+        "operationId": "v2.session.background",
+        "description": "Move active foreground backgroundable tools for this session into background observation. Idle requests are a no-op.",
+        "responseStatuses": ["204", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/message/{messageID}": {
+      "get": {
+        "operationId": "v2.session.message",
+        "description": "Retrieve one projected message owned by the Session.",
+        "responseStatuses": ["200", "400", "401", "404"]
+      },
+      "patch": {
+        "operationId": "v2.session.messageUpdate",
+        "description": "Replace the content of a completed assistant message in an idle session.",
+        "responseStatuses": ["200", "400", "401", "404", "409"]
+      }
+    },
+    "/api/session/{sessionID}/environment": {
+      "put": {
+        "operationId": "v2.session.environment",
+        "description": "Replace the process environment used by local shell commands for this session.",
+        "responseStatuses": ["204", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/view": {
+      "post": {
+        "operationId": "v2.session.view",
+        "description": "Mark the idle transition observed by the viewer as viewed.",
+        "responseStatuses": ["204", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/message": {
+      "get": {
+        "operationId": "v2.message.list",
+        "description": "Retrieve projected messages for a session. Items keep the requested order across pages; use cursor.next or cursor.previous to move through the ordered timeline.",
+        "responseStatuses": ["200", "400", "401", "404", "500"]
+      }
+    },
+    "/api/form/request": {
+      "get": {
+        "operationId": "v2.form.request.list",
+        "description": "Retrieve pending forms for a location.",
+        "responseStatuses": ["200", "400", "401"]
+      }
+    },
+    "/api/session/{sessionID}/form": {
+      "get": {
+        "operationId": "v2.session.form.list",
+        "description": "Retrieve pending forms for a session.",
+        "responseStatuses": ["200", "400", "401", "404"]
+      },
+      "post": {
+        "operationId": "v2.session.form.create",
+        "description": "Create a form for a session.",
+        "responseStatuses": ["200", "400", "401", "404", "409"]
+      }
+    },
+    "/api/session/{sessionID}/form/{formID}": {
+      "get": {
+        "operationId": "v2.session.form.get",
+        "description": "Retrieve a form for a session.",
+        "responseStatuses": ["200", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/form/{formID}/state": {
+      "get": {
+        "operationId": "v2.session.form.state",
+        "description": "Retrieve the current state for a form.",
+        "responseStatuses": ["200", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/form/{formID}/reply": {
+      "post": {
+        "operationId": "v2.session.form.reply",
+        "description": "Submit an answer to a pending form.",
+        "responseStatuses": ["204", "400", "401", "404", "409"]
+      }
+    },
+    "/api/session/{sessionID}/form/{formID}/cancel": {
+      "post": {
+        "operationId": "v2.session.form.cancel",
+        "description": "Cancel a pending form.",
+        "responseStatuses": ["204", "400", "401", "404", "409"]
+      }
+    },
+    "/api/permission/request": {
+      "get": {
+        "operationId": "v2.permission.request.list",
+        "description": "Retrieve pending permission requests for a location.",
+        "responseStatuses": ["200", "400", "401"]
+      }
+    },
+    "/api/permission/saved": {
+      "get": {
+        "operationId": "v2.permission.saved.list",
+        "description": "Retrieve saved permissions, optionally filtered by project.",
+        "responseStatuses": ["200", "400", "401"]
+      }
+    },
+    "/api/permission/saved/{id}": {
+      "delete": {
+        "operationId": "v2.permission.saved.remove",
+        "description": "Remove a saved permission by ID.",
+        "responseStatuses": ["204", "400", "401"]
+      }
+    },
+    "/api/session/{sessionID}/permission": {
+      "post": {
+        "operationId": "v2.session.permission.create",
+        "description": "Evaluate and, when approval is required, create a permission request for a session.",
+        "responseStatuses": ["200", "400", "401", "404"]
+      },
+      "get": {
+        "operationId": "v2.session.permission.list",
+        "description": "Retrieve pending permission requests owned by a session.",
+        "responseStatuses": ["200", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/permission/{requestID}": {
+      "get": {
+        "operationId": "v2.session.permission.get",
+        "description": "Retrieve a pending permission request owned by a session.",
+        "responseStatuses": ["200", "400", "401", "404"]
+      }
+    },
+    "/api/session/{sessionID}/permission/{requestID}/reply": {
+      "post": {
+        "operationId": "v2.session.permission.reply",
+        "description": "Respond to a pending permission request owned by a session.",
+        "responseStatuses": ["204", "400", "401", "404"]
+      }
+    },
+    "/api/event": {
+      "get": {
+        "operationId": "v2.event.subscribe",
+        "description": "Subscribe to native event payloads for the server. Volatile by contract: a slow consumer overflows and fails the stream, and events during disconnection are missed.",
+        "responseStatuses": ["200", "400", "401"]
+      }
+    },
+    "/api/experimental/session/{sessionID}/terminal/read": {
+      "get": {
+        "operationId": "server.experimental.persistentPty.read",
+        "description": "Read the last physical rows without changing selection or taking control. Omitted lines uses the live terminal height; larger counts include retained history. Blank rows are preserved. Screen dimensions and cursor remain relative to the live screen. Returns null when no current terminal exists. Selection is server-local and resets on restart. Experimental: may change without compatibility guarantees.",
+        "responseStatuses": ["200", "400", "401", "503"]
+      }
+    },
+    "/api/experimental/session/{sessionID}/terminal": {
+      "get": {
+        "operationId": "server.experimental.persistentPty.list",
+        "responseStatuses": ["200", "400", "401", "503"]
+      },
+      "post": {
+        "operationId": "server.experimental.persistentPty.create",
+        "responseStatuses": ["200", "400", "401", "503"]
+      }
+    }
+  }
+}

@@ -1,0 +1,117 @@
+{
+  "observed_at": "2026-09-08T00:04:28.834749+00:00",
+  "inventory": {
+    "version": "2.1.263 (Claude Code)",
+    "binary_sha256": "ef5d2909c8af49f31ab6d5487e90316777bc2fac170adfe8160716caa8aaf4f9",
+    "inventory_exit": 0,
+    "inventory_shape": "array",
+    "count": 1,
+    "fields": ["cwd", "kind", "name", "pid", "sessionId", "startedAt", "status"],
+    "kind_counts": {
+      "interactive": 1
+    },
+    "status_counts": {
+      "idle": 1
+    },
+    "state_counts": {
+      "other_or_absent": 1
+    }
+  },
+  "sdk": {
+    "version": "0.3.263",
+    "tarball_url": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk/-/claude-agent-sdk-0.3.263.tgz",
+    "integrity_sha512_verified": true,
+    "executed_or_installed": false,
+    "declaration_sha256": {
+      "sdk.d.ts": "59560e31f91e47ed93e7cbcaa846e3fc3c96d8dcc41ea36cda64de96c0c4edf4",
+      "bridge.d.ts": "3aa177a4c5859dbacd768cead5e660b148e854b834d5bf430e0c489339785295",
+      "browser-sdk.d.ts": "a8005d33d20f9b7ed540ad62653a94a5cea1a0678027a0198a2ee6bb4ac13bf1"
+    },
+    "static_checks": {
+      "request_id_in_can_use_tool": true,
+      "pending_permissions_in_initialize": true,
+      "reinitialize_method": true,
+      "custom_spawn_option": true,
+      "bridge_worker_credentials": true,
+      "bridge_server_epoch": true,
+      "bridge_alpha_stability": true,
+      "browser_sse_transport": true
+    }
+  },
+  "handshake": {
+    "fresh_child_only": true,
+    "user_messages_sent": 0,
+    "model_endpoint": "loopback_port_9",
+    "inherited_credentials": false,
+    "requests_sent": 2,
+    "observed_frames": [
+      {
+        "type": "control_response",
+        "fields": ["response", "type"],
+        "response_subtype": "success",
+        "response_fields": ["request_id", "response", "subtype"],
+        "matches_probe_request": true,
+        "payload_fields": [
+          "account",
+          "agents",
+          "analytics_disabled",
+          "available_output_styles",
+          "commands",
+          "current_permission_mode",
+          "fast_mode_disabled_reason",
+          "fast_mode_state",
+          "ide_rc_auto_enable_gate",
+          "models",
+          "output_style",
+          "pid",
+          "remote_control_auto_enable",
+          "remote_control_auto_on_by_default",
+          "remote_control_available",
+          "session_state"
+        ]
+      },
+      {
+        "type": "control_response",
+        "fields": ["response", "type"],
+        "response_subtype": "success",
+        "response_fields": [
+          "pending_permission_requests",
+          "pending_user_dialog_requests",
+          "request_id",
+          "response",
+          "subtype"
+        ],
+        "matches_probe_request": true,
+        "payload_fields": [
+          "account",
+          "agents",
+          "analytics_disabled",
+          "available_output_styles",
+          "commands",
+          "current_permission_mode",
+          "fast_mode_disabled_reason",
+          "fast_mode_state",
+          "ide_rc_auto_enable_gate",
+          "models",
+          "output_style",
+          "pid",
+          "remote_control_auto_enable",
+          "remote_control_auto_on_by_default",
+          "remote_control_available",
+          "session_state"
+        ],
+        "pending_permission_requests_count": 0,
+        "pending_user_dialog_requests_count": 0
+      }
+    ],
+    "stderr_bytes_redacted": 0,
+    "child_exit_code": 0,
+    "temporary_state_removed_on_return": true,
+    "native_background_compatibility": {
+      "exit_code": 1,
+      "explicit_bg_print_conflict": true,
+      "unattachable_diagnostic": true,
+      "raw_output_saved": false
+    }
+  }
+}

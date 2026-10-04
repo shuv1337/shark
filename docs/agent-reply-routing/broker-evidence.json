@@ -1,0 +1,165 @@
+{
+  "observedDate": "2026-09-08",
+  "stage": "approved shuvcode-only broker, not final SSHuv release",
+  "sourceBase": "19df4629",
+  "node": "v26.5.0",
+  "minimumNode": {
+    "version": "22.13.0",
+    "platform": "darwin-arm64",
+    "officialArchiveSha256": "bc1e374e7393e2f4b20e5bbc157d02e9b1fb2c634b2f992136b38fb8ca2023b7",
+    "testsPassed": 53,
+    "sqliteImport": "without runtime flag; specifically identified ExperimentalWarning accepted"
+  },
+  "shuvcode": {
+    "version": "0.0.0-latest-b133e340",
+    "mergeCommit": "b133e340e359eeb8df6fc15bb3cff55d6a6c3b6f",
+    "artifactSha256": "f540afa9dcc215af828a3e22961ae9de8001dbf1f984de8d4d9958e96b7f253c"
+  },
+  "integration": {
+    "testsPassed": 22,
+    "actualBrokerSIGKILLBoundaries": [
+      "prepared",
+      "create_response",
+      "create_attached",
+      "reply_prepared",
+      "before_admission",
+      "after_admission",
+      "cancel_response"
+    ],
+    "concurrentBrokerProcesses": true,
+    "leaseRecovery": "advance worker clock past 60-second lease; real SQLite reopening and SIGKILL",
+    "cases": [
+      {
+        "name": "a delayed SHark reply queues behind desktop work and executes once across response loss and restart",
+        "status": "passed"
+      },
+      {
+        "name": "a phone reply is admitted once and exact replay does not POST again",
+        "status": "passed"
+      },
+      {
+        "name": "desktop-first cancels the outstanding SHark prompt",
+        "status": "passed"
+      },
+      {
+        "name": "a stored SHark answer losing the native race remains visibly superseded",
+        "status": "passed"
+      },
+      {
+        "name": "lost HTTP response reconciles the committed native receipt",
+        "status": "passed"
+      },
+      {
+        "name": "permission decisions preserve once scope and reject a competing denial",
+        "status": "passed"
+      },
+      {
+        "name": "desktop denial supersedes an approval already stored in SHark",
+        "status": "passed"
+      },
+      {
+        "name": "a SHark response racing cancellation remains recoverable",
+        "status": "passed"
+      },
+      {
+        "name": "missing native receipts cannot cancel a valid SHark request or submit input",
+        "status": "passed"
+      },
+      {
+        "name": "simultaneous exact retries converge on the same native answer",
+        "status": "passed"
+      },
+      {
+        "name": "restart preserves accepted receipts and fences unavailable pending callbacks",
+        "status": "passed"
+      },
+      {
+        "name": "broker survives SIGKILL at prepared with one interaction and native input",
+        "status": "passed"
+      },
+      {
+        "name": "broker survives SIGKILL at create_response with one interaction and native input",
+        "status": "passed"
+      },
+      {
+        "name": "broker survives SIGKILL at create_attached with one interaction and native input",
+        "status": "passed"
+      },
+      {
+        "name": "broker survives SIGKILL at reply_prepared with one interaction and native input",
+        "status": "passed"
+      },
+      {
+        "name": "broker survives SIGKILL at before_admission with one interaction and native input",
+        "status": "passed"
+      },
+      {
+        "name": "broker survives SIGKILL at after_admission with one interaction and native input",
+        "status": "passed"
+      },
+      {
+        "name": "broker form arbitration preserves phone winner",
+        "status": "passed"
+      },
+      {
+        "name": "broker form arbitration preserves desktop winner",
+        "status": "passed"
+      },
+      {
+        "name": "broker permission arbitration preserves phone winner",
+        "status": "passed"
+      },
+      {
+        "name": "broker permission arbitration preserves desktop winner",
+        "status": "passed"
+      },
+      {
+        "name": "broker concurrent registration and SIGKILL after cancellation preserve one durable outcome",
+        "status": "passed"
+      }
+    ]
+  },
+  "isolation": {
+    "shark": "actual local Hono routes, migrated in-memory SQLite, synthetic token and iOS device",
+    "push": "mocked",
+    "native": "compiled installed artifact in disposable state with non-loopback network denied; local deterministic model; tools disabled",
+    "broker": "actual private SQLite WAL and forked Node processes",
+    "serviceManager": "synthetic command fixtures only"
+  },
+  "openGates": [
+    "live service installation and health on each host",
+    "Linux lingering/logout/reboot acceptance",
+    "effective event retention and lifecycle/cursor collection",
+    "Codex and Claude admission and native adapters",
+    "Herdr and SSHuv bridge/enrollment/destination integration",
+    "signed physical phone and notification acceptance"
+  ],
+  "workspaceValidation": {
+    "testsPassed": 503,
+    "breakdown": {
+      "sharkctl": 67,
+      "broker": 53,
+      "contracts": 31,
+      "expo": 77,
+      "website": 275
+    },
+    "typecheckAndBuild": "passed",
+    "lint": "passed",
+    "brandCheck": "passed"
+  },
+  "packageSmoke": {
+    "installation": "isolated offline npm install of local broker and sharkctl tarballs; scripts disabled",
+    "apiImport": "API_VERSION === 1",
+    "cli": "sharkd --help exits 0",
+    "tarballs": [
+      {
+        "file": "hark-shark-broker-0.1.0.tgz",
+        "sha256": "6b5190597ad9d5ebf25702a1e412b438f229497bcb68afeea9bf0b7f2777ad38"
+      },
+      {
+        "file": "sharkctl-0.4.1.tgz",
+        "sha256": "ef3db2492925561203cffe304461346833a3fe6b3a744022dd826309c44e19ed"
+      }
+    ]
+  }
+}

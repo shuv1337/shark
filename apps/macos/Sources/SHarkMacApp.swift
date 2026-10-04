@@ -8,7 +8,14 @@ struct SHarkMacApp: App {
     @StateObject private var store: CompanionStore
 
     init() {
-        let store = CompanionStore.live()
+        // Hosted unit tests must not read the user's Keychain or contact their server.
+        let store = AppDelegate.isRunningUnitTests
+            ? CompanionStore(
+                client: .live(),
+                vault: TokenVault(read: { nil }, write: { _ in }, delete: {}),
+                defaults: UserDefaults(suiteName: "SHarkMacTests.host.\(UUID().uuidString)")!
+            )
+            : CompanionStore.live()
         _store = StateObject(wrappedValue: store)
         AppDelegate.store = store
     }
@@ -42,6 +49,7 @@ struct SHarkMacApp: App {
 struct MenuBarRoot: View {
     @ObservedObject var store: CompanionStore
     @State private var filter = Filter.all
+    @State private var selectedItem: InboxItem?
     @State private var replyingTo: InboxItem?
     @State private var reply = ""
 
@@ -60,6 +68,9 @@ struct MenuBarRoot: View {
             footer
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .sheet(item: $selectedItem) { item in
+            NotificationDetailView(store: store, initialItem: item)
+        }
         .alert("Reply", isPresented: Binding(
             get: { replyingTo != nil },
             set: { if !$0 { replyingTo = nil; reply = "" } }
@@ -158,6 +169,7 @@ struct MenuBarRoot: View {
                         item: item,
                         hidePreviews: store.hidePreviews,
                         disabled: store.isSubmitting || staleMessage != nil,
+                        onOpen: { store.notice = nil; selectedItem = item },
                         onAction: { action in Task { await store.respond(to: item, with: action) } },
                         onReply: { replyingTo = item },
                         onRead: { Task { await store.markRead(item) } }
@@ -252,25 +264,36 @@ private struct InboxRow: View {
     let item: InboxItem
     let hidePreviews: Bool
     let disabled: Bool
+    let onOpen: () -> Void
     let onAction: (CompanionAction) -> Void
     let onReply: () -> Void
     let onRead: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(hidePreviews ? "SHark alert" : item.title).font(.headline).lineLimit(1)
-                Spacer()
-                Text(item.occurredAt, style: .relative).font(.caption2).foregroundStyle(.secondary)
+            Button(action: onOpen) {
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(hidePreviews ? "SHark alert" : item.title).font(.headline).lineLimit(1)
+                        Spacer()
+                        Text(item.occurredAt, style: .relative).font(.caption2).foregroundStyle(.secondary)
+                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                    }
+                    Text(hidePreviews ? "Open SHark to view details." : item.body)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                    Text(item.sourceName).font(.caption).foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            Text(hidePreviews ? "Open SHark to view details." : item.body)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(3)
-            HStack {
-                Text(item.sourceName).font(.caption).foregroundStyle(.tertiary)
-                Spacer()
-                if item.readAt == nil {
+            .buttonStyle(.plain)
+            .help("View notification details")
+            .accessibilityLabel(hidePreviews ? "View notification details" : "View notification: \(item.title)")
+            if item.readAt == nil {
+                HStack {
+                    Spacer()
                     Button("Mark read", action: onRead).buttonStyle(.link).font(.caption)
                 }
             }

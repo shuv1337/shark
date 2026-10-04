@@ -1,9 +1,10 @@
 # SHark Agent Reply Routing Plan
 
-Updated: **2026-09-07**. Status: **partially implemented; expanded for personal SSHuv v1**.
+Updated: **2026-09-08**. Status: **staged shuvcode broker implemented; SSHuv release gates open**.
 The original 2026-08-20 plan was added in `24d3f69` (#32). Phase 1 landed in `13e944f` (#33);
-the broker, deferred adapters, and completion integration remain unimplemented in the inspected
-source. The SSHuv requirements below are confirmed product requirements, not completed features.
+the approved staged shuvcode broker now exists in the isolated implementation workspace. Automatic
+lifecycle collection and the other required native adapters remain unimplemented. The SSHuv
+requirements below are confirmed product requirements, not completed features.
 Admission, existing-session access, cross-surface arbitration, and iOS handoff still require proof
 before their implementation contracts can be finalized. This is not blanket readiness to implement.
 
@@ -11,6 +12,63 @@ This refresh preserves the original deferred-reply reliability design, corrects 
 expiry guidance, and adds the SHark-side work and cross-repository gates needed by SSHuv.
 The SSHuv sections supersede the old one-adapter release order and any implication that SHark is
 the only user-input surface. Unresolved choices are explicit gates, not implicit scope reductions.
+
+### Implementation progress, 2026-09-08
+
+The subsequent user request authorizes implementation of this plan. It supersedes the historical
+plan-edit-only authorization recorded at the end of this document. Work is isolated in the
+`agent-reply-routing-20260907` Jujutsu workspace; unrelated primary-checkout edits are preserved.
+
+**Sequencing decision, 2026-09-08:** the user approved proceeding with the shuvcode-only reference
+broker after the installed-runtime/SHark proof. This supersedes the requirement to close Codex and
+Claude admission before creating the initial broker package/store. Their unsupported capabilities
+must fail closed. All three native agents, shared response arbitration, Herdr, and signed SSHuv
+handoff remain mandatory for the final release. The initial local API is versioned and limited to
+the proven shuvcode operations; it is not a claim that the common three-agent contract is final.
+
+- [x] Reverify Phase 1 source behavior and preserve the existing CLI contract.
+- [x] Inventory standard permission-hook and service locations on `shuvbot` and `shuvdev`
+  read-only; preserve existing non-SHark hooks. Effective-session inventory and migration remain open.
+- [x] Prepare a pure completion-content reference prototype with real-contract boundary fixtures;
+  it is not exported or integrated into a command. Phase 4 runtime integration remains open.
+- [x] Extract `sharkctl/client`, export the supported package subpaths, add protected file-only
+  configuration and notification/interaction helpers, and document the packaging change. The
+  independent extraction does not select an agent adapter or create broker storage.
+- [x] Implement the independently testable Phase 5 **candidate**: strict configured HTTPS prefix,
+  default-tap forwarding, existing detail fallback and action queue, and cold/listener callback
+  deduplication. Forwarding remains disabled without an operator-selected prefix. This does not
+  close the signed SSHuv handoff gate. See [candidate notes](docs/agent-reply-routing/ios-handoff.md).
+- [x] Build and test the shuvcode runtime candidate: opt-in session event retention, durable
+  question/permission receipts, exact reply retries, first-answer atomicity, and native TUI/HTTP
+  cooperation. Source, compiled-binary, and forced-restart results are recorded in the
+  [runtime candidate report](docs/agent-reply-routing/research/opencode-v2/runtime-candidate.md).
+  The user subsequently merged and deployed PR #364. The Mac artifact and elected service were
+  verified on 2026-09-08; effective event retention, other-host activation, and Herdr acceptance
+  remain open. No installed service was replaced by this implementation task.
+- [x] Prove SHark/shuvcode active-response arbitration and deferred queued execution against
+  the deployed Mac artifact: 11 integration cases and 21 prototype tests cover response loss,
+  restart, native desktop-first precedence, SHark cancellation races, and exact input replay.
+  See the [arbitration proof](docs/agent-reply-routing/arbitration-prototype/README.md).
+  This is a research seam without a broker store; it does not close the three-agent release gate.
+- [x] Implement the approved staged shuvcode-only broker: protected WAL outbox, exact creation/reply
+  recovery, active native arbitration, completion CLI, local API v1, queue controls, daemon, and
+  portable systemd/LaunchAgent lifecycle fixtures. See [broker documentation](packages/shark-broker/README.md).
+  Installed-runtime tests include seven actual broker SIGKILL boundaries and concurrent creation;
+  service activation, event collection, and other-agent support are not implied.
+- [ ] Close all three native-session, admission, restart/replay, and arbitration research gates.
+  Installed-runtime probes have found material gaps; see the
+  [implementation evidence ledger](docs/agent-reply-routing/README.md).
+- [ ] Extend the staged local seam to the proven common contract, add native lifecycle/cursor
+  collection and destination mappings, and complete all three production adapters after their gates close.
+- [ ] Complete the SSHuv-owned app/host integration, choose the HTTPS origin and enrollment policy,
+  and pass signed shuvtest-phone acceptance.
+- [ ] Install reviewed artifacts on participating hosts and complete operational acceptance.
+
+The staged broker package and shuvcode adapter are source implementations, not activated host services.
+No deployment, live notification, or existing user-session input was performed. Disposable local
+harness probes are recorded separately
+from production and physical-device acceptance. The original three-agent and delivery requirements
+remain in force; the research results are not permission to weaken them.
 
 ## Goal
 
@@ -66,10 +124,12 @@ distribution choices stay in SSHuv planning. They are not decided by this docume
 
 ## Implementation Baseline and Evidence Boundary
 
-Source inspection: `153461408fe6ff0fdf99fc7fd9ee5284514db2db` in this checkout. At refresh time,
-`origin/main` is `68d71f88` (one later commit declaring Node types for contracts, #43); the plan
-and integration source cited here are unchanged by that commit. Existing unrelated
-`PLAN-upstream-integration.md` work is outside this refresh.
+Initial source inspection: `153461408fe6ff0fdf99fc7fd9ee5284514db2db`. Before publication,
+`origin/main` advanced to `faf3d9e4`, adding Node types for contracts (#43) and bounded push previews
+(#44). The latter improves provider payload sizing while retaining durable inbox content; it does
+not implement agent adapters or one-tap SSHuv routing. The refreshed plan is based on that current
+main revision. Separately committed `PLAN-upstream-integration.md` work is outside this change and
+must not be included in this plan-only main publication.
 
 | Component | Verified baseline on 2026-09-07 | Remaining gate |
 | --- | --- | --- |
@@ -107,6 +167,11 @@ separately in the milestones:
   approval bridges to migrate/coexist safely, not full conversation adapters.
 - `apps/website/src/server/routes/hooks.ts`: webhook withdrawal; this is not an agent-notification
   recall API and must not be assumed to be one.
+
+Refresh validation: nine selected existing CLI fixture tests passed with
+`node --test --test-name-pattern='expiry|expires|clamp|warning|poll' packages/sharkctl/test/cli.test.mjs`.
+They exercise existing behavior, not the proposed broker or SSHuv integration. Full application
+tests, installed-client rollout, physical notification delivery and session admission remain open.
 
 ## Current State
 
@@ -630,6 +695,10 @@ The broker:
   ±10% jitter, not through a continuously re-issued hot `/wait`. Network errors use exponential
   backoff capped at 15 minutes. A hot wait costs ~4 DB reads/sec per registration on the server for
   up to 24 h and buys nothing for a question that is not blocking anyone;
+- uses a separately verified active-request response path for SSHuv-managed blocking questions and
+  approvals; do not apply the 45-second deferred polling cadence to latency-sensitive live input.
+  Select and measure bounded wait/event behavior in the arbitration spike without changing the
+  server's existing wait contract or keeping needless hot waits for completed turns;
 - assigns every reply a stable `deliveryId` exactly once when the broker first observes the
   interaction in `replied` state, persists it in the same transaction as the reply state, and
   requires adapters to deduplicate it before admitting a turn. An ambiguous crash is retried with
@@ -641,9 +710,9 @@ The broker:
   notification;
 - probes the target session before creating an interaction, every 15 minutes while pending, and
   immediately before delivery. A definitive initial `missing` result creates no interaction. A
-  definitive later `missing` result transitions to `canceling`, cancels the delivered prompt on the
-  user's devices, and
-  archives locally; `unknown` (including network failure) backs off and never creates or cancels;
+  definitive later `missing` result transitions to `canceling`, cancels the server interaction and
+  archives locally. Notification-center recall is not guaranteed. `unknown` (including network
+  failure) backs off and never creates or cancels;
 - removes or archives expired registrations; and
 - passes reply text as structured data, never shell source.
 
@@ -756,9 +825,10 @@ environment. The broker obtains the production origin only from its protected co
 installation refuses relative executable paths so later shell or package-manager changes cannot
 silently redirect the daemon. Installation also executes an import smoke test for `node:sqlite` and
 requires Node >=22.13.0 without an experimental runtime flag before writing either service. Even
-unflagged, importing `node:sqlite` still emits an `ExperimentalWarning` on stderr in current Node
-releases; the smoke test, `sharkd` logging expectations, and service-log health checks must
-tolerate exactly that warning and nothing else.
+unflagged, some supported Node releases emit an `ExperimentalWarning` for `node:sqlite`; pin and
+record the actual supported runtime behavior. The smoke test and service-log health checks may
+allow that specific observed warning, not suppress arbitrary warnings or treat a missing import
+as healthy.
 
 V1 does not support a root-managed systemd unit. Keeping the service per-user keeps the daemon,
 credentials, and SQLite state under one `shuvdev` ownership boundary.
@@ -798,7 +868,8 @@ not hidden by replacing native support with terminal access.
 requirements, not a request to rebuild it. Installed-host artifact rollout remains open.
 
 - Strengthen `skills/shark/SKILL.md` guidance for free-text blocking questions, including the
-  mandatory `--expires-in`/`--timeout` pairing, explicit reply-capable device targeting (active
+  explicit `--expires-in`/`--timeout` pairing for older clients and the implemented derivation
+  for updated clients, explicit reply-capable device targeting (active
   `ios` and `macos` entries) when web push is enabled, and exit-code branching, without regressing
   the existing exit-5 (denied/no)
   documentation for approval and yes/no prompts.
@@ -890,8 +961,11 @@ depends on conversation identity and the selected origin/pairing policy.
 
 - Modify `apps/expo/src/lib/interactions.ts` and `apps/expo/app/_layout.tsx` to distinguish default
   SSHuv taps from notification action replies and non-SSHuv taps. Add a small testable destination
-  parser/router in proposed `apps/expo/src/lib/sshuv-destination.ts` with synthetic unit fixtures;
-  use the app's established test harness or add a narrow documented runner if one is absent.
+  parser/router in proposed `apps/expo/src/lib/sshuv-destination.ts` with synthetic unit fixtures in
+  proposed `apps/expo/src/lib/sshuv-destination.test.ts`. Extend the existing Vitest fixtures in
+  `apps/expo/src/lib/interactions.test.ts` and `notification-detail.test.ts`; retain their current
+  non-SSHuv inbox-first and inline-response assertions. Run `pnpm --filter @hark/expo test` and
+  `pnpm --filter @hark/expo typecheck`, expecting no regressions before signed-device acceptance.
 - Preserve `apps/expo/app/inbox-detail.tsx` as a durable fallback. If fallback UI needs a change,
   test missing app, bad association, malformed destination, and unavailable host behavior. Never
   replace an unknown destination with whichever conversation is currently active.
@@ -945,7 +1019,7 @@ dependent implementation; do not treat them as permission to defer confirmed v1 
 
 | Decision/evidence | Required output | Blocks |
 | --- | --- | --- |
-| Three-agent existing-session/admission proof | Pinned versions, supported methods, identity, live/inactive behavior, request correlation, dedupe and ambiguity results for each agent | Broker schema and production adapters |
+| Three-agent existing-session/admission proof | Pinned versions, supported methods, identity, live/inactive behavior, request correlation, dedupe and ambiguity results for each agent | Common three-agent contract and remaining production adapters; staged shuvcode broker authorized separately |
 | Cross-surface arbitration | Authority/precedence, stale response UX, atomic admission/reconciliation and legacy-hook migration, including SHark response already stored while desktop wins | Native questions/approvals and reliable deferred replies |
 | Herdr passthrough and takeover UX | Exact requested surface, supported version, observer/controller behavior, simultaneous desktop/phone policy | SSHuv terminal acceptance |
 | Host enrollment and transport | Supported hosts, trusted pairing, access scopes, key custody/revocation, local bridge API and reconnect protocol | SSHuv host bridge and secure destination resolution |
@@ -1136,8 +1210,8 @@ diff, resolve referenced paths, check stale claims/contradictions and Markdown s
   and recoverable without becoming a general workflow engine.
 - `node:sqlite` raises the broker package's runtime floor to Node >=22.13.0 even though the wider
   repository permits older Node 22 releases. Host acceptance must use the exact executable that the
-  generated service invokes and prove `node:sqlite` imports without an experimental flag (an
-  `ExperimentalWarning` on stderr is expected and tolerated; any other warning is not).
+  generated service invokes and prove `node:sqlite` imports without an experimental flag; only
+  the specifically observed SQLite experimental warning may be tolerated for that pinned runtime.
 - The `Invalid device selection` replacement path pins a human-readable server error string rather
   than a machine code. An upstream Hark reword would be caught by the broker fixture and the
   `docs/upstream-delta.md` entry; until re-pinned, the failure mode is safe but degraded (terminal
@@ -1184,7 +1258,12 @@ diff, resolve referenced paths, check stale claims/contradictions and Markdown s
   companion (added by PR #31 and adopted into this plan 2026-08-20); browser web push
   is notification-only and Apple Watch rejects text replies.
 
-### Settled through grilling
+### Retained Design Decisions and Proposed SSHuv Extensions
+
+The original deferred-reply decisions came from the 2026-08-20 grilling. SSHuv-specific mechanisms
+below are planning extensions subject to the research gates; the user's confirmed product choices
+are separately listed in the final section. This heading does not convert proposed mechanisms
+into additional interview approvals.
 
 - **Ownership and isolation** — the sibling broker package creates deferred interactions with a
   dedicated per-host token; CLI and daemon share the token through a mode-`0600` config file. Broker
