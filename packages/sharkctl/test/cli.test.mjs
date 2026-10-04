@@ -1102,6 +1102,76 @@ test("activity update and end send sequence preconditions", async () => {
   }
 });
 
+test("activity update prints field-level validation diagnostics", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalError = console.error;
+  const stderr = [];
+  console.error = (value) => stderr.push(value);
+  globalThis.fetch = async () =>
+    Response.json(
+      {
+        error: "Invalid Live Activity update",
+        issues: [
+          {
+            path: ["status"],
+            message: "Too big: expected string to have <=60 characters",
+          },
+          {
+            path: ["progress"],
+            message: "Invalid input: expected number, received string",
+          },
+          { path: [], message: "At least one activity field is required" },
+          { path: ["steps", 0, "label"], message: "Required" },
+          "unstructured issue",
+          { path: ["symbol"] },
+        ],
+      },
+      { status: 400 },
+    );
+  try {
+    const code = await run(
+      ["activity", "update", "act_1", "--status", "Testing", "--progress", "0.4"],
+      { HARK_TOKEN: "hark_test", HARK_API_URL: "https://example.test" },
+    );
+    assert.equal(code, 1);
+    assert.equal(
+      stderr.join("\n"),
+      [
+        "Invalid Live Activity update",
+        "- status: Too big: expected string to have <=60 characters",
+        "- progress: Invalid input: expected number, received string",
+        "- At least one activity field is required",
+        "- steps[0].label: Required",
+        "- unstructured issue",
+        "- symbol: Invalid value",
+      ].join("\n"),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalError;
+  }
+});
+
+test("request errors without field issues stay a single line", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalError = console.error;
+  const stderr = [];
+  console.error = (value) => stderr.push(value);
+  globalThis.fetch = async () =>
+    Response.json({ error: "Live Activity not found" }, { status: 404 });
+  try {
+    const code = await run(["activity", "update", "missing", "--status", "Testing"], {
+      HARK_TOKEN: "hark_test",
+      HARK_API_URL: "https://example.test",
+    });
+    assert.equal(code, 1);
+    assert.deepEqual(stderr, ["Live Activity not found"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalError;
+  }
+});
+
 test("activity CLI rejects invalid progress and preserves no-delivery exit behavior", async () => {
   await assert.rejects(
     execute(["activity", "start", "--title", "Task", "--status", "Run", "--progress", "2"], {

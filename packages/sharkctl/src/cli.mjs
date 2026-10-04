@@ -739,6 +739,36 @@ export async function execute(argv, env = process.env, overrides = {}) {
   throw new UsageError("Unknown command. Run sharkctl --help.");
 }
 
+function formatIssuePath(path) {
+  if (!Array.isArray(path)) return "";
+  let formatted = "";
+  for (const segment of path) {
+    if (typeof segment === "number") {
+      formatted += `[${segment}]`;
+      continue;
+    }
+    const text = String(segment);
+    formatted = formatted ? `${formatted}.${text}` : text;
+  }
+  return formatted;
+}
+
+function formatRequestError(error) {
+  const message = error instanceof Error ? error.message : "Unexpected error";
+  const issues = error instanceof RequestError ? error.body?.issues : undefined;
+  if (!Array.isArray(issues) || issues.length === 0) return message;
+  const details = issues.map((issue) => {
+    if (!issue || typeof issue !== "object") return `- ${String(issue)}`;
+    const path = formatIssuePath(issue.path);
+    const detail =
+      typeof issue.message === "string" && issue.message.length > 0
+        ? issue.message
+        : "Invalid value";
+    return path ? `- ${path}: ${detail}` : `- ${detail}`;
+  });
+  return [message, ...details].join("\n");
+}
+
 export async function run(argv, env = process.env, overrides = {}) {
   try {
     const result = await execute(argv, env, overrides);
@@ -746,8 +776,7 @@ export async function run(argv, env = process.env, overrides = {}) {
     else console.log(JSON.stringify(result.body));
     return result.exitCode;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected error";
-    console.error(message);
+    console.error(formatRequestError(error));
     if (error instanceof UsageError) return 2;
     if (error instanceof RequestError) {
       if (error.body?.error === "access_denied") return 5;
