@@ -617,6 +617,8 @@ export type LiveActivityWebhookResponse =
       error: string;
       code?: "ACTIVE_ACTIVITY_CONFLICT";
       activityId?: string;
+      /** Lifecycle status when an update or end finds the activity already terminal. */
+      status?: LiveActivityStatus;
       issues?: unknown;
       retryAfterSeconds?: number;
     };

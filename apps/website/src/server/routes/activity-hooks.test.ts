@@ -657,4 +657,33 @@ describe("Live Activity webhook routes", () => {
       ).status,
     ).toBe(404);
   });
+
+  it("names the terminal status when a webhook update or end is rejected", async () => {
+    const started = await start();
+    const startBody = (await started.json()) as { activityId: string };
+    expect(
+      (
+        await activityRequest(TOKEN, `/${startBody.activityId}/end`, "POST", {
+          status: "Complete",
+        })
+      ).status,
+    ).toBe(200);
+    const update = await activityRequest(TOKEN, `/${startBody.activityId}`, "PATCH", {
+      status: "Pushing",
+      progress: 0.4,
+    });
+    expect(update.status).toBe(409);
+    expect(await update.json()).toMatchObject({
+      ok: false,
+      error: "Live Activity is already terminal (ended)",
+      status: "ended",
+    });
+    const end = await activityRequest(TOKEN, `/${startBody.activityId}/end`, "POST", {});
+    expect(end.status).toBe(409);
+    expect(await end.json()).toMatchObject({
+      ok: false,
+      error: "Live Activity is already terminal (ended)",
+      status: "ended",
+    });
+  });
 });

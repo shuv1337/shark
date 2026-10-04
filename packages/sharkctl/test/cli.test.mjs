@@ -1032,6 +1032,37 @@ test("activity start sends normalized finite progress and routing", async () => 
   }
 });
 
+test("activity update prints the terminal Live Activity status", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const stdout = [];
+  const stderr = [];
+  globalThis.fetch = async () =>
+    Response.json(
+      {
+        error: "Live Activity is already terminal",
+        activity: { id: "act_expired", status: "expired", props: { status: "Pushing" } },
+      },
+      { status: 409 },
+    );
+  console.log = (value) => stdout.push(value);
+  console.error = (value) => stderr.push(value);
+  try {
+    const code = await run(
+      ["activity", "update", "act_expired", "--status", "Pushing", "--progress", "0.4"],
+      { HARK_TOKEN: "hark_test", HARK_API_URL: "https://example.test" },
+    );
+    assert.equal(code, 1);
+    assert.deepEqual(stdout, []);
+    assert.deepEqual(stderr, ["Live Activity is already terminal (expired)"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    console.error = originalError;
+  }
+});
+
 test("activity update and end send sequence preconditions", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];

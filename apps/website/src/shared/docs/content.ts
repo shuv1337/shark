@@ -630,7 +630,7 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
             items: [
               "Pass `null` for `detail` or `progress` to clear the field.",
               "Pass `ifSequence` to make the write conditional. A mismatch returns `409 Sequence conflict` along with the current state so you can reconcile.",
-              "Updating an activity that has already ended or expired returns `409 Live Activity is already terminal`.",
+              "Updating an activity that has already ended, expired, or failed returns `409` with `Live Activity is already terminal (<status>)`, where `<status>` is `ended`, `expired`, or `failed`. The body also includes that `status` and the current activity.",
             ],
           },
         ],

@@ -136,7 +136,9 @@ available in self-hosted mode, and SHark permits one active activity per device;
 `activity start` to
 silently end whatever occupies the device and take the slot (the response reports the count as
 `replaced`). A `--key` becomes reusable once its activity ends, so `activity start --key deploy
---replace` works as a fixed-key restart.
+--replace` works as a fixed-key restart. `activity get` shows whether an activity is still live.
+An update or end against a terminal activity prints `Live Activity is already terminal (<status>)`,
+where `<status>` is `ended`, `expired`, or `failed`.
 
 ## permissions
 

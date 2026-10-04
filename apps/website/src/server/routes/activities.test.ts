@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 process.env.NODE_ENV = "test";
@@ -791,5 +792,81 @@ describe("Live Activity agent routes", () => {
     });
     expect(await update.json()).toMatchObject({ accepted: 0, activity: { status: "failed" } });
     expect(apnsCalls).toHaveLength(0);
+  });
+
+  it("names the lifecycle status when a progress update hits a terminal activity", async () => {
+    const created = await start({
+      title: "Commit",
+      status: "Running",
+      key: "commit-main",
+      deviceIds: ["activity_dev_1"],
+    });
+    const body = (await created.json()) as { activity: { id: string } };
+    const ended = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+      method: "POST",
+      body: JSON.stringify({ status: "Complete" }),
+    });
+    expect(ended.status).toBe(200);
+    const update = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "Pushing", progress: 0.4 }),
+    });
+    expect(update.status).toBe(409);
+    expect(await update.json()).toMatchObject({
+      error: "Live Activity is already terminal (ended)",
+      status: "ended",
+      activity: { id: body.activity.id, status: "ended" },
+    });
+
+    const failedStart = await start({
+      title: "Push",
+      status: "Running",
+      key: "push-main",
+      deviceIds: ["activity_dev_1"],
+    });
+    const failedBody = (await failedStart.json()) as { activity: { id: string } };
+    await db
+      .update(schema.liveActivity)
+      .set({ status: "failed" })
+      .where(eq(schema.liveActivity.id, failedBody.activity.id));
+    const failedUpdate = await agent(`/${failedBody.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "Pushing", progress: 0.6 }),
+    });
+    expect(failedUpdate.status).toBe(409);
+    expect(await failedUpdate.json()).toMatchObject({
+      error: "Live Activity is already terminal (failed)",
+      status: "failed",
+      activity: { id: failedBody.activity.id, status: "failed" },
+    });
+  });
+
+  it("names expiry when a progress update arrives after expiresAt", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-13T12:00:00.000Z"));
+    try {
+      const created = await start({
+        title: "Commit",
+        status: "Running",
+        key: "commit-expiry",
+        deviceIds: ["activity_dev_1"],
+        expiresInSeconds: 60,
+      });
+      expect(created.status).toBe(201);
+      const body = (await created.json()) as { activity: { id: string } };
+      vi.setSystemTime(new Date("2026-08-13T12:02:00.000Z"));
+      const update = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "Pushing", progress: 0.8 }),
+      });
+      expect(update.status).toBe(409);
+      expect(await update.json()).toMatchObject({
+        error: "Live Activity is already terminal (expired)",
+        status: "expired",
+        activity: { id: body.activity.id, status: "expired" },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

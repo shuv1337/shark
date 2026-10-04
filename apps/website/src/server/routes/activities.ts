@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   LIVE_ACTIVITY_DEFAULT_STALE_AFTER_SECONDS,
   LIVE_ACTIVITY_SCHEMA_VERSION,
+  LIVE_ACTIVITY_STATUSES,
   type LiveActivityDto,
   type LiveActivityMutationResponse,
   type LiveActivityProps,
@@ -75,6 +76,47 @@ export function toLiveActivityDto(row: ActivityRow): LiveActivityDto {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     endedAt: row.endedAt?.toISOString() ?? null,
+  };
+}
+
+const TERMINAL_LIVE_ACTIVITY_STATUSES = ["failed", "ended", "expired"] as const;
+type TerminalLiveActivityStatus = (typeof TERMINAL_LIVE_ACTIVITY_STATUSES)[number];
+
+function isLiveActivityStatus(status: string): status is LiveActivityStatus {
+  return (LIVE_ACTIVITY_STATUSES as readonly string[]).includes(status);
+}
+
+function terminalLiveActivityStatus(status: string): TerminalLiveActivityStatus | undefined {
+  if (!isLiveActivityStatus(status)) return undefined;
+  switch (status) {
+    case "failed":
+    case "ended":
+    case "expired":
+      return status;
+    case "starting":
+    case "active":
+    case "partial":
+      return undefined;
+    default: {
+      const unexpected: never = status;
+      return unexpected;
+    }
+  }
+}
+
+/** 409 body for an update or end that arrives after the activity has left the live set. */
+export function terminalLiveActivityConflict(row: ActivityRow): {
+  error: string;
+  status?: TerminalLiveActivityStatus;
+  activity: LiveActivityDto;
+} {
+  const status = terminalLiveActivityStatus(row.status);
+  return {
+    error: status
+      ? `Live Activity is already terminal (${status})`
+      : "Live Activity is already terminal",
+    ...(status ? { status } : {}),
+    activity: toLiveActivityDto(row),
   };
 }
 
@@ -1253,10 +1295,7 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
     const current = await ownedActivity(token.id, c.req.param("identifier"));
     if (!current) return c.json({ error: "Live Activity not found" }, 404);
     if (!["starting", "active", "partial"].includes(current.status)) {
-      return c.json(
-        { error: "Live Activity is already terminal", activity: toLiveActivityDto(current) },
-        409,
-      );
+      return c.json(terminalLiveActivityConflict(current), 409);
     }
     if (parsed.data.ifSequence !== undefined && parsed.data.ifSequence !== current.sequence) {
       return c.json({ error: "Sequence conflict", activity: toLiveActivityDto(current) }, 409);
@@ -1421,10 +1460,7 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
     const current = await ownedActivity(token.id, c.req.param("identifier"));
     if (!current) return c.json({ error: "Live Activity not found" }, 404);
     if (!["starting", "active", "partial"].includes(current.status)) {
-      return c.json(
-        { error: "Live Activity is already terminal", activity: toLiveActivityDto(current) },
-        409,
-      );
+      return c.json(terminalLiveActivityConflict(current), 409);
     }
     if (parsed.data.ifSequence !== undefined && parsed.data.ifSequence !== current.sequence) {
       return c.json({ error: "Sequence conflict", activity: toLiveActivityDto(current) }, 409);

@@ -32,6 +32,7 @@ import {
   findBlockingDeliveries,
   liveKeyedActivity,
   replaceBlockingDeliveries,
+  terminalLiveActivityConflict,
   toLiveActivityDto,
   trackActivityOutcome,
 } from "./activities";
@@ -532,7 +533,8 @@ export const activityHooksRoute = new Hono()
     const current = await ownedActivity(service.id, c.req.param("identifier"));
     if (!current) return c.json({ ok: false, error: "Live Activity not found" }, 404);
     if (!["starting", "active", "partial"].includes(current.status)) {
-      return c.json({ ok: false, error: "Live Activity is already terminal" }, 409);
+      const conflict = terminalLiveActivityConflict(current);
+      return c.json({ ok: false, error: conflict.error, status: conflict.status }, 409);
     }
     if (parsed.data.ifSequence !== undefined && parsed.data.ifSequence !== current.sequence) {
       return c.json({ ...response(current), ok: false, error: "Sequence conflict" }, 409);
@@ -709,7 +711,8 @@ export const activityHooksRoute = new Hono()
     const current = await ownedActivity(service.id, c.req.param("identifier"));
     if (!current) return c.json({ ok: false, error: "Live Activity not found" }, 404);
     if (!["starting", "active", "partial"].includes(current.status)) {
-      return c.json({ ok: false, error: "Live Activity is already terminal" }, 409);
+      const conflict = terminalLiveActivityConflict(current);
+      return c.json({ ok: false, error: conflict.error, status: conflict.status }, 409);
     }
     if (parsed.data.ifSequence !== undefined && parsed.data.ifSequence !== current.sequence) {
       return c.json({ ...response(current), ok: false, error: "Sequence conflict" }, 409);
