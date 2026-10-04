@@ -158,6 +158,9 @@ start a replacement activity to clear the error. `activity start` with no delive
 rejection (`accepted: 0` without `updateTokenPending`), still exit 7. Once APNs rejects a registered
 update token (for example `Unregistered` after the activity is dismissed on the phone), later
 updates and ends keep reporting that reason and, when no other device accepts, exit 7 until the phone registers a new token.
+When every delivery is already failed and has no update token, agent and webhook update and end
+both skip those rows. The response is `accepted: 0`, `failed: 0`, without `updateTokenPending`,
+and sharkctl exits 7. That stored end is not replayed when a token arrives later.
 
 A `partial` activity is still live: keep updating it, and end it on the terminal path. A failed
 sibling delivery does not pin the activity in `partial` after the remaining devices accept. Before
