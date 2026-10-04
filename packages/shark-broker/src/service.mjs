@@ -30,6 +30,33 @@ const xml = (value) =>
     .replaceAll("'", "&apos;");
 const systemd = (value) =>
   `"${value.replaceAll("$", "$$$$").replaceAll("%", "%%").replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+const serviceErrorClasses = [
+  [/input\/output error/i, "input_output_error"],
+  [/operation already in progress/i, "operation_in_progress"],
+  [/already (?:loaded|bootstrapped)/i, "already_loaded"],
+  [/no such process/i, "no_such_process"],
+  [/no such file/i, "no_such_file"],
+  [/permission denied/i, "permission_denied"],
+  [/operation not permitted/i, "operation_not_permitted"],
+  [/could not find service/i, "service_not_found"],
+  [/invalid property list|bad property list/i, "invalid_property_list"],
+];
+const serviceText = (result) => `${result.stderr ?? ""}\n${result.stdout ?? ""}`;
+const serviceStep = (args) =>
+  (args.find((arg) => !arg.startsWith("-")) ?? "command").replaceAll("-", "_");
+const serviceErrorClass = (result) => {
+  const text = serviceText(result);
+  for (const [pattern, name] of serviceErrorClasses) if (pattern.test(text)) return name;
+  return Number.isInteger(result.code) ? `exit_${result.code}` : "unknown";
+};
+const serviceManagerDiagnostic = (args, result) =>
+  `service_manager_failed:${serviceStep(args)}:${serviceErrorClass(result)}`;
+const transientBootstrapFailure = (result) =>
+  ["input_output_error", "operation_in_progress", "already_loaded"].includes(
+    serviceErrorClass(result),
+  ) || [5, 17, 36, 37].includes(result.code);
+const annotateFailure = (error, suffix) =>
+  error instanceof BrokerError ? new BrokerError(error.code, `${error.message}:${suffix}`) : error;
 
 export function serviceDefinition({ platform, node, entry, config, database }) {
   requireValue([node, entry, config, database].every(validPath), "service_paths");
@@ -112,7 +139,7 @@ export class ServiceManager {
       if (!content.includes(marker)) throw new BrokerError(3, "unowned_service_definition");
       if (matching && content !== this.definition())
         throw new BrokerError(3, "service_definition_mismatch");
-      return true;
+      return content;
     } catch (error) {
       if (error.code === "ENOENT" && !required) return false;
       if (error.code === "ENOENT") throw new BrokerError(4, "service_not_installed");
@@ -122,7 +149,7 @@ export class ServiceManager {
   async command(command, args, { allowMissing = false } = {}) {
     const result = await this.run(command, args);
     if (result.code !== 0 && !(allowMissing && [3, 5, 113].includes(result.code)))
-      throw new BrokerError(1, "service_manager_failed");
+      throw new BrokerError(1, serviceManagerDiagnostic(args, result));
     return result;
   }
   async runtimeCheck() {
@@ -220,6 +247,65 @@ export class ServiceManager {
     } while (this.now() < deadline);
     throw new BrokerError(6, "service_heartbeat_not_ready");
   }
+  async writeDefinition(content) {
+    await mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
+    const temp = `${this.file}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temp, content, { flag: "wx", mode: 0o600 });
+      await rename(temp, this.file);
+    } finally {
+      await rm(temp, { force: true });
+    }
+  }
+  async waitUntilUnloaded() {
+    const deadline = this.now() + 5_000;
+    while (this.now() <= deadline) {
+      const result = await this.run("/bin/launchctl", ["print", `gui/${this.uid}/${label}`]);
+      if (result.code !== 0) return;
+      if (this.now() >= deadline) return;
+      await this.sleep(100);
+    }
+  }
+  async bootstrapLaunchAgent(retryTransient) {
+    const args = ["bootstrap", `gui/${this.uid}`, this.file];
+    const attempts = retryTransient ? 5 : 1;
+    let result;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      result = await this.run("/bin/launchctl", args);
+      if (result.code === 0) return;
+      if (!retryTransient || !transientBootstrapFailure(result) || attempt === attempts) break;
+      await this.sleep(200);
+    }
+    throw new BrokerError(1, serviceManagerDiagnostic(args, result));
+  }
+  async installLaunchAgent(previousDefinition, wasLoaded) {
+    if (wasLoaded) {
+      try {
+        await this.command("/bin/launchctl", ["bootout", `gui/${this.uid}/${label}`]);
+      } catch (error) {
+        if (!previousDefinition) throw error;
+        await this.writeDefinition(previousDefinition);
+        throw annotateFailure(error, "definition_restored");
+      }
+      // bootout returns before launchd drops the label. bootstrap in that
+      // window is rejected and KeepAlive does not start the job again.
+      await this.waitUntilUnloaded();
+    }
+    try {
+      await this.bootstrapLaunchAgent(wasLoaded);
+    } catch (error) {
+      if (!previousDefinition) throw error;
+      await this.writeDefinition(previousDefinition);
+      if (wasLoaded) {
+        try {
+          await this.bootstrapLaunchAgent(true);
+        } catch {
+          throw annotateFailure(error, "restore_failed");
+        }
+      }
+      throw annotateFailure(error, "definition_restored");
+    }
+  }
   async install(store) {
     this.definition();
     await this.runtimeCheck();
@@ -236,29 +322,17 @@ export class ServiceManager {
           `linux_lingering_disabled: loginctl enable-linger ${this.username}`,
         );
     }
-    await this.ownedFile();
-    const previous = store.daemonState()?.instanceID;
+    const previousDefinition = await this.ownedFile();
+    const previousInstance = store.daemonState()?.instanceID;
     const priorStatus = await this.status();
-    const running = priorStatus.running;
-    await mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
-    const temp = `${this.file}.${randomUUID()}.tmp`;
-    try {
-      await writeFile(temp, this.definition(), { flag: "wx", mode: 0o600 });
-      await rename(temp, this.file);
-    } finally {
-      await rm(temp, { force: true });
-    }
+    await this.writeDefinition(this.definition());
     if (this.platform === "linux") {
       await this.command("/usr/bin/systemctl", ["--user", "daemon-reload"]);
       await this.command("/usr/bin/systemctl", ["--user", "enable", "--now", "sharkd.service"]);
-      if (running)
+      if (priorStatus.running)
         await this.command("/usr/bin/systemctl", ["--user", "restart", "sharkd.service"]);
-    } else {
-      if (priorStatus.loaded)
-        await this.command("/bin/launchctl", ["bootout", `gui/${this.uid}/${label}`]);
-      await this.command("/bin/launchctl", ["bootstrap", `gui/${this.uid}`, this.file]);
-    }
-    return this.waitHealthy(store, previous);
+    } else await this.installLaunchAgent(previousDefinition, priorStatus.loaded);
+    return this.waitHealthy(store, previousInstance);
   }
   async restart(store) {
     await this.ownedFile({ required: true, matching: true });

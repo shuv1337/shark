@@ -43,6 +43,14 @@ async function managerFixture(t, platform = "darwin") {
   let running = false;
   let linger = true;
   let refresh = true;
+  let bootstrapFailuresLeft = 0;
+  let unloadPrintsLeft = 0;
+  let failedBootstrap = {
+    code: 5,
+    stdout: "",
+    stderr: "Bootstrap failed: 5: Input/output error\n",
+  };
+  const bootstrapped = [];
   const entry = path.join(f.root, "sharkd.mjs");
   const manager = new ServiceManager({
     platform,
@@ -61,19 +69,29 @@ async function managerFixture(t, platform = "darwin") {
         return { code: 0, stdout: process.versions.node, stderr: "" };
       if (command.endsWith("loginctl"))
         return { code: 0, stdout: linger ? "yes" : "no", stderr: "" };
-      if (args[0] === "print" || args.includes("show"))
+      if (args[0] === "print" || args.includes("show")) {
+        const pendingUnload = args[0] === "print" && !loaded && unloadPrintsLeft > 0;
+        if (pendingUnload) unloadPrintsLeft -= 1;
+        const visible = loaded || pendingUnload;
         return {
-          code: loaded ? 0 : 113,
-          stdout: running
-            ? platform === "darwin"
-              ? ` pid = ${process.pid}\n`
-              : `ActiveState=active\nMainPID=${process.pid}\n`
-            : "",
+          code: visible ? 0 : 113,
+          stdout:
+            visible && running
+              ? platform === "darwin"
+                ? ` pid = ${process.pid}\n`
+                : `ActiveState=active\nMainPID=${process.pid}\n`
+              : "",
           stderr: "",
         };
+      }
       if (args[0] === "bootout" || args.includes("disable")) {
         loaded = false;
         running = false;
+      }
+      if (args[0] === "bootstrap") bootstrapped.push(await readFile(manager.file, "utf8"));
+      if (args[0] === "bootstrap" && bootstrapFailuresLeft > 0) {
+        bootstrapFailuresLeft -= 1;
+        return failedBootstrap;
       }
       if (
         args[0] === "bootstrap" ||
@@ -101,12 +119,22 @@ async function managerFixture(t, platform = "darwin") {
     ...f,
     manager,
     calls,
+    bootstrapped,
     set: (options) => {
       if ("loaded" in options) loaded = options.loaded;
       if ("linger" in options) linger = options.linger;
       if ("refresh" in options) refresh = options.refresh;
+      if ("bootstrapFailures" in options) bootstrapFailuresLeft = options.bootstrapFailures;
+      if ("unloadPrints" in options) unloadPrintsLeft = options.unloadPrints;
+      if ("failedBootstrap" in options) failedBootstrap = options.failedBootstrap;
     },
   };
+}
+
+async function seedLaunchAgent(manager, content = manager.definition()) {
+  await mkdir(path.dirname(manager.file), { recursive: true });
+  await writeFile(manager.file, content);
+  return content;
 }
 
 test("Linux lingering failure happens before writing or enabling a service", async (t) => {
@@ -137,14 +165,121 @@ for (const platform of ["linux", "darwin"])
 
 test("macOS reinstall boots out a loaded job even when no process runs", async (t) => {
   const f = await managerFixture(t);
-  await mkdir(path.dirname(f.manager.file), { recursive: true });
-  await writeFile(f.manager.file, f.manager.definition());
+  await seedLaunchAgent(f.manager);
   f.set({ loaded: true });
   await f.manager.install(f.store);
   assert.ok(
     f.calls.findIndex(([, args]) => args[0] === "bootout") <
       f.calls.findIndex(([, args]) => args[0] === "bootstrap"),
   );
+});
+
+test("macOS reinstall waits until launchctl print drops the label", async (t) => {
+  const f = await managerFixture(t);
+  await seedLaunchAgent(f.manager);
+  const started = f.now();
+  f.set({ loaded: true, unloadPrints: 2 });
+  assert.equal((await f.manager.install(f.store)).healthy, true);
+  const bootoutAt = f.calls.findIndex(([, args]) => args[0] === "bootout");
+  const bootstrapAt = f.calls.findIndex(([, args]) => args[0] === "bootstrap");
+  const prints = f.calls
+    .slice(bootoutAt + 1, bootstrapAt)
+    .filter(([, args]) => args[0] === "print");
+  assert.equal(prints.length, 3);
+  assert.equal(f.calls.filter(([, args]) => args[0] === "bootstrap").length, 1);
+  assert.ok(f.now() - started >= 200);
+});
+
+test("macOS reinstall retries a bootstrap that races the previous bootout", async (t) => {
+  const f = await managerFixture(t);
+  const definition = await seedLaunchAgent(f.manager);
+  const started = f.now();
+  f.set({ loaded: true, bootstrapFailures: 2 });
+  assert.equal((await f.manager.install(f.store)).healthy, true);
+  assert.deepEqual(f.bootstrapped, [definition, definition, definition]);
+  assert.equal(await readFile(f.manager.file, "utf8"), definition);
+  assert.ok(f.now() - started >= 400);
+});
+
+test("macOS reinstall restores the previous plist when bootstrap keeps failing", async (t) => {
+  const f = await managerFixture(t);
+  const previous = `${f.manager.definition()}<!-- previous -->\n`;
+  await seedLaunchAgent(f.manager, previous);
+  f.set({
+    loaded: true,
+    bootstrapFailures: 5,
+    failedBootstrap: {
+      code: 5,
+      stdout: "",
+      stderr:
+        "Bootstrap failed: 5: Input/output error\n/Users/example/Library/LaunchAgents/dev.shuv.shark.broker.plist\n",
+    },
+  });
+  await assert.rejects(f.manager.install(f.store), (error) => {
+    assert.equal(
+      error.message,
+      "service_manager_failed:bootstrap:input_output_error:definition_restored",
+    );
+    return true;
+  });
+  assert.equal(await readFile(f.manager.file, "utf8"), previous);
+  assert.equal(f.bootstrapped.length, 6);
+  assert.equal(f.bootstrapped[5], previous);
+  assert.ok(f.bootstrapped.slice(0, 5).every((content) => content === f.manager.definition()));
+});
+
+test("macOS bootstrap reports the launchctl step without retrying a cold install", async (t) => {
+  const f = await managerFixture(t);
+  f.set({
+    bootstrapFailures: 5,
+    failedBootstrap: {
+      code: 1,
+      stdout: "",
+      stderr: "Bootstrap failed: 1: Operation not permitted\n/Users/example/secret.plist\n",
+    },
+  });
+  await assert.rejects(f.manager.install(f.store), {
+    message: "service_manager_failed:bootstrap:operation_not_permitted",
+  });
+  assert.equal(f.bootstrapped.length, 1);
+});
+
+test("loaded macOS install does not retry a non-transient bootstrap failure", async (t) => {
+  const f = await managerFixture(t);
+  const previous = `${f.manager.definition()}<!-- previous -->\n`;
+  await seedLaunchAgent(f.manager, previous);
+  const started = f.now();
+  f.set({
+    loaded: true,
+    bootstrapFailures: 1,
+    failedBootstrap: {
+      code: 1,
+      stdout: "",
+      stderr: "Bootstrap failed: 1: Operation not permitted\n",
+    },
+  });
+  await assert.rejects(
+    f.manager.install(f.store),
+    /service_manager_failed:bootstrap:operation_not_permitted:definition_restored$/,
+  );
+  assert.equal(f.bootstrapped.length, 2);
+  assert.equal(f.bootstrapped[0], f.manager.definition());
+  assert.equal(f.bootstrapped[1], previous);
+  assert.equal(await readFile(f.manager.file, "utf8"), previous);
+  assert.equal(f.now(), started);
+});
+
+test("macOS reinstall does not claim recovery when the previous plist fails to boot", async (t) => {
+  const f = await managerFixture(t);
+  const previous = `${f.manager.definition()}<!-- previous -->\n`;
+  await seedLaunchAgent(f.manager, previous);
+  f.set({ loaded: true, bootstrapFailures: 20 });
+  await assert.rejects(f.manager.install(f.store), {
+    message: "service_manager_failed:bootstrap:input_output_error:restore_failed",
+  });
+  assert.equal(await readFile(f.manager.file, "utf8"), previous);
+  assert.equal(f.bootstrapped.length, 10);
+  assert.equal(f.bootstrapped[9], previous);
 });
 
 test("unrecognized service files cannot be overwritten or removed", async (t) => {
