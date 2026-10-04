@@ -1102,6 +1102,59 @@ test("activity update and end send sequence preconditions", async () => {
   }
 });
 
+test("activity update and end exit 0 when the stored transition is waiting on an update token", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    Response.json({
+      accepted: 0,
+      failed: 1,
+      message: "MissingUpdateToken",
+      updateTokenPending: true,
+      activity: { id: "act_1", status: "ended", sequence: 1 },
+    });
+  try {
+    const updated = await execute(["activity", "update", "act_1", "--status", "Testing"], {
+      HARK_TOKEN: "hark_test",
+      HARK_API_URL: "https://example.test",
+    });
+    const ended = await execute(["activity", "end", "act_1", "--status", "Complete"], {
+      HARK_TOKEN: "hark_test",
+      HARK_API_URL: "https://example.test",
+    });
+    assert.equal(updated.exitCode, 0);
+    assert.equal(updated.body.updateTokenPending, true);
+    assert.equal(ended.exitCode, 0);
+    assert.equal(ended.body.message, "MissingUpdateToken");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("activity update and end still exit 7 when the push is rejected", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    Response.json({
+      accepted: 0,
+      failed: 1,
+      message: "Unavailable",
+      activity: { id: "act_1", status: "ended", sequence: 1 },
+    });
+  try {
+    const updated = await execute(["activity", "update", "act_1", "--status", "Testing"], {
+      HARK_TOKEN: "hark_test",
+      HARK_API_URL: "https://example.test",
+    });
+    const ended = await execute(["activity", "end", "act_1", "--status", "Complete"], {
+      HARK_TOKEN: "hark_test",
+      HARK_API_URL: "https://example.test",
+    });
+    assert.equal(updated.exitCode, 7);
+    assert.equal(ended.exitCode, 7);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("activity CLI rejects invalid progress and preserves no-delivery exit behavior", async () => {
   await assert.rejects(
     execute(["activity", "start", "--title", "Task", "--status", "Run", "--progress", "2"], {

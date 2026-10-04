@@ -400,6 +400,53 @@ export async function dispatchLiveActivity(
   };
 }
 
+const MISSING_UPDATE_TOKEN = "MissingUpdateToken";
+
+/** True when the row mutation is stored and every push is waiting on an update token. */
+export function isUpdateTokenPending(result: {
+  accepted: number;
+  failed: number;
+  errors: readonly string[];
+}): boolean {
+  return (
+    result.accepted === 0 &&
+    result.failed > 0 &&
+    result.errors.length > 0 &&
+    result.errors.every((error) => error === MISSING_UPDATE_TOKEN)
+  );
+}
+
+export async function operationUpdateTokenPending(operation: {
+  id: string;
+  event: string;
+  acceptedCount: number;
+  failedCount: number;
+}): Promise<boolean> {
+  if (operation.event !== "update" && operation.event !== "end") return false;
+  if (operation.acceptedCount !== 0 || operation.failedCount <= 0) return false;
+  const attempts = await db
+    .select({ reason: liveActivityDeliveryAttempt.apnsReason })
+    .from(liveActivityDeliveryAttempt)
+    .where(eq(liveActivityDeliveryAttempt.operationId, operation.id));
+  return (
+    attempts.length > 0 && attempts.every((attempt) => attempt.reason === MISSING_UPDATE_TOKEN)
+  );
+}
+
+async function idempotentMutationResponse(replay: {
+  operation: typeof liveActivityOperation.$inferSelect;
+  row: ActivityRow;
+}): Promise<LiveActivityMutationResponse> {
+  const updateTokenPending = await operationUpdateTokenPending(replay.operation);
+  return {
+    activity: toLiveActivityDto(replay.row),
+    accepted: replay.operation.acceptedCount,
+    failed: replay.operation.failedCount,
+    idempotent: true,
+    ...(updateTokenPending ? { updateTokenPending: true, message: MISSING_UPDATE_TOKEN } : {}),
+  };
+}
+
 /**
  * Replays an explicit terminal operation when iOS supplies the per-activity update token only
  * after the original end attempt failed with MissingUpdateToken. The existing operation is reused
@@ -1243,12 +1290,7 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       return c.json({ error: "Idempotency-Key was already used with a different payload" }, 409);
     }
     if (replay && !replay.conflict) {
-      return c.json<LiveActivityMutationResponse>({
-        activity: toLiveActivityDto(replay.row),
-        accepted: replay.operation.acceptedCount,
-        failed: replay.operation.failedCount,
-        idempotent: true,
-      });
+      return c.json<LiveActivityMutationResponse>(await idempotentMutationResponse(replay));
     }
     const current = await ownedActivity(token.id, c.req.param("identifier"));
     if (!current) return c.json({ error: "Live Activity not found" }, 404);
@@ -1348,12 +1390,7 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
         return c.json({ error: "Idempotency-Key was already used with a different payload" }, 409);
       }
       if (raced && !raced.conflict) {
-        return c.json<LiveActivityMutationResponse>({
-          activity: toLiveActivityDto(raced.row),
-          accepted: raced.operation.acceptedCount,
-          failed: raced.operation.failedCount,
-          idempotent: true,
-        });
+        return c.json<LiveActivityMutationResponse>(await idempotentMutationResponse(raced));
       }
       throw error;
     }
@@ -1395,6 +1432,7 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       accepted: result.accepted,
       failed: result.failed,
       ...(result.errors.length ? { message: result.errors.join("; ") } : {}),
+      ...(isUpdateTokenPending(result) ? { updateTokenPending: true } : {}),
     });
   })
   .post("/:identifier/end", requireScopes("activities:write"), async (c) => {
@@ -1411,12 +1449,7 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       return c.json({ error: "Idempotency-Key was already used with a different payload" }, 409);
     }
     if (replay && !replay.conflict) {
-      return c.json<LiveActivityMutationResponse>({
-        activity: toLiveActivityDto(replay.row),
-        accepted: replay.operation.acceptedCount,
-        failed: replay.operation.failedCount,
-        idempotent: true,
-      });
+      return c.json<LiveActivityMutationResponse>(await idempotentMutationResponse(replay));
     }
     const current = await ownedActivity(token.id, c.req.param("identifier"));
     if (!current) return c.json({ error: "Live Activity not found" }, 404);
@@ -1505,12 +1538,7 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
         return c.json({ error: "Idempotency-Key was already used with a different payload" }, 409);
       }
       if (raced && !raced.conflict) {
-        return c.json<LiveActivityMutationResponse>({
-          activity: toLiveActivityDto(raced.row),
-          accepted: raced.operation.acceptedCount,
-          failed: raced.operation.failedCount,
-          idempotent: true,
-        });
+        return c.json<LiveActivityMutationResponse>(await idempotentMutationResponse(raced));
       }
       throw error;
     }
@@ -1538,6 +1566,7 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       accepted: result.accepted,
       failed: result.failed,
       ...(result.errors.length ? { message: result.errors.join("; ") } : {}),
+      ...(isUpdateTokenPending(result) ? { updateTokenPending: true } : {}),
     });
   });
 

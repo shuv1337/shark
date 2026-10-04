@@ -48,6 +48,11 @@ function parseStyle(value) {
   return String(value);
 }
 
+function activityFollowUpExitCode(body) {
+  if (body?.updateTokenPending === true) return 0;
+  return body?.accepted === 0 ? 7 : 0;
+}
+
 function parseActionLabel(value, flag) {
   const label = String(value).trim();
   if (
@@ -577,7 +582,7 @@ export async function execute(argv, env = process.env, overrides = {}) {
         : undefined,
       body: JSON.stringify(payload),
     });
-    return { body, exitCode: body.accepted === 0 ? 7 : 0 };
+    return { body, exitCode: activityFollowUpExitCode(body) };
   }
   if (group === "activity" && action === "end") {
     const identifier = id ?? options.key;
@@ -615,7 +620,7 @@ export async function execute(argv, env = process.env, overrides = {}) {
         body: JSON.stringify(payload),
       },
     );
-    return { body, exitCode: body.accepted === 0 ? 7 : 0 };
+    return { body, exitCode: activityFollowUpExitCode(body) };
   }
   if (group === "interaction" && action === "get" && id) {
     const body = await request(config, `/api/agent/interactions/${encodeURIComponent(id)}`);

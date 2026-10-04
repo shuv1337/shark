@@ -345,15 +345,36 @@ describe("Live Activity webhook routes", () => {
     ).attributes;
 
     apnsCalls.length = 0;
-    const ended = await activityRequest(TOKEN, `/${startBody.activityId}/end`, "POST", {
-      status: "Complete",
-      progress: 1,
-    });
+    const endPayload = { status: "Complete", progress: 1 };
+    const ended = await activityRequest(
+      TOKEN,
+      `/${startBody.activityId}/end`,
+      "POST",
+      endPayload,
+      "late-webhook-end",
+    );
     expect(await ended.json()).toMatchObject({
       ok: true,
       status: "ended",
       accepted: 0,
       failed: 1,
+      message: "MissingUpdateToken",
+      updateTokenPending: true,
+    });
+    const replay = await activityRequest(
+      TOKEN,
+      `/${startBody.activityId}/end`,
+      "POST",
+      endPayload,
+      "late-webhook-end",
+    );
+    expect(await replay.json()).toMatchObject({
+      ok: true,
+      idempotent: true,
+      accepted: 0,
+      failed: 1,
+      message: "MissingUpdateToken",
+      updateTokenPending: true,
     });
 
     authState.userId = null;

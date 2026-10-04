@@ -30,7 +30,9 @@ import {
   dispatchLiveActivity,
   expireLiveActivity,
   findBlockingDeliveries,
+  isUpdateTokenPending,
   liveKeyedActivity,
+  operationUpdateTokenPending,
   replaceBlockingDeliveries,
   toLiveActivityDto,
   trackActivityOutcome,
@@ -164,6 +166,23 @@ async function enforceRateLimit(service: ServiceRow, owner: UserRow) {
     return { error: "Account rate limit exceeded", retryAfterSeconds: 60 as const };
   }
   return null;
+}
+
+function pendingTokenAck(result: { accepted: number; failed: number; errors: readonly string[] }) {
+  return isUpdateTokenPending(result)
+    ? { updateTokenPending: true as const, message: "MissingUpdateToken" }
+    : {};
+}
+
+async function idempotentAck(operation: {
+  id: string;
+  event: string;
+  acceptedCount: number;
+  failedCount: number;
+}) {
+  return (await operationUpdateTokenPending(operation))
+    ? { updateTokenPending: true as const, message: "MissingUpdateToken" }
+    : {};
 }
 
 function response(row: ActivityRow, result?: DeliveryResult, extras: Record<string, unknown> = {}) {
@@ -525,7 +544,7 @@ export const activityHooksRoute = new Hono()
             failed: replay.operation.failedCount,
             errors: [],
           },
-          { idempotent: true },
+          { idempotent: true, ...(await idempotentAck(replay.operation)) },
         ),
       );
     }
@@ -628,7 +647,7 @@ export const activityHooksRoute = new Hono()
               failed: raced.operation.failedCount,
               errors: [],
             },
-            { idempotent: true },
+            { idempotent: true, ...(await idempotentAck(raced.operation)) },
           ),
         );
       }
@@ -670,7 +689,7 @@ export const activityHooksRoute = new Hono()
       .set({ acceptedCount: result.accepted, failedCount: result.failed })
       .where(eq(liveActivityOperation.id, operationId));
     if (result.accepted > 0) await trackNotification(service.userId, operationId);
-    return c.json(response(updated ?? row, result));
+    return c.json(response(updated ?? row, result, pendingTokenAck(result)));
   })
   .post("/:token/live-activities/:identifier/end", async (c) => {
     const authenticated = await authenticate(c.req.param("token"));
@@ -702,7 +721,7 @@ export const activityHooksRoute = new Hono()
             failed: replay.operation.failedCount,
             errors: [],
           },
-          { idempotent: true },
+          { idempotent: true, ...(await idempotentAck(replay.operation)) },
         ),
       );
     }
@@ -794,7 +813,7 @@ export const activityHooksRoute = new Hono()
               failed: raced.operation.failedCount,
               errors: [],
             },
-            { idempotent: true },
+            { idempotent: true, ...(await idempotentAck(raced.operation)) },
           ),
         );
       }
@@ -822,5 +841,5 @@ export const activityHooksRoute = new Hono()
       .set({ acceptedCount: result.accepted, failedCount: result.failed })
       .where(eq(liveActivityOperation.id, operationId));
     if (result.accepted > 0) await trackNotification(service.userId, operationId);
-    return c.json(response(updated ?? row, result));
+    return c.json(response(updated ?? row, result, pendingTokenAck(result)));
   });

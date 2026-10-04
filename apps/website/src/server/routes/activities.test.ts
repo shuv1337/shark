@@ -643,11 +643,13 @@ describe("Live Activity agent routes", () => {
       method: "POST",
       body: JSON.stringify({}),
     });
-    expect(await ended.json()).toMatchObject({
+    const endedBody = (await ended.json()) as { updateTokenPending?: boolean };
+    expect(endedBody).toMatchObject({
       accepted: 0,
       failed: 1,
       activity: { status: "ended" },
     });
+    expect(endedBody.updateTokenPending).toBeUndefined();
     apnsState.rejectEvent = null;
     const replacement = await start({
       title: "Replacement",
@@ -657,6 +659,47 @@ describe("Live Activity agent routes", () => {
     expect(replacement.status).toBe(201);
   });
 
+  it("acknowledges a stored update that is waiting on the update token", async () => {
+    const created = await start({
+      title: "Pending update",
+      status: "Running",
+      deviceIds: ["activity_dev_1"],
+    });
+    const body = (await created.json()) as { activity: { id: string; sequence: number } };
+    const payload = { status: "Testing", progress: 0.4 };
+    const updated = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      headers: { "Idempotency-Key": "pending-update" },
+      body: JSON.stringify(payload),
+    });
+    expect(await updated.json()).toMatchObject({
+      accepted: 0,
+      failed: 1,
+      message: "MissingUpdateToken",
+      updateTokenPending: true,
+      activity: {
+        status: "active",
+        sequence: body.activity.sequence + 1,
+        props: payload,
+      },
+    });
+    const replay = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      headers: { "Idempotency-Key": "pending-update" },
+      body: JSON.stringify(payload),
+    });
+    expect(await replay.json()).toMatchObject({
+      accepted: 0,
+      failed: 1,
+      idempotent: true,
+      message: "MissingUpdateToken",
+      updateTokenPending: true,
+      activity: { props: payload },
+    });
+    expect(apnsCalls).toHaveLength(1);
+    expect(apnsCalls[0]).toMatchObject({ input: { event: "start" } });
+  });
+
   it("replays an ended activity when its update token registers late", async () => {
     const created = await start({
       title: "Late terminal token",
@@ -664,17 +707,33 @@ describe("Live Activity agent routes", () => {
       deviceIds: ["activity_dev_1"],
     });
     const body = (await created.json()) as { activity: { id: string } };
+    const payload = { status: "Complete", progress: 1, dismissAfterSeconds: 30 };
 
     apnsCalls.length = 0;
     const ended = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
       method: "POST",
-      body: JSON.stringify({ status: "Complete", progress: 1, dismissAfterSeconds: 30 }),
+      headers: { "Idempotency-Key": "late-end" },
+      body: JSON.stringify(payload),
     });
     expect(await ended.json()).toMatchObject({
       accepted: 0,
       failed: 1,
       activity: { status: "ended", props: { status: "Complete", progress: 1 } },
       message: "MissingUpdateToken",
+      updateTokenPending: true,
+    });
+    const replay = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+      method: "POST",
+      headers: { "Idempotency-Key": "late-end" },
+      body: JSON.stringify(payload),
+    });
+    expect(await replay.json()).toMatchObject({
+      accepted: 0,
+      failed: 1,
+      idempotent: true,
+      message: "MissingUpdateToken",
+      updateTokenPending: true,
+      activity: { status: "ended" },
     });
 
     const registered = await app.request("/api/devices/live-activity/update-token", {
@@ -730,6 +789,19 @@ describe("Live Activity agent routes", () => {
       lastApnsReason: null,
     });
     expect(operation).toMatchObject({ event: "end", acceptedCount: 1, failedCount: 0 });
+    const settled = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+      method: "POST",
+      headers: { "Idempotency-Key": "late-end" },
+      body: JSON.stringify(payload),
+    });
+    const settledBody = (await settled.json()) as { updateTokenPending?: boolean };
+    expect(settledBody).toMatchObject({
+      accepted: 1,
+      failed: 0,
+      idempotent: true,
+      activity: { status: "ended" },
+    });
+    expect(settledBody.updateTokenPending).toBeUndefined();
   });
 
   it("revokes Live Activity capability atomically when device ownership changes", async () => {

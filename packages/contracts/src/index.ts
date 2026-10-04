@@ -593,6 +593,12 @@ export interface LiveActivityMutationResponse {
   replaced?: number;
   idempotent?: boolean;
   message?: string;
+  /**
+   * The update or end was stored, and every delivery is waiting for the device
+   * to register its per-activity update token. `accepted` stays 0 until APNs
+   * takes the push. A stored end is replayed when that token arrives.
+   */
+  updateTokenPending?: boolean;
 }
 
 export type LiveActivityWebhookResponse =
@@ -611,6 +617,12 @@ export type LiveActivityWebhookResponse =
       replaced?: number;
       idempotent?: boolean;
       message?: string;
+      /**
+       * The update or end was stored, and every delivery is waiting for the device
+       * to register its per-activity update token. `accepted` stays 0 until APNs
+       * takes the push. A stored end is replayed when that token arrives.
+       */
+      updateTokenPending?: boolean;
     }
   | {
       ok: false;

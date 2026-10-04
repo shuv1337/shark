@@ -805,7 +805,7 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
           },
           {
             kind: "note",
-            text: "iOS also budgets push-to-start deliveries per app. Rapid successive starts to the same device can be silently suppressed: the start still reports `accepted`, but the device never registers an update token, so every later update and end fails with `MissingUpdateToken`. Space fresh starts out by a minute or so — or keep one activity alive and update it, which is cheaper and never hits the budget.",
+            text: "iOS also budgets push-to-start deliveries per app. Rapid successive starts to the same device can be silently suppressed: the start still reports `accepted`, but the device never registers an update token. A later update or end still stores the requested state and reports `updateTokenPending` with `MissingUpdateToken` until that token arrives; SHark then replays a stored end. Space fresh starts out by a minute or so — or keep one activity alive and update it, which is cheaper and never hits the budget.",
           },
         ],
       },

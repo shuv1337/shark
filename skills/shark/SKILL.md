@@ -224,9 +224,13 @@ Starting an activity creates a lifecycle obligation. Retain its returned `.activ
 stable `--key`, then call `activity end` on every terminal path: success, failure, cancellation, and
 agent cleanup. Give the end request its own stable `--idempotency-key` so cleanup can be retried.
 A separate `notify` call is an independent inbox item; it does not correlate with or end a Live
-Activity, even when the title and requester match. If an update or end reports
-`MissingUpdateToken`, do not start a replacement merely to clear it. End the existing activity once
-the task is terminal; SHark records that state and can replay it when iOS registers the token late.
+Activity, even when the title and requester match. iOS registers a per-activity update token only
+after the activity is on screen. An update or end issued before that token arrives still stores the
+requested props and, for end, the terminal state. The command exits 0 and the response sets
+`updateTokenPending` to true with message `MissingUpdateToken`. `accepted` stays 0 until APNs takes
+the push. SHark replays a stored end when the device posts the update token; a stored update is
+included in the next push that has a token. Leave the existing activity in place. Exit 7 remains
+the result when `accepted` is 0 and `updateTokenPending` is absent.
 
 ## Approve Coding-Agent Permissions
 
