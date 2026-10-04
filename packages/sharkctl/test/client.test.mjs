@@ -141,6 +141,63 @@ test("client preserves errors and never retries failed mutations", async (t) => 
   assert.equal(calls, 1);
 });
 
+test("terminal Live Activity errors name the lifecycle status once", async (t) => {
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json(
+      {
+        error: "Live Activity is already terminal",
+        activity: { status: "expired", props: { status: "Pushing" } },
+      },
+      { status: 409 },
+    ),
+  );
+  await assert.rejects(
+    request(config, "/api/agent/activities/act_expired", { method: "PATCH", body: "{}" }),
+    (error) => {
+      assert.ok(error instanceof RequestError);
+      assert.equal(error.status, 409);
+      assert.equal(error.message, "Live Activity is already terminal (expired)");
+      assert.equal(error.body.activity.props.status, "Pushing");
+      return true;
+    },
+  );
+});
+
+test("qualified terminal Live Activity errors are not repeated", async (t) => {
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json(
+      {
+        error: "Live Activity is already terminal (ended)",
+        status: "ended",
+        activity: { status: "ended" },
+      },
+      { status: 409 },
+    ),
+  );
+  await assert.rejects(request(config, "/api/agent/activities/act_ended"), (error) => {
+    assert.ok(error instanceof RequestError);
+    assert.equal(error.message, "Live Activity is already terminal (ended)");
+    return true;
+  });
+});
+
+test("widget copy is not treated as a terminal Live Activity status", async (t) => {
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json(
+      {
+        error: "Live Activity is already terminal",
+        activity: { props: { status: "expired" } },
+      },
+      { status: 409 },
+    ),
+  );
+  await assert.rejects(request(config, "/api/agent/activities/act_widget"), (error) => {
+    assert.ok(error instanceof RequestError);
+    assert.equal(error.message, "Live Activity is already terminal");
+    return true;
+  });
+});
+
 test("network errors retain the CLI's status-zero contract", async (t) => {
   t.mock.method(globalThis, "fetch", async () => {
     throw new Error("synthetic disconnected transport");

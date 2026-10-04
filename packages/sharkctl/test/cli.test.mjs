@@ -3,7 +3,14 @@ import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { execute, parseArgs, parseDuration, run } from "../src/cli.mjs";
+import {
+  execute,
+  formatRequestError,
+  parseArgs,
+  parseDuration,
+  RequestError,
+  run,
+} from "../src/cli.mjs";
 
 test("parses repeatable devices and notify ask options", () => {
   const parsed = parseArgs([
@@ -1102,6 +1109,292 @@ test("activity update and end send sequence preconditions", async () => {
   }
 });
 
+test("activity update accepts status alone and status with progress", async () => {
+  const originalFetch = globalThis.fetch;
+  const bodies = [];
+  globalThis.fetch = async (_url, init) => {
+    bodies.push(JSON.parse(init.body));
+    return Response.json({ accepted: 1, failed: 0, activity: { id: "act_1", sequence: 1 } });
+  };
+  try {
+    const statusOnly = await execute(["activity", "update", "act_1", "--status", "Testing"], {
+      HARK_TOKEN: "hark_test",
+      HARK_API_URL: "https://example.test",
+    });
+    const withProgress = await execute(
+      ["activity", "update", "release-main", "--status", "Testing", "--progress", "0.7"],
+      { HARK_TOKEN: "hark_test", HARK_API_URL: "https://example.test" },
+    );
+    assert.equal(statusOnly.exitCode, 0);
+    assert.equal(withProgress.exitCode, 0);
+    assert.deepEqual(bodies, [{ status: "Testing" }, { status: "Testing", progress: 0.7 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("activity update and end print field issues once and never echo submitted values", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const stdout = [];
+  const stderr = [];
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), body: JSON.parse(init.body) });
+    const end = String(url).endsWith("/end");
+    return Response.json(
+      {
+        error: end ? "Invalid Live Activity end" : "Invalid Live Activity update",
+        diagnostic: end
+          ? "rejected field progress: Number must be less than or equal to 1"
+          : "rejected field progress: Invalid input: expected number, received string; rejected field activity: unrecognized",
+        issues: end
+          ? [
+              {
+                path: ["progress"],
+                message: "Number must be less than or equal to 1",
+                received: "hark_should_not_print",
+              },
+              { path: ["symbol"], message: "Invalid option" },
+              { path: [], message: "object-level constraint" },
+              { path: ["detail"], message: "too long\nnext line" },
+              "ignore me",
+              { path: ["status"], message: { leaked: "hark_nested" } },
+            ]
+          : [
+              {
+                path: ["status"],
+                message: "Too big: expected string to have <=60 characters",
+              },
+              {
+                path: ["progress"],
+                message: "Invalid input: expected number, received string",
+              },
+              { path: [], message: "At least one activity field is required" },
+              { path: ["steps", 0, "label"], message: "Required" },
+              "unstructured issue",
+              { path: ["symbol"] },
+            ],
+      },
+      { status: 400 },
+    );
+  };
+  console.log = (value) => stdout.push(value);
+  console.error = (value) => stderr.push(value);
+  try {
+    const updated = await run(
+      ["activity", "update", "act_1", "--status", "Testing", "--progress", "0.4"],
+      { HARK_TOKEN: "hark_test", HARK_API_URL: "https://example.test" },
+    );
+    assert.equal(updated, 1);
+    assert.equal(
+      stderr[0],
+      [
+        "Invalid Live Activity update",
+        "status: Too big: expected string to have <=60 characters",
+        "progress: Invalid input: expected number, received string",
+        "At least one activity field is required",
+        "steps.0.label: Required",
+        "activity: unrecognized",
+      ].join("\n"),
+    );
+    assert.equal(stderr[0].includes("rejected field progress"), false);
+
+    stderr.length = 0;
+    const ended = await run(
+      ["activity", "end", "deploy-main", "--status", "Shipped", "--progress", "2"],
+      { HARK_TOKEN: "hark_test", HARK_API_URL: "https://example.test" },
+    );
+    assert.equal(ended, 1);
+    assert.equal(stdout.length, 0);
+    assert.equal(
+      stderr[0],
+      [
+        "Invalid Live Activity end",
+        "progress: Number must be less than or equal to 1",
+        "symbol: Invalid option",
+        "object-level constraint",
+        "detail: too long next line",
+      ].join("\n"),
+    );
+    assert.equal(stderr[0].includes("hark_should_not_print"), false);
+    assert.equal(stderr[0].includes("hark_nested"), false);
+    assert.match(calls[1].url, /\/api\/agent\/activities\/deploy-main\/end$/);
+
+    calls.length = 0;
+    stderr.length = 0;
+    const byKey = await run(["activity", "end", "--key", "release-main"], {
+      HARK_TOKEN: "hark_test",
+      HARK_API_URL: "https://example.test",
+    });
+    assert.equal(byKey, 1);
+    assert.match(calls[0].url, /\/api\/agent\/activities\/release-main\/end$/);
+    assert.match(stderr[0], /^Invalid Live Activity end\nprogress:/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    console.error = originalError;
+  }
+});
+
+test("activity update explains an empty update locally", async () => {
+  const originalFetch = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async () => {
+    called = true;
+    return Response.json({ accepted: 1 });
+  };
+  try {
+    await assert.rejects(
+      execute(["activity", "update", "act_1", "--if-sequence", "1"], { HARK_TOKEN: "hark_test" }),
+      /activity update requires at least one of --title, --status, --detail, --progress/,
+    );
+    const usage = await run(["activity", "update", "act_1"], { HARK_TOKEN: "hark_test" });
+    assert.equal(usage, 2);
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("request errors without field issues stay a single line", () => {
+  const error = new RequestError("Live Activity not found", 404, {
+    error: "Live Activity not found",
+  });
+  assert.equal(formatRequestError(error), "Live Activity not found");
+  assert.equal(formatRequestError(new Error("Unexpected error")), "Unexpected error");
+  assert.equal(
+    formatRequestError(new RequestError("Invalid Live Activity end", 400, { issues: "nope" })),
+    "Invalid Live Activity end",
+  );
+});
+
+test("activity update prints one terminal status line", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const stdout = [];
+  const stderr = [];
+  const responses = [
+    {
+      status: 409,
+      body: {
+        error: "Live Activity is already terminal (ended)",
+        status: "ended",
+        endedAt: "2026-08-28T12:10:00.000Z",
+        expiresAt: "2026-08-28T20:00:00.000Z",
+        diagnostic: "rejected state: ended",
+        activity: {
+          id: "act_ended",
+          status: "ended",
+          endedAt: "2026-08-28T12:10:00.000Z",
+          expiresAt: "2026-08-28T20:00:00.000Z",
+          props: { title: "should-not-print" },
+        },
+      },
+    },
+    {
+      status: 409,
+      body: {
+        error: "Live Activity is already terminal",
+        activity: { id: "act_expired", status: "expired", props: { status: "Pushing" } },
+      },
+    },
+  ];
+  globalThis.fetch = async () => {
+    const next = responses.shift();
+    return Response.json(next.body, { status: next.status });
+  };
+  console.log = (value) => stdout.push(value);
+  console.error = (value) => stderr.push(value);
+  try {
+    const ended = await run(["activity", "update", "act_ended", "--status", "Testing"], {
+      HARK_TOKEN: "hark_test",
+      HARK_API_URL: "https://example.test",
+    });
+    assert.equal(ended, 1);
+    assert.deepEqual(stdout, []);
+    assert.deepEqual(stderr, [
+      "Live Activity is already terminal (ended)\nstatus=ended endedAt=2026-08-28T12:10:00.000Z expiresAt=2026-08-28T20:00:00.000Z",
+    ]);
+    assert.equal(stderr.join("\n").includes("should-not-print"), false);
+    assert.equal(stderr.join("\n").includes("rejected state"), false);
+
+    const expired = await run(
+      ["activity", "update", "act_expired", "--status", "Pushing", "--progress", "0.4"],
+      { HARK_TOKEN: "hark_test", HARK_API_URL: "https://example.test" },
+    );
+    assert.equal(expired, 1);
+    assert.equal(
+      stderr.at(-1),
+      "Live Activity is already terminal (expired)\nstatus=expired endedAt=null expiresAt=null",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    console.error = originalError;
+  }
+});
+
+test("activity update and end exit 0 when the stored transition is waiting on an update token", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    Response.json({
+      accepted: 0,
+      failed: 1,
+      message: "MissingUpdateToken",
+      updateTokenPending: true,
+      activity: { id: "act_1", status: "partial", sequence: 1 },
+    });
+  try {
+    const updated = await execute(["activity", "update", "act_1", "--status", "Testing"], {
+      HARK_TOKEN: "hark_test",
+      HARK_API_URL: "https://example.test",
+    });
+    const ended = await execute(["activity", "end", "act_1", "--status", "Complete"], {
+      HARK_TOKEN: "hark_test",
+      HARK_API_URL: "https://example.test",
+    });
+    assert.equal(updated.exitCode, 0);
+    assert.equal(updated.body.updateTokenPending, true);
+    assert.equal(ended.exitCode, 0);
+    assert.equal(ended.body.message, "MissingUpdateToken");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("activity update and end still exit 7 when the push is rejected", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    Response.json({
+      accepted: 0,
+      failed: 1,
+      message: "Unavailable",
+      activity: { id: "act_1", status: "ended", sequence: 1 },
+    });
+  try {
+    const updated = await execute(["activity", "update", "act_1", "--status", "Testing"], {
+      HARK_TOKEN: "hark_test",
+      HARK_API_URL: "https://example.test",
+    });
+    const ended = await execute(["activity", "end", "act_1", "--status", "Complete"], {
+      HARK_TOKEN: "hark_test",
+      HARK_API_URL: "https://example.test",
+    });
+    const started = await execute(["activity", "start", "--title", "Task", "--status", "Run"], {
+      HARK_TOKEN: "hark_test",
+      HARK_API_URL: "https://example.test",
+    });
+    assert.equal(updated.exitCode, 7);
+    assert.equal(ended.exitCode, 7);
+    assert.equal(started.exitCode, 7);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("activity CLI rejects invalid progress and preserves no-delivery exit behavior", async () => {
   await assert.rejects(
     execute(["activity", "start", "--title", "Task", "--status", "Run", "--progress", "2"], {
@@ -1144,6 +1437,7 @@ test("help lists permission bridge commands", async () => {
   assert.match(result.body.help, /permissions setup/);
   assert.match(result.body.help, /permissions uninstall/);
   assert.match(result.body.help, /permissions doctor/);
+  assert.match(result.body.help, /--status alone is a valid update/);
 });
 
 test("permissions doctor reads scopes in process without printing token metadata", async () => {

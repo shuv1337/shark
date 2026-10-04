@@ -1,14 +1,19 @@
 import { createHash } from "node:crypto";
 import {
   LIVE_ACTIVITY_DEFAULT_STALE_AFTER_SECONDS,
+  LIVE_ACTIVITY_END_FIELDS,
   LIVE_ACTIVITY_SCHEMA_VERSION,
+  LIVE_ACTIVITY_STATUSES,
+  LIVE_ACTIVITY_UPDATE_FIELDS,
   type LiveActivityDto,
   type LiveActivityMutationResponse,
   type LiveActivityProps,
   type LiveActivityStatus,
   liveActivityEndSchema,
   liveActivityPropsSchema,
+  liveActivityRequestDiagnostic,
   liveActivityStartSchema,
+  liveActivityStateDiagnostic,
   liveActivityUpdateSchema,
 } from "@hark/contracts";
 import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
@@ -75,6 +80,67 @@ export function toLiveActivityDto(row: ActivityRow): LiveActivityDto {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     endedAt: row.endedAt?.toISOString() ?? null,
+  };
+}
+
+const TERMINAL_LIVE_ACTIVITY_STATUSES = ["failed", "ended", "expired"] as const;
+type TerminalLiveActivityStatus = (typeof TERMINAL_LIVE_ACTIVITY_STATUSES)[number];
+
+function isLiveActivityStatus(status: string): status is LiveActivityStatus {
+  return (LIVE_ACTIVITY_STATUSES as readonly string[]).includes(status);
+}
+
+function terminalLiveActivityStatus(status: string): TerminalLiveActivityStatus | undefined {
+  if (!isLiveActivityStatus(status)) return undefined;
+  switch (status) {
+    case "failed":
+    case "ended":
+    case "expired":
+      return status;
+    case "starting":
+    case "active":
+    case "partial":
+      return undefined;
+    default: {
+      const unexpected: never = status;
+      return unexpected;
+    }
+  }
+}
+
+/** 409 body for an update or end that arrives after the activity has left the live set. */
+export function terminalLiveActivityConflict(row: ActivityRow): {
+  error: string;
+  status?: TerminalLiveActivityStatus;
+  endedAt: string | null;
+  expiresAt: string;
+  diagnostic: string;
+  activity: LiveActivityDto;
+} {
+  const activity = toLiveActivityDto(row);
+  const status = terminalLiveActivityStatus(row.status);
+  return {
+    error: status
+      ? `Live Activity is already terminal (${status})`
+      : "Live Activity is already terminal",
+    ...(status ? { status } : {}),
+    endedAt: activity.endedAt,
+    expiresAt: activity.expiresAt,
+    diagnostic: liveActivityStateDiagnostic(row.status),
+    activity,
+  };
+}
+
+export function invalidLiveActivityBody(
+  error: string,
+  issues: ReadonlyArray<{ path?: ReadonlyArray<PropertyKey>; message?: string }>,
+  value: unknown,
+  allowedFields: readonly string[],
+) {
+  return {
+    error,
+    diagnostic: liveActivityRequestDiagnostic(issues, value, allowedFields),
+    issues,
   };
 }
 
@@ -397,6 +463,53 @@ export async function dispatchLiveActivity(
     accepted: results.filter((result) => result.accepted).length,
     failed: results.filter((result) => !result.accepted).length,
     errors: [...new Set(results.flatMap((result) => (result.reason ? [result.reason] : [])))],
+  };
+}
+
+const MISSING_UPDATE_TOKEN = "MissingUpdateToken";
+
+/** True when the row mutation is stored and every push is waiting on an update token. */
+export function isUpdateTokenPending(result: {
+  accepted: number;
+  failed: number;
+  errors: readonly string[];
+}): boolean {
+  return (
+    result.accepted === 0 &&
+    result.failed > 0 &&
+    result.errors.length > 0 &&
+    result.errors.every((error) => error === MISSING_UPDATE_TOKEN)
+  );
+}
+
+export async function operationUpdateTokenPending(operation: {
+  id: string;
+  event: string;
+  acceptedCount: number;
+  failedCount: number;
+}): Promise<boolean> {
+  if (operation.event !== "update" && operation.event !== "end") return false;
+  if (operation.acceptedCount !== 0 || operation.failedCount <= 0) return false;
+  const attempts = await db
+    .select({ reason: liveActivityDeliveryAttempt.apnsReason })
+    .from(liveActivityDeliveryAttempt)
+    .where(eq(liveActivityDeliveryAttempt.operationId, operation.id));
+  return (
+    attempts.length > 0 && attempts.every((attempt) => attempt.reason === MISSING_UPDATE_TOKEN)
+  );
+}
+
+async function idempotentMutationResponse(replay: {
+  operation: typeof liveActivityOperation.$inferSelect;
+  row: ActivityRow;
+}): Promise<LiveActivityMutationResponse> {
+  const updateTokenPending = await operationUpdateTokenPending(replay.operation);
+  return {
+    activity: toLiveActivityDto(replay.row),
+    accepted: replay.operation.acceptedCount,
+    failed: replay.operation.failedCount,
+    idempotent: true,
+    ...(updateTokenPending ? { updateTokenPending: true, message: MISSING_UPDATE_TOKEN } : {}),
   };
 }
 
@@ -1231,9 +1344,18 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
   })
   .patch("/:identifier", requireScopes("activities:write"), async (c) => {
     const token = c.get("apiToken");
-    const parsed = liveActivityUpdateSchema.safeParse(await c.req.json().catch(() => null));
+    const body = await c.req.json().catch(() => null);
+    const parsed = liveActivityUpdateSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "Invalid Live Activity update", issues: parsed.error.issues }, 400);
+      return c.json(
+        invalidLiveActivityBody(
+          "Invalid Live Activity update",
+          parsed.error.issues,
+          body,
+          LIVE_ACTIVITY_UPDATE_FIELDS,
+        ),
+        400,
+      );
     }
     const key = idempotencyKey(c.req.header("Idempotency-Key"));
     if (key === null) return c.json({ error: "Invalid Idempotency-Key" }, 400);
@@ -1243,20 +1365,12 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       return c.json({ error: "Idempotency-Key was already used with a different payload" }, 409);
     }
     if (replay && !replay.conflict) {
-      return c.json<LiveActivityMutationResponse>({
-        activity: toLiveActivityDto(replay.row),
-        accepted: replay.operation.acceptedCount,
-        failed: replay.operation.failedCount,
-        idempotent: true,
-      });
+      return c.json<LiveActivityMutationResponse>(await idempotentMutationResponse(replay));
     }
     const current = await ownedActivity(token.id, c.req.param("identifier"));
     if (!current) return c.json({ error: "Live Activity not found" }, 404);
     if (!["starting", "active", "partial"].includes(current.status)) {
-      return c.json(
-        { error: "Live Activity is already terminal", activity: toLiveActivityDto(current) },
-        409,
-      );
+      return c.json(terminalLiveActivityConflict(current), 409);
     }
     if (parsed.data.ifSequence !== undefined && parsed.data.ifSequence !== current.sequence) {
       return c.json({ error: "Sequence conflict", activity: toLiveActivityDto(current) }, 409);
@@ -1348,20 +1462,22 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
         return c.json({ error: "Idempotency-Key was already used with a different payload" }, 409);
       }
       if (raced && !raced.conflict) {
-        return c.json<LiveActivityMutationResponse>({
-          activity: toLiveActivityDto(raced.row),
-          accepted: raced.operation.acceptedCount,
-          failed: raced.operation.failedCount,
-          idempotent: true,
-        });
+        return c.json<LiveActivityMutationResponse>(await idempotentMutationResponse(raced));
       }
       throw error;
     }
     if (!row) return c.json({ error: "Sequence conflict" }, 409);
+    // A failed sibling is not part of the live fanout. Retrying it would keep a
+    // partial activity partial after every later update the remaining devices accept.
     const deliveries = await db
       .select()
       .from(liveActivityDelivery)
-      .where(eq(liveActivityDelivery.activityId, row.id));
+      .where(
+        and(
+          eq(liveActivityDelivery.activityId, row.id),
+          inArray(liveActivityDelivery.status, ["pending", "accepted", "active"]),
+        ),
+      );
     const result = await dispatchLiveActivity(row, deliveries, operationId, "update", {
       requesterTokenId: token.id,
     });
@@ -1395,13 +1511,23 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       accepted: result.accepted,
       failed: result.failed,
       ...(result.errors.length ? { message: result.errors.join("; ") } : {}),
+      ...(isUpdateTokenPending(result) ? { updateTokenPending: true } : {}),
     });
   })
   .post("/:identifier/end", requireScopes("activities:write"), async (c) => {
     const token = c.get("apiToken");
-    const parsed = liveActivityEndSchema.safeParse(await c.req.json().catch(() => ({})));
+    const body = await c.req.json().catch(() => ({}));
+    const parsed = liveActivityEndSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "Invalid Live Activity end", issues: parsed.error.issues }, 400);
+      return c.json(
+        invalidLiveActivityBody(
+          "Invalid Live Activity end",
+          parsed.error.issues,
+          body,
+          LIVE_ACTIVITY_END_FIELDS,
+        ),
+        400,
+      );
     }
     const key = idempotencyKey(c.req.header("Idempotency-Key"));
     if (key === null) return c.json({ error: "Invalid Idempotency-Key" }, 400);
@@ -1411,20 +1537,12 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       return c.json({ error: "Idempotency-Key was already used with a different payload" }, 409);
     }
     if (replay && !replay.conflict) {
-      return c.json<LiveActivityMutationResponse>({
-        activity: toLiveActivityDto(replay.row),
-        accepted: replay.operation.acceptedCount,
-        failed: replay.operation.failedCount,
-        idempotent: true,
-      });
+      return c.json<LiveActivityMutationResponse>(await idempotentMutationResponse(replay));
     }
     const current = await ownedActivity(token.id, c.req.param("identifier"));
     if (!current) return c.json({ error: "Live Activity not found" }, 404);
     if (!["starting", "active", "partial"].includes(current.status)) {
-      return c.json(
-        { error: "Live Activity is already terminal", activity: toLiveActivityDto(current) },
-        409,
-      );
+      return c.json(terminalLiveActivityConflict(current), 409);
     }
     if (parsed.data.ifSequence !== undefined && parsed.data.ifSequence !== current.sequence) {
       return c.json({ error: "Sequence conflict", activity: toLiveActivityDto(current) }, 409);
@@ -1505,12 +1623,7 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
         return c.json({ error: "Idempotency-Key was already used with a different payload" }, 409);
       }
       if (raced && !raced.conflict) {
-        return c.json<LiveActivityMutationResponse>({
-          activity: toLiveActivityDto(raced.row),
-          accepted: raced.operation.acceptedCount,
-          failed: raced.operation.failedCount,
-          idempotent: true,
-        });
+        return c.json<LiveActivityMutationResponse>(await idempotentMutationResponse(raced));
       }
       throw error;
     }
@@ -1538,6 +1651,7 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       accepted: result.accepted,
       failed: result.failed,
       ...(result.errors.length ? { message: result.errors.join("; ") } : {}),
+      ...(isUpdateTokenPending(result) ? { updateTokenPending: true } : {}),
     });
   });
 

@@ -48,6 +48,11 @@ function parseStyle(value) {
   return String(value);
 }
 
+function activityFollowUpExitCode(body) {
+  if (body?.updateTokenPending === true) return 0;
+  return body?.accepted === 0 ? 7 : 0;
+}
+
 function parseActionLabel(value, flag) {
   const label = String(value).trim();
   if (
@@ -397,7 +402,12 @@ not end the prompt: it stays answerable on the phone until it expires, and
 sharkctl interaction wait <id> resumes waiting at any time.
 
 Authentication: run sharkctl auth login, or set HARK_TOKEN for an advanced manual setup.
-Tokens are never accepted as command arguments.`;
+Tokens are never accepted as command arguments.
+
+activity update merges only the fields you pass. --status alone is a valid update, as is
+--status together with --progress. At least one field other than --if-sequence is required:
+--title, --status, --detail, --progress, --symbol, --privacy, --accent-color, --style, or
+--stale-after. A rejected update or end names each invalid field on stderr.`;
 }
 
 export async function execute(argv, env = process.env, overrides = {}) {
@@ -570,6 +580,11 @@ export async function execute(argv, env = process.env, overrides = {}) {
         : {}),
       ...(ifSequence !== undefined ? { ifSequence } : {}),
     };
+    if (!Object.keys(payload).some((key) => key !== "ifSequence")) {
+      throw new UsageError(
+        "activity update requires at least one of --title, --status, --detail, --progress, --symbol, --privacy, --accent-color, --style, or --stale-after",
+      );
+    }
     const body = await request(config, `/api/agent/activities/${encodeURIComponent(identifier)}`, {
       method: "PATCH",
       headers: options["idempotency-key"]
@@ -577,7 +592,7 @@ export async function execute(argv, env = process.env, overrides = {}) {
         : undefined,
       body: JSON.stringify(payload),
     });
-    return { body, exitCode: body.accepted === 0 ? 7 : 0 };
+    return { body, exitCode: activityFollowUpExitCode(body) };
   }
   if (group === "activity" && action === "end") {
     const identifier = id ?? options.key;
@@ -615,7 +630,7 @@ export async function execute(argv, env = process.env, overrides = {}) {
         body: JSON.stringify(payload),
       },
     );
-    return { body, exitCode: body.accepted === 0 ? 7 : 0 };
+    return { body, exitCode: activityFollowUpExitCode(body) };
   }
   if (group === "interaction" && action === "get" && id) {
     const body = await request(config, `/api/agent/interactions/${encodeURIComponent(id)}`);
@@ -739,6 +754,113 @@ export async function execute(argv, env = process.env, overrides = {}) {
   throw new UsageError("Unknown command. Run sharkctl --help.");
 }
 
+const MAX_VALIDATION_ISSUES = 8;
+const MAX_VALIDATION_TEXT = 160;
+const TERMINAL_LIVE_ACTIVITY_ERROR = "Live Activity is already terminal";
+const TERMINAL_LIVE_ACTIVITY_STATUSES = new Set(["failed", "ended", "expired"]);
+
+function validationText(value) {
+  if (typeof value !== "string" && typeof value !== "number") return "";
+  return String(value)
+    .replace(/[\r\n]+/g, " ")
+    .trim()
+    .slice(0, MAX_VALIDATION_TEXT);
+}
+
+function validationIssueLine(issue) {
+  if (!issue || typeof issue !== "object") return "";
+  const message = validationText(issue.message);
+  if (!message) return "";
+  const path = Array.isArray(issue.path)
+    ? issue.path
+        .map(validationText)
+        .filter((segment) => segment.length > 0)
+        .join(".")
+    : "";
+  return path ? `${path}: ${message}` : message;
+}
+
+function diagnosticExtraLine(part, coveredPaths, coveredMessages) {
+  const field = /^rejected field ([^:]+): (.+)$/.exec(part);
+  if (field) {
+    const path = validationText(field[1]);
+    const message = validationText(field[2]);
+    if (!path || !message || coveredPaths.has(path)) return "";
+    coveredPaths.add(path);
+    return `${path}: ${message}`;
+  }
+  const request = /^rejected request: (.+)$/.exec(part);
+  if (!request) return "";
+  const message = validationText(request[1]);
+  if (!message || coveredMessages.has(message)) return "";
+  coveredMessages.add(message);
+  return message;
+}
+
+function validationLines(body) {
+  const lines = [];
+  const coveredPaths = new Set();
+  const coveredMessages = new Set();
+  if (Array.isArray(body.issues)) {
+    for (const issue of body.issues) {
+      if (lines.length >= MAX_VALIDATION_ISSUES) break;
+      const line = validationIssueLine(issue);
+      if (!line) continue;
+      lines.push(line);
+      const split = line.indexOf(": ");
+      if (split === -1) coveredMessages.add(line);
+      else coveredPaths.add(line.slice(0, split));
+    }
+  }
+  if (typeof body.diagnostic === "string") {
+    for (const part of body.diagnostic.split("; ")) {
+      if (lines.length >= MAX_VALIDATION_ISSUES) break;
+      const line = diagnosticExtraLine(part, coveredPaths, coveredMessages);
+      if (line) lines.push(line);
+    }
+  }
+  return lines;
+}
+
+function terminalActivityStatus(body) {
+  const candidates = [body.status, body.activity?.status];
+  return candidates.find(
+    (status) => typeof status === "string" && TERMINAL_LIVE_ACTIVITY_STATUSES.has(status),
+  );
+}
+
+function terminalTimestamp(body, field) {
+  const top = body[field];
+  if (typeof top === "string" && top.length > 0) return top;
+  if (top === null) return "null";
+  const nested = body.activity?.[field];
+  if (typeof nested === "string" && nested.length > 0) return nested;
+  return "null";
+}
+
+function terminalDetailLine(body) {
+  const status = terminalActivityStatus(body);
+  if (!status) return "";
+  return `status=${status} endedAt=${terminalTimestamp(body, "endedAt")} expiresAt=${terminalTimestamp(body, "expiresAt")}`;
+}
+
+export function formatRequestError(error) {
+  const message = error instanceof Error ? error.message : "Unexpected error";
+  if (!(error instanceof RequestError) || !error.body || typeof error.body !== "object") {
+    return message;
+  }
+  const terminal =
+    (typeof error.body.error === "string" &&
+      error.body.error.startsWith(TERMINAL_LIVE_ACTIVITY_ERROR)) ||
+    message.startsWith(TERMINAL_LIVE_ACTIVITY_ERROR);
+  if (terminal) {
+    const detail = terminalDetailLine(error.body);
+    return detail ? `${message}\n${detail}` : message;
+  }
+  const lines = validationLines(error.body);
+  return lines.length > 0 ? `${message}\n${lines.join("\n")}` : message;
+}
+
 export async function run(argv, env = process.env, overrides = {}) {
   try {
     const result = await execute(argv, env, overrides);
@@ -746,7 +868,7 @@ export async function run(argv, env = process.env, overrides = {}) {
     else console.log(JSON.stringify(result.body));
     return result.exitCode;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected error";
+    const message = formatRequestError(error);
     console.error(message);
     if (error instanceof UsageError) return 2;
     if (error instanceof RequestError) {

@@ -37,10 +37,10 @@ sharkctl auth logout
 Treat every successful `activity start` as an obligation to issue `activity end` on success,
 failure, cancellation, or cleanup. Keep the returned activity ID or use a stable key, and give the
 end request a stable idempotency key when it may be retried. Sending a normal notification does not
-end or correlate with an activity. An update immediately after start can report
-`MissingUpdateToken` because iOS has not registered the activity update token yet; see Activity
-below. If an end reports `MissingUpdateToken`, SHark retains the terminal state and replays it when
-that token arrives.
+end or correlate with an activity. An update or end issued before iOS registers the per-activity
+update token exits 0 with `updateTokenPending: true` and message `MissingUpdateToken`. SHark has
+stored the transition. A stored end is replayed when that token arrives; a stored update is not
+pushed later by itself. See Activity below.
 
 The upstream `harkctl` package is not the SHark fork. Existing SHark credentials remain usable
 because `sharkctl` deliberately reads the same protected `hark` config file during the rename.
@@ -128,27 +128,47 @@ logins created before this scope was added need to sign in again.
 
 ## activity
 
-Activity commands accept flags or `--stdin` JSON. Use `activity get <id|key>` and `activity list` to
-inspect state, `--idempotency-key` for retries, and `--if-sequence` to reject stale updates. Progress
-is a number from 0 to 1. `--accent-color` accepts `#RRGGBB`. `--style` on `activity start` and
-`activity update` picks the widget layout: `standard` (default), `ring`, `hero`, `terminal`, or
-`steps`; app builds that predate a style render the standard layout until updated. Activities default to an eight-hour
+Activity commands accept flags or `--stdin` JSON. `activity update` merges only the fields you
+pass: `--status` alone is valid, and so is `--status` with `--progress`. At least one field other
+than `--if-sequence` is required (`--title`, `--status`, `--detail`, `--progress`, `--symbol`,
+`--privacy`, `--accent-color`, `--style`, or `--stale-after`). An empty update fails locally and
+exits 2. A rejected update or end prints up to eight `path: message` lines on stderr and does not
+echo submitted values. Use `activity get <id|key>` and `activity list` to inspect state,
+`--idempotency-key` for retries, and `--if-sequence` to reject stale updates. Progress is a number
+from 0 to 1. `--accent-color` accepts `#RRGGBB`. `--style` on `activity start` and `activity update`
+picks the widget layout: `standard` (default), `ring`, `hero`, `terminal`, or `steps`; app builds
+that predate a style render the standard layout until updated. Activities default to an eight-hour
 expiry and become stale after four hours without an update. Repeated `--device` targeting is
 available in self-hosted mode, and SHark permits one active activity per device; pass `--replace` on
 `activity start` to
 silently end whatever occupies the device and take the slot (the response reports the count as
 `replaced`). A `--key` becomes reusable once its activity ends, so `activity start --key deploy
---replace` works as a fixed-key restart.
+--replace` works as a fixed-key restart. `activity get` shows whether an activity is still live.
 
 `activity start` does not return an update token, and update/end have no token flag. The phone
-creates the token after start and registers it with the server. An update before that registration
-returns `accepted: 0`, `failed: 1`, and `message: "MissingUpdateToken"` (exit `7`). The activity
-stays active and the sequence in the response has already moved forward, so a retry must use that
-sequence or omit `--if-sequence`, and it must use a new `--idempotency-key` when the failed call
-had one. Replaying the same key returns the original failure. There is no server delay that makes
-the next attempt succeed. A failed update is not delivered later by itself. An end with the same
-message stays terminal and is replayed when the token registers. Do not start a replacement
-activity to clear the error.
+creates the token after start and registers it with the server. An update or end before that
+registration returns `accepted: 0`, `failed: 1`, `message: "MissingUpdateToken"`, and
+`updateTokenPending: true` (exit 0). `accepted` stays 0 until APNs takes the push. The sequence in
+the response has already moved forward, so a later update uses that sequence or omits
+`--if-sequence`. Replaying the same idempotency key returns this stored result, including
+`updateTokenPending`. There is no server delay that makes the next attempt succeed by itself. A
+stored update is not delivered later on its own; the next push that has a token sends the stored
+props. An end with the same message stays terminal and is replayed when the token registers. Do not
+start a replacement activity to clear the error. `activity start` with no delivery, and a real APNs
+rejection (`accepted: 0` without `updateTokenPending`), still exit 7.
+
+A `partial` activity is still live: keep updating it, and end it on the terminal path. A failed
+sibling delivery does not pin the activity in `partial` after the remaining devices accept. Before
+a progress update, run `activity get`. Continue while the status is `starting`, `active`, or
+`partial`.
+
+If an update or end reports `Live Activity is already terminal (<status>)`, stderr also prints
+`status=<ended|expired|failed> endedAt=<iso-or-null> expiresAt=<iso-or-null>`. `<status>` is
+`ended`, `expired`, or `failed`. `expired` means `expiresAt` has passed. `ended` means an explicit
+end, a `--replace` takeover, or a resolved interactive prompt. `failed` means a later update found
+no retryable device delivery. SHark does not end an activity on a short timer. Restart with the
+same `--key` and `--replace` only when the task is still running, the status is `ended` or
+`failed`, and `expiresAt` is still in the future.
 
 ## permissions
 
