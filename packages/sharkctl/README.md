@@ -37,8 +37,10 @@ sharkctl auth logout
 Treat every successful `activity start` as an obligation to issue `activity end` on success,
 failure, cancellation, or cleanup. Keep the returned activity ID or use a stable key, and give the
 end request a stable idempotency key when it may be retried. Sending a normal notification does not
-end or correlate with an activity. If an end initially reports `MissingUpdateToken`, SHark retains
-the terminal state and replays it when iOS registers the activity update token late.
+end or correlate with an activity. An update immediately after start can report
+`MissingUpdateToken` because iOS has not registered the activity update token yet; see Activity
+below. If an end reports `MissingUpdateToken`, SHark retains the terminal state and replays it when
+that token arrives.
 
 The upstream `harkctl` package is not the SHark fork. Existing SHark credentials remain usable
 because `sharkctl` deliberately reads the same protected `hark` config file during the rename.
@@ -137,6 +139,16 @@ available in self-hosted mode, and SHark permits one active activity per device;
 silently end whatever occupies the device and take the slot (the response reports the count as
 `replaced`). A `--key` becomes reusable once its activity ends, so `activity start --key deploy
 --replace` works as a fixed-key restart.
+
+`activity start` does not return an update token, and update/end have no token flag. The phone
+creates the token after start and registers it with the server. An update before that registration
+returns `accepted: 0`, `failed: 1`, and `message: "MissingUpdateToken"` (exit `7`). The activity
+stays active and the sequence in the response has already moved forward, so a retry must use that
+sequence or omit `--if-sequence`, and it must use a new `--idempotency-key` when the failed call
+had one. Replaying the same key returns the original failure. There is no server delay that makes
+the next attempt succeed. A failed update is not delivered later by itself. An end with the same
+message stays terminal and is replayed when the token registers. Do not start a replacement
+activity to clear the error.
 
 ## permissions
 
