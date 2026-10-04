@@ -224,9 +224,16 @@ Starting an activity creates a lifecycle obligation. Retain its returned `.activ
 stable `--key`, then call `activity end` on every terminal path: success, failure, cancellation, and
 agent cleanup. Give the end request its own stable `--idempotency-key` so cleanup can be retried.
 A separate `notify` call is an independent inbox item; it does not correlate with or end a Live
-Activity, even when the title and requester match. If an update or end reports
-`MissingUpdateToken`, do not start a replacement merely to clear it. End the existing activity once
-the task is terminal; SHark records that state and can replay it when iOS registers the token late.
+Activity, even when the title and requester match.
+
+iOS registers the per-activity update token after the start push is accepted. The first
+`activity update` can therefore return `accepted: 0`, `message` `MissingUpdateToken`, and exit `7`
+while the activity stays active and still occupies the device. Wait briefly and repeat that same
+update against the same id or key. Keep the existing activity; a new start does not repair a missing
+update token. When the task needs visible phone progress before the token arrives, also send
+`notify` with the same status text, then continue updating the original activity once a later update
+is accepted. On every terminal path, call `activity end`. If that end reports `MissingUpdateToken`,
+SHark keeps the terminal state and replays it when iOS registers the token.
 
 ## Approve Coding-Agent Permissions
 

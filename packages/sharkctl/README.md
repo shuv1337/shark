@@ -37,8 +37,12 @@ sharkctl auth logout
 Treat every successful `activity start` as an obligation to issue `activity end` on success,
 failure, cancellation, or cleanup. Keep the returned activity ID or use a stable key, and give the
 end request a stable idempotency key when it may be retried. Sending a normal notification does not
-end or correlate with an activity. If an end initially reports `MissingUpdateToken`, SHark retains
-the terminal state and replays it when iOS registers the activity update token late.
+end or correlate with an activity. iOS registers the per-activity update token after start is
+accepted, so the first `activity update` can report `accepted: 0`, `message` `MissingUpdateToken`,
+and exit code `7` while the activity stays active. Wait briefly and retry that same update. To show
+progress before the token is ready, send `notify` with the same status text. If an end reports
+`MissingUpdateToken`, SHark retains the terminal state and replays it when iOS registers the update
+token.
 
 The upstream `harkctl` package is not the SHark fork. Existing SHark credentials remain usable
 because `sharkctl` deliberately reads the same protected `hark` config file during the rename.
@@ -128,7 +132,9 @@ logins created before this scope was added need to sign in again.
 
 Activity commands accept flags or `--stdin` JSON. Use `activity get <id|key>` and `activity list` to
 inspect state, `--idempotency-key` for retries, and `--if-sequence` to reject stale updates. Progress
-is a number from 0 to 1. `--accent-color` accepts `#RRGGBB`. `--style` on `activity start` and
+is a number from 0 to 1. An update issued before iOS registers the activity update token returns
+`accepted: 0` with `message` `MissingUpdateToken` and exit code `7`; retry it, or send `notify` when
+the phone needs that progress immediately. `--accent-color` accepts `#RRGGBB`. `--style` on `activity start` and
 `activity update` picks the widget layout: `standard` (default), `ring`, `hero`, `terminal`, or
 `steps`; app builds that predate a style render the standard layout until updated. Activities default to an eight-hour
 expiry and become stale after four hours without an update. Repeated `--device` targeting is
