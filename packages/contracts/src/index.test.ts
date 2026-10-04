@@ -8,11 +8,15 @@ import {
   isInboxItemActive,
   isInboxItemDeliveryFailure,
   isInboxItemWithdrawn,
+  LIVE_ACTIVITY_END_FIELDS,
   LIVE_ACTIVITY_SCHEMA_VERSION,
+  LIVE_ACTIVITY_UPDATE_FIELDS,
   liveActivityBackgroundTokenSchema,
   liveActivityEndSchema,
   liveActivityPropsSchema,
+  liveActivityRequestDiagnostic,
   liveActivityStartSchema,
+  liveActivityStateDiagnostic,
   liveActivityUpdateSchema,
   macosDeviceRegisterSchema,
   macosInteractionResponseSchema,
@@ -429,9 +433,37 @@ describe("Live Activity schemas", () => {
       ).toBe(false);
     }
     expect(liveActivityUpdateSchema.safeParse({ ifSequence: 0 }).success).toBe(false);
+    expect(liveActivityUpdateSchema.safeParse({ status: "Testing" }).success).toBe(true);
     expect(liveActivityUpdateSchema.safeParse({ progress: null, ifSequence: 2 }).success).toBe(
       true,
     );
+    const progress = liveActivityUpdateSchema.safeParse({
+      progress: "0.7",
+      activity: { status: "partial" },
+    });
+    expect(progress.success).toBe(false);
+    if (!progress.success) {
+      expect(
+        liveActivityRequestDiagnostic(
+          progress.error.issues,
+          { progress: "0.7", activity: { status: "partial" } },
+          LIVE_ACTIVITY_UPDATE_FIELDS,
+        ),
+      ).toBe(
+        "rejected field progress: Invalid input: expected number, received string; rejected field activity: unrecognized",
+      );
+    }
+    const empty = liveActivityUpdateSchema.safeParse({});
+    expect(empty.success).toBe(false);
+    if (!empty.success) {
+      expect(
+        liveActivityRequestDiagnostic(empty.error.issues, {}, LIVE_ACTIVITY_UPDATE_FIELDS),
+      ).toContain("status");
+    }
+    expect(LIVE_ACTIVITY_UPDATE_FIELDS).toContain("status");
+    expect(LIVE_ACTIVITY_END_FIELDS).toContain("dismissAfterSeconds");
+    expect(liveActivityStateDiagnostic("ended")).toBe("rejected state: ended");
+    expect(liveActivityStateDiagnostic("partial")).toBe("rejected state: partial");
     expect(liveActivityEndSchema.parse({}).dismissAfterSeconds).toBe(0);
   });
 

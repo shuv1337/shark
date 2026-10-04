@@ -792,4 +792,131 @@ describe("Live Activity agent routes", () => {
     expect(await update.json()).toMatchObject({ accepted: 0, activity: { status: "failed" } });
     expect(apnsCalls).toHaveLength(0);
   });
+
+  it("keeps updating and ending an activity left partial by MissingUpdateToken", async () => {
+    const created = await start({
+      title: "Partial",
+      status: "Starting",
+      deviceIds: ["activity_dev_1", "activity_dev_2"],
+    });
+    const body = (await created.json()) as { activity: { id: string } };
+    await registerUpdateToken(
+      body.activity.id,
+      "native-partial",
+      "ab".repeat(32),
+      "activity_dev_1",
+    );
+
+    const first = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "Halfway", progress: 0.4 }),
+    });
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({
+      accepted: 1,
+      failed: 1,
+      message: "MissingUpdateToken",
+      activity: { status: "partial", props: { status: "Halfway", progress: 0.4 } },
+    });
+
+    const second = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "Still going", progress: 0.6 }),
+    });
+    expect(second.status).toBe(200);
+    expect(await second.json()).toMatchObject({
+      accepted: 1,
+      failed: 1,
+      activity: { status: "partial", props: { status: "Still going", progress: 0.6 } },
+    });
+
+    const ended = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+      method: "POST",
+      body: JSON.stringify({ status: "Stopped" }),
+    });
+    expect(ended.status).toBe(200);
+    expect(await ended.json()).toMatchObject({
+      activity: { status: "ended", props: { status: "Stopped" } },
+    });
+  });
+
+  it("lets a partial activity return to active when only a failed delivery remains", async () => {
+    const created = await start({
+      title: "Recover",
+      status: "Starting",
+      deviceIds: ["activity_dev_1", "activity_dev_2"],
+    });
+    const body = (await created.json()) as { activity: { id: string } };
+    await registerUpdateToken(
+      body.activity.id,
+      "native-recover",
+      "cd".repeat(32),
+      "activity_dev_1",
+    );
+    const { and, eq } = await import("drizzle-orm");
+    await db
+      .update(schema.liveActivity)
+      .set({ status: "partial" })
+      .where(eq(schema.liveActivity.id, body.activity.id));
+    await db
+      .update(schema.liveActivityDelivery)
+      .set({ status: "failed", updateTokenCiphertext: null })
+      .where(
+        and(
+          eq(schema.liveActivityDelivery.activityId, body.activity.id),
+          eq(schema.liveActivityDelivery.deviceId, "activity_dev_2"),
+        ),
+      );
+
+    const updated = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "Recovered" }),
+    });
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toMatchObject({
+      accepted: 1,
+      failed: 0,
+      activity: { status: "active", props: { status: "Recovered" } },
+    });
+
+    const ended = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+      method: "POST",
+      body: JSON.stringify({ status: "Done" }),
+    });
+    expect(ended.status).toBe(200);
+    expect(await ended.json()).toMatchObject({ activity: { status: "ended" } });
+  });
+
+  it("names the rejected update field and the terminal state", async () => {
+    const created = await start({
+      title: "Diagnose",
+      status: "Starting",
+      deviceIds: ["activity_dev_1"],
+    });
+    const body = (await created.json()) as { activity: { id: string } };
+    const invalid = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ progress: "0.7", activity: { status: "partial" } }),
+    });
+    expect(invalid.status).toBe(400);
+    const invalidBody = (await invalid.json()) as { error: string; diagnostic: string };
+    expect(invalidBody.error).toBe("Invalid Live Activity update");
+    expect(invalidBody.diagnostic).toContain("rejected field progress");
+    expect(invalidBody.diagnostic).toContain("rejected field activity: unrecognized");
+
+    const ended = await agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    expect(ended.status).toBe(200);
+    const again = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "Later" }),
+    });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toMatchObject({
+      error: "Live Activity is already terminal",
+      diagnostic: "rejected state: ended",
+    });
+  });
 });

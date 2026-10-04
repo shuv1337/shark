@@ -1,14 +1,18 @@
 import { createHash } from "node:crypto";
 import {
   LIVE_ACTIVITY_DEFAULT_STALE_AFTER_SECONDS,
+  LIVE_ACTIVITY_END_FIELDS,
   LIVE_ACTIVITY_SCHEMA_VERSION,
+  LIVE_ACTIVITY_UPDATE_FIELDS,
   type LiveActivityDto,
   type LiveActivityMutationResponse,
   type LiveActivityProps,
   type LiveActivityStatus,
   liveActivityEndSchema,
   liveActivityPropsSchema,
+  liveActivityRequestDiagnostic,
   liveActivityStartSchema,
+  liveActivityStateDiagnostic,
   liveActivityUpdateSchema,
 } from "@hark/contracts";
 import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
@@ -1231,9 +1235,21 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
   })
   .patch("/:identifier", requireScopes("activities:write"), async (c) => {
     const token = c.get("apiToken");
-    const parsed = liveActivityUpdateSchema.safeParse(await c.req.json().catch(() => null));
+    const body = await c.req.json().catch(() => null);
+    const parsed = liveActivityUpdateSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "Invalid Live Activity update", issues: parsed.error.issues }, 400);
+      return c.json(
+        {
+          error: "Invalid Live Activity update",
+          diagnostic: liveActivityRequestDiagnostic(
+            parsed.error.issues,
+            body,
+            LIVE_ACTIVITY_UPDATE_FIELDS,
+          ),
+          issues: parsed.error.issues,
+        },
+        400,
+      );
     }
     const key = idempotencyKey(c.req.header("Idempotency-Key"));
     if (key === null) return c.json({ error: "Invalid Idempotency-Key" }, 400);
@@ -1254,7 +1270,11 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
     if (!current) return c.json({ error: "Live Activity not found" }, 404);
     if (!["starting", "active", "partial"].includes(current.status)) {
       return c.json(
-        { error: "Live Activity is already terminal", activity: toLiveActivityDto(current) },
+        {
+          error: "Live Activity is already terminal",
+          diagnostic: liveActivityStateDiagnostic(current.status),
+          activity: toLiveActivityDto(current),
+        },
         409,
       );
     }
@@ -1358,10 +1378,17 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       throw error;
     }
     if (!row) return c.json({ error: "Sequence conflict" }, 409);
+    // A failed sibling is not part of the live fanout. Retrying it would keep a
+    // partial activity partial after every later update the remaining devices accept.
     const deliveries = await db
       .select()
       .from(liveActivityDelivery)
-      .where(eq(liveActivityDelivery.activityId, row.id));
+      .where(
+        and(
+          eq(liveActivityDelivery.activityId, row.id),
+          inArray(liveActivityDelivery.status, ["pending", "accepted", "active"]),
+        ),
+      );
     const result = await dispatchLiveActivity(row, deliveries, operationId, "update", {
       requesterTokenId: token.id,
     });
@@ -1399,9 +1426,21 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
   })
   .post("/:identifier/end", requireScopes("activities:write"), async (c) => {
     const token = c.get("apiToken");
-    const parsed = liveActivityEndSchema.safeParse(await c.req.json().catch(() => ({})));
+    const body = await c.req.json().catch(() => ({}));
+    const parsed = liveActivityEndSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "Invalid Live Activity end", issues: parsed.error.issues }, 400);
+      return c.json(
+        {
+          error: "Invalid Live Activity end",
+          diagnostic: liveActivityRequestDiagnostic(
+            parsed.error.issues,
+            body,
+            LIVE_ACTIVITY_END_FIELDS,
+          ),
+          issues: parsed.error.issues,
+        },
+        400,
+      );
     }
     const key = idempotencyKey(c.req.header("Idempotency-Key"));
     if (key === null) return c.json({ error: "Invalid Idempotency-Key" }, 400);
@@ -1422,7 +1461,11 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
     if (!current) return c.json({ error: "Live Activity not found" }, 404);
     if (!["starting", "active", "partial"].includes(current.status)) {
       return c.json(
-        { error: "Live Activity is already terminal", activity: toLiveActivityDto(current) },
+        {
+          error: "Live Activity is already terminal",
+          diagnostic: liveActivityStateDiagnostic(current.status),
+          activity: toLiveActivityDto(current),
+        },
         409,
       );
     }

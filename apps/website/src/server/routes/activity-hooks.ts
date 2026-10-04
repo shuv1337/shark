@@ -1,11 +1,15 @@
 import { createHash } from "node:crypto";
 import {
   LIVE_ACTIVITY_DEFAULT_STALE_AFTER_SECONDS,
+  LIVE_ACTIVITY_END_FIELDS,
   LIVE_ACTIVITY_SCHEMA_VERSION,
+  LIVE_ACTIVITY_UPDATE_FIELDS,
   type LiveActivityProps,
   liveActivityEndSchema,
   liveActivityPropsSchema,
+  liveActivityRequestDiagnostic,
   liveActivityStartSchema,
+  liveActivityStateDiagnostic,
   liveActivityUpdateSchema,
 } from "@hark/contracts";
 import { and, count, desc, eq, gte, inArray, or } from "drizzle-orm";
@@ -499,10 +503,20 @@ export const activityHooksRoute = new Hono()
     const authenticated = await authenticate(c.req.param("token"));
     if (!authenticated) return c.json({ ok: false, error: "Unknown webhook" }, 404);
     const { service, owner } = authenticated;
-    const parsed = liveActivityUpdateSchema.safeParse(await c.req.json().catch(() => null));
+    const body = await c.req.json().catch(() => null);
+    const parsed = liveActivityUpdateSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
-        { ok: false, error: "Invalid Live Activity update", issues: parsed.error.issues },
+        {
+          ok: false,
+          error: "Invalid Live Activity update",
+          diagnostic: liveActivityRequestDiagnostic(
+            parsed.error.issues,
+            body,
+            LIVE_ACTIVITY_UPDATE_FIELDS,
+          ),
+          issues: parsed.error.issues,
+        },
         400,
       );
     }
@@ -532,7 +546,15 @@ export const activityHooksRoute = new Hono()
     const current = await ownedActivity(service.id, c.req.param("identifier"));
     if (!current) return c.json({ ok: false, error: "Live Activity not found" }, 404);
     if (!["starting", "active", "partial"].includes(current.status)) {
-      return c.json({ ok: false, error: "Live Activity is already terminal" }, 409);
+      return c.json(
+        {
+          ok: false,
+          error: "Live Activity is already terminal",
+          diagnostic: liveActivityStateDiagnostic(current.status),
+          status: current.status,
+        },
+        409,
+      );
     }
     if (parsed.data.ifSequence !== undefined && parsed.data.ifSequence !== current.sequence) {
       return c.json({ ...response(current), ok: false, error: "Sequence conflict" }, 409);
@@ -676,10 +698,20 @@ export const activityHooksRoute = new Hono()
     const authenticated = await authenticate(c.req.param("token"));
     if (!authenticated) return c.json({ ok: false, error: "Unknown webhook" }, 404);
     const { service, owner } = authenticated;
-    const parsed = liveActivityEndSchema.safeParse(await c.req.json().catch(() => ({})));
+    const body = await c.req.json().catch(() => ({}));
+    const parsed = liveActivityEndSchema.safeParse(body);
     if (!parsed.success) {
       return c.json(
-        { ok: false, error: "Invalid Live Activity end", issues: parsed.error.issues },
+        {
+          ok: false,
+          error: "Invalid Live Activity end",
+          diagnostic: liveActivityRequestDiagnostic(
+            parsed.error.issues,
+            body,
+            LIVE_ACTIVITY_END_FIELDS,
+          ),
+          issues: parsed.error.issues,
+        },
         400,
       );
     }
@@ -709,7 +741,15 @@ export const activityHooksRoute = new Hono()
     const current = await ownedActivity(service.id, c.req.param("identifier"));
     if (!current) return c.json({ ok: false, error: "Live Activity not found" }, 404);
     if (!["starting", "active", "partial"].includes(current.status)) {
-      return c.json({ ok: false, error: "Live Activity is already terminal" }, 409);
+      return c.json(
+        {
+          ok: false,
+          error: "Live Activity is already terminal",
+          diagnostic: liveActivityStateDiagnostic(current.status),
+          status: current.status,
+        },
+        409,
+      );
     }
     if (parsed.data.ifSequence !== undefined && parsed.data.ifSequence !== current.sequence) {
       return c.json({ ...response(current), ok: false, error: "Sequence conflict" }, 409);

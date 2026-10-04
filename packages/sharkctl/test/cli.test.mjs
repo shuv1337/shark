@@ -1102,6 +1102,54 @@ test("activity update and end send sequence preconditions", async () => {
   }
 });
 
+test("activity update failures name the rejected field or state", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalError = console.error;
+  const stderr = [];
+  console.error = (value) => stderr.push(String(value));
+  const responses = [
+    {
+      status: 400,
+      body: {
+        error: "Invalid Live Activity update",
+        diagnostic: "rejected field progress: Invalid input: expected number, received string",
+      },
+    },
+    {
+      status: 409,
+      body: {
+        error: "Live Activity is already terminal",
+        activity: { status: "ended" },
+      },
+    },
+  ];
+  globalThis.fetch = async () => {
+    const next = responses.shift();
+    return Response.json(next.body, { status: next.status });
+  };
+  try {
+    assert.equal(
+      await run(["activity", "update", "act_1", "--status", "Testing"], {
+        HARK_TOKEN: "hark_test",
+        HARK_API_URL: "https://example.test",
+      }),
+      1,
+    );
+    assert.match(stderr.at(-1), /Invalid Live Activity update: rejected field progress/);
+    assert.equal(
+      await run(["activity", "update", "act_1", "--status", "Later"], {
+        HARK_TOKEN: "hark_test",
+        HARK_API_URL: "https://example.test",
+      }),
+      1,
+    );
+    assert.match(stderr.at(-1), /Live Activity is already terminal: rejected state: ended/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalError;
+  }
+});
+
 test("activity CLI rejects invalid progress and preserves no-delivery exit behavior", async () => {
   await assert.rejects(
     execute(["activity", "start", "--title", "Task", "--status", "Run", "--progress", "2"], {

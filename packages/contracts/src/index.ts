@@ -508,7 +508,7 @@ export const liveActivityUpdateSchema = z
   })
   .refine(
     (input) => Object.keys(input).some((key) => key !== "ifSequence"),
-    "At least one activity field is required",
+    "At least one of title, status, detail, progress, symbol, privacyMode, accentColor, style, or staleAfterSeconds is required",
   )
   .superRefine((value, context) => {
     if (value.style === "approval") {
@@ -531,6 +531,40 @@ export const liveActivityEndSchema = z.object({
   ifSequence: z.number().int().nonnegative().optional(),
 });
 export type LiveActivityEndInput = z.infer<typeof liveActivityEndSchema>;
+
+export const LIVE_ACTIVITY_UPDATE_FIELDS = Object.keys(liveActivityUpdateSchema.shape);
+export const LIVE_ACTIVITY_END_FIELDS = Object.keys(liveActivityEndSchema.shape);
+
+/** Names the rejected request field, or the request itself when the issue has no path. */
+export function liveActivityRequestDiagnostic(
+  issues: ReadonlyArray<{ path?: ReadonlyArray<PropertyKey>; message?: string }>,
+  value: unknown,
+  allowedFields: readonly string[],
+): string {
+  const allowed = new Set(allowedFields);
+  const unrecognized =
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? Object.keys(value)
+          .filter((key) => !allowed.has(key))
+          .slice(0, 20)
+      : [];
+  const parts = issues.slice(0, 20).map((issue) => {
+    const field = (issue.path ?? [])
+      .map(String)
+      .filter((part) => part.length > 0)
+      .join(".");
+    const message = issue.message ?? "rejected";
+    return field ? `rejected field ${field}: ${message}` : `rejected request: ${message}`;
+  });
+  for (const key of unrecognized) parts.push(`rejected field ${key}: unrecognized`);
+  const diagnostic = parts.join("; ");
+  return diagnostic.length > 500 ? `${diagnostic.slice(0, 497)}...` : diagnostic;
+}
+
+/** Names the lifecycle state that rejected an update or end. */
+export function liveActivityStateDiagnostic(status: string): string {
+  return `rejected state: ${status}`;
+}
 
 export const apnsEnvironmentSchema = z.enum(["sandbox", "production"]);
 export type ApnsEnvironment = z.infer<typeof apnsEnvironmentSchema>;
@@ -618,6 +652,8 @@ export type LiveActivityWebhookResponse =
       code?: "ACTIVE_ACTIVITY_CONFLICT";
       activityId?: string;
       issues?: unknown;
+      /** Field or lifecycle state that caused the rejection. */
+      diagnostic?: string;
       retryAfterSeconds?: number;
     };
 

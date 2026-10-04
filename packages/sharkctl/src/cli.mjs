@@ -739,6 +739,42 @@ export async function execute(argv, env = process.env, overrides = {}) {
   throw new UsageError("Unknown command. Run sharkctl --help.");
 }
 
+function requestFailureText(error) {
+  const message = error instanceof Error ? error.message : "Unexpected error";
+  if (!(error instanceof RequestError) || !error.body || typeof error.body !== "object") {
+    return message;
+  }
+  const provided = error.body.diagnostic;
+  const diagnostic =
+    typeof provided === "string" && provided.length > 0 ? provided : diagnosticFromBody(error.body);
+  if (!diagnostic || message.includes(diagnostic)) return message;
+  return `${message}: ${diagnostic}`;
+}
+
+function diagnosticFromBody(body) {
+  const issues = Array.isArray(body.issues) ? body.issues : [];
+  const parts = [];
+  for (const issue of issues) {
+    if (!issue || typeof issue !== "object") continue;
+    const path = Array.isArray(issue.path)
+      ? issue.path
+          .filter((part) => part !== "" && part !== undefined && part !== null)
+          .map(String)
+          .join(".")
+      : "";
+    const text = typeof issue.message === "string" ? issue.message : "rejected";
+    parts.push(path ? `rejected field ${path}: ${text}` : `rejected request: ${text}`);
+  }
+  const state =
+    typeof body.activity?.status === "string"
+      ? body.activity.status
+      : typeof body.status === "string"
+        ? body.status
+        : "";
+  if (parts.length === 0 && state) parts.push(`rejected state: ${state}`);
+  return parts.join("; ");
+}
+
 export async function run(argv, env = process.env, overrides = {}) {
   try {
     const result = await execute(argv, env, overrides);
@@ -746,7 +782,7 @@ export async function run(argv, env = process.env, overrides = {}) {
     else console.log(JSON.stringify(result.body));
     return result.exitCode;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected error";
+    const message = requestFailureText(error);
     console.error(message);
     if (error instanceof UsageError) return 2;
     if (error instanceof RequestError) {

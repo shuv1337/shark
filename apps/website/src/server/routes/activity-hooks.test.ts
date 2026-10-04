@@ -657,4 +657,46 @@ describe("Live Activity webhook routes", () => {
       ).status,
     ).toBe(404);
   });
+
+  it("names the rejected webhook field and still updates a partial activity", async () => {
+    const created = await start();
+    const body = (await created.json()) as { activityId: string };
+    const invalid = await activityRequest(TOKEN, `/${body.activityId}`, "PATCH", {
+      progress: "0.7",
+      activity: { status: "partial" },
+    });
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toMatchObject({
+      ok: false,
+      error: "Invalid Live Activity update",
+      diagnostic: expect.stringContaining("rejected field progress"),
+    });
+
+    const { eq } = await import("drizzle-orm");
+    await db
+      .update(schema.liveActivity)
+      .set({ status: "partial" })
+      .where(eq(schema.liveActivity.id, body.activityId));
+    const updated = await activityRequest(TOKEN, `/${body.activityId}`, "PATCH", {
+      status: "Testing",
+    });
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toMatchObject({
+      ok: true,
+      status: "partial",
+      state: { status: "Testing" },
+    });
+
+    const ended = await activityRequest(TOKEN, `/${body.activityId}/end`, "POST", {
+      status: "Stopped",
+    });
+    expect(ended.status).toBe(200);
+    const again = await activityRequest(TOKEN, `/${body.activityId}`, "PATCH", { status: "Later" });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toMatchObject({
+      ok: false,
+      diagnostic: "rejected state: ended",
+      status: "ended",
+    });
+  });
 });

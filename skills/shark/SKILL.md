@@ -225,8 +225,10 @@ stable `--key`, then call `activity end` on every terminal path: success, failur
 agent cleanup. Give the end request its own stable `--idempotency-key` so cleanup can be retried.
 A separate `notify` call is an independent inbox item; it does not correlate with or end a Live
 Activity, even when the title and requester match. If an update or end reports
-`MissingUpdateToken`, do not start a replacement merely to clear it. End the existing activity once
-the task is terminal; SHark records that state and can replay it when iOS registers the token late.
+`MissingUpdateToken`, do not start a replacement merely to clear it. A `partial` activity is still
+live: keep updating it, and end it on the terminal path. SHark records that end and can replay it
+when iOS registers the token late. A 400 `diagnostic` names the rejected field; a 409 `diagnostic`
+names the terminal state.
 
 ## Approve Coding-Agent Permissions
 
