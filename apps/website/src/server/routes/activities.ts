@@ -488,28 +488,45 @@ export async function dispatchLiveActivity(
     accepted: results.filter((result) => result.accepted).length,
     failed: results.filter((result) => !result.accepted).length,
     errors: [...new Set(results.flatMap((result) => (result.reason ? [result.reason] : [])))],
-    // True when the row mutation is stored and every push is waiting on an update token. Judged
-    // per delivery, like operationUpdateTokenPending, so a rejection without a reason blocks it.
-    updateTokenPending:
-      results.length > 0 &&
-      results.every((result) => !result.accepted && result.reason === MISSING_UPDATE_TOKEN),
+    // The fresh response and a later idempotent replay both read these attempt rows.
+    updateTokenPending: await operationUpdateTokenPending({
+      id: operationId,
+      event: eventName,
+    }),
   };
+}
+
+/**
+ * True only when every attempt failed because the update token has not arrived.
+ * No attempts means nothing live was dispatched. A failure with no reason, or any
+ * other reason, is not waiting on a token. `accepted` is true only for APNs 200.
+ */
+export function isUpdateTokenPending(
+  attempts: readonly { accepted: boolean; reason: string | null }[],
+): boolean {
+  return (
+    attempts.length > 0 &&
+    attempts.every((attempt) => !attempt.accepted && attempt.reason === MISSING_UPDATE_TOKEN)
+  );
 }
 
 export async function operationUpdateTokenPending(operation: {
   id: string;
   event: string;
-  acceptedCount: number;
-  failedCount: number;
 }): Promise<boolean> {
   if (operation.event !== "update" && operation.event !== "end") return false;
-  if (operation.acceptedCount !== 0 || operation.failedCount <= 0) return false;
   const attempts = await db
-    .select({ reason: liveActivityDeliveryAttempt.apnsReason })
+    .select({
+      status: liveActivityDeliveryAttempt.apnsStatus,
+      reason: liveActivityDeliveryAttempt.apnsReason,
+    })
     .from(liveActivityDeliveryAttempt)
     .where(eq(liveActivityDeliveryAttempt.operationId, operation.id));
-  return (
-    attempts.length > 0 && attempts.every((attempt) => attempt.reason === MISSING_UPDATE_TOKEN)
+  return isUpdateTokenPending(
+    attempts.map((attempt) => ({
+      accepted: attempt.status === 200,
+      reason: attempt.reason,
+    })),
   );
 }
 

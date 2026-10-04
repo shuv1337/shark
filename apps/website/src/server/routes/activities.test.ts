@@ -839,9 +839,24 @@ describe("Live Activity agent routes", () => {
     apnsCalls.length = 0;
     const update = await agent(`/${body.activity.id}`, WRITE_SECRET, {
       method: "PATCH",
+      headers: { "Idempotency-Key": "transferred-update" },
       body: JSON.stringify({ status: "Must not dispatch" }),
     });
-    expect(await update.json()).toMatchObject({ accepted: 0, activity: { status: "failed" } });
+    const updateBody = (await update.json()) as { updateTokenPending?: boolean };
+    expect(updateBody).toMatchObject({
+      accepted: 0,
+      failed: 0,
+      activity: { status: "failed" },
+    });
+    expect(updateBody.updateTokenPending).toBeUndefined();
+    const updateReplay = await agent(`/${body.activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      headers: { "Idempotency-Key": "transferred-update" },
+      body: JSON.stringify({ status: "Must not dispatch" }),
+    });
+    const updateReplayBody = (await updateReplay.json()) as { updateTokenPending?: boolean };
+    expect(updateReplayBody).toMatchObject({ accepted: 0, failed: 0, idempotent: true });
+    expect(updateReplayBody.updateTokenPending).toBeUndefined();
     expect(apnsCalls).toHaveLength(0);
   });
 
@@ -902,6 +917,71 @@ describe("Live Activity agent routes", () => {
       updateTokenCiphertext: null,
       lastApnsReason: "OwnerChanged",
     });
+  });
+
+  it("does not treat an already-failed delivery with no update token as token-pending", async () => {
+    for (const event of ["update", "end"] as const) {
+      const created = await start({
+        title: `Already failed ${event}`,
+        status: "Running",
+        deviceIds: ["activity_dev_1"],
+      });
+      const body = (await created.json()) as { activity: { id: string } };
+      await db
+        .update(schema.liveActivityDelivery)
+        .set({
+          status: "failed",
+          updateTokenCiphertext: null,
+          updateTokenUpdatedAt: null,
+          lastApnsReason: "OwnerChanged",
+        })
+        .where(eq(schema.liveActivityDelivery.activityId, body.activity.id));
+
+      apnsCalls.length = 0;
+      const request = (key: string) =>
+        event === "update"
+          ? agent(`/${body.activity.id}`, WRITE_SECRET, {
+              method: "PATCH",
+              headers: { "Idempotency-Key": key },
+              body: JSON.stringify({ status: "Must not dispatch" }),
+            })
+          : agent(`/${body.activity.id}/end`, WRITE_SECRET, {
+              method: "POST",
+              headers: { "Idempotency-Key": key },
+              body: JSON.stringify({ status: "Stopped" }),
+            });
+      const response = await request(`failed-only-${event}`);
+      expect(response.status).toBe(200);
+      const payload = (await response.json()) as {
+        message?: string;
+        updateTokenPending?: boolean;
+      };
+      expect(payload).toMatchObject({
+        accepted: 0,
+        failed: 0,
+        activity: { status: event === "end" ? "ended" : "failed" },
+      });
+      expect(payload.message).toBeUndefined();
+      expect(payload.updateTokenPending).toBeUndefined();
+      expect(apnsCalls).toHaveLength(0);
+
+      const replayBody = (await (await request(`failed-only-${event}`)).json()) as {
+        updateTokenPending?: boolean;
+      };
+      expect(replayBody).toMatchObject({ accepted: 0, failed: 0, idempotent: true });
+      expect(replayBody.updateTokenPending).toBeUndefined();
+      expect(
+        db
+          .select()
+          .from(schema.liveActivityDelivery)
+          .where(eq(schema.liveActivityDelivery.activityId, body.activity.id))
+          .get(),
+      ).toMatchObject({
+        status: "failed",
+        updateTokenCiphertext: null,
+        lastApnsReason: "OwnerChanged",
+      });
+    }
   });
 
   it("acknowledges a stored update that is waiting on the update token", async () => {

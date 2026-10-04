@@ -246,6 +246,9 @@ remains when `accepted` is `0` and `updateTokenPending` is absent, including `ac
 no delivery and a real APNs rejection. Once APNs rejects a registered update token (for example
 `Unregistered` after the activity is dismissed on the phone), later updates and ends keep reporting
 that reason and, when no other device accepts, exit `7` until the phone registers a new token.
+When every delivery is already `failed` and has no update token, agent and webhook update and end
+both skip those rows. The response is `accepted: 0`, `failed: 0`, without `updateTokenPending`,
+and the command exits `7`. That stored end is not replayed when a token arrives later.
 
 A `partial` activity is still live. Keep updating it, and end it when the task is finished. Before
 a progress update, run `activity get <id|key>` and continue only while `.activity.status` is
