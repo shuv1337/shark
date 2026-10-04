@@ -57,6 +57,25 @@ export type ActivityRequester =
   | { requesterTokenId: string; requesterServiceId?: never }
   | { requesterTokenId?: never; requesterServiceId: string };
 
+const MISSING_UPDATE_TOKEN = "MissingUpdateToken";
+// The reasons isInvalidApnsTokenReason accepts, for SQL predicates.
+const INVALID_UPDATE_TOKEN_REASONS = ["BadDeviceToken", "DeviceTokenNotForTopic", "Unregistered"];
+
+/**
+ * Matches a stored end the delivery could not send for lack of a usable update token. Either no
+ * token had registered yet, or APNs had rejected the previous one and sendDeliveryEvent kept
+ * that reason without reaching APNs again, which leaves the attempt without an APNs status.
+ */
+export function unsentTerminalDelivery() {
+  return or(
+    eq(liveActivityDelivery.lastApnsReason, MISSING_UPDATE_TOKEN),
+    and(
+      isNull(liveActivityDelivery.lastApnsStatus),
+      inArray(liveActivityDelivery.lastApnsReason, INVALID_UPDATE_TOKEN_REASONS),
+    ),
+  );
+}
+
 function hash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
@@ -290,7 +309,8 @@ async function recordDelivery(
   result: Awaited<ReturnType<typeof sendLiveActivityPush>>,
 ): Promise<void> {
   const now = new Date();
-  const invalid = isInvalidApnsTokenReason(result.reason);
+  // Status 0 is a result SHark produced without reaching APNs, so it must not clear a token.
+  const invalid = result.status !== 0 && isInvalidApnsTokenReason(result.reason);
   db.transaction((tx) => {
     tx.insert(liveActivityDeliveryAttempt)
       .values({
@@ -381,10 +401,15 @@ async function sendDeliveryEvent(
     encryptedToken = delivery.updateTokenCiphertext;
   }
   if (!encryptedToken) {
+    // A token APNs rejected is not pending. Keep reporting that rejection until a new one registers.
+    const invalidated = isInvalidApnsTokenReason(delivery.lastApnsReason)
+      ? delivery.lastApnsReason
+      : null;
     return {
       status: 0,
       apnsId: null,
-      reason: eventName === "start" ? "MissingPushToStartToken" : "MissingUpdateToken",
+      reason:
+        eventName === "start" ? "MissingPushToStartToken" : (invalidated ?? MISSING_UPDATE_TOKEN),
       accepted: false,
     };
   }
@@ -443,7 +468,7 @@ export async function dispatchLiveActivity(
   operationId: string,
   eventName: LiveActivityApnsEvent,
   requester: ActivityRequester,
-): Promise<{ accepted: number; failed: number; errors: string[] }> {
+): Promise<{ accepted: number; failed: number; errors: string[]; updateTokenPending: boolean }> {
   const results = await Promise.all(
     deliveries.map(async (delivery) => {
       const result = await sendDeliveryEvent(row, delivery, eventName);
@@ -463,23 +488,12 @@ export async function dispatchLiveActivity(
     accepted: results.filter((result) => result.accepted).length,
     failed: results.filter((result) => !result.accepted).length,
     errors: [...new Set(results.flatMap((result) => (result.reason ? [result.reason] : [])))],
+    // True when the row mutation is stored and every push is waiting on an update token. Judged
+    // per delivery, like operationUpdateTokenPending, so a rejection without a reason blocks it.
+    updateTokenPending:
+      results.length > 0 &&
+      results.every((result) => !result.accepted && result.reason === MISSING_UPDATE_TOKEN),
   };
-}
-
-const MISSING_UPDATE_TOKEN = "MissingUpdateToken";
-
-/** True when the row mutation is stored and every push is waiting on an update token. */
-export function isUpdateTokenPending(result: {
-  accepted: number;
-  failed: number;
-  errors: readonly string[];
-}): boolean {
-  return (
-    result.accepted === 0 &&
-    result.failed > 0 &&
-    result.errors.length > 0 &&
-    result.errors.every((error) => error === MISSING_UPDATE_TOKEN)
-  );
 }
 
 export async function operationUpdateTokenPending(operation: {
@@ -515,7 +529,7 @@ async function idempotentMutationResponse(replay: {
 
 /**
  * Replays an explicit terminal operation when iOS supplies the per-activity update token only
- * after the original end attempt failed with MissingUpdateToken. The existing operation is reused
+ * after the original end attempt found no usable one. The existing operation is reused
  * so retries do not create a second lifecycle event or consume another notification allowance.
  */
 export async function replayLateTerminalDelivery(
@@ -533,7 +547,7 @@ export async function replayLateTerminalDelivery(
         eq(liveActivityDelivery.id, deliveryId),
         eq(liveActivityDelivery.status, "ended"),
         eq(liveActivityDelivery.lastEvent, "end"),
-        eq(liveActivityDelivery.lastApnsReason, "MissingUpdateToken"),
+        unsentTerminalDelivery(),
         isNotNull(liveActivityDelivery.updateTokenCiphertext),
       ),
     )
@@ -1511,7 +1525,7 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       accepted: result.accepted,
       failed: result.failed,
       ...(result.errors.length ? { message: result.errors.join("; ") } : {}),
-      ...(isUpdateTokenPending(result) ? { updateTokenPending: true } : {}),
+      ...(result.updateTokenPending ? { updateTokenPending: true } : {}),
     });
   })
   .post("/:identifier/end", requireScopes("activities:write"), async (c) => {
@@ -1628,10 +1642,16 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       throw error;
     }
     if (!row) return c.json({ error: "Sequence conflict" }, 409);
+    // Same live fanout as update. A failed delivery has no token coming and keeps its reason.
     const deliveries = await db
       .select()
       .from(liveActivityDelivery)
-      .where(eq(liveActivityDelivery.activityId, row.id));
+      .where(
+        and(
+          eq(liveActivityDelivery.activityId, row.id),
+          inArray(liveActivityDelivery.status, ["pending", "accepted", "active"]),
+        ),
+      );
     const result = await dispatchLiveActivity(row, deliveries, operationId, "end", {
       requesterTokenId: token.id,
     });
@@ -1651,7 +1671,7 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       accepted: result.accepted,
       failed: result.failed,
       ...(result.errors.length ? { message: result.errors.join("; ") } : {}),
-      ...(isUpdateTokenPending(result) ? { updateTokenPending: true } : {}),
+      ...(result.updateTokenPending ? { updateTokenPending: true } : {}),
     });
   });
 

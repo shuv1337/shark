@@ -33,7 +33,6 @@ import {
   expireLiveActivity,
   findBlockingDeliveries,
   invalidLiveActivityBody,
-  isUpdateTokenPending,
   liveKeyedActivity,
   operationUpdateTokenPending,
   replaceBlockingDeliveries,
@@ -172,8 +171,8 @@ async function enforceRateLimit(service: ServiceRow, owner: UserRow) {
   return null;
 }
 
-function pendingTokenAck(result: { accepted: number; failed: number; errors: readonly string[] }) {
-  return isUpdateTokenPending(result)
+function pendingTokenAck(result: { updateTokenPending: boolean }) {
+  return result.updateTokenPending
     ? { updateTokenPending: true as const, message: "MissingUpdateToken" }
     : {};
 }

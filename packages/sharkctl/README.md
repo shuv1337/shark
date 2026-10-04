@@ -155,7 +155,9 @@ the response has already moved forward, so a later update uses that sequence or 
 stored update is not delivered later on its own; the next push that has a token sends the stored
 props. An end with the same message stays terminal and is replayed when the token registers. Do not
 start a replacement activity to clear the error. `activity start` with no delivery, and a real APNs
-rejection (`accepted: 0` without `updateTokenPending`), still exit 7.
+rejection (`accepted: 0` without `updateTokenPending`), still exit 7. Once APNs rejects a registered
+update token (for example `Unregistered` after the activity is dismissed on the phone), later
+updates and ends keep reporting that reason and exit 7 until the phone registers a new token.
 
 A `partial` activity is still live: keep updating it, and end it on the terminal path. A failed
 sibling delivery does not pin the activity in `partial` after the remaining devices accept. Before
@@ -165,10 +167,12 @@ a progress update, run `activity get`. Continue while the status is `starting`, 
 If an update or end reports `Live Activity is already terminal (<status>)`, stderr also prints
 `status=<ended|expired|failed> endedAt=<iso-or-null> expiresAt=<iso-or-null>`. `<status>` is
 `ended`, `expired`, or `failed`. `expired` means `expiresAt` has passed. `ended` means an explicit
-end, a `--replace` takeover, or a resolved interactive prompt. `failed` means a later update found
-no retryable device delivery. SHark does not end an activity on a short timer. Restart with the
-same `--key` and `--replace` only when the task is still running, the status is `ended` or
-`failed`, and `expiresAt` is still in the future.
+end, a `--replace` takeover, or a resolved interactive prompt. `failed` means no device accepted
+the start (that `activity start` exited 7), or a later update found no retryable device delivery.
+SHark does not end an activity on a short timer. Restart with the same `--key` and `--replace` only
+when the task is still running, the status is `ended` or `failed`, and `expiresAt` is still in the
+future. If the restarted start itself exits 7, do not restart again: no device accepted it. Check
+`sharkctl devices list` and the start `message` instead.
 
 ## permissions
 

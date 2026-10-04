@@ -6,7 +6,7 @@ import { liveActivity, liveActivityDelivery, user } from "../db/schema";
 import { isEmailAllowed } from "../lib/admission";
 import { verifyLiveActivityRegistrationToken } from "../lib/live-activity-registration";
 import { encryptLiveActivityToken } from "../lib/token";
-import { replayLateTerminalDelivery } from "./activities";
+import { replayLateTerminalDelivery, unsentTerminalDelivery } from "./activities";
 
 export const liveActivityRegistrationRoute = new Hono().post("/update-token", async (c) => {
   const parsed = liveActivityBackgroundTokenSchema.safeParse(await c.req.json().catch(() => null));
@@ -39,7 +39,7 @@ export const liveActivityRegistrationRoute = new Hono().post("/update-token", as
               eq(liveActivityDelivery.status, "ended"),
               eq(liveActivity.status, "ended"),
               eq(liveActivityDelivery.lastEvent, "end"),
-              eq(liveActivityDelivery.lastApnsReason, "MissingUpdateToken"),
+              unsentTerminalDelivery(),
               isNull(liveActivityDelivery.updateTokenCiphertext),
             ),
           ),

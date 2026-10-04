@@ -6,6 +6,9 @@ process.env.DATABASE_URL = ":memory:";
 
 const authState = vi.hoisted(() => ({ userId: "hook_activity_user" as string | null }));
 const apnsCalls = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+const apnsState = vi.hoisted(() => ({
+  rejection: null as { status: number; reason: string | null } | null,
+}));
 const billingState = vi.hoisted(() => ({ pro: true }));
 
 vi.mock("../auth", () => ({
@@ -54,6 +57,7 @@ vi.mock("../lib/apns", () => ({
     priority: number,
   ) => {
     apnsCalls.push({ token, environment, input, priority });
+    if (apnsState.rejection) return { ...apnsState.rejection, apnsId: null, accepted: false };
     return { status: 200, apnsId: `hook-apns-${apnsCalls.length}`, reason: null, accepted: true };
   },
 }));
@@ -119,6 +123,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   authState.userId = "hook_activity_user";
   apnsCalls.length = 0;
+  apnsState.rejection = null;
   billingState.pro = true;
   await db.delete(schema.liveActivity);
 });
@@ -778,5 +783,62 @@ describe("Live Activity webhook routes", () => {
       endedAt: expect.any(String),
       expiresAt: expect.any(String),
     });
+  });
+
+  it("omits updateTokenPending when a sibling webhook push is rejected without a reason", async () => {
+    const now = new Date();
+    await db.insert(schema.device).values({
+      id: "hook_activity_device_2",
+      userId: "hook_activity_user",
+      expoPushToken: "ExponentPushToken[hook-activity-2]",
+      platform: "ios",
+      active: true,
+      liveActivityPushToStartTokenCiphertext: encryptLiveActivityToken("bb".repeat(32)),
+      liveActivityTokenEnvironment: "sandbox",
+      liveActivitySchemaVersion: 1,
+      liveActivityTokenUpdatedAt: now,
+      createdAt: now,
+      lastSeenAt: now,
+    });
+    try {
+      const started = await activityRequest(TOKEN, "", "POST", {
+        title: "Deploy #185",
+        status: "Building",
+        deviceIds: ["hook_activity_device", "hook_activity_device_2"],
+      });
+      const startBody = (await started.json()) as { activityId: string };
+      const registered = await app.request("/api/devices/live-activity/update-token", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          deviceId: "hook_activity_device",
+          activityId: startBody.activityId,
+          nativeActivityId: "native-hook-reasonless",
+          updateToken: "cd".repeat(32),
+          environment: "sandbox",
+          schemaVersion: 1,
+        }),
+      });
+      expect(registered.status).toBe(200);
+
+      apnsState.rejection = { status: 500, reason: null };
+      for (const [path, method, key] of [
+        [`/${startBody.activityId}`, "PATCH", "reasonless-hook-update"],
+        [`/${startBody.activityId}/end`, "POST", "reasonless-hook-end"],
+      ] as const) {
+        const first = await activityRequest(TOKEN, path, method, { status: "Rejected" }, key);
+        expect(first.status).toBe(200);
+        const firstBody = (await first.json()) as { updateTokenPending?: boolean };
+        expect(firstBody).toMatchObject({ ok: true, accepted: 0, failed: 2 });
+        expect(firstBody.updateTokenPending).toBeUndefined();
+        const replay = await activityRequest(TOKEN, path, method, { status: "Rejected" }, key);
+        const replayBody = (await replay.json()) as { updateTokenPending?: boolean };
+        expect(replayBody).toMatchObject({ ok: true, idempotent: true, accepted: 0, failed: 2 });
+        expect(replayBody.updateTokenPending).toBeUndefined();
+      }
+    } finally {
+      await db.delete(schema.liveActivity);
+      await db.delete(schema.device).where(eq(schema.device.id, "hook_activity_device_2"));
+    }
   });
 });

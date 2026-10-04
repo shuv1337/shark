@@ -243,7 +243,9 @@ The write still advances `.activity.sequence`, so a later update uses that seque
 has a token sends the stored props. A stored end is replayed when the token arrives. Leave the
 existing activity in place. Do not start a replacement to clear `MissingUpdateToken`. Exit `7`
 remains when `accepted` is `0` and `updateTokenPending` is absent, including `activity start` with
-no delivery and a real APNs rejection.
+no delivery and a real APNs rejection. Once APNs rejects a registered update token (for example
+`Unregistered` after the activity is dismissed on the phone), later updates and ends keep reporting
+that reason and exit `7` until the phone registers a new token.
 
 A `partial` activity is still live. Keep updating it, and end it when the task is finished. Before
 a progress update, run `activity get <id|key>` and continue only while `.activity.status` is
@@ -252,9 +254,12 @@ a progress update, run `activity get <id|key>` and continue only while `.activit
 If an update or end reports `Live Activity is already terminal (<status>)`, the next stderr line is
 `status=<ended|expired|failed> endedAt=<iso-or-null> expiresAt=<iso-or-null>`. SHark does not end
 an activity on a short timer. `expired` means `expiresAt` has passed. `ended` means an explicit
-end, a `--replace` takeover, or a resolved interactive prompt. `failed` means a later update found
-no retryable device delivery. When the task is still running, the status is `ended` or `failed`,
-and `expiresAt` is still in the future, restart with the same `--key` and `--replace`.
+end, a `--replace` takeover, or a resolved interactive prompt. `failed` means no device accepted
+the start (that `activity start` exited `7`), or a later update found no retryable device delivery.
+When the task is still running, the status is `ended` or `failed`, and `expiresAt` is still in the
+future, restart with the same `--key` and `--replace`. If the restarted start itself exits `7`, do
+not restart again: no device accepted it. Check `sharkctl devices list` and the start `message`
+instead.
 
 ## Approve Coding-Agent Permissions
 
