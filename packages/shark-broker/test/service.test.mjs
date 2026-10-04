@@ -190,6 +190,30 @@ test("macOS reinstall waits until launchctl print drops the label", async (t) =>
   assert.ok(f.now() - started >= 200);
 });
 
+test("macOS reinstall outwaits a daemon that is slow to exit", async (t) => {
+  const f = await managerFixture(t);
+  await seedLaunchAgent(f.manager);
+  const started = f.now();
+  // 12 seconds of a visible label: longer than the bootstrap retries alone could absorb.
+  f.set({ loaded: true, unloadPrints: 120 });
+  assert.equal((await f.manager.install(f.store)).healthy, true);
+  assert.equal(f.calls.filter(([, args]) => args[0] === "bootstrap").length, 1);
+  assert.ok(f.now() - started >= 12_000);
+});
+
+test("macOS reinstall stops waiting for the label after the launchd exit timeout", async (t) => {
+  const f = await managerFixture(t);
+  await seedLaunchAgent(f.manager);
+  const started = f.now();
+  f.set({ loaded: true, unloadPrints: 10_000 });
+  assert.equal((await f.manager.install(f.store)).healthy, true);
+  const bootoutAt = f.calls.findIndex(([, args]) => args[0] === "bootout");
+  const bootstrapAt = f.calls.findIndex(([, args]) => args[0] === "bootstrap");
+  assert.ok(bootstrapAt > bootoutAt);
+  const waited = f.now() - started;
+  assert.ok(waited >= 25_000 && waited < 30_000, `waited ${waited}ms`);
+});
+
 test("macOS reinstall retries a bootstrap that races the previous bootout", async (t) => {
   const f = await managerFixture(t);
   const definition = await seedLaunchAgent(f.manager);

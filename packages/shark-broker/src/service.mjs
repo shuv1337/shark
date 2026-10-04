@@ -258,7 +258,9 @@ export class ServiceManager {
     }
   }
   async waitUntilUnloaded() {
-    const deadline = this.now() + 5_000;
+    // The label stays until the old process exits. The daemon finishes its current poll first,
+    // and launchd kills it after its default 20 second exit timeout, so wait a little past that.
+    const deadline = this.now() + 25_000;
     while (this.now() <= deadline) {
       const result = await this.run("/bin/launchctl", ["print", `gui/${this.uid}/${label}`]);
       if (result.code !== 0) return;
