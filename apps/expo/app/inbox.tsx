@@ -280,23 +280,16 @@ export default function InboxScreen() {
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.brandRow}>
-            <View style={styles.brandGroup}>
-              <View style={styles.brandMark} />
-              <Text style={styles.brand}>Hark</Text>
-            </View>
             <Pressable
-              accessibilityLabel="Settings"
+              accessibilityLabel="Back to apps"
               accessibilityRole="button"
-              onPress={() => router.push("/settings")}
+              onPress={() => (router.canGoBack() ? router.back() : router.replace("/apps"))}
               style={({ pressed }) => [styles.settingsButton, pressed && styles.iconButtonPressed]}
             >
-              <SymbolView
-                name="gearshape.fill"
-                size={17}
-                tintColor={colors.muted}
-                style={styles.settingsIcon}
-              />
+              <SymbolView name="chevron.left" size={18} tintColor={colors.ink} weight="semibold" />
             </Pressable>
+            <Text style={styles.brand}>Inbox</Text>
+            <View style={styles.settingsButton} />
           </View>
 
           {projectGroups.length > 0 ? (
@@ -1087,23 +1080,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-  },
-  brandGroup: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 9,
-  },
-  brandMark: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: colors.accent,
+    marginHorizontal: -12,
   },
   brand: {
     color: colors.ink,
     fontFamily: fonts.semibold,
-    fontSize: 18,
-    letterSpacing: tightTracking(18),
+    fontSize: 17,
+    letterSpacing: tightTracking(17),
   },
   settingsButton: {
     width: 44,
@@ -1111,10 +1094,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 22,
-  },
-  settingsIcon: {
-    width: 20,
-    height: 20,
   },
   activityPicker: {
     gap: 6,

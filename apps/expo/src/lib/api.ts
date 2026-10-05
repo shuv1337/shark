@@ -1,4 +1,8 @@
 import type {
+  AppDto,
+  AppLaunchInput,
+  AppPassResponse,
+  AppSharingInput,
   DeviceDto,
   DeviceRegisterInput,
   DeviceUnregisterInput,
@@ -108,6 +112,26 @@ export const api = {
       `/api/inbox/notifications/${encodeURIComponent(id)}/unread`,
       { method: "POST", body: JSON.stringify({}) },
     ),
+  listApps: () => request<{ apps: AppDto[] }>("/api/apps"),
+  getApp: (id: string) => request<{ app: AppDto }>(`/api/apps/${encodeURIComponent(id)}`),
+  updateAppSharing: (id: string, input: AppSharingInput) =>
+    request<{ app: AppDto }>(`/api/apps/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+  /** Issues a short-lived signed pass. Fails with `consent_required` until approved. */
+  getAppPass: (id: string, input: AppLaunchInput = {}) =>
+    request<AppPassResponse>(`/api/apps/${encodeURIComponent(id)}/pass`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  revokeApp: (id: string) =>
+    request<{ app: AppDto }>(`/api/apps/${encodeURIComponent(id)}/revoke`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  removeApp: (id: string) =>
+    request<{ ok: true }>(`/api/apps/${encodeURIComponent(id)}`, { method: "DELETE" }),
   markAllNotificationsRead: (input: InboxMarkAllReadInput) =>
     request<{ ok: true; updated: number }>("/api/inbox/notifications/read-all", {
       method: "POST",

@@ -14,6 +14,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { AppIcon } from "../../src/components/app-icon";
 import { api, classifyNotificationDetailFailure } from "../../src/lib/api";
 import { useSession } from "../../src/lib/auth";
 import { linkifyBody, openBodyLink, openTopLevelDestination } from "../../src/lib/inbox-body";
@@ -162,7 +163,43 @@ export default function NotificationDetailScreen() {
 
           <BodyText body={notification.body} />
 
-          {notification.url ? (
+          {notification.app ? (
+            <View style={styles.appCard}>
+              <View style={styles.appIdentity}>
+                <AppIcon
+                  iconUrl={notification.app.iconUrl}
+                  name={notification.app.name}
+                  size={44}
+                />
+                <View style={styles.appCopy}>
+                  <Text style={styles.appName}>{notification.app.name}</Text>
+                  <Text numberOfLines={1} style={styles.appHost}>
+                    {appDestinationLabel(notification.app.origin, notification.url)}
+                  </Text>
+                </View>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  if (!notification.app) return;
+                  router.push({
+                    pathname: "/web/[id]",
+                    params: {
+                      id: notification.app.id,
+                      ...(notification.url ? { url: notification.url } : {}),
+                    },
+                  });
+                }}
+                style={({ pressed }) => [styles.appButton, pressed && styles.openButtonPressed]}
+              >
+                <Text style={styles.openButtonText}>Open app</Text>
+              </Pressable>
+              <View style={styles.appNote}>
+                <View style={styles.appNoteDot} />
+                <Text style={styles.appNoteText}>Signs you in with Hark. No password needed.</Text>
+              </View>
+            </View>
+          ) : notification.url ? (
             <Pressable
               accessibilityRole="button"
               onPress={() => {
@@ -178,6 +215,17 @@ export default function NotificationDetailScreen() {
       )}
     </SafeAreaView>
   );
+}
+
+/** Host plus path of the page an app notification opens, e.g. `app.example.com/builds/185`. */
+function appDestinationLabel(origin: string, url: string | null): string {
+  try {
+    const target = new URL(url && new URL(url).origin === origin ? url : origin);
+    const path = target.pathname === "/" ? "" : target.pathname;
+    return `${target.host}${path}`;
+  } catch {
+    return origin;
+  }
 }
 
 /**
@@ -374,6 +422,64 @@ const styles = StyleSheet.create({
   openButtonPressed: {
     backgroundColor: colors.accentPressed,
     transform: [{ scale: 0.98 }],
+  },
+  appCard: {
+    gap: 14,
+    marginTop: 24,
+    padding: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.line,
+    borderRadius: 18,
+    backgroundColor: colors.surface,
+  },
+  appIdentity: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  appCopy: {
+    minWidth: 0,
+    flex: 1,
+    gap: 2,
+  },
+  appName: {
+    color: colors.ink,
+    fontFamily: fonts.semibold,
+    fontSize: 15,
+    lineHeight: 20,
+    letterSpacing: tightTracking(15),
+  },
+  appHost: {
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    lineHeight: 16,
+    letterSpacing: tightTracking(12),
+  },
+  appButton: {
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 22,
+    backgroundColor: colors.accent,
+  },
+  appNote: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+  appNoteDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.accent,
+  },
+  appNoteText: {
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    letterSpacing: tightTracking(12),
   },
   openButtonText: {
     color: "#FFFFFF",

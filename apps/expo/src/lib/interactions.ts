@@ -218,6 +218,24 @@ function openNotificationDetail(compositeId: string): void {
   }
 }
 
+/** Opens a Hark web app, retrying once if the router is not mounted yet. */
+function openWebApp(appId: string, url: string | undefined): void {
+  const navigate = () => {
+    router.push({ pathname: "/web/[id]", params: { id: appId, ...(url ? { url } : {}) } });
+  };
+  try {
+    navigate();
+  } catch {
+    setTimeout(() => {
+      try {
+        navigate();
+      } catch {
+        // The app stays one tap away on the home screen.
+      }
+    }, 500);
+  }
+}
+
 export async function handleNotificationResponse(
   response: Notifications.NotificationResponse,
 ): Promise<void> {
@@ -228,9 +246,17 @@ export async function handleNotificationResponse(
         responseToken?: string;
         url?: string;
         eventId?: string;
+        appId?: string;
       }
     | undefined;
   if (response.actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER) {
+    // App notifications open inside Hark, signed in; the web view only honors
+    // `url` when it belongs to the app origin.
+    if (typeof data?.appId === "string" && /^app_[A-Za-z0-9_-]{8,64}$/.test(data.appId)) {
+      void trackAppEvent("notification_opened", { path: "/web", properties: {} });
+      openWebApp(data.appId, typeof data.url === "string" ? data.url : undefined);
+      return;
+    }
     const destination = tapDestinationUrlSchema.safeParse(data?.url);
     let destinationHost: string | undefined;
     if (destination.success) {

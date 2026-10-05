@@ -14,7 +14,7 @@
   "dependencies": {
     "@bacons/apple-targets": "5.0.0",
     "@better-auth/expo": "^1.6.25",
-    "@expo-google-fonts/inter": "^0.4.2",
+    "@expo-google-fonts/inter-tight": "^0.4.2",
     "@expo/metro-runtime": "~57.0.8",
     "@expo/ui": "~57.0.9",
     "@hark/contracts": "workspace:*",
@@ -43,7 +43,8 @@
     "react-dom": "19.2.3",
     "react-native": "0.86.2",
     "react-native-safe-area-context": "~5.7.0",
-    "react-native-screens": "~4.26.0"
+    "react-native-screens": "~4.26.0",
+    "react-native-webview": "13.16.1"
   },
   "devDependencies": {
     "@better-auth/core": "1.6.25",

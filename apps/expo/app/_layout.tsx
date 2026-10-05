@@ -1,9 +1,9 @@
 import {
-  Inter_400Regular,
-  Inter_500Medium,
-  Inter_600SemiBold,
+  InterTight_400Regular,
+  InterTight_500Medium,
+  InterTight_600SemiBold,
   useFonts,
-} from "@expo-google-fonts/inter";
+} from "@expo-google-fonts/inter-tight";
 import * as Notifications from "expo-notifications";
 import { Stack, usePathname } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
@@ -37,9 +37,9 @@ export default function RootLayout() {
   const { data: session } = useSession();
   const pathname = usePathname();
   const [fontsLoaded, fontError] = useFonts({
-    Inter_400Regular,
-    Inter_500Medium,
-    Inter_600SemiBold,
+    InterTight_400Regular,
+    InterTight_500Medium,
+    InterTight_600SemiBold,
   });
 
   useEffect(() => {

@@ -12,11 +12,15 @@ export const colors = {
 } as const;
 
 export const fonts = {
-  regular: "Inter_400Regular",
-  medium: "Inter_500Medium",
-  semibold: "Inter_600SemiBold",
+  regular: "InterTight_400Regular",
+  medium: "InterTight_500Medium",
+  semibold: "InterTight_600SemiBold",
   mono: "Menlo",
 } as const;
 
-/** React Native letterSpacing is measured in points, so convert -2% per size. */
-export const tightTracking = (fontSize: number) => fontSize * -0.02;
+/**
+ * Inter Tight already carries display spacing, so text keeps its native
+ * tracking and only large headings tighten by 1%. React Native measures
+ * letterSpacing in points.
+ */
+export const tightTracking = (fontSize: number) => (fontSize >= 24 ? fontSize * -0.01 : 0);
