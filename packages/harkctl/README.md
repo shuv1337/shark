@@ -12,7 +12,8 @@ harkctl
 ├─ activity     start · update · end · get · list
 ├─ permissions  setup · doctor · uninstall
 ├─ devices      list
-└─ services     create · list
+├─ services     create · list
+└─ apps         create · list · remove
 ```
 
 Start a browser authorization flow and approve the requested scopes with your signed-in Hark account:
@@ -35,8 +36,8 @@ harkctl auth logout
 
 Login prints a short code and verification URL to stderr, opens the system browser when interactive,
 polls at the server-provided interval, and atomically writes credentials to a mode-`0600` file. The
-default scopes support notifications, asks, Live Activities, listing devices/services, and creating
-webhook services without requesting `events:read`. Every requested scope is shown on the browser authorization page before
+default scopes support notifications, asks, Live Activities, listing devices/services, creating
+webhook services, and managing web apps without requesting `events:read`. Every requested scope is shown on the browser authorization page before
 approval. Connected tokens appear under **Dashboard > Agent connections**, where they can be revoked.
 
 Use repeatable `--scope`, `--client-name`, and `--expires-in` to narrow or label access. `--no-open`
@@ -57,6 +58,8 @@ project names are case-insensitive per account and created on first use. `--summ
 the short text shown in the push banner and list previews while the full body stays readable in
 the app; provide one whenever the body is long. `--markdown` (or `--body-format markdown`) records
 the body as Markdown for future rendering; the app displays plain text with tappable links in V1.
+`--app <app_id>` opens that web app in Hark when the notification is tapped; `--url`, if given,
+must be on the app's origin.
 
 ```bash
 long_report="$(./release-report.sh)"
@@ -119,6 +122,16 @@ for notifications sent through that URL, while `--url` sets the default tap dest
 `--stdin` to supply the service object as JSON. `services list` shows existing services without
 printing their webhook credentials. Creating services requires `services:write`; existing CLI
 logins created before this scope was added need to sign in again.
+
+## apps
+
+`apps create --name <name> --url <url> [--icon <url>] [--project <name>]` registers a web app that
+opens full-screen in the Hark iPhone app with a signed Hark pass (see the
+[Web Apps docs](https://hark.ryan.ceo/docs#web-apps)). Creating an app with an existing URL updates
+it and prints `(updated existing)`. `apps list` and `apps remove <app_id>` manage registered apps.
+These commands print readable lines; pass `--json` for the API response. They require the
+`apps:read` and `apps:write` scopes; logins created before those scopes existed need to sign in
+again (`harkctl auth login`).
 
 ## activity
 

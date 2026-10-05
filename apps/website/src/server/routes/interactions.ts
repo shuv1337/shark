@@ -28,6 +28,7 @@ import {
   user as userTable,
 } from "../db/schema";
 import { failureBucket, track } from "../lib/analytics";
+import { resolveNotificationApp } from "../lib/apps";
 import { checkNotificationAllowance, getBilling, trackNotification } from "../lib/billing";
 import { newId } from "../lib/id";
 import { deliverInteractionCallbacks } from "../lib/interaction-callbacks";
@@ -138,6 +139,7 @@ function toNotificationDto(row: NotificationRow): AgentNotificationDto {
     projectId: row.projectId,
     summary: row.summary,
     ...(row.bodyFormat === "markdown" ? { bodyFormat: "markdown" as const } : {}),
+    ...(row.appId ? { appId: row.appId } : {}),
   };
 }
 
@@ -325,6 +327,15 @@ export const agentRoute = new Hono<AgentEnv>()
       }
     }
 
+    if (parsed.data.appId) {
+      const appResolution = await resolveNotificationApp(
+        token.userId,
+        parsed.data.appId,
+        parsed.data.url,
+      );
+      if (!appResolution.ok) return c.json({ error: appResolution.error }, 400);
+    }
+
     const [owner] = await db
       .select()
       .from(userTable)
@@ -390,6 +401,7 @@ export const agentRoute = new Hono<AgentEnv>()
       projectId: projectResolution.projectId,
       bodyFormat: parsed.data.bodyFormat ?? null,
       summary: parsed.data.summary ?? null,
+      appId: parsed.data.appId ?? null,
       createdAt: new Date(),
     };
 
@@ -441,6 +453,7 @@ export const agentRoute = new Hono<AgentEnv>()
         .digest("hex")
         .slice(0, 10)}`,
       ...(projectResolution.projectId ? { projectId: projectResolution.projectId } : {}),
+      ...(parsed.data.appId ? { appId: parsed.data.appId } : {}),
       resolved: {
         title: parsed.data.title,
         body: parsed.data.body,

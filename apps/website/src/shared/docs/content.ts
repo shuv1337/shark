@@ -274,6 +274,12 @@ export const DOC_CONTENT: DocSection[] = [
                 detail:
                   "`text` or `markdown`. Stored metadata describing the body; omitted means `text`.",
               },
+              {
+                name: "appId",
+                type: "string",
+                detail:
+                  "A [web app](https://hark.ryan.ceo/docs#web-apps) ID (`app_…`) on your account. Tapping opens that app in Hark, at `url` when given; `url` must then share the app's origin. Not combinable with `response`.",
+              },
             ],
           },
         ],
@@ -1066,6 +1072,12 @@ harkctl permissions doctor`,
                   "Record the body as Markdown (same as `--body-format markdown`); V1 renders plain text.",
               },
               {
+                name: "--app",
+                type: "app id",
+                detail:
+                  "Open this [web app](https://hark.ryan.ceo/docs#web-apps) in Hark when tapped; `--url` must stay on its origin.",
+              },
+              {
                 name: "--idempotency-key",
                 type: "string",
                 detail: "Safe retries: replays return the original result without a second push.",
@@ -1162,7 +1174,7 @@ harkctl activity end deploy --status "Shipped" --progress 1 --dismiss-after 45s`
         blocks: [
           {
             kind: "p",
-            text: "Every successful command prints exactly one JSON object to stdout; diagnostics go to stderr. Exit codes make answers branchable without parsing:",
+            text: "Every successful command prints exactly one JSON object to stdout (`apps` commands print readable lines unless you pass `--json`); diagnostics go to stderr. Exit codes make answers branchable without parsing:",
           },
           {
             kind: "bullets",
@@ -1182,6 +1194,108 @@ harkctl activity end deploy --status "Shipped" --progress 1 --dismiss-after 45s`
 else
   echo "Not approved" >&2
 fi`,
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: "web-apps",
+    lead: "Open any HTTPS site you control full-screen in the Hark iPhone app. Hark hands the page a short-lived signed Hark pass, so your site can identify the viewer without building its own login.",
+    subsections: [
+      {
+        id: "apps-register",
+        blocks: [
+          {
+            kind: "p",
+            text: "Register an app with `harkctl apps create`. Registering the same URL again updates its name, icon, or project. Apps appear in the Hark iPhone app, which asks you to approve sign-in the first time one opens; you can revoke that approval or choose whether your name and email are shared at any time.",
+          },
+          {
+            kind: "code",
+            language: "bash",
+            code: `harkctl apps create --name "Ops dashboard" \
+  --url https://ops.example.com --icon https://ops.example.com/icon.png
+
+harkctl apps list
+harkctl apps remove app_...`,
+          },
+          {
+            kind: "p",
+            text: "Launch URLs must use HTTPS; plain HTTP is accepted only for `localhost` development servers. Accounts hold up to 100 apps. Agent tokens need the `apps:read` and `apps:write` scopes; sign in again if your login predates them.",
+          },
+        ],
+      },
+      {
+        id: "apps-verify",
+        blocks: [
+          {
+            kind: "steps",
+            items: [
+              "Inside the Hark app, your page calls `await window.hark.getToken()`, which resolves to a pass string. `window.hark` exists only in Hark; `window.hark.close()` returns to the app.",
+              "The page sends the pass to your server, which verifies it as an ES256 JWT against [the Hark JWKS](https://hark.ryan.ceo/.well-known/jwks.json) — for example with `jwtVerify` from `jose`.",
+              "Require issuer `https://hark.ryan.ceo`, audience equal to your app's origin, `typ` `hark-pass+jwt`, and algorithm `ES256`, then start your own session.",
+            ],
+          },
+          {
+            kind: "table",
+            variant: "field",
+            caption: "Hark pass claims",
+            rows: [
+              {
+                name: "sub",
+                type: "string",
+                detail:
+                  "Stable user ID for your origin (`hk_…`). It differs for every other origin, so apps cannot correlate users.",
+              },
+              {
+                name: "aud",
+                type: "string",
+                detail: "Your app's origin, e.g. `https://app.example.com`.",
+              },
+              {
+                name: "iat / exp",
+                type: "number",
+                detail: "Passes expire two minutes after issue.",
+              },
+              {
+                name: "jti",
+                type: "string",
+                detail: "Unique per pass; reject reused values to block replay.",
+              },
+              {
+                name: "app_id",
+                type: "string",
+                detail: "The Hark app ID the pass was issued for.",
+              },
+              {
+                name: "name / email",
+                type: "string",
+                detail:
+                  "Present only when the owner shares them. Name is shared by default; email is not.",
+              },
+            ],
+          },
+          {
+            kind: "note",
+            text: "Never trust a pass you have not verified, and never treat it as a long-lived credential: verify once, then rely on your own session.",
+          },
+        ],
+      },
+      {
+        id: "apps-notify",
+        blocks: [
+          {
+            kind: "p",
+            text: "Pass `appId` on a webhook (or `--app` to `harkctl notify`) to open the app when the notification is tapped. Add `url` to deep-link within it; it must share the app's origin.",
+          },
+          {
+            kind: "code",
+            language: "json",
+            code: `{
+  "body": "Nightly report is ready",
+  "appId": "app_...",
+  "url": "https://ops.example.com/reports/latest"
+}`,
           },
         ],
       },

@@ -74,7 +74,7 @@ export function truncatePushText(text: string, maxJsonBytes: number): string {
  * Compatibility-critical fields are never touched: `to`, `title`, `body`
  * presence, `priority`, `mutableContent`, top-level `categoryId`, and the
  * data keys `v`, `eventId`, `serviceId`, `sourceId`, `sourceName`,
- * `conversationId`, `projectId`, `interactionId`, `interactionKind`,
+ * `conversationId`, `projectId`, `appId`, `interactionId`, `interactionKind`,
  * `categoryId`, `actionDigest`, `responseToken`, and withdrawal `command`s.
  */
 export const PUSH_FIELD_DROP_ORDER = ["richContent", "avatarUrl", "url"] as const;

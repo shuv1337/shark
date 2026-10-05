@@ -61,6 +61,15 @@ export const DOC_NAV = [
       { id: "cli-scripting", label: "Scripting and exit codes" },
     ],
   },
+  {
+    id: "web-apps",
+    label: "Web apps",
+    items: [
+      { id: "apps-register", label: "Register an app" },
+      { id: "apps-verify", label: "Verify the Hark pass" },
+      { id: "apps-notify", label: "Open from a notification" },
+    ],
+  },
 ] as const;
 
 type DocNavSection = (typeof DOC_NAV)[number];

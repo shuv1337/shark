@@ -1,5 +1,6 @@
 import {
   API_ERROR_CODE_NOT_FOUND,
+  type AppSummaryDto,
   INBOX_PAGE_MAX_LIMIT,
   INBOX_PREVIEW_MAX_CHARS,
   INBOX_UNFILED_PROJECT,
@@ -16,7 +17,8 @@ import {
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
-import { agentNotification, event, project, service } from "../db/schema";
+import { agentNotification, app, event, project, service } from "../db/schema";
+import { toAppSummaryDto } from "../lib/apps";
 import { type AuthedEnv, requireAuth } from "../middleware";
 
 // ---------------------------------------------------------------------------
@@ -194,9 +196,14 @@ function notificationUnionSql(userId: string) {
       e.url as url,
       e.body_format as body_format,
       e.read_at as read_at,
-      e.created_at as created_at
+      e.created_at as created_at,
+      a.id as app_id,
+      a.name as app_name,
+      a.origin as app_origin,
+      a.icon_url as app_icon_url
     from event e
     inner join service s on s.id = e.service_id
+    left join app a on a.id = e.app_id and a.user_id = ${userId}
     where s.user_id = ${userId}
 
     union all
@@ -213,9 +220,14 @@ function notificationUnionSql(userId: string) {
       n.url as url,
       n.body_format as body_format,
       n.read_at as read_at,
-      n.created_at as created_at
+      n.created_at as created_at,
+      a.id as app_id,
+      a.name as app_name,
+      a.origin as app_origin,
+      a.icon_url as app_icon_url
     from agent_notification n
     inner join api_token t on t.id = n.requester_token_id
+    left join app a on a.id = n.app_id and a.user_id = ${userId}
     where n.user_id = ${userId}
   `;
 }
@@ -233,6 +245,26 @@ interface NotificationRow {
   bodyFormat: string | null;
   readAt: number | null;
   createdAt: number;
+  appId: string | null;
+  appName: string | null;
+  appOrigin: string | null;
+  appIconUrl: string | null;
+}
+
+function rowAppSummary(row: NotificationRow): AppSummaryDto | null {
+  if (row.appId === null || row.appName === null || row.appOrigin === null) return null;
+  return { id: row.appId, name: row.appName, origin: row.appOrigin, iconUrl: row.appIconUrl };
+}
+
+/** Owner-scoped app summary for detail routes; deleted apps resolve to null. */
+async function appSummaryFor(userId: string, appId: string | null): Promise<AppSummaryDto | null> {
+  if (!appId) return null;
+  const [row] = await db
+    .select()
+    .from(app)
+    .where(and(eq(app.id, appId), eq(app.userId, userId)))
+    .limit(1);
+  return row ? toAppSummaryDto(row) : null;
 }
 
 async function projectNamesById(userId: string): Promise<Map<string, string>> {
@@ -260,6 +292,7 @@ function toSummaryDto(
     bodyFormat: toBodyFormat(row.bodyFormat),
     readAt: toIso(row.readAt),
     createdAt: new Date(row.createdAt).toISOString(),
+    app: rowAppSummary(row),
   };
 }
 
@@ -407,7 +440,11 @@ export const inboxRoute = new Hono<AuthedEnv>()
         url,
         body_format as bodyFormat,
         read_at as readAt,
-        created_at as createdAt
+        created_at as createdAt,
+        app_id as appId,
+        app_name as appName,
+        app_origin as appOrigin,
+        app_icon_url as appIconUrl
       from (${notificationUnionSql(userId)})
       where ${sql.join(filters, sql` and `)}
       order by created_at desc, id desc
@@ -457,6 +494,7 @@ export const inboxRoute = new Hono<AuthedEnv>()
         bodyFormat: toBodyFormat(row.event.bodyFormat),
         readAt: row.event.readAt?.toISOString() ?? null,
         createdAt: row.event.createdAt.toISOString(),
+        app: await appSummaryFor(userId, row.event.appId),
         body: row.event.body,
         summary: row.event.summary,
         status: row.event.status,
@@ -487,6 +525,7 @@ export const inboxRoute = new Hono<AuthedEnv>()
       bodyFormat: toBodyFormat(row.bodyFormat),
       readAt: row.readAt?.toISOString() ?? null,
       createdAt: row.createdAt.toISOString(),
+      app: await appSummaryFor(userId, row.appId),
       body: row.body,
       summary: row.summary,
       status: null,

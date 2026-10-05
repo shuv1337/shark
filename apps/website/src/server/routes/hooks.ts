@@ -13,6 +13,7 @@ import {
   user as userTable,
 } from "../db/schema";
 import { failureBucket, track } from "../lib/analytics";
+import { resolveNotificationApp } from "../lib/apps";
 import { checkNotificationAllowance, getBilling, trackNotification } from "../lib/billing";
 import { newId } from "../lib/id";
 import { resolveProjectForDelivery } from "../lib/projects";
@@ -127,6 +128,23 @@ export const hooksRoute = new Hono()
       }
     }
 
+    if (parsed.data.appId) {
+      if (parsed.data.response) {
+        return c.json<WebhookResponse>(
+          { ok: false, error: "appId cannot be combined with response" },
+          400,
+        );
+      }
+      const appResolution = await resolveNotificationApp(
+        svc.userId,
+        parsed.data.appId,
+        parsed.data.url,
+      );
+      if (!appResolution.ok) {
+        return c.json<WebhookResponse>({ ok: false, error: appResolution.error }, 400);
+      }
+    }
+
     const billing = await getBilling(owner, true);
     track({
       name: "webhook_received",
@@ -238,6 +256,12 @@ export const hooksRoute = new Hono()
       : { projectId: null };
 
     const resolved = resolveNotification(svc, parsed.data);
+    // An app notification opens the app (at `url` when given); the service's
+    // default URL may point elsewhere, so it never applies here.
+    if (parsed.data.appId) {
+      if (parsed.data.url) resolved.url = parsed.data.url;
+      else delete resolved.url;
+    }
     const eventId = newId("evt");
     const eventValues: typeof event.$inferInsert = {
       id: eventId,
@@ -254,6 +278,7 @@ export const hooksRoute = new Hono()
       projectId: projectResolution.projectId,
       bodyFormat: parsed.data.bodyFormat ?? null,
       summary: parsed.data.summary ?? null,
+      appId: parsed.data.appId ?? null,
       createdAt: new Date(),
     };
 
@@ -388,6 +413,7 @@ export const hooksRoute = new Hono()
           eventId,
           serviceId: svc.id,
           ...(projectResolution.projectId ? { projectId: projectResolution.projectId } : {}),
+          ...(parsed.data.appId ? { appId: parsed.data.appId } : {}),
           resolved,
         });
     const result = await sendPushMessages(messages);

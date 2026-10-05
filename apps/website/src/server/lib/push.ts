@@ -50,6 +50,8 @@ export interface BuildPushInput {
   conversationKey?: string;
   /** Optional project association carried as backward-compatible push metadata. */
   projectId?: string;
+  /** Web app opened on tap; never dropped when the payload is byte-fit. */
+  appId?: string;
   resolved: ResolvedNotification;
 }
 
@@ -95,7 +97,7 @@ export function buildWelcomePushMessages(to: string): ExpoPushMessage[] {
 }
 
 export function buildPushMessages(input: BuildPushInput): ExpoPushMessage[] {
-  const { to, eventId, serviceId, conversationKey, projectId, resolved } = input;
+  const { to, eventId, serviceId, conversationKey, projectId, appId, resolved } = input;
   const data: PushData = {
     v: PUSH_SCHEMA_VERSION,
     eventId,
@@ -106,6 +108,7 @@ export function buildPushMessages(input: BuildPushInput): ExpoPushMessage[] {
     ...(resolved.url ? { url: resolved.url } : {}),
     conversationId: `hark-${conversationKey ?? serviceId}`,
     ...(projectId ? { projectId } : {}),
+    ...(appId ? { appId } : {}),
   };
 
   // The full body never enters the push payload: the summary wins when the

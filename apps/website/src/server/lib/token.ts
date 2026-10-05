@@ -7,7 +7,8 @@ type EncryptionPurpose =
   | "webhook-token"
   | "live-activity-token"
   | "callback-token"
-  | "apple-refresh-token";
+  | "apple-refresh-token"
+  | "app-signing-key";
 
 function encryptionKey(purpose: EncryptionPurpose): Buffer {
   return createHash("sha256")
@@ -137,6 +138,15 @@ export function encryptAppleRefreshToken(token: string): string {
 
 export function decryptAppleRefreshToken(value: string): string {
   return decryptToken(value, "apple-refresh-token");
+}
+
+/** Encrypts a Hark pass signing key (private JWK JSON) at rest. */
+export function encryptAppSigningKey(privateJwk: string): string {
+  return encryptToken(privateJwk, "app-signing-key");
+}
+
+export function decryptAppSigningKey(value: string): string {
+  return decryptToken(value, "app-signing-key");
 }
 
 export function hashAppleAuthorizationCode(code: string): string {

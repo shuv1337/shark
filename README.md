@@ -147,6 +147,41 @@ To contribute a genuinely new Live Activity layout, including no-simulator testi
 API, widget, CLI, and docs touchpoint, see
 [Contributing a Live Activity template](./CONTRIBUTING_LIVE_ACTIVITY_TEMPLATES.md).
 
+## Web Apps
+
+Open any HTTPS site you control full-screen in the Hark iPhone app. Hark hands the page a
+short-lived signed **Hark pass**, so the site can identify the viewer without its own login.
+
+```sh
+harkctl apps create --name "Ops dashboard" --url https://app.example.com
+harkctl notify "Nightly report is ready" --app app_... --url https://app.example.com/reports
+```
+
+Registering the same URL again updates the app. The app appears in Hark on your iPhone; the first
+time it opens, you approve sign-in and choose whether your name (shared by default) and email (not
+shared by default) are included. Notifications sent with `--app` (or `appId` in a webhook payload)
+open the app when tapped; `url`, when given, must be on the app's origin.
+
+Inside Hark, the page calls `await window.hark.getToken()` to get a pass (`window.hark` exists only
+in the Hark app; `window.hark.close()` returns to Hark), sends it to its server, and verifies it:
+
+```js
+import { createRemoteJWKSet, jwtVerify } from "jose";
+
+const jwks = createRemoteJWKSet(new URL("https://hark.ryan.ceo/.well-known/jwks.json"));
+const { payload } = await jwtVerify(token, jwks, {
+  issuer: "https://hark.ryan.ceo",
+  audience: "https://app.example.com",
+  typ: "hark-pass+jwt",
+  algorithms: ["ES256"],
+});
+// payload.sub is the stable per-app user ID; payload.name / payload.email only if the owner shares them
+```
+
+Passes expire after two minutes, so verify once and then store your own session. `sub` is pairwise:
+stable for your origin and different for every other app. Optionally reject a reused `jti` to block
+replay.
+
 ## Agent Workflows
 
 The [`harkctl`](./packages/harkctl) CLI can send one-shot notifications, ask for approvals or short

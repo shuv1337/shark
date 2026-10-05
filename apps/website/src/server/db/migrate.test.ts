@@ -44,9 +44,11 @@ beforeAll(() => {
   };
   const newEntry = journal.entries.find((entry) => entry.tag === NEW_MIGRATION_TAG);
   expect(newEntry, "expected the project inbox migration in the journal").toBeDefined();
+  // Later migrations are excluded too: Drizzle skips any migration older than
+  // the newest one already applied, so they must run after the upgrade.
   const legacyJournal = {
     ...journal,
-    entries: journal.entries.filter((entry) => entry.tag !== NEW_MIGRATION_TAG),
+    entries: journal.entries.filter((entry) => entry.idx < (newEntry?.idx ?? 0)),
   };
 
   // Phase 1: the world before the deploy.

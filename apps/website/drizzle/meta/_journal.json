@@ -141,6 +141,13 @@
       "when": 1786325907544,
       "tag": "0019_grey_millenium_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1791211716860,
+      "tag": "0020_simple_black_panther",
+      "breakpoints": true
     }
   ]
 }

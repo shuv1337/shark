@@ -15,6 +15,8 @@ const DEFAULT_SCOPES = [
   "devices:read",
   "services:read",
   "services:write",
+  "apps:read",
+  "apps:write",
 ];
 const TERMINAL = new Set(["approved", "denied", "yes", "no", "replied", "canceled", "expired"]);
 
@@ -136,6 +138,9 @@ export function parseArgs(argv) {
     "project",
     "summary",
     "body-format",
+    "name",
+    "icon",
+    "app",
   ]);
   const booleanFlags = new Set([
     "approval",
@@ -427,7 +432,7 @@ function help() {
   harkctl auth status
   harkctl notify <body> [--title <name>] [--image <url>] [--url <url>] [--device <id>]
                  [--project <name>] [--summary <text>] [--markdown | --body-format <text|markdown>]
-                 [--idempotency-key <key>] [--stdin]
+                 [--app <app_id>] [--idempotency-key <key>] [--stdin]
   harkctl notify ask <prompt> (--approval|--yes-no|--text) [--title <name>] [--image <url>]
                   [--url <url>] [--device <id>] [--expires-in <duration>]
                   [--live-activity [--style <approval|shell|verdict|signal>]
@@ -457,6 +462,9 @@ function help() {
   harkctl devices list
   harkctl services list
   harkctl services create --title <title> [--image <url>] [--url <url>] [--stdin]
+  harkctl apps create --name <name> --url <url> [--icon <url>] [--project <name>] [--json]
+  harkctl apps list [--json]
+  harkctl apps remove <app_id> [--json]
 
 notify sends a one-shot push; notify ask sends a push that elicits an answer.
 Inside notify, a first positional of exactly "ask" selects the subcommand. Everything
@@ -471,8 +479,33 @@ notification into a named project in the Hark app inbox, --summary sets the shor
 push/preview text for a long body, and --markdown (or --body-format markdown) records
 how the body should eventually render. Project names are case-insensitive per account.
 
+apps registers a web app (an HTTPS site you control) that opens full-screen in the Hark
+iPhone app, which hands the page a short-lived signed Hark pass. Creating an app with an
+existing URL updates it. notify --app <app_id> opens that app when tapped; --url must
+then be on the app's origin.
+
 Authentication: run harkctl auth login, or set HARK_TOKEN for an advanced manual setup.
 Tokens are never accepted as command arguments.`;
+}
+
+/** Adds a re-login hint when a token predates the app scopes. */
+async function appsRequest(config, path, init) {
+  try {
+    return await request(config, path, init);
+  } catch (error) {
+    if (error instanceof RequestError && error.status === 403) {
+      throw new RequestError(
+        `${error.message}. Run harkctl auth login to grant app scopes (apps:read, apps:write).`,
+        error.status,
+        error.body,
+      );
+    }
+    throw error;
+  }
+}
+
+function formatApp(app) {
+  return `${app.id}  ${app.name}  ${app.url}`;
 }
 
 export async function execute(argv, env = process.env, overrides = {}) {
@@ -547,6 +580,44 @@ export async function execute(argv, env = process.env, overrides = {}) {
       }),
       exitCode: 0,
     };
+  }
+  if (group === "apps" && action === "create") {
+    if (!options.name || !options.url)
+      throw new UsageError("apps create requires --name and --url");
+    const payload = {
+      name: options.name,
+      url: options.url,
+      ...(options.icon ? { iconUrl: options.icon } : {}),
+      ...(options.project ? { project: options.project } : {}),
+    };
+    const body = await appsRequest(config, "/api/agent/apps", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    return {
+      body,
+      exitCode: 0,
+      ...(options.json
+        ? {}
+        : { output: `${formatApp(body.app)}${body.created ? "" : " (updated existing)"}` }),
+    };
+  }
+  if (group === "apps" && action === "list") {
+    const body = await appsRequest(config, "/api/agent/apps");
+    return {
+      body,
+      exitCode: 0,
+      ...(options.json
+        ? {}
+        : { output: body.apps.length > 0 ? body.apps.map(formatApp).join("\n") : "No apps" }),
+    };
+  }
+  if (group === "apps" && action === "remove") {
+    if (!id) throw new UsageError("apps remove requires an app ID");
+    const body = await appsRequest(config, `/api/agent/apps/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    return { body, exitCode: 0, ...(options.json ? {} : { output: `Removed ${id}` }) };
   }
   if (group === "activity" && action === "list") {
     const limit = options.limit ? Number.parseInt(options.limit, 10) : 50;
@@ -720,9 +791,15 @@ export async function execute(argv, env = process.env, overrides = {}) {
       if (options.timeout !== undefined && !options.wait) {
         throw new UsageError("--timeout requires --wait");
       }
-      if (options.project || options.summary || options.markdown || options["body-format"]) {
+      if (
+        options.project ||
+        options.summary ||
+        options.markdown ||
+        options["body-format"] ||
+        options.app
+      ) {
         throw new UsageError(
-          "--project, --summary, --markdown, and --body-format apply to notify, not notify ask",
+          "--project, --summary, --markdown, --body-format, and --app apply to notify, not notify ask",
         );
       }
       const stdin = options.stdin ? await readStdinJson() : {};
@@ -793,6 +870,7 @@ export async function execute(argv, env = process.env, overrides = {}) {
       ...(options.project ? { project: options.project } : {}),
       ...(options.summary ? { summary: options.summary } : {}),
       ...(bodyFormat ? { bodyFormat } : {}),
+      ...(options.app ? { appId: options.app } : {}),
     };
     const body = await request(config, "/api/agent/notifications", {
       method: "POST",
@@ -810,6 +888,7 @@ export async function run(argv, env = process.env, overrides = {}) {
   try {
     const result = await execute(argv, env, overrides);
     if (result.text) console.log(result.body.help);
+    else if (result.output !== undefined) console.log(result.output);
     else console.log(JSON.stringify(result.body));
     return result.exitCode;
   } catch (error) {

@@ -8,6 +8,7 @@ import { activityHooksRoute } from "./routes/activity-hooks";
 import { analyticsRoute } from "./routes/analytics";
 import { apiTokensRoute } from "./routes/api-tokens";
 import { appleAuthRoute } from "./routes/apple-auth";
+import { appPassJwksRoute, appsAgentRoute, appsSessionRoute } from "./routes/apps";
 import { billingRoute } from "./routes/billing";
 import { deviceAuthorizationRoute } from "./routes/device-authorization";
 import { devicesRoute } from "./routes/devices";
@@ -50,6 +51,7 @@ app.get("/oss", (c) => c.redirect("https://github.com/R44VC0RP/hark/"));
 // Mounted before the static handler in index.ts so the generated markdown wins
 // over anything with the same name in dist/client.
 app.route("/", docsTextRoute);
+app.route("/", appPassJwksRoute);
 
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
@@ -59,8 +61,10 @@ app.route("/api/api-tokens", apiTokensRoute);
 app.route("/api/apple-auth", appleAuthRoute);
 app.route("/api/device-authorization", deviceAuthorizationRoute);
 app.route("/api/agent/activities", activitiesAgentRoute);
+app.route("/api/agent/apps", appsAgentRoute);
 app.route("/api/agent", agentRoute);
 app.route("/api/activities", activitiesSessionRoute);
+app.route("/api/apps", appsSessionRoute);
 app.route("/api/activity-feed", activityFeedRoute);
 app.route("/api/inbox", inboxRoute);
 app.route("/api/interactions", interactionResponseRoute);

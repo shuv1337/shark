@@ -1,5 +1,13 @@
 import { sql } from "drizzle-orm";
-import { check, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import {
+  type AnySQLiteColumn,
+  check,
+  index,
+  integer,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 
 // ---------------------------------------------------------------------------
 // Better Auth core tables
@@ -175,6 +183,8 @@ export const event = sqliteTable(
     bodyFormat: text("body_format"),
     /** Sender-supplied digest used for push text and bounded previews. */
     summary: text("summary"),
+    /** Optional web app opened on tap; delivery survives app deletion. */
+    appId: text("app_id").references((): AnySQLiteColumn => app.id, { onDelete: "set null" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => [
@@ -234,6 +244,8 @@ export const agentNotification = sqliteTable(
     bodyFormat: text("body_format"),
     /** Sender-supplied digest used for push text and bounded previews. */
     summary: text("summary"),
+    /** Optional web app opened on tap; delivery survives app deletion. */
+    appId: text("app_id").references((): AnySQLiteColumn => app.id, { onDelete: "set null" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => [
@@ -249,6 +261,53 @@ export const agentNotification = sqliteTable(
       .where(sql`"read_at" is null`),
   ],
 );
+
+/**
+ * Owner-registered web app opened full-screen in the Hark iPhone app. Sign-in
+ * passes are issued only after the owner consents, and are bound to `origin`.
+ */
+export const app = sqliteTable(
+  "app",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** Launch URL loaded by the in-app web view. */
+    url: text("url").notNull(),
+    /** Canonical origin of `url`; the Hark pass audience. */
+    origin: text("origin").notNull(),
+    iconUrl: text("icon_url"),
+    projectId: text("project_id").references(() => project.id, { onDelete: "set null" }),
+    shareName: integer("share_name", { mode: "boolean" }).notNull().default(true),
+    shareEmail: integer("share_email", { mode: "boolean" }).notNull().default(false),
+    /** Null until the owner approves sign-in; revoking clears it. */
+    consentedAt: integer("consented_at", { mode: "timestamp_ms" }),
+    lastOpenedAt: integer("last_opened_at", { mode: "timestamp_ms" }),
+    createdByTokenId: text("created_by_token_id").references(() => apiToken.id, {
+      onDelete: "set null",
+    }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("app_user_url_unique").on(table.userId, table.url),
+    index("app_user_id_idx").on(table.userId),
+  ],
+);
+
+/** ES256 keys that sign Hark passes. Private keys are stored encrypted. */
+export const appSigningKey = sqliteTable("app_signing_key", {
+  /** JWK `kid`. */
+  id: text("id").primaryKey(),
+  algorithm: text("algorithm").notNull(),
+  /** Public JWK as JSON, served from the JWKS endpoint while not retired. */
+  publicJwk: text("public_jwk").notNull(),
+  privateJwkCiphertext: text("private_jwk_ciphertext").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  retiredAt: integer("retired_at", { mode: "timestamp_ms" }),
+});
 
 export const deviceAuthorizationRequest = sqliteTable(
   "device_authorization_request",

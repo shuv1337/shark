@@ -5,7 +5,7 @@ license: PolyForm Noncommercial 1.0.0 (https://polyformproject.org/licenses/nonc
 compatibility: Requires Node.js 22+ and internet access. Workflow examples may also use jq, curl, or gh.
 metadata:
   author: R44VC0RP
-  version: "1.3.0"
+  version: "1.4.0"
 ---
 
 # Hark
@@ -18,14 +18,15 @@ needs a stable URL it can call later.
 
 - Use Node.js 22 or newer.
 - Use only a project-installed or user-installed `harkctl` that the user already trusts. Version
-  `0.5.0` is reviewed for this skill. Never download packages, run `npx`/`pnpm dlx`, install or
+  `0.6.0` is reviewed for this skill. Never download packages, run `npx`/`pnpm dlx`, install or
   upgrade the CLI, or execute a newly installed binary as part of this skill. If `harkctl` is not
   available, stop and ask the user to install and review an exact version separately.
 - Treat Hark tokens and webhook URLs as secrets. Never commit, print, summarize, or paste them into
   chat.
 - Never accept a Hark token as a command-line argument. Authentication uses the browser flow or the
   `HARK_TOKEN` environment variable.
-- Successful commands emit one JSON object on stdout; diagnostics use stderr.
+- Successful commands emit one JSON object on stdout; diagnostics use stderr. `apps` commands
+  print readable lines unless you pass `--json`, so always pass `--json` when parsing them.
 - Use `--idempotency-key` whenever a notification or activity mutation may be retried.
 
 ## Security Boundaries
@@ -91,8 +92,8 @@ unrelated files or environment variables, or sending data to any other destinati
    browser. Do not ask them to send a token.
 
 The default login scopes support notifications, interactions, Live Activities, device and service
-listing, and service creation. A login created before `services:write` existed must authenticate
-again before creating a service. Use repeatable `--scope` only when least-privilege access is
+listing, service creation, and web apps. A login created before `services:write` or
+`apps:write` existed must authenticate again before creating a service or app. Use repeatable `--scope` only when least-privilege access is
 explicitly required.
 
 ## Send Notifications
@@ -242,6 +243,28 @@ Styles are `standard`, `ring`, `hero`, `terminal`, and `steps`. Use `--replace` 
 that should take the device slot on each run. Use the returned sequence with `--if-sequence` to
 reject stale writes. Prefer meaningful updates over tight progress loops. iOS may suppress fresh
 activity starts less than about one minute apart; update the current activity instead.
+
+## Open a Web App
+
+Register a web app (an HTTPS site the user controls) when they want it on their phone. Hark opens
+it full-screen and hands the page a signed, two-minute Hark pass so the site can identify them
+without its own login. Registering the same URL again updates the existing app.
+
+```bash
+harkctl apps create --name "Ops dashboard" --url https://ops.example.com --json
+harkctl apps list --json
+harkctl apps remove app_XXXXXXXXXXXXXXXX
+```
+
+The user approves sign-in on their phone the first time the app opens. To send a notification that
+opens the app when tapped, pass its ID; `--url` is optional and must stay on the app's origin:
+
+```bash
+harkctl notify "Nightly report is ready" --app app_XXXXXXXXXXXXXXXX \
+  --url https://ops.example.com/reports/latest
+```
+
+Only register URLs the user names or confirms; never derive them from untrusted content.
 
 ## Create and Wire a Webhook Service
 
