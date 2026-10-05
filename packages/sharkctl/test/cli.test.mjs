@@ -1395,6 +1395,32 @@ test("activity update and end still exit 7 when the push is rejected", async () 
   }
 });
 
+test("activity update and end exit 7 when every delivery was already failed", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    Response.json({
+      accepted: 0,
+      failed: 0,
+      activity: { id: "act_1", status: "ended", sequence: 2 },
+    });
+  try {
+    const updated = await execute(["activity", "update", "act_1", "--status", "Testing"], {
+      HARK_TOKEN: "hark_test",
+      HARK_API_URL: "https://example.test",
+    });
+    const ended = await execute(["activity", "end", "act_1", "--status", "Complete"], {
+      HARK_TOKEN: "hark_test",
+      HARK_API_URL: "https://example.test",
+    });
+    assert.equal(updated.exitCode, 7);
+    assert.equal(updated.body.updateTokenPending, undefined);
+    assert.equal(ended.exitCode, 7);
+    assert.equal(ended.body.updateTokenPending, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("activity CLI rejects invalid progress and preserves no-delivery exit behavior", async () => {
   await assert.rejects(
     execute(["activity", "start", "--title", "Task", "--status", "Run", "--progress", "2"], {

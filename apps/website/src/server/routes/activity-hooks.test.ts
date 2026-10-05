@@ -841,4 +841,59 @@ describe("Live Activity webhook routes", () => {
       await db.delete(schema.device).where(eq(schema.device.id, "hook_activity_device_2"));
     }
   });
+
+  it("skips an already-failed webhook delivery and does not set updateTokenPending", async () => {
+    const started = await start();
+    const startBody = (await started.json()) as { activityId: string };
+    await db
+      .update(schema.liveActivityDelivery)
+      .set({
+        status: "failed",
+        updateTokenCiphertext: null,
+        updateTokenUpdatedAt: null,
+        lastApnsReason: "OwnerChanged",
+      })
+      .where(eq(schema.liveActivityDelivery.activityId, startBody.activityId));
+
+    apnsCalls.length = 0;
+    const ended = await activityRequest(
+      TOKEN,
+      `/${startBody.activityId}/end`,
+      "POST",
+      { status: "Stopped" },
+      "failed-only-hook-end",
+    );
+    expect(ended.status).toBe(200);
+    const endedBody = (await ended.json()) as { updateTokenPending?: boolean; message?: string };
+    expect(endedBody).toMatchObject({
+      ok: true,
+      accepted: 0,
+      failed: 0,
+      status: "ended",
+    });
+    expect(endedBody.message).toBeUndefined();
+    expect(endedBody.updateTokenPending).toBeUndefined();
+    const replay = await activityRequest(
+      TOKEN,
+      `/${startBody.activityId}/end`,
+      "POST",
+      { status: "Stopped" },
+      "failed-only-hook-end",
+    );
+    const replayBody = (await replay.json()) as { updateTokenPending?: boolean };
+    expect(replayBody).toMatchObject({ ok: true, idempotent: true, accepted: 0, failed: 0 });
+    expect(replayBody.updateTokenPending).toBeUndefined();
+    expect(apnsCalls).toHaveLength(0);
+    expect(
+      db
+        .select()
+        .from(schema.liveActivityDelivery)
+        .where(eq(schema.liveActivityDelivery.activityId, startBody.activityId))
+        .get(),
+    ).toMatchObject({
+      status: "failed",
+      updateTokenCiphertext: null,
+      lastApnsReason: "OwnerChanged",
+    });
+  });
 });
