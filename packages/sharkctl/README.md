@@ -13,7 +13,8 @@ sharkctl
 ├─ permissions  setup · doctor · uninstall
 ├─ devices      list
 ├─ services     create · list
-└─ apps         create · list · remove
+├─ apps         create · list · remove
+└─ board        ask · cancel · get · wait · answers · ack · work · done · note
 ```
 
 Start a browser authorization flow and approve the requested scopes with your signed-in SHark account:
@@ -136,6 +137,33 @@ app with an existing URL updates it and returns `created: false`. `apps list` an
 notification is tapped; `--url` is optional and must stay on the app's origin. These commands
 require the `apps:read` and `apps:write` scopes; logins created before those scopes existed need to
 sign in again (`sharkctl auth login`).
+
+## board
+
+`board` feeds the captain's board at `/board`: durable questions that outlive their push, work in
+flight, and heads-up notes. It needs the `board:read` and `board:write` scopes, which the default
+login does not request; sign in once per agent with
+`sharkctl auth login --client-name "<Agent> (<host>)" --scope board:read --scope board:write`, so
+each agent has its own token and the board can say who asked.
+
+`board ask --key <key> --title <title>` is an upsert: repeating it unchanged only records that the
+agent still cares, changing the title, body, options, or links bumps the revision and sends one new
+push (p0 and p1 only; `--priority p2` stays board-only, `--push none` always does). `--option` is
+repeatable (`Label`, `id=Label`, or `Label:primary|destructive`, up to six), `--allow-text` accepts a
+typed reply, `--kind todo` makes a single Done item, and `--link [kind=]https://…` attaches PR,
+issue, or doc links. Bodies come from `--body-file`; pushes carry only the agent and title. The
+agent gets the answer through `--wait`, `board wait --key`, `board get --key`, or `board answers
+--since <cursor>`, and optionally through a callback registered with `--callback-url-env VAR
+--callback-token-file <path>` (the token never appears on argv). Call `board ack --key` after
+applying an answer so the board shows it landed. `board cancel --key` withdraws a question.
+
+`board work --key <key> --title <title> --state <queued|in_flight|review|blocked>` upserts a work
+item and counts as its heartbeat; items past `--heartbeat-ttl` (default 6h) show as stale. `board
+done --key <key> [--verb merged|shipped|done|closed|reported]` moves it to Recently done, creating it
+if needed with `--title`. `board note --key <key> <text>` keeps a heads-up note; `--clear` removes it.
+
+Only the captain's signed-in browser or phone can answer; no token scope resolves an ask. Content
+is screened locally and server-side for tokens, keys, and webhook URLs: link to them, never paste.
 
 ## activity
 

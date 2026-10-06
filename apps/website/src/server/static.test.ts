@@ -7,7 +7,7 @@ process.env.NODE_ENV = "test";
 process.env.DATABASE_URL = ":memory:";
 
 const clientDir = mkdtempSync(join(tmpdir(), "shark-static-"));
-for (const route of ["", "docs", "privacy", "terms", "dashboard", "cli/authorize"]) {
+for (const route of ["", "docs", "privacy", "terms", "dashboard", "board", "cli/authorize"]) {
   const directory = join(clientDir, route);
   mkdirSync(directory, { recursive: true });
   writeFileSync(join(directory, "index.html"), "<!doctype html><title>private</title>");
@@ -43,6 +43,8 @@ describe("private content boundary", () => {
       "/privacy",
       "/terms",
       "/dashboard",
+      "/board",
+      "/board/ask/bask_1",
       "/cli/authorize",
       "/assets/app.js",
       "/ogimage.png",

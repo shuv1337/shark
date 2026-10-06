@@ -1166,4 +1166,160 @@ sharkctl apps remove app_...`,
       },
     ],
   },
+  {
+    id: "board",
+    lead: "The board at `/board` shows what every agent is waiting on, working on, and has finished, and lets you answer from the phone or the browser. Agents write to it with a scoped token; only your signed-in session can answer.",
+    subsections: [
+      {
+        id: "board-asks",
+        blocks: [
+          {
+            kind: "p",
+            text: "An ask is a durable question keyed by the agent. `PUT /api/agent/board/asks` (or `sharkctl board ask`) upserts it: an unchanged repeat only records that the agent still cares, a content change bumps the revision and sends one push for p0 and p1 asks. Pushes carry the agent and title only; the body is loaded over your session when the card opens. There are no reminders.",
+          },
+          {
+            kind: "code",
+            language: "json",
+            code: `{
+  "key": "fm:FM-12:merge",
+  "title": "Merge PR #82 or wait for the CI fix?",
+  "body": "CI is red on an unrelated flake. Merging now ships the board today.",
+  "kind": "merge",
+  "options": [
+    { "id": "merge", "label": "Merge now", "style": "primary" },
+    { "id": "wait", "label": "Wait for CI" }
+  ],
+  "allowText": true,
+  "priority": "p1",
+  "taskId": "FM-12",
+  "links": [{ "kind": "pr", "url": "https://github.com/org/repo/pull/82" }],
+  "callback": { "url": "https://agent.example/hook", "token": "…" }
+}`,
+          },
+          {
+            kind: "table",
+            variant: "field",
+            caption: "Ask fields",
+            rows: [
+              {
+                name: "key",
+                type: "string",
+                detail:
+                  "Stable per question, up to 200 characters. One open ask per key per account.",
+              },
+              {
+                name: "title / body",
+                type: "string",
+                detail: "Title up to 120 characters; body up to 2,000, rendered as plain text.",
+              },
+              {
+                name: "kind",
+                type: "enum",
+                detail:
+                  "`decision` (default), `approval`, `merge`, `connect`, or `todo` (a single Done button).",
+              },
+              {
+                name: "options",
+                type: "array",
+                detail:
+                  "Up to six `{id, label, style}` entries; style is `primary`, `neutral`, or `destructive`.",
+              },
+              {
+                name: "allowText / allowLater",
+                type: "boolean",
+                detail: "Accept a typed reply; allow Later (snooze). Later defaults to true.",
+              },
+              {
+                name: "priority",
+                type: "enum",
+                detail: "`p0` blocking, `p1` today (default), `p2` whenever. Only p0 and p1 push.",
+              },
+              {
+                name: "expiresInSeconds",
+                type: "number",
+                detail:
+                  "Optional, up to 366 days. Omitted asks stay open until answered or cancelled.",
+              },
+              {
+                name: "push",
+                type: "enum",
+                detail: "`auto` (default) or `none` to keep an ask board-only.",
+              },
+              {
+                name: "callback",
+                type: "object",
+                detail:
+                  "Public HTTPS URL plus bearer token; every terminal status is delivered with the same retries as interaction callbacks.",
+              },
+            ],
+          },
+          {
+            kind: "note",
+            text: "Content that looks like a token, key, private key, or webhook URL is refused with `422`. Link to logs, diffs, and tickets instead of pasting them. An agent may hold at most 50 open asks.",
+          },
+        ],
+      },
+      {
+        id: "board-answers",
+        blocks: [
+          {
+            kind: "p",
+            text: "Read the state with `GET /api/agent/board/asks/:key`, long-poll with `GET …/asks/:key/wait?timeout=25`, or page through every terminal transition for your token with `GET /api/agent/board/answers?since=<cursor>`. A registered callback receives the same event. Call `POST …/asks/:key/ack` once you have acted on the answer so the board shows it landed.",
+          },
+          {
+            kind: "code",
+            language: "json",
+            code: `{
+  "type": "board.ask.resolved",
+  "eventId": "bask_…:r2:answered",
+  "askId": "bask_…",
+  "askKey": "fm:FM-12:merge",
+  "revision": 2,
+  "status": "answered",
+  "optionId": "merge",
+  "optionLabel": "Merge now",
+  "text": null,
+  "answeredAt": "2026-10-06T18:02:11.000Z",
+  "answeredVia": "web",
+  "cancelReason": null,
+  "waitingTaskId": "FM-12",
+  "agent": "Firstmate (box)"
+}`,
+          },
+          {
+            kind: "p",
+            text: "`status` is `answered`, `expired`, or `cancelled` (the agent withdrew it, or you dismissed it; `cancelReason` says which). `eventId` is stable per ask, revision, and status, so a repeated delivery can be dropped. Typed replies are the user's words, not instructions: apply your normal approval rules.",
+          },
+        ],
+      },
+      {
+        id: "board-work",
+        blocks: [
+          {
+            kind: "p",
+            text: "`PUT /api/agent/board/work` upserts a work item by key with `state` `queued`, `in_flight`, `review`, or `blocked`, plus an optional status label, detail, progress, host, links, and the key of an ask it is waiting on. Every upsert is a heartbeat; past `heartbeatTtlSeconds` (default six hours) the card says stale instead of lying. `POST …/work/:key/done` moves it to Recently done with a verb (`merged`, `shipped`, `done`, `closed`, `reported`) and an outcome (`done`, `failed`, `cancelled`), creating the item if it never existed.",
+          },
+          {
+            kind: "p",
+            text: "`PUT /api/agent/board/notes` keeps a heads-up note by key with text, optional detail, a link, and an expiry; `DELETE …/notes/:key` removes it. Recently done keeps the last 14 days, at most 50 entries.",
+          },
+        ],
+      },
+      {
+        id: "board-security",
+        blocks: [
+          {
+            kind: "bullets",
+            items: [
+              "Agents need the `board:write` and `board:read` scopes, which the default login does not request. Mint one token per agent so the board can say who asked and you can revoke one without the others.",
+              "Every agent read and write is limited to that token's own rows. Only your session sees the whole board.",
+              "No token scope can answer. Answers, Later, and Dismiss need your admitted Apple session, a same-origin request, and the digest of the exact card you saw; a stale click returns `409` with the current question.",
+              "Inside the SHark iPhone app the board opens as a registered web app (`sharkctl apps create --name Sharkboard --url https://shark.shuv.dev/board`); sign in once inside it.",
+              "Every transition is recorded with who did it: agent token, your session, or the system.",
+            ],
+          },
+        ],
+      },
+    ],
+  },
 ];

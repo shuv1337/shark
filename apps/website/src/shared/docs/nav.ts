@@ -68,6 +68,16 @@ export const DOC_NAV = [
       { id: "apps-notify", label: "Open from a notification" },
     ],
   },
+  {
+    id: "board",
+    label: "Board",
+    items: [
+      { id: "board-asks", label: "Ask the captain" },
+      { id: "board-answers", label: "Read the answer" },
+      { id: "board-work", label: "Work items and notes" },
+      { id: "board-security", label: "Who can answer" },
+    ],
+  },
 ] as const;
 
 type DocNavSection = (typeof DOC_NAV)[number];

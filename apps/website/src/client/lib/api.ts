@@ -3,6 +3,12 @@ import type {
   ApiTokenCreatedResponse,
   ApiTokenCreateInput,
   ApiTokenDto,
+  BoardAnswerInput,
+  BoardAskDto,
+  BoardAskEventDto,
+  BoardDismissInput,
+  BoardPageDto,
+  BoardSnoozeInput,
   DeviceAuthorizationRequestDto,
   DeviceDto,
   EventDto,
@@ -19,11 +25,14 @@ import type {
 export class ApiRequestError extends Error {
   status: number;
   issues?: unknown;
+  /** Server-supplied replacement state, e.g. the current board ask after a stale click. */
+  body: ApiError & Record<string, unknown>;
 
   constructor(status: number, body: ApiError) {
     super(body.error);
     this.status = status;
     this.issues = body.issues;
+    this.body = body as ApiError & Record<string, unknown>;
   }
 }
 
@@ -108,4 +117,24 @@ export const api = {
   markInboxItemRead: (id: string) =>
     request<{ ok: true }>(`/api/inbox/${encodeURIComponent(id)}/read`, { method: "POST" }),
   markAllInboxRead: () => request<{ ok: true }>("/api/inbox/read-all", { method: "POST" }),
+  getBoard: () => request<BoardPageDto>("/api/board"),
+  getBoardAsk: (id: string) =>
+    request<{ ask: BoardAskDto; events: BoardAskEventDto[] }>(
+      `/api/board/asks/${encodeURIComponent(id)}`,
+    ),
+  answerBoardAsk: (id: string, input: BoardAnswerInput) =>
+    request<{ ask: BoardAskDto }>(`/api/board/asks/${encodeURIComponent(id)}/answer`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  snoozeBoardAsk: (id: string, input: BoardSnoozeInput) =>
+    request<{ ask: BoardAskDto }>(`/api/board/asks/${encodeURIComponent(id)}/snooze`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  dismissBoardAsk: (id: string, input: BoardDismissInput) =>
+    request<{ ask: BoardAskDto }>(`/api/board/asks/${encodeURIComponent(id)}/dismiss`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
 };

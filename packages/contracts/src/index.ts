@@ -735,6 +735,8 @@ export const API_TOKEN_SCOPES = [
   "macos:register",
   "apps:read",
   "apps:write",
+  "board:read",
+  "board:write",
 ] as const;
 export const apiTokenScopeSchema = z.enum(API_TOKEN_SCOPES);
 export type ApiTokenScope = z.infer<typeof apiTokenScopeSchema>;
@@ -1275,3 +1277,4 @@ export interface ApiError {
   error: string;
   issues?: unknown;
 }
+export * from "./board";

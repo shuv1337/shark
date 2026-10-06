@@ -62,6 +62,10 @@ changes.
   nullable `app_id` on `event` and `agent_notification`, `/api/agent/apps`, `/api/apps`, the
   anonymous `/.well-known/jwks.json`, `sharkctl apps` and `notify --app`, and the iPhone web view.
   The JWT `typ` `hark-pass+jwt` and the `app_` id prefix stay as protocol identifiers.
+- The board (`/board`, `/api/board`, `/api/agent/board`, `sharkctl board`) is fork-only: four
+  `board_*` tables, `board:read`/`board:write` scopes, a per-user server-sent event stream, and a
+  callback worker beside the interaction one. Upstream tables are referenced, never altered. No
+  token scope can answer an ask; answers come only from an admitted same-origin session.
 - Upstream review 2026-10-06 (upstream `main` at `a84813a`): a probe merge produced 66 conflicts
   across 168 files and both histories carry a different migration `0019`, so `upstream/main` is
   still never merged. Skipped: `f743f61` project inbox and app icons, `2647efe` contracts CI fix,

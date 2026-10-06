@@ -1,0 +1,673 @@
+import { eq } from "drizzle-orm";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+process.env.NODE_ENV = "test";
+process.env.DATABASE_URL = ":memory:";
+process.env.APP_URL = "https://shark.example";
+
+const authState = vi.hoisted(() => ({ userId: "cap" as string | null, sessionId: "sess_1" }));
+const sent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+const callbacks = vi.hoisted(() => ({
+  calls: [] as Array<{ url: string; authorization: string | null; body: Record<string, unknown> }>,
+  status: 200,
+}));
+
+vi.mock("../lib/billing", () => ({
+  getBilling: async () => ({
+    configured: true,
+    plan: "pro",
+    priceMonthly: 8,
+    features: { deviceRouting: true },
+    limits: {
+      devices: null,
+      notificationsPerMonth: 100_000,
+      servicePerMinute: 10_000,
+      accountPerMinute: 10_000,
+    },
+    usage: { notificationsRemaining: 100 },
+  }),
+  checkNotificationAllowance: async () => true,
+  trackNotification: async () => undefined,
+  hasAutumn: () => false,
+  clearBillingCache: () => undefined,
+  createCheckout: async () => "https://example.com/checkout",
+  createBillingPortal: async () => "https://example.com/portal",
+}));
+
+vi.mock("../auth", () => ({
+  auth: {
+    handler: () => new Response("not used"),
+    api: {
+      getSession: async () =>
+        authState.userId
+          ? {
+              session: { id: authState.sessionId },
+              user: {
+                id: authState.userId,
+                name: "Cap",
+                email: authState.userId === "cap" ? "cap@example.com" : "other@example.com",
+                image: null,
+              },
+            }
+          : null,
+    },
+  },
+}));
+
+vi.mock("expo-server-sdk", () => {
+  class Expo {
+    chunkPushNotifications(messages: Array<Record<string, unknown>>) {
+      return [messages];
+    }
+    async sendPushNotificationsAsync(messages: Array<Record<string, unknown>>) {
+      sent.push(...messages);
+      return messages.map(() => ({ status: "ok", id: "ticket" }));
+    }
+  }
+  return { Expo, default: Expo };
+});
+
+let app: typeof import("../app")["app"];
+let db: typeof import("../db")["db"];
+let schema: typeof import("../db/schema");
+let board: typeof import("../lib/board");
+let boardCallbacks: typeof import("../lib/board-callbacks");
+let boardStream: typeof import("../lib/board-stream");
+
+const FM = `hark_${"f".repeat(43)}`;
+const BRO = `hark_${"b".repeat(43)}`;
+const READ_ONLY = `hark_${"r".repeat(43)}`;
+const OTHER_USER = `hark_${"o".repeat(43)}`;
+const ORIGIN = { origin: "https://shark.example" };
+
+beforeAll(async () => {
+  ({ app } = await import("../app"));
+  ({ db } = await import("../db"));
+  schema = await import("../db/schema");
+  board = await import("../lib/board");
+  boardCallbacks = await import("../lib/board-callbacks");
+  boardStream = await import("../lib/board-stream");
+  const { hashApiToken } = await import("../lib/token");
+  const { runMigrations } = await import("../db/migrate");
+  runMigrations();
+
+  const now = new Date();
+  await db.insert(schema.user).values([
+    {
+      id: "cap",
+      name: "Cap",
+      email: "cap@example.com",
+      emailVerified: true,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: "other",
+      name: "Other",
+      email: "other@example.com",
+      emailVerified: true,
+      createdAt: now,
+      updatedAt: now,
+    },
+  ]);
+  await db.insert(schema.device).values({
+    id: "dev_1",
+    userId: "cap",
+    expoPushToken: "ExponentPushToken[cap]",
+    platform: "ios",
+    active: true,
+    createdAt: now,
+    lastSeenAt: now,
+  });
+  await db.insert(schema.apiToken).values([
+    {
+      id: "tok_fm",
+      userId: "cap",
+      name: "Firstmate (box)",
+      tokenHash: hashApiToken(FM),
+      prefix: FM.slice(0, 13),
+      scopes: ["board:read", "board:write"],
+      createdAt: now,
+    },
+    {
+      id: "tok_bro",
+      userId: "cap",
+      name: "Bro (shuvdev)",
+      tokenHash: hashApiToken(BRO),
+      prefix: BRO.slice(0, 13),
+      scopes: ["board:read", "board:write"],
+      createdAt: now,
+    },
+    {
+      id: "tok_read",
+      userId: "cap",
+      name: "Reader",
+      tokenHash: hashApiToken(READ_ONLY),
+      prefix: READ_ONLY.slice(0, 13),
+      scopes: ["board:read"],
+      createdAt: now,
+    },
+    {
+      id: "tok_other",
+      userId: "other",
+      name: "Stranger",
+      tokenHash: hashApiToken(OTHER_USER),
+      prefix: OTHER_USER.slice(0, 13),
+      scopes: ["board:read", "board:write"],
+      createdAt: now,
+    },
+  ]);
+  await db.insert(schema.app).values({
+    id: "app_boardboard",
+    userId: "cap",
+    name: "Sharkboard",
+    url: "https://shark.example/board",
+    origin: "https://shark.example",
+    createdAt: now,
+    updatedAt: now,
+  });
+});
+
+afterEach(async () => {
+  authState.userId = "cap";
+  sent.length = 0;
+  callbacks.calls.length = 0;
+  callbacks.status = 200;
+  vi.unstubAllGlobals();
+  boardStream.resetBoardStream();
+  await db.delete(schema.boardAskEvent);
+  await db.delete(schema.boardWorkItem);
+  await db.delete(schema.boardNote);
+  await db.delete(schema.boardAsk);
+  await db.delete(schema.agentNotification);
+});
+
+function agent(path: string, token = FM, init?: RequestInit) {
+  return app.request(`/api/agent/board${path}`, {
+    ...init,
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      ...init?.headers,
+    },
+  });
+}
+
+function session(path: string, init?: RequestInit, headers: Record<string, string> = ORIGIN) {
+  return app.request(`/api/board${path === "/" ? "" : path}`, {
+    ...init,
+    headers: { "content-type": "application/json", ...headers, ...init?.headers },
+  });
+}
+
+const baseAsk = {
+  key: "fm:FM-CAP-BOARD-2:pick",
+  title: "Ship the board now?",
+  body: "Web first, native later.",
+  options: [
+    { id: "ship", label: "Ship", style: "primary" },
+    { id: "wait", label: "Wait" },
+  ],
+  allowText: true,
+  priority: "p1",
+  taskId: "FM-CAP-BOARD-2",
+  links: [{ kind: "pr", url: "https://github.com/shuv1337/shark/pull/82" }],
+};
+
+async function createAsk(overrides: Record<string, unknown> = {}, token = FM) {
+  const response = await agent("/asks", token, {
+    method: "PUT",
+    body: JSON.stringify({ ...baseAsk, ...overrides }),
+  });
+  const body = (await response.json()) as {
+    ask: { id: string; digest: string; revision: number; status: string };
+    created: boolean;
+    changed: boolean;
+    pushed: boolean;
+    error?: string;
+  };
+  return { response, body };
+}
+
+describe("agent asks", () => {
+  it("creates once, re-asserts silently, and revises with a new digest and push", async () => {
+    const first = await createAsk();
+    expect(first.response.status).toBe(201);
+    expect(first.body.created).toBe(true);
+    expect(first.body.pushed).toBe(true);
+    expect(sent).toHaveLength(1);
+    // The push carries agent and title only, deep-links into the board, and opens the board app.
+    expect(sent[0]).toMatchObject({ title: "Firstmate (box)", body: "Ship the board now?" });
+    expect(sent[0]?.data).toMatchObject({
+      appId: "app_boardboard",
+      url: `https://shark.example/board/ask/${first.body.ask.id}`,
+    });
+    expect(JSON.stringify(sent[0])).not.toContain("Web first, native later.");
+
+    const again = await createAsk();
+    expect(again.response.status).toBe(200);
+    expect(again.body.created).toBe(false);
+    expect(again.body.changed).toBe(false);
+    expect(again.body.ask.revision).toBe(1);
+    expect(sent).toHaveLength(1);
+
+    const revised = await createAsk({ title: "Ship the board today?" });
+    expect(revised.body.changed).toBe(true);
+    expect(revised.body.ask.revision).toBe(2);
+    expect(revised.body.ask.digest).not.toBe(first.body.ask.digest);
+    expect(sent).toHaveLength(2);
+
+    const events = await db
+      .select()
+      .from(schema.boardAskEvent)
+      .where(eq(schema.boardAskEvent.askId, first.body.ask.id));
+    expect(events.map((event) => event.kind).sort()).toEqual([
+      "opened",
+      "pushed",
+      "pushed",
+      "revised",
+    ]);
+  });
+
+  it("keeps p2 asks and push:none off the phone", async () => {
+    const quiet = await createAsk({ priority: "p2" });
+    expect(quiet.body.pushed).toBe(false);
+    const silent = await createAsk({ key: "fm:other", push: "none" });
+    expect(silent.body.pushed).toBe(false);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("refuses secrets, invalid shapes, foreign keys, and more than the cap", async () => {
+    const secret = await createAsk({ body: `Use token hark_${"x".repeat(43)} please` });
+    expect(secret.response.status).toBe(422);
+    const noAnswer = await createAsk({ options: [], allowText: false });
+    expect(noAnswer.response.status).toBe(400);
+    const badLink = await createAsk({ links: [{ kind: "pr", url: "http://insecure.example/" }] });
+    expect(badLink.response.status).toBe(400);
+
+    await createAsk();
+    const stolen = await createAsk({}, BRO);
+    expect(stolen.response.status).toBe(409);
+
+    const readOnly = await agent("/asks", READ_ONLY, {
+      method: "PUT",
+      body: JSON.stringify(baseAsk),
+    });
+    expect(readOnly.status).toBe(403);
+
+    for (let index = 1; index < 50; index += 1) {
+      const { response } = await createAsk({ key: `fm:bulk:${index}`, priority: "p2" });
+      expect(response.status).toBe(201);
+    }
+    const overflow = await createAsk({ key: "fm:bulk:overflow", priority: "p2" });
+    expect(overflow.response.status).toBe(409);
+  });
+
+  it("lets only the owning agent read, cancel, and ack its ask", async () => {
+    const { body } = await createAsk();
+    expect((await agent("/asks/fm:FM-CAP-BOARD-2:pick", BRO)).status).toBe(404);
+    expect((await agent("/asks/fm:FM-CAP-BOARD-2:pick", OTHER_USER)).status).toBe(404);
+    const mine = await agent("/asks/fm:FM-CAP-BOARD-2:pick");
+    expect(mine.status).toBe(200);
+    expect(((await mine.json()) as { ask: { id: string } }).ask.id).toBe(body.ask.id);
+
+    const cancelled = await agent("/asks/fm:FM-CAP-BOARD-2:pick/cancel", FM, {
+      method: "POST",
+      body: JSON.stringify({ reason: "Decided in chat" }),
+    });
+    expect(cancelled.status).toBe(200);
+    expect(((await cancelled.json()) as { ask: { status: string } }).ask.status).toBe("cancelled");
+
+    const answers = await agent("/answers");
+    const page = (await answers.json()) as {
+      events: Array<{ status: string; cancelReason: string; eventId: string }>;
+      cursor: string;
+    };
+    expect(page.events).toHaveLength(1);
+    expect(page.events[0]).toMatchObject({ status: "cancelled", cancelReason: "Decided in chat" });
+    const after = await agent(`/answers?since=${encodeURIComponent(page.cursor)}`);
+    expect(((await after.json()) as { events: unknown[] }).events).toEqual([]);
+
+    const acked = await agent("/asks/fm:FM-CAP-BOARD-2:pick/ack", FM, { method: "POST" });
+    expect(acked.status).toBe(200);
+    expect((await agent("/asks/fm:FM-CAP-BOARD-2:pick/ack", FM, { method: "POST" })).status).toBe(
+      404,
+    );
+  });
+
+  it("long-polls until the captain answers", async () => {
+    const { body } = await createAsk();
+    const waiting = agent("/asks/fm:FM-CAP-BOARD-2:pick/wait?timeout=5");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const answered = await session(`/asks/${body.ask.id}/answer`, {
+      method: "POST",
+      body: JSON.stringify({ digest: body.ask.digest, optionId: "ship" }),
+    });
+    expect(answered.status).toBe(200);
+    const result = (await (await waiting).json()) as { ask: { status: string }; timedOut: boolean };
+    expect(result.timedOut).toBe(false);
+    expect(result.ask.status).toBe("answered");
+
+    const timed = await agent("/asks/fm:FM-CAP-BOARD-2:pick/wait?timeout=0");
+    expect(((await timed.json()) as { timedOut: boolean }).timedOut).toBe(false);
+  });
+});
+
+describe("captain actions", () => {
+  it("builds the page with lanes and crew, and answers only with a current digest", async () => {
+    const { body } = await createAsk();
+    await createAsk(
+      {
+        key: "bro:sb-1",
+        title: "Merge sb-1?",
+        options: [{ id: "yes", label: "Yes" }],
+        priority: "p0",
+      },
+      BRO,
+    );
+    await agent("/work", BRO, {
+      method: "PUT",
+      body: JSON.stringify({
+        key: "bro:sb-2",
+        title: "CI speedup",
+        state: "in_flight",
+        statusLabel: "Testing",
+        progress: 0.5,
+        host: "shuvdev",
+      }),
+    });
+    await agent("/work", FM, {
+      method: "PUT",
+      body: JSON.stringify({ key: "fm:q1", title: "Queued thing", state: "queued" }),
+    });
+    await agent("/notes", FM, {
+      method: "PUT",
+      body: JSON.stringify({ key: "fm:heads", text: "Disk is at 80%" }),
+    });
+
+    const page = (await (await session("/")).json()) as {
+      waiting: Array<{ id: string; priority: string; agent: string }>;
+      withAgent: unknown[];
+      inFlight: Array<{ title: string }>;
+      queued: Array<{ title: string }>;
+      notes: Array<{ text: string }>;
+      crew: Array<{ agent: string; openAsks: number; inFlight: number }>;
+      cursor: string;
+    };
+    expect(page.waiting.map((ask) => ask.priority)).toEqual(["p0", "p1"]);
+    expect(page.inFlight.map((item) => item.title)).toEqual(["CI speedup"]);
+    expect(page.queued.map((item) => item.title)).toEqual(["Queued thing"]);
+    expect(page.notes.map((note) => note.text)).toEqual(["Disk is at 80%"]);
+    expect(page.crew.map((entry) => [entry.agent, entry.openAsks, entry.inFlight]).sort()).toEqual([
+      ["Bro (shuvdev)", 1, 1],
+      ["Firstmate (box)", 1, 0],
+    ]);
+
+    const stale = await session(`/asks/${body.ask.id}/answer`, {
+      method: "POST",
+      body: JSON.stringify({ digest: "0".repeat(64), optionId: "ship" }),
+    });
+    expect(stale.status).toBe(409);
+    expect(((await stale.json()) as { ask: { id: string } }).ask.id).toBe(body.ask.id);
+
+    const crossSite = await session(
+      `/asks/${body.ask.id}/answer`,
+      { method: "POST", body: JSON.stringify({ digest: body.ask.digest, optionId: "ship" }) },
+      { origin: "https://evil.example" },
+    );
+    expect(crossSite.status).toBe(403);
+
+    const unknownOption = await session(`/asks/${body.ask.id}/answer`, {
+      method: "POST",
+      body: JSON.stringify({ digest: body.ask.digest, optionId: "nope" }),
+    });
+    expect(unknownOption.status).toBe(422);
+
+    const answered = await session(`/asks/${body.ask.id}/answer`, {
+      method: "POST",
+      body: JSON.stringify({ digest: body.ask.digest, text: "Ship it, but tag the release." }),
+    });
+    expect(answered.status).toBe(200);
+    const answeredBody = (await answered.json()) as {
+      ask: { status: string; answer: { text: string; via: string } };
+    };
+    expect(answeredBody.ask.answer).toMatchObject({
+      text: "Ship it, but tag the release.",
+      via: "web",
+    });
+
+    const twice = await session(`/asks/${body.ask.id}/answer`, {
+      method: "POST",
+      body: JSON.stringify({ digest: body.ask.digest, optionId: "ship" }),
+    });
+    expect(twice.status).toBe(409);
+
+    const detail = (await (await session(`/asks/${body.ask.id}`)).json()) as {
+      events: Array<{ kind: string; actorType: string }>;
+    };
+    expect(detail.events.find((event) => event.kind === "answered")?.actorType).toBe("session");
+
+    const after = (await (await session("/")).json()) as {
+      waiting: unknown[];
+      withAgent: Array<{ id: string }>;
+    };
+    expect(after.waiting).toHaveLength(1);
+    expect(after.withAgent.map((ask) => ask.id)).toEqual([body.ask.id]);
+
+    // Another account sees nothing.
+    authState.userId = "other";
+    const theirs = (await (await session("/")).json()) as { waiting: unknown[]; crew: unknown[] };
+    expect(theirs.waiting).toEqual([]);
+    expect(theirs.crew).toEqual([]);
+    expect((await session(`/asks/${body.ask.id}`)).status).toBe(404);
+  });
+
+  it("snoozes and dismisses, and dismissal reaches the agent as cancelled", async () => {
+    const { body } = await createAsk();
+    const snoozed = await session(`/asks/${body.ask.id}/snooze`, {
+      method: "POST",
+      body: JSON.stringify({ digest: body.ask.digest, until: "2099-01-01" }),
+    });
+    expect(snoozed.status).toBe(200);
+    const page = (await (await session("/")).json()) as { waiting: unknown[] };
+    expect(page.waiting).toEqual([]);
+    const still = (await (await agent("/asks/fm:FM-CAP-BOARD-2:pick")).json()) as {
+      ask: { status: string };
+    };
+    expect(still.ask.status).toBe("open");
+
+    const past = await session(`/asks/${body.ask.id}/snooze`, {
+      method: "POST",
+      body: JSON.stringify({ digest: body.ask.digest, until: "2000-01-01" }),
+    });
+    expect(past.status).toBe(422);
+
+    const dismissed = await session(`/asks/${body.ask.id}/dismiss`, {
+      method: "POST",
+      body: JSON.stringify({ digest: body.ask.digest, reason: "Not needed" }),
+    });
+    expect(dismissed.status).toBe(200);
+    const answers = (await (await agent("/answers")).json()) as {
+      events: Array<{ status: string; cancelReason: string }>;
+    };
+    expect(answers.events[0]).toMatchObject({ status: "cancelled", cancelReason: "Not needed" });
+  });
+
+  it("requires a session for every captain route", async () => {
+    authState.userId = null;
+    expect((await session("/")).status).toBe(401);
+    expect((await session("/stream")).status).toBe(401);
+  });
+});
+
+describe("work, notes, done", () => {
+  it("heartbeats work items, completes them, and keeps notes per key", async () => {
+    const created = await agent("/work", BRO, {
+      method: "PUT",
+      body: JSON.stringify({ key: "bro:sb-3", title: "Mate", state: "queued" }),
+    });
+    expect(created.status).toBe(201);
+    const running = await agent("/work", BRO, {
+      method: "PUT",
+      body: JSON.stringify({
+        key: "bro:sb-3",
+        title: "Mate",
+        state: "in_flight",
+        heartbeatTtlSeconds: 60,
+      }),
+    });
+    const runningBody = (await running.json()) as {
+      work: { startedAt: string | null; stale: boolean };
+    };
+    expect(runningBody.work.startedAt).not.toBeNull();
+    expect(runningBody.work.stale).toBe(false);
+
+    const [row] = await db
+      .select()
+      .from(schema.boardWorkItem)
+      .where(eq(schema.boardWorkItem.workKey, "bro:sb-3"));
+    expect(board.toWorkDto(row as never, new Date(Date.now() + 120_000)).stale).toBe(true);
+
+    const other = await agent("/work", FM, {
+      method: "PUT",
+      body: JSON.stringify({ key: "bro:sb-3", title: "Mate", state: "queued" }),
+    });
+    expect(other.status).toBe(409);
+
+    const done = await agent("/work/bro:sb-3/done", BRO, {
+      method: "POST",
+      body: JSON.stringify({
+        verb: "merged",
+        links: [{ kind: "pr", url: "https://github.com/x/y/pull/1" }],
+      }),
+    });
+    expect(done.status).toBe(200);
+    const doneBody = (await done.json()) as {
+      work: { state: string; completionVerb: string; completedAt: string };
+    };
+    expect(doneBody.work).toMatchObject({ state: "done", completionVerb: "merged" });
+
+    const fresh = await agent("/work/fm:new/done", FM, {
+      method: "POST",
+      body: JSON.stringify({ title: "One-off", verb: "shipped" }),
+    });
+    expect(fresh.status).toBe(200);
+    const untitled = await agent("/work/fm:untitled/done", FM, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    expect(untitled.status).toBe(422);
+
+    const page = (await (await session("/")).json()) as {
+      done: Array<{ kind: string; item: { title: string } }>;
+    };
+    expect(page.done.map((entry) => entry.item.title)).toEqual(["One-off", "Mate"]);
+
+    const note = await agent("/notes", FM, {
+      method: "PUT",
+      body: JSON.stringify({ key: "fm:n", text: "Heads up" }),
+    });
+    expect(note.status).toBe(201);
+    const again = await agent("/notes", FM, {
+      method: "PUT",
+      body: JSON.stringify({ key: "fm:n", text: "Heads up, updated" }),
+    });
+    expect(again.status).toBe(200);
+    expect((await agent("/notes/fm:n", BRO, { method: "DELETE" })).status).toBe(404);
+    expect((await agent("/notes/fm:n", FM, { method: "DELETE" })).status).toBe(200);
+  });
+});
+
+describe("expiry and callbacks", () => {
+  it("expires due asks and delivers every terminal status to the callback with retries", async () => {
+    vi.stubGlobal("fetch", async (url: string | URL, init?: RequestInit) => {
+      callbacks.calls.push({
+        url: String(url),
+        authorization: new Headers(init?.headers).get("authorization"),
+        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+      });
+      return new Response(null, { status: callbacks.status });
+    });
+    const callback = { url: "https://grok.example/routine", token: "k".repeat(32) };
+    const { body } = await createAsk({ expiresInSeconds: 60, callback });
+    expect(await board.sweepExpiredAsks(new Date(Date.now() + 120_000))).toBe(1);
+    // The sweep kicks delivery; joining it observes the delivered state.
+    await boardCallbacks.deliverBoardCallbacks();
+    const [expired] = await db
+      .select()
+      .from(schema.boardAsk)
+      .where(eq(schema.boardAsk.id, body.ask.id));
+    expect(expired?.status).toBe("expired");
+    expect(expired?.callbackStatus).toBe("delivered");
+    expect(callbacks.calls).toHaveLength(1);
+    expect(callbacks.calls[0]).toMatchObject({
+      url: "https://grok.example/routine",
+      authorization: `Bearer ${"k".repeat(32)}`,
+    });
+    expect(callbacks.calls[0]?.body).toMatchObject({
+      type: "board.ask.resolved",
+      askId: body.ask.id,
+      askKey: "fm:FM-CAP-BOARD-2:pick",
+      status: "expired",
+      eventId: `${body.ask.id}:r1:expired`,
+      agent: "Firstmate (box)",
+    });
+
+    // A failing receiver is retried on the interaction schedule.
+    callbacks.status = 503;
+    const second = await createAsk({ key: "fm:second", callback });
+    const dismissed = await session(`/asks/${second.body.ask.id}/dismiss`, {
+      method: "POST",
+      body: JSON.stringify({ digest: second.body.ask.digest }),
+    });
+    expect(dismissed.status).toBe(200);
+    await boardCallbacks.deliverBoardCallbacks();
+    const [retrying] = await db
+      .select()
+      .from(schema.boardAsk)
+      .where(eq(schema.boardAsk.id, second.body.ask.id));
+    expect(retrying?.callbackStatus).toBe("retrying");
+    expect(retrying?.callbackAttempts).toBe(1);
+    expect(retrying?.callbackNextAttemptAt?.getTime()).toBeGreaterThan(Date.now());
+
+    callbacks.status = 200;
+    await db
+      .update(schema.boardAsk)
+      .set({ callbackNextAttemptAt: new Date(0) })
+      .where(eq(schema.boardAsk.id, second.body.ask.id));
+    await boardCallbacks.deliverBoardCallbacks();
+    const [delivered] = await db
+      .select()
+      .from(schema.boardAsk)
+      .where(eq(schema.boardAsk.id, second.body.ask.id));
+    expect(delivered?.callbackStatus).toBe("delivered");
+    expect(callbacks.calls.at(-1)?.body).toMatchObject({
+      status: "cancelled",
+      cancelReason: "Dismissed by the captain",
+    });
+
+    // The answers feed carries the same events for polling agents.
+    const answers = (await (await agent("/answers")).json()) as {
+      events: Array<{ eventId: string }>;
+    };
+    expect(answers.events.map((event) => event.eventId)).toEqual([
+      `${body.ask.id}:r1:expired`,
+      `${second.body.ask.id}:r1:cancelled`,
+    ]);
+  });
+
+  it("announces changes on the stream", async () => {
+    const versions: number[] = [];
+    const stop = boardStream.subscribeBoard("cap", (version) => versions.push(version));
+    await createAsk();
+    stop();
+    expect(versions).toEqual([1]);
+    const stream = await session("/stream");
+    expect(stream.status).toBe(200);
+    expect(stream.headers.get("content-type")).toContain("text/event-stream");
+    const reader = stream.body?.getReader();
+    const first = await reader?.read();
+    expect(new TextDecoder().decode(first?.value)).toContain("event: changed");
+    await reader?.cancel();
+  });
+});

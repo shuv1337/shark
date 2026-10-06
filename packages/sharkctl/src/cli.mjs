@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { chmod, mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
+import { BOARD_HELP, BoardUsageError, boardCommand } from "./board.mjs";
 import { publicRequest, RequestError, request } from "./client.mjs";
 import { REQUIRED_PERMISSION_SCOPES, sharkEnvironment } from "./permissions/ask.mjs";
 import { main as permissionsMain } from "./permissions/cli.mjs";
@@ -72,7 +73,7 @@ function parseActionLabel(value, flag) {
 
 export function parseArgs(argv) {
   const positionals = [];
-  const options = { device: [], scope: [] };
+  const options = { device: [], scope: [], option: [], link: [] };
   /** Index in `positionals` where post-`--` arguments start, or null. */
   let separatorAt = null;
   const valueFlags = new Set([
@@ -102,6 +103,26 @@ export function parseArgs(argv) {
     "name",
     "icon",
     "app",
+    "kind",
+    "priority",
+    "task",
+    "agent",
+    "option",
+    "link",
+    "body-file",
+    "detail-file",
+    "note-file",
+    "callback-url-env",
+    "callback-token-file",
+    "push",
+    "reason",
+    "since",
+    "state",
+    "host",
+    "verb",
+    "outcome",
+    "waiting-ask",
+    "heartbeat-ttl",
   ]);
   const booleanFlags = new Set([
     "approval",
@@ -116,6 +137,9 @@ export function parseArgs(argv) {
     "open",
     "no-open",
     "live-activity",
+    "allow-text",
+    "no-later",
+    "clear",
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -131,7 +155,7 @@ export function parseArgs(argv) {
     if (valueFlags.has(rawName)) {
       const value = inline ?? argv[++index];
       if (!value || value.startsWith("--")) throw new UsageError(`--${rawName} requires a value`);
-      if (rawName === "device" || rawName === "scope") options[rawName].push(value);
+      if (["device", "scope", "option", "link"].includes(rawName)) options[rawName].push(value);
       else options[rawName] = value;
     } else if (booleanFlags.has(rawName) && inline === undefined) {
       options[rawName] = true;
@@ -398,6 +422,7 @@ function help() {
   sharkctl apps create --name <name> --url <url> [--icon <url>]
   sharkctl apps list
   sharkctl apps remove <app_id>
+${BOARD_HELP}
 
 notify sends a one-shot push; notify ask sends a push that elicits an answer.
 Inside notify, a first positional of exactly "ask" selects the subcommand. Everything
@@ -413,6 +438,13 @@ apps registers a web app (an HTTPS site you control) that opens full-screen in t
 iPhone app, which hands the page a short-lived signed pass. Creating an app with an
 existing URL updates it. notify --app <app_id> opens that app when tapped; --url must
 then be on the app's origin.
+
+board puts durable questions, work items, and heads-up notes on the captain's board at
+/board. board ask is an upsert by --key: repeating it unchanged sends nothing, changing
+it bumps the revision and sends one push (p0 and p1 only; p2 stays board-only). Only the
+captain's signed-in session can answer; read answers with board wait, board get, or
+board answers --since <cursor>, then board ack --key. The callback token is read from a
+file, never from argv. Needs the board:read and board:write scopes (not granted by default).
 
 Authentication: run sharkctl auth login, or set HARK_TOKEN for an advanced manual setup.
 Tokens are never accepted as command arguments.
@@ -516,6 +548,20 @@ export async function execute(argv, env = process.env, overrides = {}) {
       }),
       exitCode: 0,
     };
+  }
+  if (group === "board") {
+    try {
+      return await boardCommand(action, positionals.slice(2), options, {
+        config,
+        runtime,
+        env,
+        readStdinJson,
+        parseDuration,
+      });
+    } catch (error) {
+      if (error instanceof BoardUsageError) throw new UsageError(error.message);
+      throw error;
+    }
   }
   if (group === "apps" && action === "create") {
     if (!options.name || !options.url)

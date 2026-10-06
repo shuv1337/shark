@@ -1,5 +1,13 @@
 import { sql } from "drizzle-orm";
-import { check, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import {
+  check,
+  index,
+  integer,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 
 // ---------------------------------------------------------------------------
 // Better Auth core tables
@@ -694,5 +702,179 @@ export const analyticsUserDay = sqliteTable(
   (table) => [
     uniqueIndex("analytics_user_day_user_day_unique").on(table.userId, table.day),
     index("analytics_user_day_day_idx").on(table.day),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// SHark board (fork-only). Durable asks, work items, and notes written by
+// agent tokens and answered only by the captain's session. These tables
+// reference upstream tables but never alter their columns.
+// ---------------------------------------------------------------------------
+
+/** A question for the captain that outlives any push sent for it. */
+export const boardAsk = sqliteTable(
+  "board_ask",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    requesterTokenId: text("requester_token_id").references(() => apiToken.id, {
+      onDelete: "set null",
+    }),
+    /** Snapshot of `api_token.name` at create time, like `inbox_item.source_name`. */
+    agentLabel: text("agent_label").notNull(),
+    /** Agent-declared sub-identity; displayed, never trusted. */
+    agentDisplay: text("agent_display"),
+    askKey: text("ask_key").notNull(),
+    revision: integer("revision").notNull().default(1),
+    title: text("title").notNull(),
+    body: text("body"),
+    kind: text("kind").notNull(),
+    options: text("options", { mode: "json" })
+      .$type<Array<{ id: string; label: string; style: string }>>()
+      .notNull(),
+    allowText: integer("allow_text", { mode: "boolean" }).notNull().default(false),
+    allowLater: integer("allow_later", { mode: "boolean" }).notNull().default(true),
+    priority: text("priority").notNull().default("p1"),
+    waitingTaskId: text("waiting_task_id"),
+    links: text("links", { mode: "json" })
+      .$type<Array<{ kind: string; url: string; label?: string }>>()
+      .notNull(),
+    status: text("status").notNull().default("open"),
+    snoozeUntil: integer("snooze_until", { mode: "timestamp_ms" }),
+    /** Null: persists until answered or cancelled. */
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    answerOptionId: text("answer_option_id"),
+    answerText: text("answer_text"),
+    answeredAt: integer("answered_at", { mode: "timestamp_ms" }),
+    answeredVia: text("answered_via"),
+    answeredByDeviceId: text("answered_by_device_id").references(() => device.id, {
+      onDelete: "set null",
+    }),
+    /** Domain-separated hash of the answering session id; never the raw id. */
+    answeredSessionHash: text("answered_session_hash"),
+    cancelReason: text("cancel_reason"),
+    /** sha256 over the user-visible fields of the current revision. */
+    actionDigest: text("action_digest").notNull(),
+    pushNotificationId: text("push_notification_id").references(() => agentNotification.id, {
+      onDelete: "set null",
+    }),
+    callbackUrl: text("callback_url"),
+    callbackTokenCiphertext: text("callback_token_ciphertext"),
+    callbackStatus: text("callback_status"),
+    callbackAttempts: integer("callback_attempts").notNull().default(0),
+    callbackNextAttemptAt: integer("callback_next_attempt_at", { mode: "timestamp_ms" }),
+    callbackLastError: text("callback_last_error"),
+    callbackDeliveredAt: integer("callback_delivered_at", { mode: "timestamp_ms" }),
+    /** Set when the terminal status still needs to reach the agent (callback or poll). */
+    resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
+    ackedAt: integer("acked_at", { mode: "timestamp_ms" }),
+    lastAssertedAt: integer("last_asserted_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("board_ask_open_key_unique")
+      .on(table.userId, table.askKey)
+      .where(sql`${table.status} = 'open'`),
+    index("board_ask_user_status_idx").on(
+      table.userId,
+      table.status,
+      table.priority,
+      table.createdAt,
+    ),
+    index("board_ask_token_resolved_idx").on(table.requesterTokenId, table.resolvedAt),
+    index("board_ask_callback_due_idx").on(table.callbackStatus, table.callbackNextAttemptAt),
+    index("board_ask_expiry_idx").on(table.status, table.expiresAt),
+  ],
+);
+
+/** Append-only audit and delivery log for one ask. */
+export const boardAskEvent = sqliteTable(
+  "board_ask_event",
+  {
+    id: text("id").primaryKey(),
+    askId: text("ask_id")
+      .notNull()
+      .references(() => boardAsk.id, { onDelete: "cascade" }),
+    dedupeKey: text("dedupe_key").notNull(),
+    kind: text("kind").notNull(),
+    actorType: text("actor_type").notNull(),
+    actorRef: text("actor_ref"),
+    revision: integer("revision").notNull(),
+    detail: text("detail"),
+    occurredAt: integer("occurred_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("board_ask_event_dedupe_unique").on(table.askId, table.dedupeKey),
+    index("board_ask_event_ask_occurred_idx").on(table.askId, table.occurredAt),
+  ],
+);
+
+/** Queued, in-flight, and recently finished work, one row per agent work key. */
+export const boardWorkItem = sqliteTable(
+  "board_work_item",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    requesterTokenId: text("requester_token_id").references(() => apiToken.id, {
+      onDelete: "set null",
+    }),
+    agentLabel: text("agent_label").notNull(),
+    agentDisplay: text("agent_display"),
+    workKey: text("work_key").notNull(),
+    title: text("title").notNull(),
+    state: text("state").notNull(),
+    statusLabel: text("status_label"),
+    detail: text("detail"),
+    progress: real("progress"),
+    links: text("links", { mode: "json" })
+      .$type<Array<{ kind: string; url: string; label?: string }>>()
+      .notNull(),
+    host: text("host"),
+    waitingAskId: text("waiting_ask_id").references(() => boardAsk.id, { onDelete: "set null" }),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }),
+    lastHeartbeatAt: integer("last_heartbeat_at", { mode: "timestamp_ms" }).notNull(),
+    heartbeatTtlSeconds: integer("heartbeat_ttl_seconds").notNull().default(21_600),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    completionVerb: text("completion_verb"),
+    note: text("note"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("board_work_item_user_key_unique").on(table.userId, table.workKey),
+    index("board_work_item_user_state_idx").on(table.userId, table.state, table.completedAt),
+    index("board_work_item_token_idx").on(table.requesterTokenId),
+  ],
+);
+
+/** Heads-up notes that are not tied to a task. */
+export const boardNote = sqliteTable(
+  "board_note",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    requesterTokenId: text("requester_token_id").references(() => apiToken.id, {
+      onDelete: "set null",
+    }),
+    agentLabel: text("agent_label").notNull(),
+    agentDisplay: text("agent_display"),
+    noteKey: text("note_key").notNull(),
+    text: text("text").notNull(),
+    detail: text("detail"),
+    link: text("link"),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("board_note_user_key_unique").on(table.userId, table.noteKey),
+    index("board_note_user_idx").on(table.userId),
   ],
 );
