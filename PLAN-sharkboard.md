@@ -1,6 +1,6 @@
 # SHark Board Plan: upstream integration plus the multi-agent captain board
 
-Status: ready for implementation. Written 2026-10-06 against SHark `main` at `900c93a` and upstream
+Status: Phases 0 to 5 implemented on branch `feat/sharkboard` (commits 155f9ab and the board commit, 2026-10-06), pending review, release (Phase 6), and the shuvbro adapter (Phase 7). v1 pushes are plain deep-link notifications; lock-screen quick actions and pass-based web-view auth are deferred. Originally: Written 2026-10-06 against SHark `main` at `900c93a` and upstream
 Hark `main` at `a84813a` (fetched 2026-10-06). Supersedes the upstream half of
 `PLAN-upstream-integration.md`, whose three pull requests have all landed (#38, #39, #40).
 Re-fetch both remotes before starting and revise the SHAs if either has moved.
