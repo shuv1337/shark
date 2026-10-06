@@ -17,6 +17,8 @@ const DEFAULT_SCOPES = [
   "devices:read",
   "services:read",
   "services:write",
+  "apps:read",
+  "apps:write",
 ];
 const TERMINAL = new Set(["approved", "denied", "yes", "no", "replied", "canceled", "expired"]);
 
@@ -97,6 +99,9 @@ export function parseArgs(argv) {
     "limit",
     "primary-label",
     "secondary-label",
+    "name",
+    "icon",
+    "app",
   ]);
   const booleanFlags = new Set([
     "approval",
@@ -367,7 +372,7 @@ function help() {
   sharkctl auth logout
   sharkctl auth status
   sharkctl notify <body> [--title <name>] [--image <url>] [--url <url>] [--device <id>]
-                 [--idempotency-key <key>] [--stdin]
+                 [--app <app_id>] [--idempotency-key <key>] [--stdin]
   sharkctl notify ask <prompt> (--approval|--yes-no|--text) [--title <name>] [--image <url>]
                   [--url <url>] [--device <id>] [--expires-in <duration>]
                   [--live-activity [--primary-label <label>] [--secondary-label <label>]]
@@ -390,6 +395,9 @@ function help() {
   sharkctl devices list
   sharkctl services list
   sharkctl services create --title <title> [--image <url>] [--url <url>] [--stdin]
+  sharkctl apps create --name <name> --url <url> [--icon <url>]
+  sharkctl apps list
+  sharkctl apps remove <app_id>
 
 notify sends a one-shot push; notify ask sends a push that elicits an answer.
 Inside notify, a first positional of exactly "ask" selects the subcommand. Everything
@@ -401,6 +409,11 @@ to 30 s through 24 h (8 h for Live Activities). A timed-out poll or wait does
 not end the prompt: it stays answerable on the phone until it expires, and
 sharkctl interaction wait <id> resumes waiting at any time.
 
+apps registers a web app (an HTTPS site you control) that opens full-screen in the SHark
+iPhone app, which hands the page a short-lived signed pass. Creating an app with an
+existing URL updates it. notify --app <app_id> opens that app when tapped; --url must
+then be on the app's origin.
+
 Authentication: run sharkctl auth login, or set HARK_TOKEN for an advanced manual setup.
 Tokens are never accepted as command arguments.
 
@@ -408,6 +421,22 @@ activity update merges only the fields you pass. --status alone is a valid updat
 --status together with --progress. At least one field other than --if-sequence is required:
 --title, --status, --detail, --progress, --symbol, --privacy, --accent-color, --style, or
 --stale-after. A rejected update or end names each invalid field on stderr.`;
+}
+
+/** Adds a re-login hint when a token predates the app scopes. */
+async function appsRequest(config, path, init) {
+  try {
+    return await request(config, path, init);
+  } catch (error) {
+    if (error instanceof RequestError && error.status === 403) {
+      throw new RequestError(
+        `${error.message}. Run sharkctl auth login to grant app scopes (apps:read, apps:write).`,
+        error.status,
+        error.body,
+      );
+    }
+    throw error;
+  }
 }
 
 export async function execute(argv, env = process.env, overrides = {}) {
@@ -487,6 +516,31 @@ export async function execute(argv, env = process.env, overrides = {}) {
       }),
       exitCode: 0,
     };
+  }
+  if (group === "apps" && action === "create") {
+    if (!options.name || !options.url)
+      throw new UsageError("apps create requires --name and --url");
+    const payload = {
+      name: options.name,
+      url: options.url,
+      ...(options.icon ? { iconUrl: options.icon } : {}),
+    };
+    const body = await appsRequest(config, "/api/agent/apps", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    return { body, exitCode: 0 };
+  }
+  if (group === "apps" && action === "list") {
+    const body = await appsRequest(config, "/api/agent/apps");
+    return { body, exitCode: 0 };
+  }
+  if (group === "apps" && action === "remove") {
+    if (!id) throw new UsageError("apps remove requires an app ID");
+    const body = await appsRequest(config, `/api/agent/apps/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    return { body, exitCode: 0 };
   }
   if (group === "activity" && action === "list") {
     const limit = options.limit ? Number.parseInt(options.limit, 10) : 50;
@@ -665,6 +719,7 @@ export async function execute(argv, env = process.env, overrides = {}) {
       if (options.timeout !== undefined && !options.wait) {
         throw new UsageError("--timeout requires --wait");
       }
+      if (options.app) throw new UsageError("--app applies to notify, not notify ask");
       const stdin = options.stdin ? await readStdinJson(runtime) : {};
       const prompt = positionals.slice(2).join(" ") || stdin.prompt;
       if (!prompt) throw new UsageError("notify ask requires a prompt");
@@ -741,6 +796,7 @@ export async function execute(argv, env = process.env, overrides = {}) {
       ...(options.image ? { imageUrl: options.image } : {}),
       ...(options.url ? { url: options.url } : {}),
       ...(options.device.length > 0 ? { deviceIds: options.device } : {}),
+      ...(options.app ? { appId: options.app } : {}),
     };
     const body = await request(config, "/api/agent/notifications", {
       method: "POST",

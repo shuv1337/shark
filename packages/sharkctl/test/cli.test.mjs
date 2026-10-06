@@ -1560,3 +1560,89 @@ test("rejects group-readable config files", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("registers, lists, and removes web apps, and opens one from notify --app", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url: String(url), init });
+    if (String(url).endsWith("/api/agent/apps") && init?.method === "POST") {
+      return Response.json(
+        {
+          app: { id: "app_abcdefgh", name: "Sharkboard", url: "https://b.example/board" },
+          created: true,
+        },
+        { status: 201 },
+      );
+    }
+    if (String(url).endsWith("/api/agent/apps")) return Response.json({ apps: [] });
+    if (String(url).endsWith("/api/agent/apps/app_abcdefgh")) return Response.json({ ok: true });
+    if (String(url).endsWith("/api/agent/notifications")) {
+      return Response.json({ notification: { id: "anot_1" }, accepted: 1 }, { status: 201 });
+    }
+    throw new Error(`unexpected ${url}`);
+  };
+  const env = { HARK_TOKEN: "hark_test", HARK_API_URL: "https://example.test" };
+  try {
+    const created = await execute(
+      ["apps", "create", "--name", "Sharkboard", "--url", "https://b.example/board"],
+      env,
+    );
+    assert.equal(created.exitCode, 0);
+    assert.equal(created.body.app.id, "app_abcdefgh");
+    assert.deepEqual(JSON.parse(requests[0].init.body), {
+      name: "Sharkboard",
+      url: "https://b.example/board",
+    });
+
+    const listed = await execute(["apps", "list"], env);
+    assert.deepEqual(listed.body, { apps: [] });
+
+    const removed = await execute(["apps", "remove", "app_abcdefgh"], env);
+    assert.equal(removed.exitCode, 0);
+    assert.equal(requests[2].init.method, "DELETE");
+
+    const notified = await execute(
+      [
+        "notify",
+        "Board updated",
+        "--app",
+        "app_abcdefgh",
+        "--url",
+        "https://b.example/board/ask/1",
+      ],
+      env,
+    );
+    assert.equal(notified.exitCode, 0);
+    assert.deepEqual(JSON.parse(requests[3].init.body), {
+      body: "Board updated",
+      url: "https://b.example/board/ask/1",
+      appId: "app_abcdefgh",
+    });
+
+    await assert.rejects(
+      execute(["apps", "create", "--name", "x"], env),
+      /requires --name and --url/,
+    );
+    await assert.rejects(
+      execute(["notify", "ask", "Deploy?", "--approval", "--app", "app_abcdefgh"], env),
+      /--app applies to notify/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("explains missing app scopes on 403", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    Response.json({ error: "Insufficient scope", required: ["apps:read"] }, { status: 403 });
+  try {
+    await assert.rejects(
+      execute(["apps", "list"], { HARK_TOKEN: "hark_test", HARK_API_URL: "https://example.test" }),
+      /sharkctl auth login to grant app scopes/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

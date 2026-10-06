@@ -59,11 +59,20 @@ export const DOC_NAV = [
       { id: "cli-scripting", label: "Scripting and exit codes" },
     ],
   },
+  {
+    id: "web-apps",
+    label: "Web apps",
+    items: [
+      { id: "apps-register", label: "Register an app" },
+      { id: "apps-verify", label: "Verify the pass" },
+      { id: "apps-notify", label: "Open from a notification" },
+    ],
+  },
 ] as const;
 
 type DocNavSection = (typeof DOC_NAV)[number];
 
-/** Ids of the three top-level sections. */
+/** Ids of the top-level sections. */
 export type DocSectionId = DocNavSection["id"];
 /** Ids of every nested anchor. */
 export type DocItemId = DocNavSection["items"][number]["id"];

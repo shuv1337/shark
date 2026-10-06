@@ -1064,4 +1064,106 @@ fi`,
       },
     ],
   },
+  {
+    id: "web-apps",
+    lead: "Open any HTTPS site you control full-screen in the SHark iPhone app. SHark hands the page a short-lived signed pass, so your site can identify the viewer without building its own login. SHark's own board at `/board` is registered this way.",
+    subsections: [
+      {
+        id: "apps-register",
+        blocks: [
+          {
+            kind: "p",
+            text: "Register an app with `sharkctl apps create`. Registering the same URL again updates its name or icon. Apps appear in the SHark iPhone app, which asks you to approve sign-in the first time one opens; you can revoke that approval or choose whether your name and email are shared at any time.",
+          },
+          {
+            kind: "code",
+            language: "bash",
+            code: `sharkctl apps create --name "Sharkboard" \\
+  --url https://shark.shuv.dev/board
+
+sharkctl apps list
+sharkctl apps remove app_...`,
+          },
+          {
+            kind: "p",
+            text: "Launch URLs must use HTTPS; plain HTTP is accepted only for `localhost` development servers. Accounts hold up to 100 apps. Agent tokens need the `apps:read` and `apps:write` scopes; sign in again if your login predates them.",
+          },
+        ],
+      },
+      {
+        id: "apps-verify",
+        blocks: [
+          {
+            kind: "steps",
+            items: [
+              "Inside the SHark app, your page calls `await window.hark.getToken()`, which resolves to a pass string. `window.hark` exists only inside SHark; `window.hark.close()` returns to the app.",
+              "The page sends the pass to your server, which verifies it as an ES256 JWT against [the SHark JWKS](https://shark.shuv.dev/.well-known/jwks.json), for example with `jwtVerify` from `jose`.",
+              "Require issuer `https://shark.shuv.dev`, audience equal to your app's origin, `typ` `hark-pass+jwt`, and algorithm `ES256`, then start your own session.",
+            ],
+          },
+          {
+            kind: "table",
+            variant: "field",
+            caption: "Pass claims",
+            rows: [
+              {
+                name: "sub",
+                type: "string",
+                detail:
+                  "Stable user ID for your origin (`hk_…`). It differs for every other origin, so apps cannot correlate users.",
+              },
+              {
+                name: "aud",
+                type: "string",
+                detail: "Your app's origin, e.g. `https://app.example.com`.",
+              },
+              {
+                name: "iat / exp",
+                type: "number",
+                detail: "Passes expire two minutes after issue.",
+              },
+              {
+                name: "jti",
+                type: "string",
+                detail: "Unique per pass; reject reused values to block replay.",
+              },
+              {
+                name: "app_id",
+                type: "string",
+                detail: "The SHark app ID the pass was issued for.",
+              },
+              {
+                name: "name / email",
+                type: "string",
+                detail:
+                  "Present only when the owner shares them. Name is shared by default; email is not.",
+              },
+            ],
+          },
+          {
+            kind: "note",
+            text: "Never trust a pass you have not verified, and never treat it as a long-lived credential: verify once, then rely on your own session.",
+          },
+        ],
+      },
+      {
+        id: "apps-notify",
+        blocks: [
+          {
+            kind: "p",
+            text: "Pass `appId` on a webhook (or `--app` to `sharkctl notify`) to open the app when the notification is tapped. Add `url` to deep-link within it; it must share the app's origin. The service default URL is not applied to app notifications, and `appId` cannot be combined with an interactive `response`.",
+          },
+          {
+            kind: "code",
+            language: "json",
+            code: `{
+  "body": "Two asks are waiting on the board",
+  "appId": "app_...",
+  "url": "https://shark.shuv.dev/board"
+}`,
+          },
+        ],
+      },
+    ],
+  },
 ];

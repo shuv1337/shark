@@ -7,10 +7,18 @@ import {
   type InboxItemEventDto,
   type InboxPageDto,
 } from "@hark/contracts";
-import { and, asc, count, desc, eq, isNull, lt, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
-import { inboxItem, inboxItemEvent, interaction } from "../db/schema";
+import {
+  agentNotification,
+  app,
+  event,
+  inboxItem,
+  inboxItemEvent,
+  interaction,
+} from "../db/schema";
+import { toAppSummaryDto } from "../lib/apps";
 import { syncInboxForUser } from "../lib/inbox";
 import { type AuthedEnv, requireAuth } from "../middleware";
 
@@ -49,6 +57,10 @@ type ItemRow = typeof inboxItem.$inferSelect & {
   primaryLabel: string | null;
   secondaryLabel: string | null;
   expiresAt: Date | null;
+  appId: string | null;
+  appName: string | null;
+  appOrigin: string | null;
+  appIconUrl: string | null;
 };
 
 function toItemDto(row: ItemRow): InboxItemDto {
@@ -87,10 +99,20 @@ function toItemDto(row: ItemRow): InboxItemDto {
     occurredAt: row.occurredAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     action,
+    app:
+      row.appId && row.appName && row.appOrigin
+        ? toAppSummaryDto({
+            id: row.appId,
+            name: row.appName,
+            origin: row.appOrigin,
+            iconUrl: row.appIconUrl,
+          })
+        : null,
   };
 }
 
-async function itemRows(userId: string, itemId?: string): Promise<ItemRow[]> {
+/** Inbox rows with their interaction action and web app joins; callers add where/order/limit. */
+function itemQuery() {
   return db
     .select({
       id: inboxItem.id,
@@ -118,13 +140,38 @@ async function itemRows(userId: string, itemId?: string): Promise<ItemRow[]> {
       primaryLabel: interaction.primaryLabel,
       secondaryLabel: interaction.secondaryLabel,
       expiresAt: interaction.expiresAt,
+      appId: app.id,
+      appName: app.name,
+      appOrigin: app.origin,
+      appIconUrl: app.iconUrl,
     })
     .from(inboxItem)
     .leftJoin(
       interaction,
       and(eq(inboxItem.entityType, "interaction"), eq(interaction.id, inboxItem.entityId)),
     )
-    .where(and(eq(inboxItem.userId, userId), ...(itemId ? [eq(inboxItem.id, itemId)] : [])));
+    .leftJoin(event, and(eq(inboxItem.entityType, "event"), eq(event.id, inboxItem.entityId)))
+    .leftJoin(
+      agentNotification,
+      and(
+        eq(inboxItem.entityType, "agent_notification"),
+        eq(agentNotification.id, inboxItem.entityId),
+      ),
+    )
+    .leftJoin(
+      app,
+      and(
+        eq(app.id, sql`coalesce(${event.appId}, ${agentNotification.appId})`),
+        eq(app.userId, inboxItem.userId),
+      ),
+    )
+    .$dynamic();
+}
+
+async function itemRows(userId: string, itemId?: string): Promise<ItemRow[]> {
+  return itemQuery().where(
+    and(eq(inboxItem.userId, userId), ...(itemId ? [eq(inboxItem.id, itemId)] : [])),
+  );
 }
 
 export const inboxRoute = new Hono<AuthedEnv>()
@@ -173,39 +220,7 @@ export const inboxRoute = new Hono<AuthedEnv>()
         )
       : undefined;
 
-    const rows = await db
-      .select({
-        id: inboxItem.id,
-        userId: inboxItem.userId,
-        entityType: inboxItem.entityType,
-        entityId: inboxItem.entityId,
-        kind: inboxItem.kind,
-        sourceName: inboxItem.sourceName,
-        sourceImageUrl: inboxItem.sourceImageUrl,
-        title: inboxItem.title,
-        body: inboxItem.body,
-        imageUrl: inboxItem.imageUrl,
-        url: inboxItem.url,
-        status: inboxItem.status,
-        result: inboxItem.result,
-        acceptedCount: inboxItem.acceptedCount,
-        failedCount: inboxItem.failedCount,
-        needsAction: inboxItem.needsAction,
-        readAt: inboxItem.readAt,
-        occurredAt: inboxItem.occurredAt,
-        updatedAt: inboxItem.updatedAt,
-        interactionKind: interaction.kind,
-        choices: interaction.choices,
-        actionDigest: interaction.actionDigest,
-        primaryLabel: interaction.primaryLabel,
-        secondaryLabel: interaction.secondaryLabel,
-        expiresAt: interaction.expiresAt,
-      })
-      .from(inboxItem)
-      .leftJoin(
-        interaction,
-        and(eq(inboxItem.entityType, "interaction"), eq(interaction.id, inboxItem.entityId)),
-      )
+    const rows = await itemQuery()
       .where(
         and(
           eq(inboxItem.userId, userId),

@@ -5,6 +5,7 @@ import { colors, fonts, tightTracking } from "../lib/theme";
 
 const destinations = [
   { path: "/inbox", label: "Inbox", icon: "tray.full" },
+  { path: "/apps", label: "Apps", icon: "square.grid.2x2" },
   { path: "/home", label: "Device", icon: "iphone" },
   { path: "/settings", label: "Settings", icon: "gearshape" },
 ] as const;

@@ -12,13 +12,14 @@ sharkctl
 ├─ activity     start · update · end · get · list
 ├─ permissions  setup · doctor · uninstall
 ├─ devices      list
-└─ services     create · list
+├─ services     create · list
+└─ apps         create · list · remove
 ```
 
 Start a browser authorization flow and approve the requested scopes with your signed-in SHark account:
 
 ```sh
-npm install --global sharkctl@0.4.1
+npm install --global sharkctl@0.5.0
 sharkctl auth login
 sharkctl auth status
 sharkctl notify "Deploy finished ✅" --title "Deploy bot" --image https://example.com/bot.png \
@@ -49,8 +50,8 @@ Login prints a short code and verification URL to stderr, opens the system brows
 polls at the server-provided interval, and atomically writes credentials to a mode-`0600` file.
 `sharkctl auth status` reports only whether the current credentials authenticate; it deliberately
 omits token identifiers, prefixes, scopes, and timestamps so captured command output is safe. The
-default scopes support notifications, asks, Live Activities, listing devices/services, and creating
-webhook services without requesting `events:read`. Every requested scope is shown on the browser
+default scopes support notifications, asks, Live Activities, listing devices/services, creating
+webhook services, and managing web apps without requesting `events:read`. Every requested scope is shown on the browser
 authorization page before approval. Connected tokens appear under **Dashboard > Agent
 connections**, where they can be revoked.
 
@@ -125,6 +126,16 @@ for notifications sent through that URL, while `--url` sets the default tap dest
 `--stdin` to supply the service object as JSON. `services list` shows existing services without
 printing their webhook credentials. Creating services requires `services:write`; existing CLI
 logins created before this scope was added need to sign in again.
+
+## apps
+
+`apps create --name <name> --url <url> [--icon <url>]` registers a web app that opens full-screen in
+the SHark iPhone app with a signed pass (see the Web apps section of the in-app docs). Creating an
+app with an existing URL updates it and returns `created: false`. `apps list` and
+`apps remove <app_id>` manage registered apps. `notify --app <app_id>` opens that app when the
+notification is tapped; `--url` is optional and must stay on the app's origin. These commands
+require the `apps:read` and `apps:write` scopes; logins created before those scopes existed need to
+sign in again (`sharkctl auth login`).
 
 ## activity
 

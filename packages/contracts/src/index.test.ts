@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  API_TOKEN_SCOPES,
   agentNotificationCreateSchema,
+  appCreateSchema,
+  appIdSchema,
   appleNativeTokenExchangeSchema,
+  appOrigin,
+  appUrlSchema,
   deviceRegisterSchema,
   interactionCreateSchema,
   interactionResponseSchema,
@@ -646,5 +651,52 @@ describe("pushDataSchema", () => {
         eventId: "evt_1",
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("web app contracts", () => {
+  it("accepts HTTPS launch URLs and loopback HTTP only", () => {
+    expect(appUrlSchema.safeParse("https://board.example.com/board").success).toBe(true);
+    expect(appUrlSchema.safeParse("https://host.tail1234.ts.net/").success).toBe(true);
+    expect(appUrlSchema.safeParse("http://localhost:5173/board").success).toBe(true);
+    expect(appUrlSchema.safeParse("http://127.0.0.1:8787/").success).toBe(true);
+    expect(appUrlSchema.safeParse("http://board.example.com/").success).toBe(false);
+    expect(appUrlSchema.safeParse("https://user:pw@board.example.com/").success).toBe(false);
+    expect(appUrlSchema.safeParse("javascript:alert(1)").success).toBe(false);
+    expect(appOrigin("https://Board.Example.com:443/x?y=1")).toBe("https://board.example.com");
+  });
+
+  it("requires a single-line name and an app id prefix", () => {
+    expect(
+      appCreateSchema.safeParse({ name: "Sharkboard", url: "https://b.example" }).success,
+    ).toBe(true);
+    expect(
+      appCreateSchema.safeParse({ name: "two\nlines", url: "https://b.example" }).success,
+    ).toBe(false);
+    expect(appCreateSchema.safeParse({ name: "", url: "https://b.example" }).success).toBe(false);
+    expect(appIdSchema.safeParse("app_abcdefgh").success).toBe(true);
+    expect(appIdSchema.safeParse("anot_abcdefgh").success).toBe(false);
+  });
+
+  it("exposes app scopes and carries appId through notification payloads", () => {
+    expect(API_TOKEN_SCOPES).toContain("apps:read");
+    expect(API_TOKEN_SCOPES).toContain("apps:write");
+    expect(
+      agentNotificationCreateSchema.safeParse({ body: "Open", appId: "app_abcdefgh" }).success,
+    ).toBe(true);
+    expect(webhookRequestSchema.safeParse({ body: "Open", appId: "app_abcdefgh" }).success).toBe(
+      true,
+    );
+    expect(webhookRequestSchema.safeParse({ body: "Open", appId: "nope" }).success).toBe(false);
+    const push = pushDataSchema.safeParse({
+      v: 1,
+      eventId: "evt_1",
+      serviceId: "svc_1",
+      sourceId: "svc_1",
+      sourceName: "Board",
+      conversationId: "hark-svc_1",
+      appId: "app_abcdefgh",
+    });
+    expect(push.success).toBe(true);
   });
 });

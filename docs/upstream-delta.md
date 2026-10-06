@@ -57,6 +57,16 @@ changes.
   shuvcode/OpenCode v2 protocol only; Codex/Claude fail closed. This adds no harness-aware server
   state and changes no SHark API or credential boundary. See [broker setup and limits](../packages/shark-broker/README.md).
 
+- Web apps and signed passes are ported from upstream Hark `8e14ede`/`a84813a` without the
+  upstream project link, home-screen swap, or font change: `app` and `app_signing_key` tables,
+  nullable `app_id` on `event` and `agent_notification`, `/api/agent/apps`, `/api/apps`, the
+  anonymous `/.well-known/jwks.json`, `sharkctl apps` and `notify --app`, and the iPhone web view.
+  The JWT `typ` `hark-pass+jwt` and the `app_` id prefix stay as protocol identifiers.
+- Upstream review 2026-10-06 (upstream `main` at `a84813a`): a probe merge produced 66 conflicts
+  across 168 files and both histories carry a different migration `0019`, so `upstream/main` is
+  still never merged. Skipped: `f743f61` project inbox and app icons, `2647efe` contracts CI fix,
+  `c98ccfa` version bump. See `PLAN-sharkboard.md`.
+
 ## CLI and compatibility names
 
 `sharkctl` is the canonical fork CLI and package. Keep `HARK_*`, `@hark/*`, the `hark` config

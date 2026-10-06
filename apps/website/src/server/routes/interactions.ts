@@ -30,6 +30,7 @@ import {
 } from "../db/schema";
 import { isEmailAllowed } from "../lib/admission";
 import { failureBucket, track } from "../lib/analytics";
+import { resolveNotificationApp } from "../lib/apps";
 import { checkNotificationAllowance, getBilling, trackNotification } from "../lib/billing";
 import { newId } from "../lib/id";
 import { deliverInteractionCallbacks } from "../lib/interaction-callbacks";
@@ -207,6 +208,7 @@ function toNotificationDto(row: NotificationRow): AgentNotificationDto {
     imageUrl: row.imageUrl,
     url: row.url,
     createdAt: row.createdAt.toISOString(),
+    ...(row.appId ? { appId: row.appId } : {}),
   };
 }
 
@@ -427,6 +429,15 @@ export const agentRoute = new Hono<AgentEnv>()
       }
     }
 
+    if (parsed.data.appId) {
+      const appResolution = await resolveNotificationApp(
+        token.userId,
+        parsed.data.appId,
+        parsed.data.url,
+      );
+      if (!appResolution.ok) return c.json({ error: appResolution.error }, 400);
+    }
+
     const [owner] = await db
       .select()
       .from(userTable)
@@ -472,6 +483,7 @@ export const agentRoute = new Hono<AgentEnv>()
       error: null,
       idempotencyKey: idempotencyKey ?? null,
       requestHash: idempotencyKey ? requestHash : null,
+      appId: parsed.data.appId ?? null,
       createdAt: new Date(),
     };
 
@@ -524,6 +536,7 @@ export const agentRoute = new Hono<AgentEnv>()
         .update(parsed.data.title.trim().toLowerCase())
         .digest("hex")
         .slice(0, 10)}`,
+      ...(parsed.data.appId ? { appId: parsed.data.appId } : {}),
       resolved: {
         title: parsed.data.title,
         body: parsed.data.body,

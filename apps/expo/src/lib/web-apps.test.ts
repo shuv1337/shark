@@ -1,0 +1,85 @@
+import { describe, expect, it } from "vitest";
+import {
+  buildBridgeScript,
+  buildResolveScript,
+  fallbackTint,
+  isAppOrigin,
+  isDarkColor,
+  parseBridgeMessage,
+  pickStripColor,
+  resolveLaunchUrl,
+  webAppFromNotificationData,
+} from "./web-apps";
+
+const app = { url: "https://shark.example/board", origin: "https://shark.example" };
+
+describe("web app helpers", () => {
+  it("resolves deep links only on the app origin", () => {
+    expect(resolveLaunchUrl(app, "https://shark.example/board/ask/1")).toBe(
+      "https://shark.example/board/ask/1",
+    );
+    expect(resolveLaunchUrl(app, "https://evil.example/board")).toBe(app.url);
+    expect(resolveLaunchUrl(app)).toBe(app.url);
+    expect(isAppOrigin("https://shark.example:443/x", app.origin)).toBe(true);
+    expect(isAppOrigin("http://shark.example/x", app.origin)).toBe(false);
+  });
+
+  it("extracts the app to open from push data", () => {
+    expect(
+      webAppFromNotificationData({ appId: "app_abcdefgh", url: "https://shark.example/board" }),
+    ).toEqual({ appId: "app_abcdefgh", url: "https://shark.example/board" });
+    expect(webAppFromNotificationData({ appId: "app_abcdefgh", url: "javascript:1" })).toEqual({
+      appId: "app_abcdefgh",
+    });
+    expect(webAppFromNotificationData({ appId: "anot_x" })).toBeNull();
+    expect(webAppFromNotificationData({ eventId: "evt_1" })).toBeNull();
+    expect(webAppFromNotificationData(null)).toBeNull();
+  });
+
+  it("parses only versioned bridge messages", () => {
+    expect(parseBridgeMessage(JSON.stringify({ hark: 1, type: "getToken", id: "7" }))).toEqual({
+      type: "getToken",
+      id: "7",
+    });
+    expect(parseBridgeMessage(JSON.stringify({ hark: 1, type: "close" }))).toEqual({
+      type: "close",
+    });
+    expect(
+      parseBridgeMessage(JSON.stringify({ hark: 1, type: "theme", color: "#fff", background: 1 })),
+    ).toEqual({ type: "theme", color: "#fff", background: null });
+    expect(parseBridgeMessage(JSON.stringify({ type: "getToken", id: "7" }))).toBeNull();
+    expect(parseBridgeMessage("not json")).toBeNull();
+    expect(
+      parseBridgeMessage(JSON.stringify({ hark: 1, type: "getToken", id: "x".repeat(40) })),
+    ).toBeNull();
+  });
+
+  it("never embeds a token in the bridge and guards the resolver by origin", () => {
+    const script = buildBridgeScript(app.origin);
+    expect(script).toContain(JSON.stringify(app.origin));
+    expect(script).toContain("getToken");
+    expect(script).not.toContain("hark_");
+    const resolve = buildResolveScript(app.origin, "3", { token: "pass.jwt" });
+    expect(resolve).toContain('"3"');
+    expect(resolve).toContain('"pass.jwt"');
+    expect(resolve).toContain(`window.location.origin !== ${JSON.stringify(app.origin)}`);
+    const failed = buildResolveScript(app.origin, "4", { error: "consent_required" });
+    expect(failed).toContain('"consent_required"');
+    expect(failed).toContain("null");
+  });
+
+  it("accepts only simple colors for the status strip", () => {
+    expect(pickStripColor("#0C1119", null)).toBe("#0C1119");
+    expect(pickStripColor(null, "rgb(12, 17, 25)")).toBe("rgb(12, 17, 25)");
+    expect(pickStripColor("rgba(0, 0, 0, 0)", "rgb(1, 2, 3)")).toBe("rgb(1, 2, 3)");
+    expect(pickStripColor("url(javascript:1)", "transparent")).toBeNull();
+    expect(isDarkColor("#0C1119")).toBe(true);
+    expect(isDarkColor("#FAFAF9")).toBe(false);
+    expect(isDarkColor("rgb(12, 17, 25)")).toBe(true);
+  });
+
+  it("tints letter tiles deterministically", () => {
+    expect(fallbackTint("Sharkboard")).toEqual(fallbackTint("Sharkboard"));
+    expect(fallbackTint("")).toBeDefined();
+  });
+});
