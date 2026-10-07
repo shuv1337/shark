@@ -294,6 +294,20 @@ describe("session passes", () => {
     expect(again.status).toBe(409);
   });
 
+  it("refuses cookie mutations that a browser sends from another origin", async () => {
+    const { app: created } = await createApp();
+    for (const origin of ["https://evil.example", "null"]) {
+      const pass = await session(`/api/apps/${created.id}/pass`, {
+        method: "POST",
+        headers: { origin },
+        body: JSON.stringify({ consent: true }),
+      });
+      expect(pass.status).toBe(403);
+    }
+    const [row] = await db.select().from(schema.app).where(eq(schema.app.id, created.id));
+    expect(row?.consentedAt).toBeNull();
+  });
+
   it("scopes session reads and sharing updates to the owner", async () => {
     const { app: created } = await createApp();
     const mine = await session(`/api/apps/${created.id}`);

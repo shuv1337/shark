@@ -7,7 +7,9 @@ import {
   appleNativeTokenExchangeSchema,
   appOrigin,
   appUrlSchema,
+  boardAskUpsertSchema,
   deviceRegisterSchema,
+  findBoardSecret,
   interactionCreateSchema,
   interactionResponseSchema,
   isInboxItemActive,
@@ -698,5 +700,43 @@ describe("web app contracts", () => {
       appId: "app_abcdefgh",
     });
     expect(push.success).toBe(true);
+  });
+});
+
+describe("board schemas", () => {
+  it("accepts only public HTTPS callbacks", () => {
+    const base = { key: "fm:x", title: "Ship?", options: [{ id: "ok", label: "OK" }] };
+    const token = "k".repeat(32);
+    expect(
+      boardAskUpsertSchema.safeParse({
+        ...base,
+        callback: { url: "https://hooks.example/routine", token },
+      }).success,
+    ).toBe(true);
+    for (const url of [
+      "https://127.0.0.1/hook",
+      "https://10.0.0.5/hook",
+      "https://192.168.1.2/hook",
+      "https://169.254.169.254/latest",
+      "https://[::1]/hook",
+      "https://box.local/hook",
+      "http://hooks.example/routine",
+    ]) {
+      expect(boardAskUpsertSchema.safeParse({ ...base, callback: { url, token } }).success).toBe(
+        false,
+      );
+    }
+  });
+
+  it("rejects format characters that would hide a secret from the screener", () => {
+    const base = { key: "fm:x", options: [{ id: "ok", label: "OK" }] };
+    expect(boardAskUpsertSchema.safeParse({ ...base, title: "Plain title" }).success).toBe(true);
+    expect(boardAskUpsertSchema.safeParse({ ...base, title: "hark_\u200bsecret" }).success).toBe(
+      false,
+    );
+    expect(
+      boardAskUpsertSchema.safeParse({ ...base, title: "T", body: "line\u2060break" }).success,
+    ).toBe(false);
+    expect(findBoardSecret(`hark_${"a".repeat(43)}`)).toBe("SHark API token");
   });
 });

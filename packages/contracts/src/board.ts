@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { publicHttpsUrlSchema } from "./url";
 
 // ---------------------------------------------------------------------------
 // SHark board (fork-only): durable asks, work items, and notes for a captain
@@ -58,6 +59,13 @@ export type BoardCompletionVerb = z.infer<typeof boardCompletionVerbSchema>;
 
 export const BOARD_LINK_KINDS = ["pr", "issue", "linear", "source", "doc", "other"] as const;
 
+/** Zero-width and other format characters would hide a secret from the screener while the card looks intact. */
+const FORMAT_CHARACTER = /\p{Cf}/u;
+const noFormatCharacters = (value: string) => !FORMAT_CHARACTER.test(value);
+
+const multiLine = (max: number) =>
+  z.string().trim().max(max).refine(noFormatCharacters, "Format characters are not allowed");
+
 const singleLine = (max: number) =>
   z
     .string()
@@ -71,7 +79,8 @@ const singleLine = (max: number) =>
           return code >= 32 && code !== 127;
         }),
       "Must be a single line",
-    );
+    )
+    .refine(noFormatCharacters, "Format characters are not allowed");
 
 export const boardKeySchema = z
   .string()
@@ -113,7 +122,7 @@ export type BoardOption = z.infer<typeof boardOptionSchema>;
 
 /** Public HTTPS callback, the same shape webhooks accept for interaction answers. */
 export const boardCallbackSchema = z.object({
-  url: httpsUrlSchema,
+  url: publicHttpsUrlSchema,
   token: z.string().min(16).max(512),
 });
 
@@ -121,7 +130,7 @@ export const boardAskUpsertSchema = z
   .object({
     key: boardKeySchema,
     title: singleLine(BOARD_TITLE_MAX_CHARS),
-    body: z.string().trim().max(BOARD_BODY_MAX_CHARS).optional(),
+    body: multiLine(BOARD_BODY_MAX_CHARS).optional(),
     kind: boardAskKindSchema.default("decision"),
     options: z.array(boardOptionSchema).max(BOARD_MAX_OPTIONS).default([]),
     allowText: z.boolean().default(false),
@@ -174,7 +183,7 @@ export const boardWorkUpsertSchema = z.object({
   title: singleLine(BOARD_TITLE_MAX_CHARS),
   state: z.enum(BOARD_WORK_ACTIVE_STATES),
   statusLabel: singleLine(60).optional(),
-  detail: z.string().trim().max(240).optional(),
+  detail: multiLine(240).optional(),
   progress: z.number().min(0).max(1).optional(),
   links: z.array(boardLinkSchema).max(BOARD_MAX_LINKS).default([]),
   host: singleLine(60).optional(),
@@ -197,7 +206,7 @@ export const boardDoneSchema = z.object({
   /** `failed` or `cancelled` record an unsuccessful end; default is `done`. */
   outcome: z.enum(["done", "failed", "cancelled"]).default("done"),
   links: z.array(boardLinkSchema).max(BOARD_MAX_LINKS).default([]),
-  note: z.string().trim().max(600).optional(),
+  note: multiLine(600).optional(),
   agentDisplay: singleLine(60).optional(),
 });
 export type BoardDoneInput = z.infer<typeof boardDoneSchema>;
@@ -205,7 +214,7 @@ export type BoardDoneInput = z.infer<typeof boardDoneSchema>;
 export const boardNoteUpsertSchema = z.object({
   key: boardKeySchema,
   text: singleLine(300),
-  detail: z.string().trim().max(2000).optional(),
+  detail: multiLine(2000).optional(),
   link: httpsUrlSchema.optional(),
   expiresInSeconds: z.number().int().min(60).max(BOARD_MAX_EXPIRES_IN_SECONDS).nullish(),
   agentDisplay: singleLine(60).optional(),

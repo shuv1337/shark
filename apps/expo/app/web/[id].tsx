@@ -211,17 +211,20 @@ export default function WebAppScreen() {
 
   const openOutside = (url: string) => {
     if (!app) return;
-    const origin = originOf(url);
-    if (!origin || !/^https?:/.test(url)) {
-      void Linking.openURL(url).catch(() => {});
-      return;
-    }
+    // Every top-frame navigation off the app's origin is confirmed, including
+    // custom URL schemes: a page must not hand the phone to another app silently.
+    const web = /^https?:/i.test(url) && originOf(url) !== null;
     Alert.alert(
       `This link leaves ${app.name}`,
-      `It opens in Safari. Your SHark sign-in stays with ${new URL(app.origin).host}.`,
+      web
+        ? `It opens in Safari. Your SHark sign-in stays with ${new URL(app.origin).host}.`
+        : `It opens another app. Your SHark sign-in stays with ${new URL(app.origin).host}.`,
       [
         { text: `Stay in ${app.name}`, style: "cancel" },
-        { text: "Open in Safari", onPress: () => void Linking.openURL(url).catch(() => {}) },
+        {
+          text: web ? "Open in Safari" : "Open",
+          onPress: () => void Linking.openURL(url).catch(() => {}),
+        },
       ],
     );
   };

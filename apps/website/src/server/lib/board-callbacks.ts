@@ -1,3 +1,4 @@
+import { isPublicHttpsUrl } from "@hark/contracts";
 import { and, eq, inArray, isNotNull, lte } from "drizzle-orm";
 import { db } from "../db";
 import { boardAsk } from "../db/schema";
@@ -32,6 +33,27 @@ export function deliverBoardCallbacks(): Promise<void> {
 
     for (const row of rows) {
       const attempt = row.callbackAttempts + 1;
+      // Re-checked at delivery so a row written before this rule, or by any
+      // other path, still never makes this process connect to a private host.
+      if (!isPublicHttpsUrl(row.callbackUrl as string)) {
+        await db
+          .update(boardAsk)
+          .set({
+            callbackStatus: "failed",
+            callbackAttempts: attempt,
+            callbackLastError: "Callback URL is not a public HTTPS URL",
+            callbackNextAttemptAt: null,
+          })
+          .where(eq(boardAsk.id, row.id));
+        await appendAskEvent(row.id, {
+          dedupeKey: `callback_failed:r${row.revision}:${row.status}`,
+          kind: "callback_failed",
+          actorType: "system",
+          revision: row.revision,
+          detail: "Callback URL is not a public HTTPS URL",
+        });
+        continue;
+      }
       try {
         const response = await fetch(row.callbackUrl as string, {
           method: "POST",

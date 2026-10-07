@@ -32,7 +32,12 @@ export function subscribeBoard(userId: string, listener: Listener): () => void {
   listeners.set(userId, set);
   return () => {
     set.delete(listener);
-    if (set.size === 0) listeners.delete(userId);
+    if (set.size === 0) {
+      listeners.delete(userId);
+      // Nobody is watching, so the counter can restart; pages refetch on any
+      // `changed` event rather than comparing versions across connections.
+      versions.delete(userId);
+    }
   };
 }
 

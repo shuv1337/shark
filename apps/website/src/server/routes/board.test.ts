@@ -7,6 +7,7 @@ process.env.APP_URL = "https://shark.example";
 
 const authState = vi.hoisted(() => ({ userId: "cap" as string | null, sessionId: "sess_1" }));
 const sent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+const pushState = vi.hoisted(() => ({ fail: false }));
 const callbacks = vi.hoisted(() => ({
   calls: [] as Array<{ url: string; authorization: string | null; body: Record<string, unknown> }>,
   status: 200,
@@ -60,6 +61,7 @@ vi.mock("expo-server-sdk", () => {
       return [messages];
     }
     async sendPushNotificationsAsync(messages: Array<Record<string, unknown>>) {
+      if (pushState.fail) throw new Error("push provider unavailable");
       sent.push(...messages);
       return messages.map(() => ({ status: "ok", id: "ticket" }));
     }
@@ -171,6 +173,7 @@ beforeAll(async () => {
 afterEach(async () => {
   authState.userId = "cap";
   sent.length = 0;
+  pushState.fail = false;
   callbacks.calls.length = 0;
   callbacks.status = 200;
   vi.unstubAllGlobals();
@@ -301,6 +304,72 @@ describe("agent asks", () => {
     }
     const overflow = await createAsk({ key: "fm:bulk:overflow", priority: "p2" });
     expect(overflow.response.status).toBe(409);
+  });
+
+  it("screens keys, reasons, and callbacks, and refuses private callback hosts", async () => {
+    const secretKey = await createAsk({ key: `fm:hark_${"a".repeat(43)}` });
+    expect(secretKey.response.status).toBe(422);
+    const hidden = await createAsk({ title: `Use hark_\u200b${"a".repeat(43)}` });
+    expect(hidden.response.status).toBe(400);
+    for (const url of ["https://127.0.0.1/hook", "https://10.1.2.3/hook", "https://box.local/h"]) {
+      const { response } = await createAsk({ callback: { url, token: "k".repeat(32) } });
+      expect(response.status).toBe(400);
+    }
+    await createAsk();
+    const cancelled = await agent(`/asks/${encodeURIComponent(baseAsk.key)}/cancel`, FM, {
+      method: "POST",
+      body: JSON.stringify({ reason: `moved to hark_${"b".repeat(43)}` }),
+    });
+    expect(cancelled.status).toBe(422);
+  });
+
+  it("retries a failed push on re-assert under the same notification", async () => {
+    pushState.fail = true;
+    const first = await createAsk();
+    expect(first.response.status).toBe(201);
+    expect(first.body.pushed).toBe(false);
+    let rows = await db.select().from(schema.agentNotification);
+    expect(rows.map((row) => row.status)).toEqual(["failed"]);
+
+    pushState.fail = false;
+    const again = await createAsk();
+    expect(again.response.status).toBe(200);
+    expect(again.body.changed).toBe(false);
+    expect(again.body.pushed).toBe(true);
+    rows = await db.select().from(schema.agentNotification);
+    expect(rows.map((row) => row.status)).toEqual(["accepted"]);
+    expect(sent).toHaveLength(1);
+
+    const third = await createAsk();
+    expect(third.body.pushed).toBe(false);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("opens the board app only for an exact board URL", async () => {
+    const { isBoardAppUrl } = await import("../lib/board-push");
+    expect(isBoardAppUrl("https://shark.example/board")).toBe(true);
+    expect(isBoardAppUrl("https://shark.example/board/ask/bask_1")).toBe(true);
+    expect(isBoardAppUrl("https://shark.example/board-evil")).toBe(false);
+    expect(isBoardAppUrl("https://shark.example/boarder")).toBe(false);
+    expect(isBoardAppUrl("https://evil.example/board")).toBe(false);
+
+    const now = new Date();
+    await db.insert(schema.app).values({
+      id: "app_decoy",
+      userId: "cap",
+      name: "Boarder",
+      url: "https://shark.example/boarder",
+      origin: "https://shark.example",
+      lastOpenedAt: new Date(now.getTime() + 60_000),
+      createdAt: now,
+      updatedAt: now,
+    });
+    try {
+      await createAsk();
+      expect((sent[0]?.data as { appId?: string } | undefined)?.appId).toBe("app_boardboard");
+    } finally {
+      await db.delete(schema.app).where(eq(schema.app.id, "app_decoy"));
+    }
   });
 
   it("lets only the owning agent read, cancel, and ack its ask", async () => {

@@ -291,6 +291,8 @@ function screen(values: Array<string | null | undefined>): BoardFailure | null {
 
 function screenAsk(input: BoardAskUpsertInput): BoardFailure | null {
   return screen([
+    input.key,
+    input.callback?.url,
     input.title,
     input.body,
     input.taskId,
@@ -315,7 +317,7 @@ async function openAskByKey(userId: string, key: string): Promise<AskRow | undef
 
 async function pushAsk(row: AskRow, token: TokenRow): Promise<boolean> {
   try {
-    const result = await sendBoardAskPush(row, token.id);
+    const result = await sendBoardAskPush(row, token);
     if (!result) {
       await appendAskEvent(row.id, {
         dedupeKey: `push_failed:r${row.revision}`,
@@ -326,10 +328,12 @@ async function pushAsk(row: AskRow, token: TokenRow): Promise<boolean> {
       });
       return false;
     }
-    await db
-      .update(boardAsk)
-      .set({ pushNotificationId: result.notificationId })
-      .where(eq(boardAsk.id, row.id));
+    if (result.accepted > 0) {
+      await db
+        .update(boardAsk)
+        .set({ pushNotificationId: result.notificationId })
+        .where(eq(boardAsk.id, row.id));
+    }
     await appendAskEvent(row.id, {
       dedupeKey: `pushed:r${row.revision}`,
       kind: result.accepted > 0 ? "pushed" : "push_failed",
@@ -352,6 +356,12 @@ async function pushAsk(row: AskRow, token: TokenRow): Promise<boolean> {
 
 export type UpsertAskOutcome =
   | { ok: true; row: AskRow; created: boolean; changed: boolean; pushed: boolean }
+  | BoardFailure;
+
+type UpsertAskStep =
+  | { kind: "unchanged"; row: AskRow; retryPush: boolean }
+  | { kind: "revised"; row: AskRow }
+  | { kind: "created"; row: AskRow }
   | BoardFailure;
 
 export async function upsertAsk(
@@ -386,110 +396,150 @@ export async function upsertAsk(
   };
   const shouldPush = input.push === "auto" && input.priority !== "p2";
 
-  const existing = await openAskByKey(token.userId, input.key);
-  if (existing) {
-    if (existing.requesterTokenId !== token.id) {
-      return { ok: false, status: 409, error: "Another agent owns this ask key" };
-    }
-    const unchanged =
-      contentHash({
-        title: existing.title,
-        body: existing.body,
-        kind: existing.kind,
-        options: existing.options,
-        allowText: existing.allowText,
-        allowLater: existing.allowLater,
-        priority: existing.priority,
-        taskId: existing.waitingTaskId,
-        links: existing.links,
-      }) === contentHash(content);
-    if (unchanged) {
-      const [row] = await db
-        .update(boardAsk)
-        .set({
-          lastAssertedAt: now,
-          agentDisplay: input.agentDisplay ?? existing.agentDisplay,
-          ...(input.expiresInSeconds !== undefined ? { expiresAt } : {}),
-          ...callbackFields,
-        })
-        .where(eq(boardAsk.id, existing.id))
-        .returning();
-      return { ok: true, row: row ?? existing, created: false, changed: false, pushed: false };
-    }
-    const revision = existing.revision + 1;
-    const [row] = await db
-      .update(boardAsk)
-      .set({
-        ...content,
-        waitingTaskId: content.taskId,
-        revision,
-        actionDigest: askDigest({ id: existing.id, revision, ...content }),
-        agentDisplay: input.agentDisplay ?? existing.agentDisplay,
-        snoozeUntil: null,
-        expiresAt,
-        lastAssertedAt: now,
-        updatedAt: now,
-        ...callbackFields,
-      })
-      .where(eq(boardAsk.id, existing.id))
-      .returning();
-    if (!row) return { ok: false, status: 409, error: "Ask changed concurrently" };
-    await appendAskEvent(row.id, {
-      dedupeKey: `revised:r${revision}`,
-      kind: "revised",
-      actorType: "token",
-      actorRef: token.id,
-      revision,
-    });
-    const pushed = shouldPush ? await pushAsk(row, token) : false;
-    notifyBoardChanged(token.userId);
-    return { ok: true, row, created: false, changed: true, pushed };
-  }
+  // Synchronous transaction: the open-row read, the cap check, and the write
+  // cannot interleave with another request on the single SQLite connection, so
+  // a re-assert never lands on a row the captain answered in between and the
+  // open cap holds under parallel PUTs.
+  let step: UpsertAskStep;
+  try {
+    step = db.transaction((tx): UpsertAskStep => {
+      const existing = tx
+        .select()
+        .from(boardAsk)
+        .where(
+          and(
+            eq(boardAsk.userId, token.userId),
+            eq(boardAsk.askKey, input.key),
+            eq(boardAsk.status, "open"),
+          ),
+        )
+        .get();
+      if (existing) {
+        if (existing.requesterTokenId !== token.id) {
+          return { ok: false, status: 409, error: "Another agent owns this ask key" };
+        }
+        const openAndCurrent = and(
+          eq(boardAsk.id, existing.id),
+          eq(boardAsk.status, "open"),
+          eq(boardAsk.revision, existing.revision),
+        );
+        const unchanged =
+          contentHash({
+            title: existing.title,
+            body: existing.body,
+            kind: existing.kind,
+            options: existing.options,
+            allowText: existing.allowText,
+            allowLater: existing.allowLater,
+            priority: existing.priority,
+            taskId: existing.waitingTaskId,
+            links: existing.links,
+          }) === contentHash(content);
+        if (unchanged) {
+          const row = tx
+            .update(boardAsk)
+            .set({
+              lastAssertedAt: now,
+              agentDisplay: input.agentDisplay ?? existing.agentDisplay,
+              ...(input.expiresInSeconds !== undefined ? { expiresAt } : {}),
+              ...callbackFields,
+            })
+            .where(openAndCurrent)
+            .returning()
+            .get();
+          if (!row) return { ok: false, status: 409, error: "Ask changed concurrently" };
+          return {
+            kind: "unchanged",
+            row,
+            retryPush: shouldPush && row.pushNotificationId === null,
+          };
+        }
+        const revision = existing.revision + 1;
+        const row = tx
+          .update(boardAsk)
+          .set({
+            ...content,
+            waitingTaskId: content.taskId,
+            revision,
+            actionDigest: askDigest({ id: existing.id, revision, ...content }),
+            agentDisplay: input.agentDisplay ?? existing.agentDisplay,
+            snoozeUntil: null,
+            expiresAt,
+            pushNotificationId: null,
+            lastAssertedAt: now,
+            updatedAt: now,
+            ...callbackFields,
+          })
+          .where(openAndCurrent)
+          .returning()
+          .get();
+        if (!row) return { ok: false, status: 409, error: "Ask changed concurrently" };
+        return { kind: "revised", row };
+      }
 
-  const [open] = await db
-    .select({ value: count() })
-    .from(boardAsk)
-    .where(and(eq(boardAsk.requesterTokenId, token.id), eq(boardAsk.status, "open")));
-  if ((open?.value ?? 0) >= BOARD_MAX_OPEN_ASKS_PER_TOKEN) {
-    return {
-      ok: false,
-      status: 409,
-      error: `This agent already has ${BOARD_MAX_OPEN_ASKS_PER_TOKEN} open asks; answer or cancel some first`,
-    };
+      const open = tx
+        .select({ value: count() })
+        .from(boardAsk)
+        .where(and(eq(boardAsk.requesterTokenId, token.id), eq(boardAsk.status, "open")))
+        .get();
+      if ((open?.value ?? 0) >= BOARD_MAX_OPEN_ASKS_PER_TOKEN) {
+        return {
+          ok: false,
+          status: 409,
+          error: `This agent already has ${BOARD_MAX_OPEN_ASKS_PER_TOKEN} open asks; answer or cancel some first`,
+        };
+      }
+      const id = newId("bask");
+      const row = tx
+        .insert(boardAsk)
+        .values({
+          id,
+          userId: token.userId,
+          requesterTokenId: token.id,
+          agentLabel: token.name,
+          agentDisplay: input.agentDisplay ?? null,
+          askKey: input.key,
+          revision: 1,
+          ...content,
+          waitingTaskId: content.taskId,
+          status: "open",
+          expiresAt,
+          actionDigest: askDigest({ id, revision: 1, ...content }),
+          ...callbackFields,
+          lastAssertedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning()
+        .get();
+      if (!row) return { ok: false, status: 409, error: "Ask was created concurrently" };
+      return { kind: "created", row };
+    });
+  } catch (error) {
+    if (error instanceof Error && /UNIQUE constraint failed/.test(error.message)) {
+      return { ok: false, status: 409, error: "Ask was created concurrently; retry" };
+    }
+    throw error;
   }
-  const id = newId("bask");
-  const [row] = await db
-    .insert(boardAsk)
-    .values({
-      id,
-      userId: token.userId,
-      requesterTokenId: token.id,
-      agentLabel: token.name,
-      agentDisplay: input.agentDisplay ?? null,
-      askKey: input.key,
-      revision: 1,
-      ...content,
-      waitingTaskId: content.taskId,
-      status: "open",
-      expiresAt,
-      actionDigest: askDigest({ id, revision: 1, ...content }),
-      ...callbackFields,
-      lastAssertedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .returning();
-  if (!row) return { ok: false, status: 409, error: "Ask was created concurrently" };
+  if ("ok" in step) return step;
+
+  if (step.kind === "unchanged") {
+    // The earlier push for this revision never reached a device: one retry per
+    // re-assert, under the same idempotency key, so a flaky send is not final.
+    const pushed = step.retryPush ? await pushAsk(step.row, token) : false;
+    return { ok: true, row: step.row, created: false, changed: false, pushed };
+  }
+  const { row } = step;
   await appendAskEvent(row.id, {
-    dedupeKey: "opened",
-    kind: "opened",
+    dedupeKey: step.kind === "created" ? "opened" : `revised:r${row.revision}`,
+    kind: step.kind === "created" ? "opened" : "revised",
     actorType: "token",
     actorRef: token.id,
-    revision: 1,
+    revision: row.revision,
   });
   const pushed = shouldPush ? await pushAsk(row, token) : false;
   notifyBoardChanged(token.userId);
-  return { ok: true, row, created: true, changed: true, pushed };
+  return { ok: true, row, created: step.kind === "created", changed: true, pushed };
 }
 
 /** Marks an ask terminal and queues its callback; shared by answer, dismiss, cancel, expiry. */
@@ -507,6 +557,8 @@ export async function cancelAsk(
   key: string,
   reason: string | undefined,
 ): Promise<{ ok: true; row: AskRow } | BoardFailure> {
+  const rejected = screen([reason]);
+  if (rejected) return rejected;
   const existing = await openAskByKey(token.userId, key);
   if (!existing || existing.requesterTokenId !== token.id) {
     return { ok: false, status: 404, error: "No open ask with that key" };
@@ -740,7 +792,13 @@ export async function snoozeAsk(
   const [row] = await db
     .update(boardAsk)
     .set({ snoozeUntil: until, updatedAt: now })
-    .where(eq(boardAsk.id, existing.id))
+    .where(
+      and(
+        eq(boardAsk.id, existing.id),
+        eq(boardAsk.status, "open"),
+        eq(boardAsk.revision, existing.revision),
+      ),
+    )
     .returning();
   if (!row) return { ok: false, status: 409, error: "This ask changed concurrently" };
   await appendAskEvent(row.id, {
@@ -761,6 +819,8 @@ export async function dismissAsk(
   input: BoardDismissInput,
   actor: CaptainActor,
 ): Promise<{ ok: true; row: AskRow } | BoardFailure> {
+  const rejected = screen([input.reason]);
+  if (rejected) return rejected;
   const existing = await ownedAsk(userId, askId);
   if (!existing) return { ok: false, status: 404, error: "Ask not found" };
   if (existing.status !== "open") {
@@ -783,7 +843,13 @@ export async function dismissAsk(
       answeredVia: actor.via,
       answeredSessionHash: actor.sessionHash ?? null,
     })
-    .where(and(eq(boardAsk.id, existing.id), eq(boardAsk.status, "open")))
+    .where(
+      and(
+        eq(boardAsk.id, existing.id),
+        eq(boardAsk.status, "open"),
+        eq(boardAsk.revision, existing.revision),
+      ),
+    )
     .returning();
   if (!row) return { ok: false, status: 409, error: "This ask changed concurrently" };
   await appendAskEvent(row.id, {
@@ -810,10 +876,12 @@ export async function upsertWork(
   input: BoardWorkUpsertInput,
 ): Promise<{ ok: true; row: WorkRow; created: boolean } | BoardFailure> {
   const rejected = screen([
+    input.key,
     input.title,
     input.detail,
     input.statusLabel,
     input.host,
+    input.agentDisplay,
     ...input.links.flatMap((link) => [link.label, link.url]),
   ]);
   if (rejected) return rejected;
@@ -880,8 +948,10 @@ export async function markDone(
   input: BoardDoneInput,
 ): Promise<{ ok: true; row: WorkRow } | BoardFailure> {
   const rejected = screen([
+    input.key,
     input.title,
     input.note,
+    input.agentDisplay,
     ...input.links.flatMap((link) => [link.label, link.url]),
   ]);
   if (rejected) return rejected;
@@ -943,7 +1013,7 @@ export async function upsertNote(
   token: TokenRow,
   input: BoardNoteUpsertInput,
 ): Promise<{ ok: true; row: NoteRow; created: boolean } | BoardFailure> {
-  const rejected = screen([input.text, input.detail, input.link]);
+  const rejected = screen([input.key, input.text, input.detail, input.link, input.agentDisplay]);
   if (rejected) return rejected;
   const now = new Date();
   const expiresAt =

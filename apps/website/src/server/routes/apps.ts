@@ -16,6 +16,7 @@ import { app } from "../db/schema";
 import { issueAppPass, publicJwks } from "../lib/app-pass";
 import { ownedAppDto, selectAppsWithJoins, toAppDto } from "../lib/apps";
 import { newId } from "../lib/id";
+import { isSameOriginOrNative } from "../lib/same-origin";
 import {
   type AgentEnv,
   type AuthedEnv,
@@ -141,6 +142,13 @@ export const appsAgentRoute = new Hono<AgentEnv>()
 
 export const appsSessionRoute = new Hono<AuthedEnv>()
   .use("*", requireAuth)
+  .use("*", async (c, next) => {
+    // Pass minting, consent, sharing, and removal mutate on a session cookie.
+    if (c.req.method !== "GET" && !isSameOriginOrNative(c.req.raw)) {
+      return c.json({ error: "Invalid request origin" }, 403);
+    }
+    await next();
+  })
   .get("/", async (c) => {
     const rows = await selectAppsWithJoins()
       .where(eq(app.userId, c.get("user").id))

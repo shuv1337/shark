@@ -10,3 +10,13 @@ export function isSameOrigin(request: Request): boolean {
   const origin = request.headers.get("origin");
   return origin !== null && origin === new URL(env.APP_URL).origin;
 }
+
+/**
+ * Same-origin check for cookie-authenticated routes the iPhone app also calls.
+ * Browsers always send `Origin` on a cross-site POST (or `null`), so a foreign
+ * or null origin is refused; the native client sends no `Origin` at all and is
+ * allowed through on its session cookie.
+ */
+export function isSameOriginOrNative(request: Request): boolean {
+  return request.headers.get("origin") === null || isSameOrigin(request);
+}

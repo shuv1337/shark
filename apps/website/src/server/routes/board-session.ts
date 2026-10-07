@@ -115,25 +115,28 @@ export const boardSessionRoute = new Hono<AuthedEnv>()
         wake?.();
       }, 25_000);
       stream.onAbort(() => {
-        clearInterval(keepalive);
-        unsubscribe();
         wake?.();
       });
-      let sent = version;
-      while (!stream.aborted) {
-        await new Promise<void>((resolve) => {
-          wake = resolve;
-        });
-        wake = null;
-        if (stream.aborted) break;
-        if (version !== sent) {
-          sent = version;
-          await stream.writeSSE({ event: "changed", data: String(version), id: String(version) });
-        } else {
-          await stream.write(": keepalive\n\n");
+      try {
+        let sent = version;
+        while (!stream.aborted) {
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+          wake = null;
+          if (stream.aborted) break;
+          if (version !== sent) {
+            sent = version;
+            await stream.writeSSE({ event: "changed", data: String(version), id: String(version) });
+          } else {
+            await stream.write(": keepalive\n\n");
+          }
         }
+      } finally {
+        // Runs on abort, on a handler throw, and when the loop ends; the
+        // interval and the listener never outlive the connection.
+        clearInterval(keepalive);
+        unsubscribe();
       }
-      clearInterval(keepalive);
-      unsubscribe();
     });
   });
