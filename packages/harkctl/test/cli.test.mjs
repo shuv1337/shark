@@ -1091,3 +1091,215 @@ test("rejects group-readable config files", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+const AGENT_ENV = { HARK_TOKEN: "hark_test", HARK_API_URL: "https://example.test" };
+
+/** Replaces fetch for one test, recording each request and answering from `respond`. */
+async function withMockServer(respond, callback) {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const request = {
+      path: String(url).replace("https://example.test", ""),
+      method: init.method ?? "GET",
+      body: init.body ? JSON.parse(init.body) : undefined,
+    };
+    requests.push(request);
+    return respond(request);
+  };
+  try {
+    await callback(requests);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+test("account commands call the matching agent routes", async () => {
+  const cases = [
+    [["services", "get", "svc_1"], "GET", "/api/agent/services/svc_1"],
+    [["services", "rotate", "svc_1"], "POST", "/api/agent/services/svc_1/rotate"],
+    [["services", "remove", "svc_1"], "DELETE", "/api/agent/services/svc_1"],
+    [["devices", "remove", "dev_1"], "DELETE", "/api/agent/devices/dev_1"],
+    [["inbox", "projects"], "GET", "/api/agent/inbox/projects"],
+    [
+      ["inbox", "list", "--project", "unfiled", "--unread", "--limit", "5", "--cursor", "abc"],
+      "GET",
+      "/api/agent/inbox/notifications?project=unfiled&limit=5&unread=1&cursor=abc",
+    ],
+    [["inbox", "get", "event:evt_1"], "GET", "/api/agent/inbox/notifications/event%3Aevt_1"],
+    [
+      ["inbox", "unread", "event:evt_1"],
+      "POST",
+      "/api/agent/inbox/notifications/event%3Aevt_1/unread",
+    ],
+    [["interaction", "list"], "GET", "/api/agent/interactions"],
+    [
+      ["activity", "feed", "--filter", "response", "--page", "2"],
+      "GET",
+      "/api/agent/activity-feed?filter=response&page=2",
+    ],
+    [["billing"], "GET", "/api/agent/billing"],
+    [["tokens", "list"], "GET", "/api/agent/tokens"],
+    [["tokens", "revoke", "tok_1"], "DELETE", "/api/agent/tokens/tok_1"],
+    [["notify", "withdraw", "anot_1"], "POST", "/api/agent/notifications/anot_1/withdraw"],
+  ];
+  for (const [argv, method, path] of cases) {
+    await withMockServer(
+      () => Response.json({ ok: true }),
+      async (requests) => {
+        const result = await execute(argv, AGENT_ENV);
+        assert.equal(result.exitCode, 0, argv.join(" "));
+        assert.deepEqual(result.body, { ok: true });
+        assert.deepEqual(
+          requests.map(({ method: m, path: p }) => `${m} ${p}`),
+          [`${method} ${path}`],
+        );
+      },
+    );
+  }
+});
+
+test("services update sends only the provided fields", async () => {
+  await withMockServer(
+    () => Response.json({ service: { id: "svc_1", title: "Bot" } }),
+    async (requests) => {
+      const result = await execute(
+        ["services", "update", "svc_1", "--title", "Bot", "--url", "https://example.com/x"],
+        AGENT_ENV,
+      );
+      assert.equal(result.exitCode, 0);
+      assert.deepEqual(requests, [
+        {
+          path: "/api/agent/services/svc_1",
+          method: "PATCH",
+          body: { title: "Bot", url: "https://example.com/x" },
+        },
+      ]);
+    },
+  );
+  await assert.rejects(execute(["services", "update", "svc_1"], AGENT_ENV), /requires --title/);
+  await assert.rejects(execute(["services", "rotate"], AGENT_ENV), /requires an ID/);
+});
+
+test("inbox read-all submits the read-through token from a fresh list", async () => {
+  await withMockServer(
+    ({ path }) =>
+      path.startsWith("/api/agent/inbox/notifications?")
+        ? Response.json({ items: [], nextCursor: null, readThroughToken: "rt-token" })
+        : Response.json({ ok: true, updated: 3 }),
+    async (requests) => {
+      const result = await execute(["inbox", "read-all", "--project", "prj_1"], AGENT_ENV);
+      assert.deepEqual(result.body, { ok: true, updated: 3 });
+      assert.deepEqual(requests, [
+        {
+          path: "/api/agent/inbox/notifications?project=prj_1&limit=1",
+          method: "GET",
+          body: undefined,
+        },
+        {
+          path: "/api/agent/inbox/notifications/read-all",
+          method: "POST",
+          body: { readThrough: "rt-token", project: "prj_1" },
+        },
+      ]);
+    },
+  );
+});
+
+test("notify withdraw is a subcommand unless it follows --", async () => {
+  await assert.rejects(
+    execute(["notify", "withdraw", "the", "deploy"], AGENT_ENV),
+    /exactly one notification ID/,
+  );
+  await withMockServer(
+    () => Response.json({ notification: { id: "anot_2" }, accepted: 1 }, { status: 201 }),
+    async (requests) => {
+      const result = await execute(["notify", "--", "withdraw"], AGENT_ENV);
+      assert.equal(result.exitCode, 0);
+      assert.deepEqual(requests, [
+        { path: "/api/agent/notifications", method: "POST", body: { body: "withdraw" } },
+      ]);
+    },
+  );
+});
+
+test("apps update sends metadata only and prints a readable line", async () => {
+  const app = {
+    id: "app_1",
+    name: "Ops",
+    url: "https://new.example.com/",
+    consentedAt: null,
+  };
+  await withMockServer(
+    () => Response.json({ app }),
+    async (requests) => {
+      const result = await execute(
+        [
+          "apps",
+          "update",
+          "app_1",
+          "--url",
+          "https://new.example.com/",
+          "--no-icon",
+          "--no-project",
+        ],
+        AGENT_ENV,
+      );
+      assert.equal(
+        result.output,
+        "app_1  Ops  https://new.example.com/ (approve sign-in on your phone)",
+      );
+      assert.deepEqual(requests[0], {
+        path: "/api/agent/apps/app_1",
+        method: "PATCH",
+        body: { url: "https://new.example.com/", iconUrl: null, project: null },
+      });
+      const revoked = await execute(["apps", "revoke", "app_1", "--json"], AGENT_ENV);
+      assert.deepEqual(revoked.body, { app });
+      assert.equal(revoked.output, undefined);
+      assert.equal(requests[1].path, "/api/agent/apps/app_1/revoke");
+    },
+  );
+  await assert.rejects(
+    execute(
+      ["apps", "update", "app_1", "--icon", "https://example.com/i.png", "--no-icon"],
+      AGENT_ENV,
+    ),
+    /cannot be used together/,
+  );
+  await assert.rejects(execute(["apps", "update", "app_1"], AGENT_ENV), /requires --name/);
+});
+
+test("a missing scope names the scopes to grant and exits 3", async () => {
+  await withMockServer(
+    () =>
+      Response.json({ error: "Insufficient scope", required: ["tokens:manage"] }, { status: 403 }),
+    async () => {
+      await assert.rejects(execute(["tokens", "list"], AGENT_ENV), /grant tokens:manage/);
+      const originalError = console.error;
+      console.error = () => {};
+      try {
+        assert.equal(await run(["tokens", "list"], AGENT_ENV), 3);
+      } finally {
+        console.error = originalError;
+      }
+    },
+  );
+});
+
+test("default login scopes include the account scopes but not tokens:manage", async () => {
+  await withMockServer(
+    () => Response.json({ error: "stop here" }, { status: 400 }),
+    async (requests) => {
+      await assert.rejects(
+        execute(["auth", "login", "--no-open"], { HARK_API_URL: "https://example.test" }),
+        /stop here/,
+      );
+      const { scopes } = requests[0].body;
+      for (const scope of ["devices:write", "inbox:read", "inbox:write", "billing:read"]) {
+        assert.ok(scopes.includes(scope), scope);
+      }
+      assert.equal(scopes.includes("tokens:manage"), false);
+    },
+  );
+});

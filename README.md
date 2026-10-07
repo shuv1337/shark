@@ -215,6 +215,27 @@ Claude Code, Codex, OpenCode V1, and OpenCode V2 details.
 Only an explicit phone approval allows a request. Other outcomes deny it, and raw commands, patches,
 prompts, file contents, and absolute paths are not sent to Hark.
 
+## Agent API
+
+Everything you can do in the dashboard or the phone inbox is also available to a scoped agent token
+(`Authorization: Bearer hark_…`) under `/api/agent`, and through `harkctl`: services (get, update,
+rotate, remove), devices, the project inbox (list, read, unread, read-all), the activity feed,
+pending prompts, notification withdrawal, web app metadata and sign-out, billing, and token
+list/revoke.
+
+```sh
+harkctl inbox list --unread
+harkctl interaction list
+harkctl notify withdraw anot_...
+harkctl services rotate svc_...
+```
+
+A few actions stay human-only on purpose: answering prompts, creating API tokens, approving app
+sign-in or changing what an app may see, registering devices, and billing checkout. Every route,
+its scopes, and its request and response schemas are described by the public OpenAPI document at
+[`/api/agent/openapi.json`](https://hark.ryan.ceo/api/agent/openapi.json); see the
+[Agent API docs](https://hark.ryan.ceo/docs#agent-api).
+
 ## License
 
 Hark is source-available under the

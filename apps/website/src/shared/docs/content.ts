@@ -85,6 +85,7 @@ export interface DocSection {
 export const DOCS_TITLE = "Webhooks to iPhone notifications";
 export const DOCS_URL = "https://hark.ryan.ceo/docs";
 export const DOCS_MARKDOWN_URL = "https://hark.ryan.ceo/docs.md";
+export const AGENT_OPENAPI_URL = "https://hark.ryan.ceo/api/agent/openapi.json";
 
 export const DOC_CONTENT: DocSection[] = [
   {
@@ -1297,6 +1298,231 @@ harkctl apps remove app_...`,
   "url": "https://ops.example.com/reports/latest"
 }`,
           },
+        ],
+      },
+    ],
+  },
+  {
+    id: "agent-api",
+    lead: "Everything you can do in the dashboard or the phone inbox is also available to a scoped agent token, except the few decisions only you should make. `harkctl` wraps every route.",
+    subsections: [
+      {
+        id: "agent-api-auth",
+        blocks: [
+          {
+            kind: "p",
+            text: "Send `Authorization: Bearer hark_…` with a token from `harkctl auth login` or the dashboard's Agent connections. Each route requires the scopes listed below; a missing scope returns `403` with `required` naming them. Every resource is scoped to the token's account, and other accounts' IDs return `404`.",
+          },
+          {
+            kind: "bullets",
+            items: [
+              "Default `harkctl` logins request every scope except `events:read` and `tokens:manage`; add those with `--scope`.",
+              "`devices:write`, `inbox:read`, `inbox:write`, `billing:read`, and `tokens:manage` were added with this API; older logins must sign in again to use them.",
+              "Agent reads of services never include webhook URLs. Only create and rotate return a URL, once.",
+            ],
+          },
+        ],
+      },
+      {
+        id: "agent-api-routes",
+        blocks: [
+          {
+            kind: "table",
+            variant: "route",
+            caption: "Agent API routes",
+            rows: [
+              {
+                method: "GET",
+                path: "/api/agent/auth/status",
+                detail: "Describe the calling token. Any scope.",
+              },
+              {
+                method: "POST",
+                path: "/api/agent/auth/revoke",
+                detail: "Revoke the calling token. Any scope.",
+              },
+              {
+                method: "POST",
+                path: "/api/agent/notifications",
+                detail: "Send a push. `notifications:send`.",
+              },
+              {
+                method: "POST",
+                path: "/api/agent/notifications/:id/withdraw",
+                detail:
+                  "Remove a sent agent push from Notification Center and mark it read. `notifications:send`.",
+              },
+              {
+                method: "GET",
+                path: "/api/agent/interactions",
+                detail: "Pending prompts from every source on the account. `interactions:read`.",
+              },
+              {
+                method: "POST",
+                path: "/api/agent/interactions",
+                detail: "Ask a question. `interactions:create` and `notifications:send`.",
+              },
+              {
+                method: "GET",
+                path: "/api/agent/interactions/:id",
+                detail:
+                  "Read a prompt this token created; `/wait` long-polls it. `interactions:read`.",
+              },
+              {
+                method: "POST",
+                path: "/api/agent/interactions/:id/cancel",
+                detail: "Cancel a prompt this token created. `interactions:create`.",
+              },
+              {
+                method: "GET",
+                path: "/api/agent/inbox/projects",
+                detail: "Inbox projects with unread counts. `inbox:read`.",
+              },
+              {
+                method: "GET",
+                path: "/api/agent/inbox/notifications",
+                detail: "Inbox page: `limit`, `project`, `unread`, `cursor`. `inbox:read`.",
+              },
+              {
+                method: "GET",
+                path: "/api/agent/inbox/notifications/:id",
+                detail: "One notification with its full body. `inbox:read`.",
+              },
+              {
+                method: "POST",
+                path: "/api/agent/inbox/notifications/:id/read",
+                detail: "Mark read; `/unread` reverses it. `inbox:write`.",
+              },
+              {
+                method: "POST",
+                path: "/api/agent/inbox/notifications/read-all",
+                detail: "Mark read up to a list response's `readThroughToken`. `inbox:write`.",
+              },
+              {
+                method: "GET",
+                path: "/api/agent/activity-feed",
+                detail: "Account activity history: `filter`, `page`. `events:read`.",
+              },
+              {
+                method: "GET",
+                path: "/api/agent/events",
+                detail: "Recent webhook deliveries. `events:read`.",
+              },
+              {
+                method: "GET",
+                path: "/api/agent/services",
+                detail: "List services, or `/:id` for one, without webhook URLs. `services:read`.",
+              },
+              {
+                method: "POST",
+                path: "/api/agent/services",
+                detail: "Create a service; the webhook URL is returned once. `services:write`.",
+              },
+              {
+                method: "PATCH",
+                path: "/api/agent/services/:id",
+                detail: "Change title, avatar, or tap URL; `DELETE` removes it. `services:write`.",
+              },
+              {
+                method: "POST",
+                path: "/api/agent/services/:id/rotate",
+                detail:
+                  "Replace the webhook token; the new URL is returned once. `services:write`.",
+              },
+              {
+                method: "GET",
+                path: "/api/agent/devices",
+                detail: "Registered devices. `devices:read`.",
+              },
+              {
+                method: "DELETE",
+                path: "/api/agent/devices/:id",
+                detail: "Remove a device until Hark next opens on it. `devices:write`.",
+              },
+              {
+                method: "GET",
+                path: "/api/agent/apps",
+                detail: "List apps, or `/:id` for one. `apps:read`.",
+              },
+              {
+                method: "POST",
+                path: "/api/agent/apps",
+                detail: "Register an app; an existing URL is updated. `apps:write`.",
+              },
+              {
+                method: "PATCH",
+                path: "/api/agent/apps/:id",
+                detail: "Change name, URL, icon, or project; `DELETE` removes it. `apps:write`.",
+              },
+              {
+                method: "POST",
+                path: "/api/agent/apps/:id/revoke",
+                detail: "Sign the app out until the owner approves it again. `apps:write`.",
+              },
+              {
+                method: "GET",
+                path: "/api/agent/activities",
+                detail:
+                  "Live Activities this token started; full CRUD under `/:identifier`. `activities:read` / `activities:write`.",
+              },
+              {
+                method: "GET",
+                path: "/api/agent/billing",
+                detail: "Plan, limits, and remaining usage. `billing:read`.",
+              },
+              {
+                method: "GET",
+                path: "/api/agent/tokens",
+                detail: "The account's tokens, never their secrets. `tokens:manage`.",
+              },
+              {
+                method: "DELETE",
+                path: "/api/agent/tokens/:id",
+                detail: "Revoke another token of the account. `tokens:manage`.",
+              },
+            ],
+          },
+          {
+            kind: "code",
+            language: "bash",
+            code: `harkctl inbox list --unread --limit 20
+harkctl inbox read-all --project unfiled
+harkctl interaction list
+harkctl notify withdraw anot_...
+harkctl services rotate svc_...
+harkctl apps update app_... --name "Ops board"
+harkctl billing
+harkctl tokens list   # needs --scope tokens:manage at login`,
+          },
+        ],
+      },
+      {
+        id: "agent-api-human-only",
+        blocks: [
+          {
+            kind: "p",
+            text: "Some actions have no agent route on purpose. An agent may reduce access, but only a person on their phone or signed in to the dashboard can grant it.",
+          },
+          {
+            kind: "bullets",
+            items: [
+              "Answering prompts: an approval means a human approved, so agents can list and cancel prompts but never respond to them.",
+              "Creating API tokens: a token that could mint tokens could grant itself any scope and outlive its own revocation. Agents can list and revoke tokens with `tokens:manage`.",
+              "App sign-in: approving sign-in, issuing Hark passes, and choosing whether your name and email are shared stay on the phone. Moving an app's URL to a new origin clears its approval.",
+              "Registering devices, which needs the iPhone's push token.",
+              "Starting checkout or opening the billing portal.",
+            ],
+          },
+        ],
+      },
+      {
+        id: "agent-api-openapi",
+        blocks: [
+          {
+            kind: "p",
+            text: "A public OpenAPI 3.1 document describes every agent route, its scopes (`x-hark-scopes`), request schema, and response shape. Request schemas are generated from the same validators the server uses.",
+          },
+          { kind: "copy", label: "OpenAPI document", value: AGENT_OPENAPI_URL },
         ],
       },
     ],

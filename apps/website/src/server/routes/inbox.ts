@@ -19,7 +19,13 @@ import { Hono } from "hono";
 import { db } from "../db";
 import { agentNotification, app, event, project, service } from "../db/schema";
 import { toAppSummaryDto } from "../lib/apps";
-import { type AuthedEnv, requireAuth } from "../middleware";
+import {
+  type AgentEnv,
+  type AuthedEnv,
+  requireApiToken,
+  requireAuth,
+  requireScopes,
+} from "../middleware";
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -302,24 +308,32 @@ function toSummaryDto(
 const NOT_FOUND = { error: "Notification not found", code: API_ERROR_CODE_NOT_FOUND } as const;
 
 // ---------------------------------------------------------------------------
-// Routes
+// Operations shared by the session and agent-token routes
 // ---------------------------------------------------------------------------
 
-export const inboxRoute = new Hono<AuthedEnv>()
-  .use("*", requireAuth)
-  .get("/projects", async (c) => {
-    const userId = c.get("user").id;
-    interface BucketRow {
-      projectId: string | null;
-      total: number;
-      unread: number;
-      latestTitle: string | null;
-      latestPreview: string | null;
-      latestImageUrl: string | null;
-      latestLength: number | null;
-      latestAt: number | null;
-    }
-    const buckets = db.all(sql`
+/** A handler result: the success body, or an error status with its JSON body. */
+type Outcome<T> =
+  | { ok: true; body: T }
+  | { ok: false; status: 400 | 404; body: { error: string; code?: string; issues?: unknown } };
+
+const notFound = { ok: false, status: 404, body: NOT_FOUND } as const;
+
+function invalid(error: string, issues?: unknown): Outcome<never> {
+  return { ok: false, status: 400, body: issues === undefined ? { error } : { error, issues } };
+}
+
+async function listInboxProjects(userId: string): Promise<InboxProjectsDto> {
+  interface BucketRow {
+    projectId: string | null;
+    total: number;
+    unread: number;
+    latestTitle: string | null;
+    latestPreview: string | null;
+    latestImageUrl: string | null;
+    latestLength: number | null;
+    latestAt: number | null;
+  }
+  const buckets = db.all(sql`
       select
         project_id as projectId,
         total,
@@ -341,93 +355,102 @@ export const inboxRoute = new Hono<AuthedEnv>()
       order by latestAt desc
     `) as BucketRow[];
 
-    const knownProjects = await db
-      .select({
-        id: project.id,
-        name: project.name,
-        updatedAt: project.updatedAt,
-      })
-      .from(project)
-      .where(eq(project.userId, userId));
-    const namesById = new Map(knownProjects.map((row) => [row.id, row.name]));
+  const knownProjects = await db
+    .select({
+      id: project.id,
+      name: project.name,
+      updatedAt: project.updatedAt,
+    })
+    .from(project)
+    .where(eq(project.userId, userId));
+  const namesById = new Map(knownProjects.map((row) => [row.id, row.name]));
 
-    const populated: InboxProjectSummaryDto[] = buckets.map((bucket) => ({
-      projectId: bucket.projectId,
-      name: bucket.projectId
-        ? (namesById.get(bucket.projectId) ?? INBOX_UNFILED_PROJECT_NAME)
-        : INBOX_UNFILED_PROJECT_NAME,
-      unreadCount: bucket.unread,
-      totalCount: bucket.total,
-      latestTitle: bucket.latestTitle,
-      latestPreview:
-        bucket.latestPreview === null
-          ? null
-          : boundPreview(bucket.latestPreview, bucket.latestLength ?? 0),
-      latestImageUrl: bucket.latestImageUrl,
-      latestAt: toIso(bucket.latestAt),
+  const populated: InboxProjectSummaryDto[] = buckets.map((bucket) => ({
+    projectId: bucket.projectId,
+    name: bucket.projectId
+      ? (namesById.get(bucket.projectId) ?? INBOX_UNFILED_PROJECT_NAME)
+      : INBOX_UNFILED_PROJECT_NAME,
+    unreadCount: bucket.unread,
+    totalCount: bucket.total,
+    latestTitle: bucket.latestTitle,
+    latestPreview:
+      bucket.latestPreview === null
+        ? null
+        : boundPreview(bucket.latestPreview, bucket.latestLength ?? 0),
+    latestImageUrl: bucket.latestImageUrl,
+    latestAt: toIso(bucket.latestAt),
+  }));
+
+  const seen = new Set(populated.map((summary) => summary.projectId));
+  const empty: InboxProjectSummaryDto[] = knownProjects
+    .filter((row) => !seen.has(row.id))
+    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+    .map((row) => ({
+      projectId: row.id,
+      name: row.name,
+      unreadCount: 0,
+      totalCount: 0,
+      latestTitle: null,
+      latestPreview: null,
+      latestImageUrl: null,
+      latestAt: null,
     }));
 
-    const seen = new Set(populated.map((summary) => summary.projectId));
-    const empty: InboxProjectSummaryDto[] = knownProjects
-      .filter((row) => !seen.has(row.id))
-      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
-      .map((row) => ({
-        projectId: row.id,
-        name: row.name,
-        unreadCount: 0,
-        totalCount: 0,
-        latestTitle: null,
-        latestPreview: null,
-        latestImageUrl: null,
-        latestAt: null,
-      }));
+  const projects = [...populated, ...empty];
+  const totalUnread = projects.reduce((sum, summary) => sum + summary.unreadCount, 0);
+  return { projects, totalUnread };
+}
 
-    const projects = [...populated, ...empty];
-    const totalUnread = projects.reduce((sum, summary) => sum + summary.unreadCount, 0);
-    return c.json<InboxProjectsDto>({ projects, totalUnread });
-  })
-  .get("/notifications", async (c) => {
-    const userId = c.get("user").id;
+interface InboxPageQuery {
+  limit?: string;
+  project?: string;
+  unread?: string;
+  cursor?: string;
+}
 
-    const requestedLimit = Number.parseInt(c.req.query("limit") ?? "20", 10);
-    if (
-      !Number.isFinite(requestedLimit) ||
-      requestedLimit < 1 ||
-      requestedLimit > INBOX_PAGE_MAX_LIMIT
-    ) {
-      return c.json({ error: `limit must be between 1 and ${INBOX_PAGE_MAX_LIMIT}` }, 400);
-    }
+async function listInboxNotifications(
+  userId: string,
+  query: InboxPageQuery,
+): Promise<Outcome<InboxNotificationPageDto>> {
+  const requestedLimit = Number.parseInt(query.limit ?? "20", 10);
+  if (
+    !Number.isFinite(requestedLimit) ||
+    requestedLimit < 1 ||
+    requestedLimit > INBOX_PAGE_MAX_LIMIT
+  ) {
+    return invalid(`limit must be between 1 and ${INBOX_PAGE_MAX_LIMIT}`);
+  }
 
-    const projectParam = c.req.query("project");
-    if (projectParam !== undefined && (projectParam.length === 0 || projectParam.length > 100)) {
-      return c.json({ error: "Invalid project filter" }, 400);
-    }
-    const unreadParam = c.req.query("unread");
-    if (unreadParam !== undefined && unreadParam !== "1" && unreadParam !== "true") {
-      return c.json({ error: "Invalid unread filter" }, 400);
-    }
+  const projectParam = query.project;
+  if (projectParam !== undefined && (projectParam.length === 0 || projectParam.length > 100)) {
+    return invalid("Invalid project filter");
+  }
+  const unreadParam = query.unread;
+  if (unreadParam !== undefined && unreadParam !== "1" && unreadParam !== "true") {
+    return invalid("Invalid unread filter");
+  }
 
-    const cursorParam = c.req.query("cursor");
-    const cursor = cursorParam === undefined ? undefined : decodeCursor(cursorParam);
-    if (cursor === null) return c.json({ error: "Invalid cursor" }, 400);
+  const cursorParam = query.cursor;
+  const cursor = cursorParam === undefined ? undefined : decodeCursor(cursorParam);
+  if (cursor === null) return invalid("Invalid cursor");
 
-    const filters = [sql`1 = 1`];
-    if (projectParam === INBOX_UNFILED_PROJECT) filters.push(sql`project_id is null`);
-    else if (projectParam !== undefined) filters.push(sql`project_id = ${projectParam}`);
-    if (unreadParam !== undefined) filters.push(sql`read_at is null`);
-    if (cursor) {
-      filters.push(
-        sql`(created_at < ${cursor.createdAt} or (created_at = ${cursor.createdAt} and id < ${cursor.id}))`,
-      );
-    }
+  const filters = [sql`1 = 1`];
+  if (projectParam === INBOX_UNFILED_PROJECT) filters.push(sql`project_id is null`);
+  else if (projectParam !== undefined) filters.push(sql`project_id = ${projectParam}`);
+  if (unreadParam !== undefined) filters.push(sql`read_at is null`);
+  if (cursor) {
+    filters.push(
+      sql`(created_at < ${cursor.createdAt} or (created_at = ${cursor.createdAt} and id < ${cursor.id}))`,
+    );
+  }
 
-    // Snapshot the high-water rowids before reading the page (both queries
-    // are synchronous, so nothing can insert in between). The snapshot spans
-    // the account/project scope regardless of the unread filter or cursor:
-    // every row it covers was visible to this client at response time.
-    const readThroughToken = encodeReadThroughToken(readThroughSnapshot(userId, projectParam));
+  // Snapshot the high-water rowids before reading the page (both queries
+  // are synchronous, so nothing can insert in between). The snapshot spans
+  // the account/project scope regardless of the unread filter or cursor:
+  // every row it covers was visible to this client at response time.
+  const readThroughToken = encodeReadThroughToken(readThroughSnapshot(userId, projectParam));
 
-    const rows = db.all(sql`
+  const rows = db.all(sql`
       select
         id,
         origin,
@@ -451,222 +474,315 @@ export const inboxRoute = new Hono<AuthedEnv>()
       limit ${requestedLimit + 1}
     `) as NotificationRow[];
 
-    const projectNames = await projectNamesById(userId);
-    const page = rows.slice(0, requestedLimit);
-    const last = page[page.length - 1];
-    const nextCursor =
-      rows.length > requestedLimit && last
-        ? encodeCursor({ createdAt: last.createdAt, id: last.id })
-        : null;
-    return c.json<InboxNotificationPageDto>({
+  const projectNames = await projectNamesById(userId);
+  const page = rows.slice(0, requestedLimit);
+  const last = page[page.length - 1];
+  const nextCursor =
+    rows.length > requestedLimit && last
+      ? encodeCursor({ createdAt: last.createdAt, id: last.id })
+      : null;
+  return {
+    ok: true,
+    body: {
       items: page.map((row) => toSummaryDto(row, projectNames)),
       nextCursor,
       readThroughToken,
-    });
-  })
-  .get("/notifications/:id", async (c) => {
-    const userId = c.get("user").id;
-    const target = parseCompositeId(c.req.param("id"));
-    if (!target) return c.json(NOT_FOUND, 404);
+    },
+  };
+}
 
-    if (target.origin === "event") {
-      const [row] = await db
-        .select({ event, serviceTitle: service.title, serviceImageUrl: service.imageUrl })
-        .from(event)
-        .innerJoin(service, eq(event.serviceId, service.id))
-        .where(and(eq(event.id, target.id), eq(service.userId, userId)))
-        .limit(1);
-      if (!row) return c.json(NOT_FOUND, 404);
-      const projectNames = await projectNamesById(userId);
-      const detail: InboxNotificationDetailDto = {
-        id: `event:${row.event.id}`,
-        origin: "event",
-        projectId: row.event.projectId,
-        projectName: row.event.projectId ? (projectNames.get(row.event.projectId) ?? null) : null,
-        sourceName: row.serviceTitle,
-        sourceImageUrl: row.event.imageUrl ?? row.serviceImageUrl,
-        title: row.event.title,
-        preview: boundPreview(
-          row.event.summary ?? row.event.body,
-          Array.from(row.event.summary ?? row.event.body).length,
-        ),
-        url: row.event.url,
-        bodyFormat: toBodyFormat(row.event.bodyFormat),
-        readAt: row.event.readAt?.toISOString() ?? null,
-        createdAt: row.event.createdAt.toISOString(),
-        app: await appSummaryFor(userId, row.event.appId),
-        body: row.event.body,
-        summary: row.event.summary,
-        status: row.event.status,
-      };
-      return c.json({ notification: detail });
-    }
+async function getInboxNotification(
+  userId: string,
+  compositeId: string,
+): Promise<InboxNotificationDetailDto | null> {
+  const target = parseCompositeId(compositeId);
+  if (!target) return null;
 
+  if (target.origin === "event") {
     const [row] = await db
-      .select()
-      .from(agentNotification)
-      .where(and(eq(agentNotification.id, target.id), eq(agentNotification.userId, userId)))
+      .select({ event, serviceTitle: service.title, serviceImageUrl: service.imageUrl })
+      .from(event)
+      .innerJoin(service, eq(event.serviceId, service.id))
+      .where(and(eq(event.id, target.id), eq(service.userId, userId)))
       .limit(1);
-    if (!row) return c.json(NOT_FOUND, 404);
-    const [tokenRow] = (await db.all(
-      sql`select name from api_token where id = ${row.requesterTokenId} limit 1`,
-    )) as Array<{ name: string }>;
+    if (!row) return null;
     const projectNames = await projectNamesById(userId);
     const detail: InboxNotificationDetailDto = {
-      id: `notification:${row.id}`,
-      origin: "notification",
-      projectId: row.projectId,
-      projectName: row.projectId ? (projectNames.get(row.projectId) ?? null) : null,
-      sourceName: tokenRow?.name ?? row.title,
-      sourceImageUrl: row.imageUrl,
-      title: row.title,
-      preview: boundPreview(row.summary ?? row.body, Array.from(row.summary ?? row.body).length),
-      url: row.url,
-      bodyFormat: toBodyFormat(row.bodyFormat),
-      readAt: row.readAt?.toISOString() ?? null,
-      createdAt: row.createdAt.toISOString(),
-      app: await appSummaryFor(userId, row.appId),
-      body: row.body,
-      summary: row.summary,
-      status: null,
+      id: `event:${row.event.id}`,
+      origin: "event",
+      projectId: row.event.projectId,
+      projectName: row.event.projectId ? (projectNames.get(row.event.projectId) ?? null) : null,
+      sourceName: row.serviceTitle,
+      sourceImageUrl: row.event.imageUrl ?? row.serviceImageUrl,
+      title: row.event.title,
+      preview: boundPreview(
+        row.event.summary ?? row.event.body,
+        Array.from(row.event.summary ?? row.event.body).length,
+      ),
+      url: row.event.url,
+      bodyFormat: toBodyFormat(row.event.bodyFormat),
+      readAt: row.event.readAt?.toISOString() ?? null,
+      createdAt: row.event.createdAt.toISOString(),
+      app: await appSummaryFor(userId, row.event.appId),
+      body: row.event.body,
+      summary: row.event.summary,
+      status: row.event.status,
     };
-    return c.json({ notification: detail });
+    return detail;
+  }
+
+  const [row] = await db
+    .select()
+    .from(agentNotification)
+    .where(and(eq(agentNotification.id, target.id), eq(agentNotification.userId, userId)))
+    .limit(1);
+  if (!row) return null;
+  const [tokenRow] = (await db.all(
+    sql`select name from api_token where id = ${row.requesterTokenId} limit 1`,
+  )) as Array<{ name: string }>;
+  const projectNames = await projectNamesById(userId);
+  const detail: InboxNotificationDetailDto = {
+    id: `notification:${row.id}`,
+    origin: "notification",
+    projectId: row.projectId,
+    projectName: row.projectId ? (projectNames.get(row.projectId) ?? null) : null,
+    sourceName: tokenRow?.name ?? row.title,
+    sourceImageUrl: row.imageUrl,
+    title: row.title,
+    preview: boundPreview(row.summary ?? row.body, Array.from(row.summary ?? row.body).length),
+    url: row.url,
+    bodyFormat: toBodyFormat(row.bodyFormat),
+    readAt: row.readAt?.toISOString() ?? null,
+    createdAt: row.createdAt.toISOString(),
+    app: await appSummaryFor(userId, row.appId),
+    body: row.body,
+    summary: row.summary,
+    status: null,
+  };
+  return detail;
+}
+
+async function markAllInboxRead(
+  userId: string,
+  input: unknown,
+): Promise<Outcome<{ ok: true; updated: number }>> {
+  const parsed = inboxMarkAllReadSchema.safeParse(input);
+  if (!parsed.success) {
+    return invalid("Invalid read-all request", parsed.error.issues);
+  }
+  const snapshot = decodeReadThroughToken(parsed.data.readThrough);
+  if (!snapshot) {
+    return invalid("Invalid read-through token");
+  }
+  const now = new Date();
+  const projectFilter = parsed.data.project;
+
+  // The token only bounds the snapshot moment via rowids. Ownership and
+  // the requested project scope are enforced here, in SQL — never taken
+  // from the token — so a forged token cannot reach foreign rows.
+  const ownedServices = db
+    .select({ id: service.id })
+    .from(service)
+    .where(eq(service.userId, userId));
+  const eventConditions = [
+    isNull(event.readAt),
+    sql`${event}.rowid <= ${snapshot.event}`,
+    sql`${event.serviceId} in ${ownedServices}`,
+  ];
+  const agentConditions = [
+    isNull(agentNotification.readAt),
+    sql`${agentNotification}.rowid <= ${snapshot.notification}`,
+    eq(agentNotification.userId, userId),
+  ];
+  if (projectFilter === INBOX_UNFILED_PROJECT) {
+    eventConditions.push(isNull(event.projectId));
+    agentConditions.push(isNull(agentNotification.projectId));
+  } else if (projectFilter !== undefined) {
+    eventConditions.push(eq(event.projectId, projectFilter));
+    agentConditions.push(eq(agentNotification.projectId, projectFilter));
+  }
+
+  // A zero bound means the snapshot saw no rows in that table; rowids
+  // start at 1, so skip the statement instead of scanning for nothing.
+  const [eventRows, agentRows] = await Promise.all([
+    snapshot.event === 0
+      ? []
+      : db
+          .update(event)
+          .set({ readAt: now })
+          .where(and(...eventConditions))
+          .returning({ id: event.id }),
+    snapshot.notification === 0
+      ? []
+      : db
+          .update(agentNotification)
+          .set({ readAt: now })
+          .where(and(...agentConditions))
+          .returning({ id: agentNotification.id }),
+  ]);
+  return { ok: true, body: { ok: true, updated: eventRows.length + agentRows.length } };
+}
+
+type ReadMarkResult = { ok: true; readAt: string | null; idempotent?: true };
+
+async function markInboxRead(
+  userId: string,
+  compositeId: string,
+): Promise<Outcome<ReadMarkResult>> {
+  const target = parseCompositeId(compositeId);
+  if (!target) return notFound;
+  const now = new Date();
+
+  if (target.origin === "event") {
+    const [current] = await db
+      .select({ id: event.id, readAt: event.readAt })
+      .from(event)
+      .innerJoin(service, eq(event.serviceId, service.id))
+      .where(and(eq(event.id, target.id), eq(service.userId, userId)))
+      .limit(1);
+    if (!current) return notFound;
+    // Idempotent: an already-read notification keeps its first read time.
+    if (current.readAt) {
+      return {
+        ok: true,
+        body: { ok: true, readAt: current.readAt.toISOString(), idempotent: true },
+      };
+    }
+    await db
+      .update(event)
+      .set({ readAt: now })
+      .where(and(eq(event.id, target.id), isNull(event.readAt)));
+    const [settled] = await db
+      .select({ readAt: event.readAt })
+      .from(event)
+      .where(eq(event.id, target.id))
+      .limit(1);
+    return { ok: true, body: { ok: true, readAt: (settled?.readAt ?? now).toISOString() } };
+  }
+
+  const [current] = await db
+    .select({ id: agentNotification.id, readAt: agentNotification.readAt })
+    .from(agentNotification)
+    .where(and(eq(agentNotification.id, target.id), eq(agentNotification.userId, userId)))
+    .limit(1);
+  if (!current) return notFound;
+  if (current.readAt) {
+    return { ok: true, body: { ok: true, readAt: current.readAt.toISOString(), idempotent: true } };
+  }
+  await db
+    .update(agentNotification)
+    .set({ readAt: now })
+    .where(and(eq(agentNotification.id, target.id), isNull(agentNotification.readAt)));
+  const [settled] = await db
+    .select({ readAt: agentNotification.readAt })
+    .from(agentNotification)
+    .where(eq(agentNotification.id, target.id))
+    .limit(1);
+  return { ok: true, body: { ok: true, readAt: (settled?.readAt ?? now).toISOString() } };
+}
+
+async function markInboxUnread(
+  userId: string,
+  compositeId: string,
+): Promise<Outcome<ReadMarkResult>> {
+  const target = parseCompositeId(compositeId);
+  if (!target) return notFound;
+
+  if (target.origin === "event") {
+    const [current] = await db
+      .select({ id: event.id })
+      .from(event)
+      .innerJoin(service, eq(event.serviceId, service.id))
+      .where(and(eq(event.id, target.id), eq(service.userId, userId)))
+      .limit(1);
+    if (!current) return notFound;
+    // Last write wins; marking an unread notification unread is a no-op.
+    await db.update(event).set({ readAt: null }).where(eq(event.id, target.id));
+    return { ok: true, body: { ok: true, readAt: null } };
+  }
+
+  const [current] = await db
+    .select({ id: agentNotification.id })
+    .from(agentNotification)
+    .where(and(eq(agentNotification.id, target.id), eq(agentNotification.userId, userId)))
+    .limit(1);
+  if (!current) return notFound;
+  await db
+    .update(agentNotification)
+    .set({ readAt: null })
+    .where(eq(agentNotification.id, target.id));
+  return { ok: true, body: { ok: true, readAt: null } };
+}
+
+// ---------------------------------------------------------------------------
+// Routes
+// ---------------------------------------------------------------------------
+
+function pageQuery(query: (name: string) => string | undefined): InboxPageQuery {
+  return {
+    limit: query("limit"),
+    project: query("project"),
+    unread: query("unread"),
+    cursor: query("cursor"),
+  };
+}
+
+export const inboxRoute = new Hono<AuthedEnv>()
+  .use("*", requireAuth)
+  .get("/projects", async (c) => c.json(await listInboxProjects(c.get("user").id)))
+  .get("/notifications", async (c) => {
+    const result = await listInboxNotifications(
+      c.get("user").id,
+      pageQuery((name) => c.req.query(name)),
+    );
+    return result.ok ? c.json(result.body) : c.json(result.body, result.status);
+  })
+  .get("/notifications/:id", async (c) => {
+    const detail = await getInboxNotification(c.get("user").id, c.req.param("id"));
+    return detail ? c.json({ notification: detail }) : c.json(NOT_FOUND, 404);
   })
   .post("/notifications/read-all", async (c) => {
-    const userId = c.get("user").id;
-    const parsed = inboxMarkAllReadSchema.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) {
-      return c.json({ error: "Invalid read-all request", issues: parsed.error.issues }, 400);
-    }
-    const snapshot = decodeReadThroughToken(parsed.data.readThrough);
-    if (!snapshot) {
-      return c.json({ error: "Invalid read-through token" }, 400);
-    }
-    const now = new Date();
-    const projectFilter = parsed.data.project;
-
-    // The token only bounds the snapshot moment via rowids. Ownership and
-    // the requested project scope are enforced here, in SQL — never taken
-    // from the token — so a forged token cannot reach foreign rows.
-    const ownedServices = db
-      .select({ id: service.id })
-      .from(service)
-      .where(eq(service.userId, userId));
-    const eventConditions = [
-      isNull(event.readAt),
-      sql`${event}.rowid <= ${snapshot.event}`,
-      sql`${event.serviceId} in ${ownedServices}`,
-    ];
-    const agentConditions = [
-      isNull(agentNotification.readAt),
-      sql`${agentNotification}.rowid <= ${snapshot.notification}`,
-      eq(agentNotification.userId, userId),
-    ];
-    if (projectFilter === INBOX_UNFILED_PROJECT) {
-      eventConditions.push(isNull(event.projectId));
-      agentConditions.push(isNull(agentNotification.projectId));
-    } else if (projectFilter !== undefined) {
-      eventConditions.push(eq(event.projectId, projectFilter));
-      agentConditions.push(eq(agentNotification.projectId, projectFilter));
-    }
-
-    // A zero bound means the snapshot saw no rows in that table; rowids
-    // start at 1, so skip the statement instead of scanning for nothing.
-    const [eventRows, agentRows] = await Promise.all([
-      snapshot.event === 0
-        ? []
-        : db
-            .update(event)
-            .set({ readAt: now })
-            .where(and(...eventConditions))
-            .returning({ id: event.id }),
-      snapshot.notification === 0
-        ? []
-        : db
-            .update(agentNotification)
-            .set({ readAt: now })
-            .where(and(...agentConditions))
-            .returning({ id: agentNotification.id }),
-    ]);
-    return c.json({ ok: true, updated: eventRows.length + agentRows.length });
+    const result = await markAllInboxRead(c.get("user").id, await c.req.json().catch(() => null));
+    return result.ok ? c.json(result.body) : c.json(result.body, result.status);
   })
   .post("/notifications/:id/read", async (c) => {
-    const userId = c.get("user").id;
-    const target = parseCompositeId(c.req.param("id"));
-    if (!target) return c.json(NOT_FOUND, 404);
-    const now = new Date();
-
-    if (target.origin === "event") {
-      const [current] = await db
-        .select({ id: event.id, readAt: event.readAt })
-        .from(event)
-        .innerJoin(service, eq(event.serviceId, service.id))
-        .where(and(eq(event.id, target.id), eq(service.userId, userId)))
-        .limit(1);
-      if (!current) return c.json(NOT_FOUND, 404);
-      // Idempotent: an already-read notification keeps its first read time.
-      if (current.readAt) {
-        return c.json({ ok: true, readAt: current.readAt.toISOString(), idempotent: true });
-      }
-      await db
-        .update(event)
-        .set({ readAt: now })
-        .where(and(eq(event.id, target.id), isNull(event.readAt)));
-      const [settled] = await db
-        .select({ readAt: event.readAt })
-        .from(event)
-        .where(eq(event.id, target.id))
-        .limit(1);
-      return c.json({ ok: true, readAt: (settled?.readAt ?? now).toISOString() });
-    }
-
-    const [current] = await db
-      .select({ id: agentNotification.id, readAt: agentNotification.readAt })
-      .from(agentNotification)
-      .where(and(eq(agentNotification.id, target.id), eq(agentNotification.userId, userId)))
-      .limit(1);
-    if (!current) return c.json(NOT_FOUND, 404);
-    if (current.readAt) {
-      return c.json({ ok: true, readAt: current.readAt.toISOString(), idempotent: true });
-    }
-    await db
-      .update(agentNotification)
-      .set({ readAt: now })
-      .where(and(eq(agentNotification.id, target.id), isNull(agentNotification.readAt)));
-    const [settled] = await db
-      .select({ readAt: agentNotification.readAt })
-      .from(agentNotification)
-      .where(eq(agentNotification.id, target.id))
-      .limit(1);
-    return c.json({ ok: true, readAt: (settled?.readAt ?? now).toISOString() });
+    const result = await markInboxRead(c.get("user").id, c.req.param("id"));
+    return result.ok ? c.json(result.body) : c.json(result.body, result.status);
   })
   .post("/notifications/:id/unread", async (c) => {
-    const userId = c.get("user").id;
-    const target = parseCompositeId(c.req.param("id"));
-    if (!target) return c.json(NOT_FOUND, 404);
+    const result = await markInboxUnread(c.get("user").id, c.req.param("id"));
+    return result.ok ? c.json(result.body) : c.json(result.body, result.status);
+  });
 
-    if (target.origin === "event") {
-      const [current] = await db
-        .select({ id: event.id })
-        .from(event)
-        .innerJoin(service, eq(event.serviceId, service.id))
-        .where(and(eq(event.id, target.id), eq(service.userId, userId)))
-        .limit(1);
-      if (!current) return c.json(NOT_FOUND, 404);
-      // Last write wins; marking an unread notification unread is a no-op.
-      await db.update(event).set({ readAt: null }).where(eq(event.id, target.id));
-      return c.json({ ok: true, readAt: null });
-    }
-
-    const [current] = await db
-      .select({ id: agentNotification.id })
-      .from(agentNotification)
-      .where(and(eq(agentNotification.id, target.id), eq(agentNotification.userId, userId)))
-      .limit(1);
-    if (!current) return c.json(NOT_FOUND, 404);
-    await db
-      .update(agentNotification)
-      .set({ readAt: null })
-      .where(eq(agentNotification.id, target.id));
-    return c.json({ ok: true, readAt: null });
+/** Agent-token twin of {@link inboxRoute}, mounted at `/api/agent/inbox`. */
+export const inboxAgentRoute = new Hono<AgentEnv>()
+  .use("*", requireApiToken)
+  .get("/projects", requireScopes("inbox:read"), async (c) =>
+    c.json(await listInboxProjects(c.get("apiToken").userId)),
+  )
+  .get("/notifications", requireScopes("inbox:read"), async (c) => {
+    const result = await listInboxNotifications(
+      c.get("apiToken").userId,
+      pageQuery((name) => c.req.query(name)),
+    );
+    return result.ok ? c.json(result.body) : c.json(result.body, result.status);
+  })
+  .get("/notifications/:id", requireScopes("inbox:read"), async (c) => {
+    const detail = await getInboxNotification(c.get("apiToken").userId, c.req.param("id"));
+    return detail ? c.json({ notification: detail }) : c.json(NOT_FOUND, 404);
+  })
+  .post("/notifications/read-all", requireScopes("inbox:write"), async (c) => {
+    const result = await markAllInboxRead(
+      c.get("apiToken").userId,
+      await c.req.json().catch(() => null),
+    );
+    return result.ok ? c.json(result.body) : c.json(result.body, result.status);
+  })
+  .post("/notifications/:id/read", requireScopes("inbox:write"), async (c) => {
+    const result = await markInboxRead(c.get("apiToken").userId, c.req.param("id"));
+    return result.ok ? c.json(result.body) : c.json(result.body, result.status);
+  })
+  .post("/notifications/:id/unread", requireScopes("inbox:write"), async (c) => {
+    const result = await markInboxUnread(c.get("apiToken").userId, c.req.param("id"));
+    return result.ok ? c.json(result.body) : c.json(result.body, result.status);
   });

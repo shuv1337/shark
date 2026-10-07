@@ -231,6 +231,12 @@ export interface ServiceDto {
   updatedAt: string;
 }
 
+/**
+ * Service as returned to agent tokens by reads and updates. The webhook URL
+ * embeds a credential, so it is only returned by create and rotate.
+ */
+export type AgentServiceDto = Omit<ServiceDto, "webhookUrl">;
+
 /** Returned when a service is created or its token is rotated. */
 export interface ServiceCreatedResponse {
   service: ServiceDto;
@@ -729,6 +735,16 @@ export const API_TOKEN_SCOPES = [
   "events:read",
   "apps:read",
   "apps:write",
+  "devices:write",
+  "inbox:read",
+  "inbox:write",
+  "billing:read",
+  /**
+   * Lists and revokes the account's other tokens. Never grants token
+   * creation: an agent token cannot mint credentials, so a leaked token can
+   * never escalate its own scopes or outlive its revocation.
+   */
+  "tokens:manage",
 ] as const;
 export const apiTokenScopeSchema = z.enum(API_TOKEN_SCOPES);
 export type ApiTokenScope = z.infer<typeof apiTokenScopeSchema>;
@@ -1059,6 +1075,19 @@ export interface AgentNotificationCreateResponse {
   message?: string;
 }
 
+/**
+ * Result of withdrawing an agent notification: a silent background command
+ * removes it from Notification Center and the inbox marks it read.
+ */
+export interface AgentNotificationWithdrawResponse {
+  ok: true;
+  notificationId: string;
+  /** `withdraw_partial` when only some active devices accepted the command. */
+  status: "withdrawn" | "withdraw_partial";
+  /** Silent commands accepted by Expo, not proof of removal on a device. */
+  accepted: number;
+}
+
 // ---------------------------------------------------------------------------
 // Web apps (full-screen web views signed in with a Hark pass)
 // ---------------------------------------------------------------------------
@@ -1101,6 +1130,24 @@ export const appSharingSchema = z.object({
   shareEmail: z.boolean().optional(),
 });
 export type AppSharingInput = z.infer<typeof appSharingSchema>;
+
+/**
+ * Agent-editable app metadata. Sharing preferences and sign-in consent are
+ * deliberately absent: they are owner privacy decisions made on the phone.
+ * Moving the URL to a different origin clears consent, so the owner approves
+ * the new site before it receives a pass.
+ */
+export const appUpdateSchema = z
+  .strictObject({
+    name: appNameSchema.optional(),
+    url: appUrlSchema.optional(),
+    /** `null` clears the icon. */
+    iconUrl: publicHttpsUrlSchema.nullable().optional(),
+    /** Project name; `null` moves the app out of its project. */
+    project: projectNameSchema.nullable().optional(),
+  })
+  .refine((input) => Object.keys(input).length > 0, "At least one field is required");
+export type AppUpdateInput = z.infer<typeof appUpdateSchema>;
 
 export const appLaunchSchema = appSharingSchema.extend({
   /** Required (true) before the first pass is issued, and again after revoke. */

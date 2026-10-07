@@ -17,6 +17,10 @@ const DEFAULT_SCOPES = [
   "services:write",
   "apps:read",
   "apps:write",
+  "devices:write",
+  "inbox:read",
+  "inbox:write",
+  "billing:read",
 ];
 const TERMINAL = new Set(["approved", "denied", "yes", "no", "replied", "canceled", "expired"]);
 
@@ -141,6 +145,9 @@ export function parseArgs(argv) {
     "name",
     "icon",
     "app",
+    "cursor",
+    "filter",
+    "page",
   ]);
   const booleanFlags = new Set([
     "approval",
@@ -156,6 +163,9 @@ export function parseArgs(argv) {
     "no-open",
     "live-activity",
     "markdown",
+    "unread",
+    "no-icon",
+    "no-project",
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -438,6 +448,8 @@ function help() {
                   [--live-activity [--style <approval|shell|verdict|signal>]
                                    [--primary-label <label>] [--secondary-label <label>]]
                   [--idempotency-key <key>] [--stdin] [--wait [--timeout <duration>] | --poll]
+  harkctl notify withdraw <notification_id>
+  harkctl interaction list
   harkctl interaction get <id>
   harkctl interaction wait <id> [--timeout <duration>]
   harkctl activity start --title <title> --status <status> [--key <key>] [--detail <text>]
@@ -456,15 +468,34 @@ function help() {
                          [--idempotency-key <key>] [--stdin]
   harkctl activity get <id|key>
   harkctl activity list [--limit <n>]
+  harkctl activity feed [--filter <all|notification|live_activity|response>] [--page <n>]
   harkctl permissions setup [claude|codex|opencode|all]
   harkctl permissions uninstall [claude|codex|opencode|all]
   harkctl permissions doctor
   harkctl devices list
+  harkctl devices remove <device_id>
   harkctl services list
   harkctl services create --title <title> [--image <url>] [--url <url>] [--stdin]
+  harkctl services get <service_id>
+  harkctl services update <service_id> [--title <title>] [--image <url>] [--url <url>] [--stdin]
+  harkctl services rotate <service_id>
+  harkctl services remove <service_id>
+  harkctl inbox projects
+  harkctl inbox list [--project <project_id|unfiled>] [--unread] [--limit <n>] [--cursor <c>]
+  harkctl inbox get <notification_id>
+  harkctl inbox read <notification_id>
+  harkctl inbox unread <notification_id>
+  harkctl inbox read-all [--project <project_id|unfiled>]
   harkctl apps create --name <name> --url <url> [--icon <url>] [--project <name>] [--json]
   harkctl apps list [--json]
+  harkctl apps get <app_id> [--json]
+  harkctl apps update <app_id> [--name <name>] [--url <url>] [--icon <url> | --no-icon]
+                      [--project <name> | --no-project] [--json]
+  harkctl apps revoke <app_id> [--json]
   harkctl apps remove <app_id> [--json]
+  harkctl billing
+  harkctl tokens list
+  harkctl tokens revoke <token_id>
 
 notify sends a one-shot push; notify ask sends a push that elicits an answer.
 Inside notify, a first positional of exactly "ask" selects the subcommand. Everything
@@ -479,10 +510,22 @@ notification into a named project in the Hark app inbox, --summary sets the shor
 push/preview text for a long body, and --markdown (or --body-format markdown) records
 how the body should eventually render. Project names are case-insensitive per account.
 
+notify withdraw removes an agent notification from your phones (a silent command) and marks
+it read; "harkctl notify -- withdraw" sends the literal body "withdraw". interaction list
+shows every pending prompt on the account; agents can read prompts but only a human on the
+phone can answer them. inbox read-all marks only notifications that existed when it ran.
+
 apps registers a web app (an HTTPS site you control) that opens full-screen in the Hark
 iPhone app, which hands the page a short-lived signed Hark pass. Creating an app with an
 existing URL updates it. notify --app <app_id> opens that app when tapped; --url must
 then be on the app's origin.
+
+apps update changes metadata only; sharing and sign-in approval are decided on the phone,
+and moving an app to a new origin asks for approval again. apps revoke signs the app out.
+
+Default logins exclude events:read (activity feed) and tokens:manage (tokens list/revoke);
+request them with --scope. No command creates tokens: new tokens always need a signed-in
+human (harkctl auth login).
 
 Authentication: run harkctl auth login, or set HARK_TOKEN for an advanced manual setup.
 Tokens are never accepted as command arguments.`;
@@ -502,6 +545,35 @@ async function appsRequest(config, path, init) {
     }
     throw error;
   }
+}
+
+/** Adds a re-login hint naming the scopes a 403 reported as missing. */
+async function scopedRequest(config, path, init) {
+  try {
+    return await request(config, path, init);
+  } catch (error) {
+    const required = error instanceof RequestError ? error.body?.required : undefined;
+    if (error instanceof RequestError && error.status === 403 && Array.isArray(required)) {
+      throw new RequestError(
+        `${error.message}. Run harkctl auth login --scope ... to grant ${required.join(", ")}.`,
+        error.status,
+        error.body,
+      );
+    }
+    throw error;
+  }
+}
+
+function requireId(id, usage) {
+  if (!id) throw new UsageError(`${usage} requires an ID`);
+  return encodeURIComponent(id);
+}
+
+function parseNonNegativeInteger(value, flag) {
+  if (!/^\d+$/.test(String(value))) {
+    throw new UsageError(`--${flag} must be a non-negative integer`);
+  }
+  return String(Number.parseInt(value, 10));
 }
 
 function formatApp(app) {
@@ -579,6 +651,134 @@ export async function execute(argv, env = process.env, overrides = {}) {
         body: JSON.stringify(payload),
       }),
       exitCode: 0,
+    };
+  }
+  if (group === "devices" && action === "remove") {
+    const path = `/api/agent/devices/${requireId(id, "devices remove")}`;
+    return { body: await scopedRequest(config, path, { method: "DELETE" }), exitCode: 0 };
+  }
+  if (group === "services" && ["get", "update", "rotate", "remove"].includes(action)) {
+    const path = `/api/agent/services/${requireId(id, `services ${action}`)}`;
+    if (action === "get") return { body: await scopedRequest(config, path), exitCode: 0 };
+    if (action === "rotate") {
+      return {
+        body: await scopedRequest(config, `${path}/rotate`, { method: "POST" }),
+        exitCode: 0,
+      };
+    }
+    if (action === "remove") {
+      return { body: await scopedRequest(config, path, { method: "DELETE" }), exitCode: 0 };
+    }
+    const stdin = options.stdin ? await readStdinJson() : {};
+    const payload = {
+      ...stdin,
+      ...(options.title ? { title: options.title } : {}),
+      ...(options.image ? { imageUrl: options.image } : {}),
+      ...(options.url ? { url: options.url } : {}),
+    };
+    if (Object.keys(payload).length === 0) {
+      throw new UsageError("services update requires --title, --image, --url, or --stdin");
+    }
+    return {
+      body: await scopedRequest(config, path, { method: "PATCH", body: JSON.stringify(payload) }),
+      exitCode: 0,
+    };
+  }
+  if (group === "inbox") {
+    if (action === "projects") {
+      return { body: await scopedRequest(config, "/api/agent/inbox/projects"), exitCode: 0 };
+    }
+    if (action === "list" || action === "read-all") {
+      const query = new URLSearchParams();
+      if (options.project) query.set("project", options.project);
+      if (action === "list") {
+        if (options.limit) query.set("limit", parseNonNegativeInteger(options.limit, "limit"));
+        if (options.unread) query.set("unread", "1");
+        if (options.cursor) query.set("cursor", options.cursor);
+      } else {
+        // The read-through token bounds read-all to notifications that existed
+        // when this command ran, so anything arriving meanwhile stays unread.
+        query.set("limit", "1");
+      }
+      const suffix = query.size > 0 ? `?${query}` : "";
+      const page = await scopedRequest(config, `/api/agent/inbox/notifications${suffix}`);
+      if (action === "list") return { body: page, exitCode: 0 };
+      const body = await scopedRequest(config, "/api/agent/inbox/notifications/read-all", {
+        method: "POST",
+        body: JSON.stringify({
+          readThrough: page.readThroughToken,
+          ...(options.project ? { project: options.project } : {}),
+        }),
+      });
+      return { body, exitCode: 0 };
+    }
+    if (["get", "read", "unread"].includes(action)) {
+      const path = `/api/agent/inbox/notifications/${requireId(id, `inbox ${action}`)}`;
+      if (action === "get") return { body: await scopedRequest(config, path), exitCode: 0 };
+      return {
+        body: await scopedRequest(config, `${path}/${action}`, { method: "POST" }),
+        exitCode: 0,
+      };
+    }
+  }
+  if (group === "billing" && action === undefined) {
+    return { body: await scopedRequest(config, "/api/agent/billing"), exitCode: 0 };
+  }
+  if (group === "tokens" && action === "list") {
+    return { body: await scopedRequest(config, "/api/agent/tokens"), exitCode: 0 };
+  }
+  if (group === "tokens" && action === "revoke") {
+    const path = `/api/agent/tokens/${requireId(id, "tokens revoke")}`;
+    return { body: await scopedRequest(config, path, { method: "DELETE" }), exitCode: 0 };
+  }
+  if (group === "interaction" && action === "list") {
+    return { body: await scopedRequest(config, "/api/agent/interactions"), exitCode: 0 };
+  }
+  if (group === "activity" && action === "feed") {
+    const query = new URLSearchParams();
+    if (options.filter) query.set("filter", options.filter);
+    if (options.page) query.set("page", parseNonNegativeInteger(options.page, "page"));
+    const suffix = query.size > 0 ? `?${query}` : "";
+    return { body: await scopedRequest(config, `/api/agent/activity-feed${suffix}`), exitCode: 0 };
+  }
+  if (group === "apps" && ["get", "update", "revoke"].includes(action)) {
+    const path = `/api/agent/apps/${requireId(id, `apps ${action}`)}`;
+    let body;
+    if (action === "get") body = await appsRequest(config, path);
+    else if (action === "revoke") {
+      body = await appsRequest(config, `${path}/revoke`, { method: "POST" });
+    } else {
+      if (options.icon && options["no-icon"]) {
+        throw new UsageError("--icon and --no-icon cannot be used together");
+      }
+      if (options.project && options["no-project"]) {
+        throw new UsageError("--project and --no-project cannot be used together");
+      }
+      const payload = {
+        ...(options.name ? { name: options.name } : {}),
+        ...(options.url ? { url: options.url } : {}),
+        ...(options.icon ? { iconUrl: options.icon } : {}),
+        ...(options["no-icon"] ? { iconUrl: null } : {}),
+        ...(options.project ? { project: options.project } : {}),
+        ...(options["no-project"] ? { project: null } : {}),
+      };
+      if (Object.keys(payload).length === 0) {
+        throw new UsageError(
+          "apps update requires --name, --url, --icon, --no-icon, --project, or --no-project",
+        );
+      }
+      body = await appsRequest(config, path, { method: "PATCH", body: JSON.stringify(payload) });
+    }
+    const suffix =
+      action === "revoke"
+        ? " (sign-in revoked)"
+        : action === "update" && body.app.consentedAt === null
+          ? " (approve sign-in on your phone)"
+          : "";
+    return {
+      body,
+      exitCode: 0,
+      ...(options.json ? {} : { output: `${formatApp(body.app)}${suffix}` }),
     };
   }
   if (group === "apps" && action === "create") {
@@ -771,9 +971,19 @@ export async function execute(argv, env = process.env, overrides = {}) {
     };
   }
   if (group === "notify") {
-    // A first positional of exactly `ask` selects the subcommand unless it came
-    // after a bare `--`, which forces it to be the literal notification body.
-    const isAsk = positionals[1] === "ask" && (separatorAt === null || separatorAt > 1);
+    // A first positional of exactly `ask` or `withdraw` selects the subcommand
+    // unless it came after a bare `--`, which forces it to be the literal body.
+    const isSubcommand = separatorAt === null || separatorAt > 1;
+    if (positionals[1] === "withdraw" && isSubcommand) {
+      if (positionals.length !== 3) {
+        throw new UsageError(
+          'notify withdraw takes exactly one notification ID; use "harkctl notify -- withdraw ..." to send that text',
+        );
+      }
+      const path = `/api/agent/notifications/${encodeURIComponent(positionals[2])}/withdraw`;
+      return { body: await scopedRequest(config, path, { method: "POST" }), exitCode: 0 };
+    }
+    const isAsk = positionals[1] === "ask" && isSubcommand;
     if (isAsk) {
       const selectors = [
         options.approval ? "approval" : null,

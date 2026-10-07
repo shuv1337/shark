@@ -15,7 +15,13 @@ import { getBilling } from "../lib/billing";
 import { newId } from "../lib/id";
 import { buildWelcomePushMessages, sendPushMessages } from "../lib/push";
 import { encryptLiveActivityToken } from "../lib/token";
-import { type AuthedEnv, requireAuth } from "../middleware";
+import {
+  type AgentEnv,
+  type AuthedEnv,
+  requireApiToken,
+  requireAuth,
+  requireScopes,
+} from "../middleware";
 
 function toDto(row: typeof device.$inferSelect): DeviceDto {
   return {
@@ -36,20 +42,38 @@ function toDto(row: typeof device.$inferSelect): DeviceDto {
   };
 }
 
+async function listDevices(userId: string): Promise<DeviceDto[]> {
+  const rows = await db
+    .select()
+    .from(device)
+    .where(eq(device.userId, userId))
+    .orderBy(desc(device.lastSeenAt));
+  return rows.map(toDto);
+}
+
+/** Removes one owned device; the phone registers again the next time Hark opens. */
+async function removeDeviceForUser(userId: string, deviceId: string): Promise<boolean> {
+  const removed = await db
+    .delete(device)
+    .where(and(eq(device.userId, userId), eq(device.id, deviceId)))
+    .returning({ id: device.id });
+  if (removed.length === 0) return false;
+  track({
+    name: "device_unregistered",
+    userId,
+    deviceId: removed[0]?.id ?? null,
+    outcome: "by_id",
+    value: removed.length,
+  });
+  return true;
+}
+
 const wait = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
 export const devicesRoute = new Hono<AuthedEnv>()
   .use("*", requireAuth)
-  .get("/", async (c) => {
-    const user = c.get("user");
-    const rows = await db
-      .select()
-      .from(device)
-      .where(eq(device.userId, user.id))
-      .orderBy(desc(device.lastSeenAt));
-    return c.json({ devices: rows.map(toDto) });
-  })
+  .get("/", async (c) => c.json({ devices: await listDevices(c.get("user").id) }))
   .post("/live-activity/push-to-start", async (c) => {
     const parsed = liveActivityPushToStartTokenSchema.safeParse(
       await c.req.json().catch(() => null),
@@ -327,20 +351,8 @@ export const devicesRoute = new Hono<AuthedEnv>()
     return c.json({ device: toDto(responseRow) }, 201);
   })
   .delete("/:id", async (c) => {
-    const user = c.get("user");
-    const removed = await db
-      .delete(device)
-      .where(and(eq(device.userId, user.id), eq(device.id, c.req.param("id"))))
-      .returning({ id: device.id });
-    if (removed.length > 0) {
-      track({
-        name: "device_unregistered",
-        userId: user.id,
-        deviceId: removed[0]?.id ?? null,
-        outcome: "by_id",
-        value: removed.length,
-      });
-    }
+    // Idempotent for the phone: removing an unknown device still succeeds.
+    await removeDeviceForUser(c.get("user").id, c.req.param("id"));
     return c.json({ ok: true });
   })
   .delete("/", async (c) => {
@@ -362,5 +374,20 @@ export const devicesRoute = new Hono<AuthedEnv>()
         value: removed.length,
       });
     }
+    return c.json({ ok: true });
+  });
+
+/**
+ * Agent-token device routes, mounted at `/api/agent/devices`. Registration
+ * stays phone-only: only the Hark app holds a push token to register.
+ */
+export const devicesAgentRoute = new Hono<AgentEnv>()
+  .use("*", requireApiToken)
+  .get("/", requireScopes("devices:read"), async (c) =>
+    c.json({ devices: await listDevices(c.get("apiToken").userId) }),
+  )
+  .delete("/:id", requireScopes("devices:write"), async (c) => {
+    const removed = await removeDeviceForUser(c.get("apiToken").userId, c.req.param("id"));
+    if (!removed) return c.json({ error: "Device not found" }, 404);
     return c.json({ ok: true });
   });

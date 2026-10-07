@@ -7,9 +7,10 @@ import {
   appLaunchSchema,
   appOrigin,
   appSharingSchema,
+  appUpdateSchema,
   MAX_APPS_PER_ACCOUNT,
 } from "@hark/contracts";
-import { and, count, desc, eq, sql } from "drizzle-orm";
+import { and, count, desc, eq, ne, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
 import { app } from "../db/schema";
@@ -64,6 +65,16 @@ async function deleteOwnedApp(userId: string, appId: string): Promise<boolean> {
     .where(and(eq(app.id, appId), eq(app.userId, userId)))
     .returning({ id: app.id });
   return deleted.length > 0;
+}
+
+/** Clears sign-in consent; the app keeps its metadata and asks again on next open. */
+async function revokeAppConsent(userId: string, appId: string): Promise<boolean> {
+  const updated = await db
+    .update(app)
+    .set({ consentedAt: null, updatedAt: new Date() })
+    .where(and(eq(app.id, appId), eq(app.userId, userId)))
+    .returning({ id: app.id });
+  return updated.length > 0;
 }
 
 export const appsAgentRoute = new Hono<AgentEnv>()
@@ -139,6 +150,75 @@ export const appsAgentRoute = new Hono<AgentEnv>()
       ...(projectResolution?.message ? { message: projectResolution.message } : {}),
     };
     return c.json(body, outcome.kind === "created" ? 201 : 200);
+  })
+  .get("/:id", requireScopes("apps:read"), async (c) => {
+    const dto = await ownedAppDto(c.get("apiToken").userId, c.req.param("id"));
+    if (!dto) return c.json(NOT_FOUND, 404);
+    return c.json({ app: dto });
+  })
+  // Metadata only: sharing preferences and consent are owner decisions made
+  // on the phone, and pass issuance is never available to agent tokens.
+  .patch("/:id", requireScopes("apps:write"), async (c) => {
+    const userId = c.get("apiToken").userId;
+    const appId = c.req.param("id");
+    const parsed = appUpdateSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) {
+      return c.json({ error: "Invalid app", issues: parsed.error.issues }, 400);
+    }
+    const input = parsed.data;
+    const [current] = await db
+      .select({ id: app.id, origin: app.origin })
+      .from(app)
+      .where(and(eq(app.id, appId), eq(app.userId, userId)))
+      .limit(1);
+    if (!current) return c.json(NOT_FOUND, 404);
+    const projectResolution =
+      typeof input.project === "string"
+        ? await resolveProjectForDelivery(userId, input.project)
+        : undefined;
+    const origin = input.url === undefined ? current.origin : appOrigin(input.url);
+
+    const outcome = db.transaction((tx) => {
+      if (input.url !== undefined) {
+        const duplicate = tx
+          .select({ id: app.id })
+          .from(app)
+          .where(and(eq(app.userId, userId), eq(app.url, input.url), ne(app.id, current.id)))
+          .get();
+        if (duplicate) return "duplicate" as const;
+      }
+      tx.update(app)
+        .set({
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.url !== undefined ? { url: input.url, origin } : {}),
+          // A new origin is a different site: the owner approves it before
+          // it can receive a pass, exactly as on first open.
+          ...(origin !== current.origin ? { consentedAt: null } : {}),
+          ...(input.iconUrl !== undefined ? { iconUrl: input.iconUrl } : {}),
+          ...(input.project === null ? { projectId: null } : {}),
+          ...(projectResolution ? { projectId: projectResolution.projectId } : {}),
+          updatedAt: new Date(),
+        })
+        .where(and(eq(app.id, current.id), eq(app.userId, userId)))
+        .run();
+      return "updated" as const;
+    });
+    if (outcome === "duplicate") {
+      return c.json({ error: "Another app already uses this URL" }, 409);
+    }
+    const dto = await ownedAppDto(userId, current.id);
+    if (!dto) return c.json(NOT_FOUND, 404);
+    return c.json({
+      app: dto,
+      ...(projectResolution?.message ? { message: projectResolution.message } : {}),
+    });
+  })
+  // Reducing access is safe to delegate; granting it is not, so there is no
+  // agent route that approves sign-in or issues a pass.
+  .post("/:id/revoke", requireScopes("apps:write"), async (c) => {
+    const userId = c.get("apiToken").userId;
+    if (!(await revokeAppConsent(userId, c.req.param("id")))) return c.json(NOT_FOUND, 404);
+    return c.json({ app: await ownedAppDto(userId, c.req.param("id")) });
   })
   .delete("/:id", requireScopes("apps:write"), async (c) => {
     const removed = await deleteOwnedApp(c.get("apiToken").userId, c.req.param("id"));
@@ -235,12 +315,7 @@ export const appsSessionRoute = new Hono<AuthedEnv>()
   })
   .post("/:id/revoke", async (c) => {
     const userId = c.get("user").id;
-    const updated = await db
-      .update(app)
-      .set({ consentedAt: null, updatedAt: new Date() })
-      .where(and(eq(app.id, c.req.param("id")), eq(app.userId, userId)))
-      .returning({ id: app.id });
-    if (updated.length === 0) return c.json(NOT_FOUND, 404);
+    if (!(await revokeAppConsent(userId, c.req.param("id")))) return c.json(NOT_FOUND, 404);
     return c.json({ app: await ownedAppDto(userId, c.req.param("id")) });
   })
   .delete("/:id", async (c) => {

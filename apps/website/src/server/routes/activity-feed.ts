@@ -1,8 +1,18 @@
-import { INBOX_ACTIVITY_KINDS, type InboxActivityDto } from "@hark/contracts";
+import {
+  INBOX_ACTIVITY_KINDS,
+  type InboxActivityDto,
+  type InboxActivityPageDto,
+} from "@hark/contracts";
 import { sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
-import { type AuthedEnv, requireAuth } from "../middleware";
+import {
+  type AgentEnv,
+  type AuthedEnv,
+  requireApiToken,
+  requireAuth,
+  requireScopes,
+} from "../middleware";
 
 const PAGE_SIZE = 20;
 const MAX_PAGE = 1_000_000;
@@ -22,17 +32,23 @@ interface ActivityFeedRow {
   total: number;
 }
 
-export const activityFeedRoute = new Hono<AuthedEnv>().use("*", requireAuth).get("/", async (c) => {
-  const requestedFilter = c.req.query("filter") ?? "all";
+type FeedOutcome = { ok: true; body: InboxActivityPageDto } | { ok: false; error: string };
+
+/** One page of the account's merged activity history, newest first. */
+function readActivityFeed(
+  userId: string,
+  filterParam: string | undefined,
+  pageParam: string | undefined,
+): FeedOutcome {
+  const requestedFilter = filterParam ?? "all";
   if (!FILTERS.includes(requestedFilter as ActivityFilter)) {
-    return c.json({ error: "Invalid activity filter" }, 400);
+    return { ok: false, error: "Invalid activity filter" };
   }
   const filter = requestedFilter as ActivityFilter;
-  const requestedPage = Number.parseInt(c.req.query("page") ?? "0", 10);
+  const requestedPage = Number.parseInt(pageParam ?? "0", 10);
   if (!Number.isFinite(requestedPage) || requestedPage < 0 || requestedPage > MAX_PAGE) {
-    return c.json({ error: "Invalid activity page" }, 400);
+    return { ok: false, error: "Invalid activity page" };
   }
-  const userId = c.get("user").id;
   const filterClause = filter === "all" ? sql`1 = 1` : sql`kind = ${filter}`;
   const offset = requestedPage * PAGE_SIZE;
 
@@ -155,10 +171,25 @@ export const activityFeedRoute = new Hono<AuthedEnv>().use("*", requireAuth).get
     createdAt: new Date(row.createdAt).toISOString(),
   }));
 
-  return c.json({
-    items,
-    page: requestedPage,
-    pageSize: PAGE_SIZE,
-    total: rows[0]?.total ?? 0,
-  });
+  return {
+    ok: true,
+    body: { items, page: requestedPage, pageSize: PAGE_SIZE, total: rows[0]?.total ?? 0 },
+  };
+}
+
+export const activityFeedRoute = new Hono<AuthedEnv>().use("*", requireAuth).get("/", (c) => {
+  const result = readActivityFeed(c.get("user").id, c.req.query("filter"), c.req.query("page"));
+  return result.ok ? c.json(result.body) : c.json({ error: result.error }, 400);
 });
+
+/** Agent-token twin of {@link activityFeedRoute}, mounted at `/api/agent/activity-feed`. */
+export const activityFeedAgentRoute = new Hono<AgentEnv>()
+  .use("*", requireApiToken)
+  .get("/", requireScopes("events:read"), (c) => {
+    const result = readActivityFeed(
+      c.get("apiToken").userId,
+      c.req.query("filter"),
+      c.req.query("page"),
+    );
+    return result.ok ? c.json(result.body) : c.json({ error: result.error }, 400);
+  });

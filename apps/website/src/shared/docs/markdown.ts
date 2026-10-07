@@ -115,6 +115,7 @@ export function llmsTxt(): string {
 - [Documentation as markdown](${DOCS_MARKDOWN_URL}): the same content as plain markdown.
 - [Agent documentation](https://hark.ryan.ceo/agents.md): agent-oriented alias of the complete Markdown docs.
 - [Coding-agent permission setup](https://hark.ryan.ceo/docs#cli-permissions): Claude Code, Codex, OpenCode V1, and OpenCode V2.
+- [Agent API OpenAPI document](https://hark.ryan.ceo/api/agent/openapi.json): every token-authenticated route with its scopes and schemas.
 
 ## Product
 

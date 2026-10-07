@@ -3,19 +3,20 @@ import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { auth } from "./auth";
 import { activitiesAgentRoute, activitiesSessionRoute } from "./routes/activities";
-import { activityFeedRoute } from "./routes/activity-feed";
+import { activityFeedAgentRoute, activityFeedRoute } from "./routes/activity-feed";
 import { activityHooksRoute } from "./routes/activity-hooks";
+import { agentOpenApiRoute } from "./routes/agent-openapi";
 import { analyticsRoute } from "./routes/analytics";
-import { apiTokensRoute } from "./routes/api-tokens";
+import { apiTokensAgentRoute, apiTokensRoute } from "./routes/api-tokens";
 import { appleAuthRoute } from "./routes/apple-auth";
 import { appPassJwksRoute, appsAgentRoute, appsSessionRoute } from "./routes/apps";
-import { billingRoute } from "./routes/billing";
+import { billingAgentRoute, billingRoute } from "./routes/billing";
 import { deviceAuthorizationRoute } from "./routes/device-authorization";
-import { devicesRoute } from "./routes/devices";
+import { devicesAgentRoute, devicesRoute } from "./routes/devices";
 import { docsTextRoute } from "./routes/docs";
 import { eventsRoute } from "./routes/events";
 import { hooksRoute } from "./routes/hooks";
-import { inboxRoute } from "./routes/inbox";
+import { inboxAgentRoute, inboxRoute } from "./routes/inbox";
 import {
   agentRoute,
   interactionCredentialResponseRoute,
@@ -23,7 +24,7 @@ import {
   liveActivityInteractionResponseRoute,
 } from "./routes/interactions";
 import { liveActivityRegistrationRoute } from "./routes/live-activity-registration";
-import { servicesRoute } from "./routes/services";
+import { servicesAgentRoute, servicesRoute } from "./routes/services";
 
 export const app = new Hono();
 
@@ -60,8 +61,16 @@ app.route("/api/analytics", analyticsRoute);
 app.route("/api/api-tokens", apiTokensRoute);
 app.route("/api/apple-auth", appleAuthRoute);
 app.route("/api/device-authorization", deviceAuthorizationRoute);
+// The public discovery document must precede every token-guarded agent mount.
+app.route("/api/agent", agentOpenApiRoute);
 app.route("/api/agent/activities", activitiesAgentRoute);
+app.route("/api/agent/activity-feed", activityFeedAgentRoute);
 app.route("/api/agent/apps", appsAgentRoute);
+app.route("/api/agent/billing", billingAgentRoute);
+app.route("/api/agent/devices", devicesAgentRoute);
+app.route("/api/agent/inbox", inboxAgentRoute);
+app.route("/api/agent/services", servicesAgentRoute);
+app.route("/api/agent/tokens", apiTokensAgentRoute);
 app.route("/api/agent", agentRoute);
 app.route("/api/activities", activitiesSessionRoute);
 app.route("/api/apps", appsSessionRoute);

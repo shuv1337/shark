@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   type AgentNotificationDto,
+  type AgentNotificationWithdrawResponse,
   agentNotificationCreateSchema,
   type InboxInteractionDto,
   type InteractionDto,
@@ -10,7 +11,6 @@ import {
   interactionCredentialResponseSchema,
   interactionResponseSchema,
   liveActivityInteractionResponseSchema,
-  serviceCreateSchema,
 } from "@hark/contracts";
 import { and, count, desc, eq, gt, gte, inArray, isNull, lte } from "drizzle-orm";
 import { Hono } from "hono";
@@ -48,7 +48,7 @@ import {
   resolveInteractionLiveActivity,
   startInteractionLiveActivity,
 } from "./activities";
-import { createServiceForUser } from "./services";
+import { pushWithdrawalCommand } from "./hooks";
 
 type InteractionRow = typeof interaction.$inferSelect;
 
@@ -177,6 +177,43 @@ async function insertAgentNotification(
   }
 }
 
+/** The account's answerable prompts from every source, newest first. */
+async function listPendingInteractions(userId: string): Promise<InboxInteractionDto[]> {
+  const now = new Date();
+  const rows = await db
+    .select({
+      row: interaction,
+      tokenName: apiToken.name,
+      serviceName: service.title,
+      serviceImageUrl: service.imageUrl,
+      projectId: event.projectId,
+    })
+    .from(interaction)
+    .leftJoin(apiToken, eq(interaction.requesterTokenId, apiToken.id))
+    .leftJoin(service, eq(interaction.requesterServiceId, service.id))
+    .leftJoin(event, eq(interaction.eventId, event.id))
+    .where(
+      and(
+        eq(interaction.userId, userId),
+        eq(interaction.status, "pending"),
+        gt(interaction.expiresAt, now),
+      ),
+    )
+    .orderBy(desc(interaction.createdAt))
+    .limit(50);
+  return rows.map(({ row, tokenName, serviceName, serviceImageUrl, projectId }) => ({
+    ...toDto(row),
+    sourceName: serviceName ?? tokenName ?? row.title,
+    sourceImageUrl: row.imageUrl ?? serviceImageUrl,
+    projectId,
+  }));
+}
+
+/** Accepts the bare `anot_…` ID or the inbox composite `notification:anot_…`. */
+function agentNotificationIdFrom(value: string): string {
+  return value.startsWith("notification:") ? value.slice("notification:".length) : value;
+}
+
 export const agentRoute = new Hono<AgentEnv>()
   .use("*", requireApiToken)
   .get("/auth/status", (c) => {
@@ -201,68 +238,6 @@ export const agentRoute = new Hono<AgentEnv>()
       .where(and(eq(apiToken.id, c.get("apiToken").id), isNull(apiToken.revokedAt)));
     track({ name: "api_token_revoked", userId: c.get("apiToken").userId, outcome: "agent" });
     return c.json({ ok: true });
-  })
-  .get("/devices", requireScopes("devices:read"), async (c) => {
-    const rows = await db
-      .select({
-        id: device.id,
-        platform: device.platform,
-        deviceName: device.deviceName,
-        active: device.active,
-        liveActivityPushToStartTokenCiphertext: device.liveActivityPushToStartTokenCiphertext,
-        liveActivityTokenEnvironment: device.liveActivityTokenEnvironment,
-        liveActivityTokenUpdatedAt: device.liveActivityTokenUpdatedAt,
-        createdAt: device.createdAt,
-        lastSeenAt: device.lastSeenAt,
-      })
-      .from(device)
-      .where(eq(device.userId, c.get("apiToken").userId))
-      .orderBy(desc(device.lastSeenAt));
-    return c.json({
-      devices: rows.map((row) => ({
-        ...row,
-        platform: "ios" as const,
-        liveActivitiesCapable: Boolean(row.liveActivityPushToStartTokenCiphertext),
-        liveActivityTokenEnvironment:
-          row.liveActivityTokenEnvironment === "sandbox" ||
-          row.liveActivityTokenEnvironment === "production"
-            ? row.liveActivityTokenEnvironment
-            : null,
-        liveActivityTokenUpdatedAt: row.liveActivityTokenUpdatedAt?.toISOString() ?? null,
-        liveActivityPushToStartTokenCiphertext: undefined,
-        createdAt: row.createdAt.toISOString(),
-        lastSeenAt: row.lastSeenAt.toISOString(),
-      })),
-    });
-  })
-  .get("/services", requireScopes("services:read"), async (c) => {
-    const rows = await db
-      .select({
-        id: service.id,
-        title: service.title,
-        imageUrl: service.imageUrl,
-        url: service.url,
-        createdAt: service.createdAt,
-        updatedAt: service.updatedAt,
-      })
-      .from(service)
-      .where(eq(service.userId, c.get("apiToken").userId))
-      .orderBy(desc(service.createdAt));
-    return c.json({
-      services: rows.map((row) => ({
-        ...row,
-        createdAt: row.createdAt.toISOString(),
-        updatedAt: row.updatedAt.toISOString(),
-      })),
-    });
-  })
-  .post("/services", requireScopes("services:write"), async (c) => {
-    const parsed = serviceCreateSchema.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) {
-      return c.json({ error: "Invalid service", issues: parsed.error.issues }, 400);
-    }
-    const response = await createServiceForUser(c.get("apiToken").userId, parsed.data);
-    return c.json(response, 201);
   })
   .get("/events", requireScopes("events:read"), async (c) => {
     const requested = Number.parseInt(c.req.query("limit") ?? "50", 10);
@@ -512,6 +487,40 @@ export const agentRoute = new Hono<AgentEnv>()
       201,
     );
   })
+  // Withdrawal mirrors the webhook route: a silent command removes the push
+  // from Notification Center and the inbox copy is marked read. Agent
+  // notifications carry no linked prompt; cancel interactions separately.
+  .post("/notifications/:id/withdraw", requireScopes("notifications:send"), async (c) => {
+    const userId = c.get("apiToken").userId;
+    const [row] = await db
+      .select({ id: agentNotification.id })
+      .from(agentNotification)
+      .where(
+        and(
+          eq(agentNotification.id, agentNotificationIdFrom(c.req.param("id"))),
+          eq(agentNotification.userId, userId),
+        ),
+      )
+      .limit(1);
+    if (!row) return c.json({ error: "Notification not found" }, 404);
+    const result = await pushWithdrawalCommand(userId, row.id);
+    if (result.targets > 0 && result.accepted === 0) {
+      return c.json({ error: "Withdrawal delivery failed" }, 502);
+    }
+    await db
+      .update(agentNotification)
+      .set({ readAt: new Date() })
+      .where(and(eq(agentNotification.id, row.id), isNull(agentNotification.readAt)));
+    return c.json<AgentNotificationWithdrawResponse>({
+      ok: true,
+      notificationId: row.id,
+      status: result.accepted < result.targets ? "withdraw_partial" : "withdrawn",
+      accepted: result.accepted,
+    });
+  })
+  .get("/interactions", requireScopes("interactions:read"), async (c) =>
+    c.json({ interactions: await listPendingInteractions(c.get("apiToken").userId) }),
+  )
   .post("/interactions", requireScopes("interactions:create", "notifications:send"), async (c) => {
     const token = c.get("apiToken");
     const parsed = interactionCreateSchema.safeParse(await c.req.json().catch(() => null));
@@ -916,39 +925,7 @@ export const agentRoute = new Hono<AgentEnv>()
 
 export const interactionResponseRoute = new Hono<AuthedEnv>()
   .use("*", requireAuth)
-  .get("/", async (c) => {
-    const now = new Date();
-    const rows = await db
-      .select({
-        row: interaction,
-        tokenName: apiToken.name,
-        serviceName: service.title,
-        serviceImageUrl: service.imageUrl,
-        projectId: event.projectId,
-      })
-      .from(interaction)
-      .leftJoin(apiToken, eq(interaction.requesterTokenId, apiToken.id))
-      .leftJoin(service, eq(interaction.requesterServiceId, service.id))
-      .leftJoin(event, eq(interaction.eventId, event.id))
-      .where(
-        and(
-          eq(interaction.userId, c.get("user").id),
-          eq(interaction.status, "pending"),
-          gt(interaction.expiresAt, now),
-        ),
-      )
-      .orderBy(desc(interaction.createdAt))
-      .limit(50);
-    const interactions: InboxInteractionDto[] = rows.map(
-      ({ row, tokenName, serviceName, serviceImageUrl, projectId }) => ({
-        ...toDto(row),
-        sourceName: serviceName ?? tokenName ?? row.title,
-        sourceImageUrl: row.imageUrl ?? serviceImageUrl,
-        projectId,
-      }),
-    );
-    return c.json({ interactions });
-  })
+  .get("/", async (c) => c.json({ interactions: await listPendingInteractions(c.get("user").id) }))
   .post("/:id/respond", async (c) => {
     const parsed = interactionResponseSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) {

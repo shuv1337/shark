@@ -1,5 +1,8 @@
 import type { BillingRedirectResponse } from "@hark/contracts";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
+import { db } from "../db";
+import { user as userTable } from "../db/schema";
 import { track } from "../lib/analytics";
 import {
   createBillingPortal,
@@ -8,7 +11,13 @@ import {
   getPricingPlans,
   hasAutumn,
 } from "../lib/billing";
-import { type AuthedEnv, requireAuth } from "../middleware";
+import {
+  type AgentEnv,
+  type AuthedEnv,
+  requireApiToken,
+  requireAuth,
+  requireScopes,
+} from "../middleware";
 
 export const billingRoute = new Hono<AuthedEnv>()
   // Public: the pricing page reads the plan catalog without a session.
@@ -39,4 +48,21 @@ export const billingRoute = new Hono<AuthedEnv>()
       console.error("[billing] Could not create customer portal", error);
       return c.json({ error: "Could not open billing portal" }, 502);
     }
+  });
+
+/**
+ * Read-only billing for agent tokens, mounted at `/api/agent/billing`.
+ * Checkout and the customer portal stay session-only: both start payment
+ * flows that only the account owner should open.
+ */
+export const billingAgentRoute = new Hono<AgentEnv>()
+  .use("*", requireApiToken)
+  .get("/", requireScopes("billing:read"), async (c) => {
+    const [owner] = await db
+      .select({ id: userTable.id, name: userTable.name, email: userTable.email })
+      .from(userTable)
+      .where(eq(userTable.id, c.get("apiToken").userId))
+      .limit(1);
+    if (!owner) return c.json({ error: "Account not found" }, 404);
+    return c.json(await getBilling(owner));
   });

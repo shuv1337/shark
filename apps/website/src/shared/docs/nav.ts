@@ -70,11 +70,21 @@ export const DOC_NAV = [
       { id: "apps-notify", label: "Open from a notification" },
     ],
   },
+  {
+    id: "agent-api",
+    label: "Agent API",
+    items: [
+      { id: "agent-api-auth", label: "Tokens and scopes" },
+      { id: "agent-api-routes", label: "Routes" },
+      { id: "agent-api-human-only", label: "Human-only actions" },
+      { id: "agent-api-openapi", label: "OpenAPI document" },
+    ],
+  },
 ] as const;
 
 type DocNavSection = (typeof DOC_NAV)[number];
 
-/** Ids of the three top-level sections. */
+/** Ids of the top-level sections. */
 export type DocSectionId = DocNavSection["id"];
 /** Ids of every nested anchor. */
 export type DocItemId = DocNavSection["items"][number]["id"];

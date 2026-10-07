@@ -7,13 +7,17 @@ task Live Activities from Node.js 22 or newer.
 harkctl
 ├─ auth         login · logout · status
 ├─ notify       <body>                          one-shot push
-│  └─ ask       <prompt> (--approval | --yes-no | --text)  push that elicits an answer
-├─ interaction  get <id> · wait <id>
-├─ activity     start · update · end · get · list
+│  ├─ ask       <prompt> (--approval | --yes-no | --text)  push that elicits an answer
+│  └─ withdraw  <notification_id>               remove a sent push from your phones
+├─ interaction  list · get <id> · wait <id>
+├─ activity     start · update · end · get · list · feed
+├─ inbox        projects · list · get · read · unread · read-all
 ├─ permissions  setup · doctor · uninstall
-├─ devices      list
-├─ services     create · list
-└─ apps         create · list · remove
+├─ devices      list · remove
+├─ services     create · list · get · update · rotate · remove
+├─ apps         create · list · get · update · revoke · remove
+├─ billing
+└─ tokens       list · revoke
 ```
 
 Start a browser authorization flow and approve the requested scopes with your signed-in Hark account:
@@ -36,9 +40,10 @@ harkctl auth logout
 
 Login prints a short code and verification URL to stderr, opens the system browser when interactive,
 polls at the server-provided interval, and atomically writes credentials to a mode-`0600` file. The
-default scopes support notifications, asks, Live Activities, listing devices/services, creating
-webhook services, and managing web apps without requesting `events:read`. Every requested scope is shown on the browser authorization page before
-approval. Connected tokens appear under **Dashboard > Agent connections**, where they can be revoked.
+default scopes support notifications, asks, Live Activities, devices, webhook services, web apps,
+the inbox, and billing. They exclude `events:read` (needed by `activity feed`) and `tokens:manage`
+(needed by `tokens`); add them with `--scope`. Every requested scope is shown on the browser
+authorization page before approval. Connected tokens appear under **Dashboard > Agent connections**, where they can be revoked.
 
 Use repeatable `--scope`, `--client-name`, and `--expires-in` to narrow or label access. `--no-open`
 suppresses browser launch; `--open` explicitly enables it in non-interactive environments. `--json`
@@ -108,7 +113,15 @@ undeliverable notification.
 Inside `notify`, a first positional of exactly `ask` selects the subcommand. Everything after a bare
 `--` separator is treated as positional, so `harkctl notify -- ask` sends the literal body “ask”.
 
+`harkctl notify withdraw <notification_id>` removes an agent notification from your phones with a
+silent background command and marks its inbox copy read. It accepts the `anot_…` ID from the
+`notify` response or the `notification:anot_…` inbox ID. `harkctl notify -- withdraw` sends the
+literal body “withdraw”.
+
 ## interaction
+
+`interaction list` shows every pending prompt on the account, from any token or webhook. Agents can
+read prompts but never answer them: only a human on the phone or a signed-in session approves.
 
 `interaction get <id>` prints the current state and maps terminal states to exit codes.
 `interaction wait <id> [--timeout <duration>]` long-polls until the interaction is answered,
@@ -123,12 +136,50 @@ for notifications sent through that URL, while `--url` sets the default tap dest
 printing their webhook credentials. Creating services requires `services:write`; existing CLI
 logins created before this scope was added need to sign in again.
 
+`services get <id>` shows one service (without its webhook URL). `services update <id>` changes
+`--title`, `--image`, or `--url` (or `--stdin` JSON). `services rotate <id>` replaces the webhook
+token and prints the new `webhookUrl` once; the old URL stops working immediately.
+`services remove <id>` deletes the service.
+
+## devices
+
+`devices list` shows registered iPhones. `devices remove <id>` (scope `devices:write`) removes one;
+it registers again the next time Hark opens on that phone. Registration itself is phone-only.
+
+## inbox
+
+The inbox commands mirror the Hark app inbox (scopes `inbox:read` and `inbox:write`):
+`inbox projects` lists projects with unread counts, `inbox list` pages notifications newest first
+(`--project <id|unfiled>`, `--unread`, `--limit`, and `--cursor <nextCursor>`), `inbox get <id>`
+returns one notification with its full body, and `inbox read <id>` / `inbox unread <id>` toggle
+its read state. IDs look like `event:evt_…` or `notification:anot_…`. `inbox read-all
+[--project <id|unfiled>]` marks everything read up to the moment it runs; notifications arriving
+meanwhile stay unread.
+
+`activity feed [--filter all|notification|live_activity|response] [--page <n>]` returns the
+dashboard's activity history, 20 entries per page (scope `events:read`).
+
+## billing and tokens
+
+`billing` prints the plan, limits, and remaining monthly notifications (scope `billing:read`).
+Checkout and the billing portal stay in the dashboard.
+
+`tokens list` shows the account's agent tokens (never their secrets) and `tokens revoke <id>`
+revokes one; both need the opt-in `tokens:manage` scope. There is no command that creates a token:
+a token that could mint tokens could grant itself any scope, so new tokens always need a signed-in
+human (`harkctl auth login`).
+
 ## apps
 
 `apps create --name <name> --url <url> [--icon <url>] [--project <name>]` registers a web app that
 opens full-screen in the Hark iPhone app with a signed Hark pass (see the
 [Web Apps docs](https://hark.ryan.ceo/docs#web-apps)). Creating an app with an existing URL updates
-it and prints `(updated existing)`. `apps list` and `apps remove <app_id>` manage registered apps.
+it and prints `(updated existing)`. `apps list`, `apps get <app_id>`, and `apps remove <app_id>`
+manage registered apps. `apps update <app_id>` changes `--name`, `--url`, `--icon` (or
+`--no-icon`), and `--project` (or `--no-project`); moving the URL to a different origin clears
+sign-in approval, so the owner approves the new site on the phone. `apps revoke <app_id>` signs the
+app out until the owner approves it again. Sharing preferences and sign-in approval are never
+changed by the CLI.
 These commands print readable lines; pass `--json` for the API response. They require the
 `apps:read` and `apps:write` scopes; logins created before those scopes existed need to sign in
 again (`harkctl auth login`).
