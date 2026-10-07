@@ -59,11 +59,30 @@ export const DOC_NAV = [
       { id: "cli-scripting", label: "Scripting and exit codes" },
     ],
   },
+  {
+    id: "web-apps",
+    label: "Web apps",
+    items: [
+      { id: "apps-register", label: "Register an app" },
+      { id: "apps-verify", label: "Verify the pass" },
+      { id: "apps-notify", label: "Open from a notification" },
+    ],
+  },
+  {
+    id: "board",
+    label: "Board",
+    items: [
+      { id: "board-asks", label: "Ask the captain" },
+      { id: "board-answers", label: "Read the answer" },
+      { id: "board-work", label: "Work items and notes" },
+      { id: "board-security", label: "Who can answer" },
+    ],
+  },
 ] as const;
 
 type DocNavSection = (typeof DOC_NAV)[number];
 
-/** Ids of the three top-level sections. */
+/** Ids of the top-level sections. */
 export type DocSectionId = DocNavSection["id"];
 /** Ids of every nested anchor. */
 export type DocItemId = DocNavSection["items"][number]["id"];

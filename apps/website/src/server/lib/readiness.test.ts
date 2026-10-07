@@ -32,6 +32,12 @@ function makeDatabase(options?: { migrationCount?: number; latest?: number }) {
       "live_activity_delivery",
       "inbox_item",
       "inbox_item_event",
+      "app",
+      "app_signing_key",
+      "board_ask",
+      "board_ask_event",
+      "board_work_item",
+      "board_note",
     ]
       .map((name) => `create table "${name}" (id text primary key);`)
       .join("\n")}

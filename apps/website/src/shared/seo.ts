@@ -2,7 +2,14 @@ import { BRAND } from "./brand";
 
 export const SITE_URL = BRAND.origin;
 
-export type SeoPage = "home" | "docs" | "privacy" | "terms" | "dashboard" | "cliAuthorize";
+export type SeoPage =
+  | "home"
+  | "docs"
+  | "privacy"
+  | "terms"
+  | "dashboard"
+  | "board"
+  | "cliAuthorize";
 
 export interface PageSeo {
   path: string;
@@ -42,6 +49,12 @@ export const PAGE_SEO: Record<SeoPage, PageSeo> = {
     description: "Manage private SHark services, devices, activity, and agent connections.",
     index: false,
   },
+  board: {
+    path: "/board",
+    title: "Board — SHark",
+    description: "What your agents are waiting on, working on, and finished.",
+    index: false,
+  },
   cliAuthorize: {
     path: "/cli/authorize",
     title: "Authorize SHark CLI",
@@ -56,6 +69,7 @@ export const PRIVATE_PAGES = [
   "privacy",
   "terms",
   "dashboard",
+  "board",
   "cliAuthorize",
 ] as const satisfies readonly SeoPage[];
 
@@ -65,6 +79,7 @@ export function absoluteUrl(path: string): string {
 
 export function seoPageForPath(pathname: string): SeoPage | null {
   const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  if (normalized.startsWith("/board/")) return "board";
   for (const [page, metadata] of Object.entries(PAGE_SEO) as [SeoPage, PageSeo][]) {
     if (metadata.path === normalized) return page;
   }

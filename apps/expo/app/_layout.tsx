@@ -24,6 +24,7 @@ import {
   withdrawalEventId,
 } from "../src/lib/notification-withdrawals";
 import { colors } from "../src/lib/theme";
+import { webAppFromNotificationData } from "../src/lib/web-apps";
 
 void SplashScreen.preventAutoHideAsync();
 void registerInteractionCategories().catch((error) => {
@@ -59,8 +60,19 @@ export default function RootLayout() {
   const responseHandler = useRef<ReturnType<typeof createNotificationResponseHandler> | null>(null);
   if (!responseHandler.current) {
     responseHandler.current = createNotificationResponseHandler(async (response) => {
-      const inboxId = inboxIdFromNotificationData(response.notification.request.content.data);
+      const data = response.notification.request.content.data;
+      const inboxId = inboxIdFromNotificationData(data);
+      const webApp = webAppFromNotificationData(data);
       await handleNotificationResponse(response, (detail) => {
+        // App notifications open inside SHark, signed in; the web view only
+        // honors `url` when it belongs to the app origin.
+        if (webApp) {
+          routerRef.current.push({
+            pathname: "/web/[id]",
+            params: { id: webApp.appId, ...(webApp.url ? { url: webApp.url } : {}) },
+          });
+          return;
+        }
         if (inboxId) {
           routerRef.current.push({ pathname: "/inbox-detail", params: { id: inboxId } });
           return;

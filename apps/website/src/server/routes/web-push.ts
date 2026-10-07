@@ -10,6 +10,7 @@ import { device, macosDevice, webPushSubscription } from "../db/schema";
 import { env } from "../env";
 import { getBilling } from "../lib/billing";
 import { newId } from "../lib/id";
+import { isSameOrigin } from "../lib/same-origin";
 import { encryptWebPushSubscription, hashWebPushEndpoint } from "../lib/token";
 import { sendWebPushNotifications } from "../lib/web-push";
 import { type AuthedEnv, requireAuth } from "../middleware";
@@ -22,11 +23,6 @@ function toDto(row: typeof webPushSubscription.$inferSelect): WebPushSubscriptio
     createdAt: row.createdAt.toISOString(),
     lastSeenAt: row.lastSeenAt.toISOString(),
   };
-}
-
-function isSameOrigin(request: Request): boolean {
-  const origin = request.headers.get("origin");
-  return origin !== null && origin === new URL(env.APP_URL).origin;
 }
 
 export const webPushRoute = new Hono<AuthedEnv>()

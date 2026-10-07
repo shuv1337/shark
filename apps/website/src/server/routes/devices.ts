@@ -17,11 +17,11 @@ import {
   user as userTable,
   webPushSubscription,
 } from "../db/schema";
-import { env } from "../env";
 import { track } from "../lib/analytics";
 import { getBilling } from "../lib/billing";
 import { newId } from "../lib/id";
 import { buildWelcomePushMessages, sendPushMessages } from "../lib/push";
+import { isSameOrigin } from "../lib/same-origin";
 import { encryptLiveActivityToken } from "../lib/token";
 import { type AuthedEnv, requireAuth } from "../middleware";
 import { replayLateTerminalDelivery, unsentTerminalDelivery } from "./activities";
@@ -77,11 +77,6 @@ function macosToDto(row: typeof macosDevice.$inferSelect): DeviceDto {
 
 const wait = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
-
-function isSameOrigin(request: Request): boolean {
-  const origin = request.headers.get("origin");
-  return origin !== null && origin === new URL(env.APP_URL).origin;
-}
 
 export const devicesRoute = new Hono<AuthedEnv>()
   .use("*", requireAuth)

@@ -6,6 +6,8 @@ import { sqlite } from "./db";
 import { runMigrations } from "./db/migrate";
 import { assertRuntimeEnv, env } from "./env";
 import { pruneAnalytics } from "./lib/analytics";
+import { startBoardSweeper } from "./lib/board";
+import { startBoardCallbackWorker } from "./lib/board-callbacks";
 import { startInteractionCallbackWorker } from "./lib/interaction-callbacks";
 import { mountPrivateStaticRoutes } from "./static";
 
@@ -14,6 +16,8 @@ runMigrations();
 // Bounds the analytics log at startup; long-running processes prune opportunistically.
 pruneAnalytics();
 startInteractionCallbackWorker();
+startBoardCallbackWorker();
+startBoardSweeper();
 
 // In production the same process serves authenticated noindex application
 // shells. Unknown paths remain real 404s.

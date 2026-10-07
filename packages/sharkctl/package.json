@@ -1,6 +1,6 @@
 {
   "name": "sharkctl",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "CLI for SHark notifications, approvals, replies, and Live Activities",
   "repository": {
     "type": "git",
@@ -36,7 +36,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "node --check src/client.mjs && node --check src/cli.mjs && node --check bin/sharkctl.mjs && node --check src/permissions/cli.mjs && node --check src/permissions/ask.mjs && node --check src/permissions/hook.mjs && node --check src/permissions/install.mjs && node --check src/permissions/opencode-service.mjs && node --check src/permissions/opencode-v1.mjs && node --check src/permissions/opencode-v2.mjs",
+    "build": "node --check src/client.mjs && node --check src/board.mjs && node --check src/cli.mjs && node --check bin/sharkctl.mjs && node --check src/permissions/cli.mjs && node --check src/permissions/ask.mjs && node --check src/permissions/hook.mjs && node --check src/permissions/install.mjs && node --check src/permissions/opencode-service.mjs && node --check src/permissions/opencode-v1.mjs && node --check src/permissions/opencode-v2.mjs",
     "typecheck": "pnpm build",
     "test": "node --test",
     "prepublishOnly": "pnpm test && pnpm build"

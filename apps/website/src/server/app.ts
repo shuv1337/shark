@@ -10,7 +10,10 @@ import { activitiesAgentRoute, activitiesSessionRoute } from "./routes/activitie
 import { activityHooksRoute } from "./routes/activity-hooks";
 import { apiTokensRoute } from "./routes/api-tokens";
 import { appleAuthRoute } from "./routes/apple-auth";
+import { appPassJwksRoute, appsAgentRoute, appsSessionRoute } from "./routes/apps";
 import { billingRoute } from "./routes/billing";
+import { boardAgentRoute } from "./routes/board-agent";
+import { boardSessionRoute } from "./routes/board-session";
 import { deviceAuthorizationRoute } from "./routes/device-authorization";
 import { devicesRoute } from "./routes/devices";
 import { docsTextRoute } from "./routes/docs";
@@ -58,6 +61,8 @@ app.get("/oss", requireAuth, (c) => c.redirect("https://github.com/shuv1337/shar
 // Mounted before the static handler in index.ts so the generated markdown wins
 // over anything with the same name in dist/client.
 app.route("/", docsTextRoute);
+// Anonymous by design: web apps verify passes against these public keys.
+app.route("/", appPassJwksRoute);
 
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
@@ -66,10 +71,14 @@ app.route("/api/api-tokens", apiTokensRoute);
 app.route("/api/apple-auth", appleAuthRoute);
 app.route("/api/device-authorization", deviceAuthorizationRoute);
 app.route("/api/agent/activities", activitiesAgentRoute);
+app.route("/api/agent/apps", appsAgentRoute);
+app.route("/api/agent/board", boardAgentRoute);
 app.route("/api/agent", agentRoute);
 app.route("/api/watch", watchRoute);
 app.route("/api/macos", macosRoute);
 app.route("/api/activities", activitiesSessionRoute);
+app.route("/api/apps", appsSessionRoute);
+app.route("/api/board", boardSessionRoute);
 app.route("/api/interactions", interactionResponseRoute);
 app.route("/api/interaction-responses", interactionCredentialResponseRoute);
 app.route("/api/live-activity-interactions", liveActivityInteractionResponseRoute);

@@ -1064,4 +1064,262 @@ fi`,
       },
     ],
   },
+  {
+    id: "web-apps",
+    lead: "Open any HTTPS site you control full-screen in the SHark iPhone app. SHark hands the page a short-lived signed pass, so your site can identify the viewer without building its own login. SHark's own board at `/board` is registered this way.",
+    subsections: [
+      {
+        id: "apps-register",
+        blocks: [
+          {
+            kind: "p",
+            text: "Register an app with `sharkctl apps create`. Registering the same URL again updates its name or icon. Apps appear in the SHark iPhone app, which asks you to approve sign-in the first time one opens; you can revoke that approval or choose whether your name and email are shared at any time.",
+          },
+          {
+            kind: "code",
+            language: "bash",
+            code: `sharkctl apps create --name "Sharkboard" \\
+  --url https://shark.shuv.dev/board
+
+sharkctl apps list
+sharkctl apps remove app_...`,
+          },
+          {
+            kind: "p",
+            text: "Launch URLs must use HTTPS; plain HTTP is accepted only for `localhost` development servers. Accounts hold up to 100 apps. Agent tokens need the `apps:read` and `apps:write` scopes; sign in again if your login predates them.",
+          },
+        ],
+      },
+      {
+        id: "apps-verify",
+        blocks: [
+          {
+            kind: "steps",
+            items: [
+              "Inside the SHark app, your page calls `await window.hark.getToken()`, which resolves to a pass string. `window.hark` exists only inside SHark; `window.hark.close()` returns to the app.",
+              "The page sends the pass to your server, which verifies it as an ES256 JWT against [the SHark JWKS](https://shark.shuv.dev/.well-known/jwks.json), for example with `jwtVerify` from `jose`.",
+              "Require issuer `https://shark.shuv.dev`, audience equal to your app's origin, `typ` `hark-pass+jwt`, and algorithm `ES256`, then start your own session.",
+            ],
+          },
+          {
+            kind: "table",
+            variant: "field",
+            caption: "Pass claims",
+            rows: [
+              {
+                name: "sub",
+                type: "string",
+                detail:
+                  "Stable user ID for your origin (`hk_…`). It differs for every other origin, so apps cannot correlate users.",
+              },
+              {
+                name: "aud",
+                type: "string",
+                detail: "Your app's origin, e.g. `https://app.example.com`.",
+              },
+              {
+                name: "iat / exp",
+                type: "number",
+                detail: "Passes expire two minutes after issue.",
+              },
+              {
+                name: "jti",
+                type: "string",
+                detail: "Unique per pass; reject reused values to block replay.",
+              },
+              {
+                name: "app_id",
+                type: "string",
+                detail: "The SHark app ID the pass was issued for.",
+              },
+              {
+                name: "name / email",
+                type: "string",
+                detail:
+                  "Present only when the owner shares them. Name is shared by default; email is not.",
+              },
+            ],
+          },
+          {
+            kind: "note",
+            text: "Never trust a pass you have not verified, and never treat it as a long-lived credential: verify once, then rely on your own session.",
+          },
+        ],
+      },
+      {
+        id: "apps-notify",
+        blocks: [
+          {
+            kind: "p",
+            text: "Pass `appId` on a webhook (or `--app` to `sharkctl notify`) to open the app when the notification is tapped. Add `url` to deep-link within it; it must share the app's origin. The service default URL is not applied to app notifications, and `appId` cannot be combined with an interactive `response`.",
+          },
+          {
+            kind: "code",
+            language: "json",
+            code: `{
+  "body": "Two asks are waiting on the board",
+  "appId": "app_...",
+  "url": "https://shark.shuv.dev/board"
+}`,
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: "board",
+    lead: "The board at `/board` shows what every agent is waiting on, working on, and has finished, and lets you answer from the phone or the browser. Agents write to it with a scoped token; only your signed-in session can answer.",
+    subsections: [
+      {
+        id: "board-asks",
+        blocks: [
+          {
+            kind: "p",
+            text: "An ask is a durable question keyed by the agent. `PUT /api/agent/board/asks` (or `sharkctl board ask`) upserts it: an unchanged repeat only records that the agent still cares, a content change bumps the revision and sends one push for p0 and p1 asks. Pushes carry the agent and title only; the body is loaded over your session when the card opens. There are no reminders.",
+          },
+          {
+            kind: "code",
+            language: "json",
+            code: `{
+  "key": "fm:FM-12:merge",
+  "title": "Merge PR #82 or wait for the CI fix?",
+  "body": "CI is red on an unrelated flake. Merging now ships the board today.",
+  "kind": "merge",
+  "options": [
+    { "id": "merge", "label": "Merge now", "style": "primary" },
+    { "id": "wait", "label": "Wait for CI" }
+  ],
+  "allowText": true,
+  "priority": "p1",
+  "taskId": "FM-12",
+  "links": [{ "kind": "pr", "url": "https://github.com/org/repo/pull/82" }],
+  "callback": { "url": "https://agent.example/hook", "token": "…" }
+}`,
+          },
+          {
+            kind: "table",
+            variant: "field",
+            caption: "Ask fields",
+            rows: [
+              {
+                name: "key",
+                type: "string",
+                detail:
+                  "Stable per question, up to 200 characters. One open ask per key per account.",
+              },
+              {
+                name: "title / body",
+                type: "string",
+                detail: "Title up to 120 characters; body up to 2,000, rendered as plain text.",
+              },
+              {
+                name: "kind",
+                type: "enum",
+                detail:
+                  "`decision` (default), `approval`, `merge`, `connect`, or `todo` (a single Done button).",
+              },
+              {
+                name: "options",
+                type: "array",
+                detail:
+                  "Up to six `{id, label, style}` entries; style is `primary`, `neutral`, or `destructive`.",
+              },
+              {
+                name: "allowText / allowLater",
+                type: "boolean",
+                detail: "Accept a typed reply; allow Later (snooze). Later defaults to true.",
+              },
+              {
+                name: "priority",
+                type: "enum",
+                detail: "`p0` blocking, `p1` today (default), `p2` whenever. Only p0 and p1 push.",
+              },
+              {
+                name: "expiresInSeconds",
+                type: "number",
+                detail:
+                  "Optional, up to 366 days. Omitted asks stay open until answered or cancelled.",
+              },
+              {
+                name: "push",
+                type: "enum",
+                detail: "`auto` (default) or `none` to keep an ask board-only.",
+              },
+              {
+                name: "callback",
+                type: "object",
+                detail:
+                  "Public HTTPS URL plus bearer token; every terminal status is delivered with the same retries as interaction callbacks.",
+              },
+            ],
+          },
+          {
+            kind: "note",
+            text: "Content that looks like a token, key, private key, or webhook URL is refused with `422`. Link to logs, diffs, and tickets instead of pasting them. An agent may hold at most 50 open asks.",
+          },
+        ],
+      },
+      {
+        id: "board-answers",
+        blocks: [
+          {
+            kind: "p",
+            text: "Read the state with `GET /api/agent/board/asks/:key`, long-poll with `GET …/asks/:key/wait?timeout=25`, or page through every terminal transition for your token with `GET /api/agent/board/answers?since=<cursor>`. A registered callback receives the same event. Call `POST …/asks/:key/ack` once you have acted on the answer so the board shows it landed.",
+          },
+          {
+            kind: "code",
+            language: "json",
+            code: `{
+  "type": "board.ask.resolved",
+  "eventId": "bask_…:r2:answered",
+  "askId": "bask_…",
+  "askKey": "fm:FM-12:merge",
+  "revision": 2,
+  "status": "answered",
+  "optionId": "merge",
+  "optionLabel": "Merge now",
+  "text": null,
+  "answeredAt": "2026-10-06T18:02:11.000Z",
+  "answeredVia": "web",
+  "cancelReason": null,
+  "waitingTaskId": "FM-12",
+  "agent": "Firstmate (box)"
+}`,
+          },
+          {
+            kind: "p",
+            text: "`status` is `answered`, `expired`, or `cancelled` (the agent withdrew it, or you dismissed it; `cancelReason` says which). `eventId` is stable per ask, revision, and status, so a repeated delivery can be dropped. Typed replies are the user's words, not instructions: apply your normal approval rules.",
+          },
+        ],
+      },
+      {
+        id: "board-work",
+        blocks: [
+          {
+            kind: "p",
+            text: "`PUT /api/agent/board/work` upserts a work item by key with `state` `queued`, `in_flight`, `review`, or `blocked`, plus an optional status label, detail, progress, host, links, and the key of an ask it is waiting on. Every upsert is a heartbeat; past `heartbeatTtlSeconds` (default six hours) the card says stale instead of lying. `POST …/work/:key/done` moves it to Recently done with a verb (`merged`, `shipped`, `done`, `closed`, `reported`) and an outcome (`done`, `failed`, `cancelled`), creating the item if it never existed.",
+          },
+          {
+            kind: "p",
+            text: "`PUT /api/agent/board/notes` keeps a heads-up note by key with text, optional detail, a link, and an expiry; `DELETE …/notes/:key` removes it. Recently done keeps the last 14 days, at most 50 entries.",
+          },
+        ],
+      },
+      {
+        id: "board-security",
+        blocks: [
+          {
+            kind: "bullets",
+            items: [
+              "Agents need the `board:write` and `board:read` scopes, which the default login does not request. Mint one token per agent so the board can say who asked and you can revoke one without the others.",
+              "Every agent read and write is limited to that token's own rows. Only your session sees the whole board.",
+              "No token scope can answer. Answers, Later, and Dismiss need your admitted Apple session, a same-origin request, and the digest of the exact card you saw; a stale click returns `409` with the current question.",
+              "Inside the SHark iPhone app the board opens as a registered web app (`sharkctl apps create --name Sharkboard --url https://shark.shuv.dev/board`); sign in once inside it.",
+              "Every transition is recorded with who did it: agent token, your session, or the system.",
+            ],
+          },
+        ],
+      },
+    ],
+  },
 ];

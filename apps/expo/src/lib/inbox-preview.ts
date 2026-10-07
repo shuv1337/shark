@@ -1,4 +1,4 @@
-import type { InboxDetailDto, InboxFilter, InboxItemDto } from "@hark/contracts";
+import type { AppDto, InboxDetailDto, InboxFilter, InboxItemDto } from "@hark/contracts";
 import * as Device from "expo-device";
 
 export const isSimulatorPreview = typeof __DEV__ !== "undefined" && __DEV__ && !Device.isDevice;
@@ -167,3 +167,20 @@ export function previewInboxDetailForId(id: string): InboxDetailDto {
     ],
   };
 }
+
+export const previewApps: AppDto[] = [
+  {
+    id: "app_previewboard",
+    name: "Sharkboard",
+    origin: "https://shark.shuv.dev",
+    iconUrl: null,
+    url: "https://shark.shuv.dev/board",
+    shareName: true,
+    shareEmail: false,
+    consentedAt: null,
+    lastOpenedAt: null,
+    createdBy: "Firstmate (box)",
+    createdAt: isoMinutesAgo(600),
+    updatedAt: isoMinutesAgo(600),
+  },
+];

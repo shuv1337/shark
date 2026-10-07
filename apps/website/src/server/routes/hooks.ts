@@ -21,6 +21,7 @@ import {
 } from "../db/schema";
 import { isEmailAllowed } from "../lib/admission";
 import { failureBucket, track } from "../lib/analytics";
+import { resolveNotificationApp } from "../lib/apps";
 import { checkNotificationAllowance, getBilling, trackNotification } from "../lib/billing";
 import { newId } from "../lib/id";
 import { syncInboxForUser } from "../lib/inbox";
@@ -133,6 +134,23 @@ export const hooksRoute = new Hono()
         }
         const replay = replayResponse(existing);
         return c.json(replay.body, replay.status);
+      }
+    }
+
+    if (parsed.data.appId) {
+      if (parsed.data.response) {
+        return c.json<WebhookResponse>(
+          { ok: false, error: "appId cannot be combined with response" },
+          400,
+        );
+      }
+      const appResolution = await resolveNotificationApp(
+        svc.userId,
+        parsed.data.appId,
+        parsed.data.url,
+      );
+      if (!appResolution.ok) {
+        return c.json<WebhookResponse>({ ok: false, error: appResolution.error }, 400);
       }
     }
 
@@ -264,6 +282,12 @@ export const hooksRoute = new Hono()
     }
 
     const resolved = resolveNotification(svc, parsed.data);
+    // An app notification opens the app (at `url` when given); the service's
+    // default URL may point elsewhere, so it never applies here.
+    if (parsed.data.appId) {
+      if (parsed.data.url) resolved.url = parsed.data.url;
+      else delete resolved.url;
+    }
     const eventId = newId("evt");
     const eventValues: typeof event.$inferInsert = {
       id: eventId,
@@ -277,6 +301,7 @@ export const hooksRoute = new Hono()
       error: null,
       idempotencyKey: idempotencyKey ?? null,
       requestHash: idempotencyKey ? requestHash : null,
+      appId: parsed.data.appId ?? null,
       createdAt: new Date(),
     };
 
@@ -454,6 +479,7 @@ export const hooksRoute = new Hono()
           to: devices.map((registeredDevice) => registeredDevice.expoPushToken),
           eventId,
           serviceId: svc.id,
+          ...(parsed.data.appId ? { appId: parsed.data.appId } : {}),
           resolved,
         });
     const result = await sendPushFanout({

@@ -4,7 +4,14 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import type { Hono } from "hono";
 import { requireAuth } from "./middleware";
 
-export const PRIVATE_DOCUMENT_ROUTES = ["/", "/docs", "/privacy", "/terms", "/dashboard"] as const;
+export const PRIVATE_DOCUMENT_ROUTES = [
+  "/",
+  "/docs",
+  "/privacy",
+  "/terms",
+  "/dashboard",
+  "/board",
+] as const;
 export const PRIVATE_ROOT_ASSETS = ["/ogimage.png"] as const;
 export const PUBLIC_PUSH_ASSETS = ["/sw.js", "/favicon.png", "/app-store-icon.png"] as const;
 
@@ -20,6 +27,12 @@ export function mountPrivateStaticRoutes(
     if (existsSync(resolve(clientDir, file))) {
       app.get(path, requireAuth, serveStatic({ path: `${staticRoot}/${file}` }));
     }
+  }
+
+  // Ask deep links from pushes render the same board shell.
+  const boardFile = "board/index.html";
+  if (existsSync(resolve(clientDir, boardFile))) {
+    app.get("/board/ask/:id", requireAuth, serveStatic({ path: `${staticRoot}/${boardFile}` }));
   }
 
   const cliFile = "cli/authorize/index.html";

@@ -3,65 +3,9 @@ import { z } from "zod";
 /** Version of the push `data` payload schema understood by the iOS extension. */
 export const PUSH_SCHEMA_VERSION = 1 as const;
 
-function isPublicHttpsUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "https:") return false;
+import { isPublicHttpsUrl, publicHttpsUrlSchema } from "./url";
 
-    const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-    if (
-      hostname === "localhost" ||
-      hostname.endsWith(".localhost") ||
-      hostname.endsWith(".local")
-    ) {
-      return false;
-    }
-
-    const ipv4 = hostname.split(".").map(Number);
-    if (
-      ipv4.length === 4 &&
-      ipv4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
-    ) {
-      const [a, b] = ipv4;
-      if (
-        a === 0 ||
-        a === 10 ||
-        a === 127 ||
-        (a === 169 && b === 254) ||
-        (a === 172 && b !== undefined && b >= 16 && b <= 31) ||
-        (a === 192 && b === 168) ||
-        // Carrier-grade NAT and IETF protocol assignments reach internal hosts too.
-        (a === 100 && b !== undefined && b >= 64 && b <= 127) ||
-        (a === 192 && b === 0) ||
-        (a === 198 && b !== undefined && (b === 18 || b === 19)) ||
-        a === 224 ||
-        a === 255
-      ) {
-        return false;
-      }
-    }
-
-    if (
-      hostname === "::1" ||
-      hostname.startsWith("fc") ||
-      hostname.startsWith("fd") ||
-      hostname.startsWith("fe80:") ||
-      // IPv4-mapped IPv6 (::ffff:127.0.0.1) otherwise bypasses the checks above.
-      hostname.startsWith("::ffff:")
-    ) {
-      return false;
-    }
-
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const publicHttpsUrlSchema = z
-  .url()
-  .max(2048)
-  .refine(isPublicHttpsUrl, "Must be a public HTTPS URL");
+export { isPublicHttpsUrl };
 
 /**
  * Tap destinations are handed to the iOS app and opened with `Linking.openURL`,
@@ -79,6 +23,38 @@ const webUrlSchema = z
       return false;
     }
   }, "Must be an http or https URL");
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/**
+ * Web app launch URLs are loaded only by the owner's own in-app web view and
+ * are never fetched by the server, so private and tailnet hosts are allowed.
+ * HTTPS is required because the signed sign-in pass is bound to the origin;
+ * plain HTTP is accepted only for loopback development servers.
+ */
+export const appUrlSchema = z
+  .url()
+  .max(2048)
+  .refine((value) => {
+    try {
+      const url = new URL(value);
+      if (url.username || url.password) return false;
+      if (url.protocol === "https:") return true;
+      return url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname.toLowerCase());
+    } catch {
+      return false;
+    }
+  }, "Must be an HTTPS URL (HTTP is allowed only for localhost)");
+
+/** Canonical origin used as the sign-in pass audience, e.g. `https://app.example.com`. */
+export function appOrigin(url: string): string {
+  return new URL(url).origin;
+}
+
+export const appIdSchema = z
+  .string()
+  .trim()
+  .regex(/^app_[A-Za-z0-9_-]{8,64}$/, "Must be a SHark app ID (app_…)");
 
 // ---------------------------------------------------------------------------
 // Services
@@ -156,6 +132,8 @@ export const webhookRequestSchema = z.object({
     .transform((ids) => [...new Set(ids)].sort())
     .optional(),
   response: webhookResponseRequestSchema.optional(),
+  /** Opens this SHark web app on tap; `url`, when present, must share its origin. */
+  appId: appIdSchema.optional(),
 });
 export type WebhookRequest = z.infer<typeof webhookRequestSchema>;
 
@@ -233,6 +211,8 @@ export interface InboxItemDto {
   occurredAt: string;
   updatedAt: string;
   action: InboxActionDto | null;
+  /** Web app opened by this notification; older servers omit it. */
+  app?: AppSummaryDto | null;
 }
 
 /** A partial notification is terminal fanout; only Live Activities can remain active when partial. */
@@ -697,6 +677,10 @@ export const API_TOKEN_SCOPES = [
   "macos:read",
   "macos:respond",
   "macos:register",
+  "apps:read",
+  "apps:write",
+  "board:read",
+  "board:write",
 ] as const;
 export const apiTokenScopeSchema = z.enum(API_TOKEN_SCOPES);
 export type ApiTokenScope = z.infer<typeof apiTokenScopeSchema>;
@@ -1009,6 +993,8 @@ export const agentNotificationCreateSchema = z.object({
     .max(50)
     .transform((ids) => [...new Set(ids)].sort())
     .optional(),
+  /** Opens this SHark web app on tap; `url`, when present, must share its origin. */
+  appId: appIdSchema.optional(),
 });
 export type AgentNotificationCreateInput = z.infer<typeof agentNotificationCreateSchema>;
 
@@ -1019,6 +1005,7 @@ export interface AgentNotificationDto {
   imageUrl: string | null;
   url: string | null;
   createdAt: string;
+  appId?: string | null;
 }
 
 export interface AgentNotificationCreateResponse {
@@ -1028,6 +1015,106 @@ export interface AgentNotificationCreateResponse {
   idempotent?: boolean;
   message?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Web apps (full-screen web views signed in with a SHark pass)
+// ---------------------------------------------------------------------------
+
+export const APP_NAME_MAX_CHARS = 40 as const;
+export const MAX_APPS_PER_ACCOUNT = 100 as const;
+/** Lifetime of a signed pass. Apps exchange it for their own session. */
+export const APP_PASS_TTL_SECONDS = 120 as const;
+/** JWT `typ` header of a pass, so it cannot be confused with other JWTs. Protocol identifier. */
+export const APP_PASS_JWT_TYPE = "hark-pass+jwt" as const;
+export const APP_PASS_ALGORITHM = "ES256" as const;
+/** JWKS path served from the SHark origin (the pass `iss`). */
+export const APP_PASS_JWKS_PATH = "/.well-known/jwks.json" as const;
+
+export const appNameSchema = z
+  .string()
+  .trim()
+  .min(1, "Name is required")
+  .max(APP_NAME_MAX_CHARS)
+  .refine(
+    (value) =>
+      Array.from(value).every((character) => {
+        const code = character.charCodeAt(0);
+        return code >= 32 && code !== 127;
+      }),
+    "App names must be a single line",
+  );
+
+export const appCreateSchema = z.object({
+  name: appNameSchema,
+  url: appUrlSchema,
+  iconUrl: publicHttpsUrlSchema.optional(),
+});
+export type AppCreateInput = z.infer<typeof appCreateSchema>;
+
+/** Owner-controlled sharing preferences; the pairwise SHark ID is always shared. */
+export const appSharingSchema = z.object({
+  shareName: z.boolean().optional(),
+  shareEmail: z.boolean().optional(),
+});
+export type AppSharingInput = z.infer<typeof appSharingSchema>;
+
+export const appLaunchSchema = appSharingSchema.extend({
+  /** Required (true) before the first pass is issued, and again after revoke. */
+  consent: z.boolean().optional(),
+});
+export type AppLaunchInput = z.infer<typeof appLaunchSchema>;
+
+export interface AppSummaryDto {
+  id: string;
+  name: string;
+  origin: string;
+  iconUrl: string | null;
+}
+
+export interface AppDto extends AppSummaryDto {
+  /** Launch URL opened in the SHark web view. */
+  url: string;
+  shareName: boolean;
+  shareEmail: boolean;
+  /** `null` until the owner approves sign-in; passes are refused until then. */
+  consentedAt: string | null;
+  lastOpenedAt: string | null;
+  /** Name of the agent token that registered the app, when known. */
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AppCreateResponse {
+  app: AppDto;
+  /** `false` when an app with the same URL already existed and was updated. */
+  created: boolean;
+}
+
+export interface AppPassResponse {
+  /** Compact ES256 JWT. Verify it with the SHark JWKS; never trust it unverified. */
+  token: string;
+  expiresAt: string;
+  app: AppDto;
+}
+
+/** Claims of a pass, as verified by a web app's server. */
+export interface AppPassClaims {
+  iss: string;
+  /** The app origin, e.g. `https://app.example.com`. */
+  aud: string;
+  /** Pairwise user ID: stable for this origin and different for every other app. */
+  sub: string;
+  iat: number;
+  exp: number;
+  jti: string;
+  app_id: string;
+  name?: string;
+  email?: string;
+}
+
+/** `code` returned when a pass needs owner consent first. */
+export const API_ERROR_CODE_CONSENT_REQUIRED = "consent_required" as const;
 
 // ---------------------------------------------------------------------------
 // Billing
@@ -1093,6 +1180,8 @@ export const webhookPushDataSchema = z.object({
   /** Destination URL to open when the notification is tapped. */
   url: z.url().optional(),
   conversationId: z.string(),
+  /** Web app opened in SHark on tap, at `url` when present; ignored by older builds. */
+  appId: z.string().optional(),
 });
 export const interactionPushDataSchema = z.object({
   v: z.literal(PUSH_SCHEMA_VERSION),
@@ -1132,3 +1221,4 @@ export interface ApiError {
   error: string;
   issues?: unknown;
 }
+export * from "./board";
