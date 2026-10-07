@@ -1,13 +1,12 @@
-const IOS_APP_DOWNLOAD_URL =
-  "https://apps.apple.com/us/app/hark-developer-notifications/id6794121509";
+import { APP_STORE_URL } from "./SiteChrome";
 
 export function AppDownloadBanner() {
   return (
     <a
-      href={IOS_APP_DOWNLOAD_URL}
+      href={APP_STORE_URL}
       target="_blank"
       rel="noopener noreferrer"
-      className="group mb-8 flex items-center gap-3.5 rounded-2xl border border-brand-blue bg-surface p-4 shadow-xs transition hover:bg-brand-blue/5"
+      className="hark-glass group mb-8 flex items-center gap-3.5 rounded-3xl p-4 transition-[filter] hover:brightness-110"
     >
       <img
         src="/app-store-icon.png"
@@ -17,14 +16,16 @@ export function AppDownloadBanner() {
         className="size-10 shrink-0 rounded-[10px]"
       />
       <span className="min-w-0 flex-1">
-        <span className="block text-sm font-semibold">Hark for iPhone is now available</span>
-        <span className="mt-0.5 block truncate text-xs text-ink-subtle">
+        <span className="block text-[15px] font-medium text-white">
+          Hark for iPhone is now available
+        </span>
+        <span className="mt-0.5 block truncate text-sm text-ink-muted">
           Download it from the App Store to receive notifications.
         </span>
       </span>
       <span
         aria-hidden="true"
-        className="shrink-0 text-sm font-medium text-brand-blue transition-transform group-hover:translate-x-0.5"
+        className="shrink-0 text-white transition-transform group-hover:translate-x-0.5"
       >
         →
       </span>

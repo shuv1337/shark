@@ -9,7 +9,7 @@ export function GoogleButton({ onClick, disabled }: Props) {
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="border-accent/25 text-accent-text hover:bg-accent-soft focus-visible:outline-accent inline-flex items-center gap-3 rounded-full border bg-surface px-6 py-3 text-sm font-medium shadow-xs transition focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50"
+      className="inline-flex h-11 items-center justify-center gap-2.5 rounded-full border border-line-strong bg-panel px-5 text-[15px] font-medium text-white transition-[background-color,transform] duration-150 hover:bg-surface-hover active:scale-[0.97] disabled:opacity-50"
     >
       <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
         <path

@@ -1,8 +1,9 @@
 import type { DeviceAuthorizationRequestDto } from "@hark/contracts";
 import { useEffect, useState } from "react";
-import { Link } from "react-router";
 import { AppleButton } from "../components/AppleButton";
 import { GoogleButton } from "../components/GoogleButton";
+import { Brand, PAGE_COLUMN } from "../components/SiteChrome";
+import { primaryButton, secondaryButton } from "../components/ui";
 import { api } from "../lib/api";
 import { signInWithApple, signInWithGoogle, useSession } from "../lib/auth";
 
@@ -66,48 +67,43 @@ export function CliAuthorize() {
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <header className="mx-auto flex h-20 w-full max-w-3xl items-center justify-between px-6">
-        <Link className="text-lg font-semibold" to="/">
-          Hark
-        </Link>
-        <div className="flex items-center gap-3">
-          {session ? (
-            <span className="text-ink-faint max-w-48 truncate text-xs">{session.user.email}</span>
-          ) : null}
-        </div>
+      <header className={`${PAGE_COLUMN} flex h-16 items-center justify-between`}>
+        <Brand />
+        {session ? (
+          <span className="max-w-56 truncate text-sm text-ink-faint">{session.user.email}</span>
+        ) : null}
       </header>
 
-      <main className="mx-auto flex w-full max-w-lg flex-1 items-center px-5 pb-20 sm:px-6">
-        <section className="w-full rounded-2xl border border-line bg-surface p-5 shadow-xl shadow-ink/5 sm:p-8 dark:shadow-none dark:ring-1 dark:ring-white/10">
-          <h1 className="text-2xl font-semibold text-balance">Authorize a command-line client</h1>
+      <main className="mx-auto flex w-full max-w-lg flex-1 items-center px-6 pb-20">
+        <section className="hark-glass w-full rounded-3xl p-5 sm:p-8">
+          <h1 className="text-[26px] leading-[1.15] font-medium tracking-[-0.015em] text-balance text-white">
+            Authorize a command-line client
+          </h1>
 
           {!submittedCode ? (
             <form className="mt-6" onSubmit={lookUp}>
-              <label className="text-sm font-medium" htmlFor="device-code">
+              <label className="text-[15px] text-ink-muted" htmlFor="device-code">
                 Enter the code shown in your terminal
               </label>
               <input
                 autoCapitalize="characters"
                 autoComplete="one-time-code"
-                className="focus:border-accent border-line-strong bg-field text-ink placeholder:text-ink-faint mt-2 min-h-12 w-full rounded-xl border px-4 font-mono text-lg uppercase tracking-[0.12em] outline-none"
+                className="hark-field mt-2 min-h-12 px-4 font-mono text-lg tracking-[0.12em] uppercase"
                 id="device-code"
                 maxLength={9}
                 onChange={(event) => setCode(event.target.value)}
                 placeholder="ABCD-EFGH"
                 value={code}
               />
-              <button
-                className="bg-accent hover:bg-accent-hover mt-4 min-h-11 w-full rounded-full px-5 text-sm font-semibold text-on-accent"
-                type="submit"
-              >
+              <button className={`${primaryButton} mt-4 w-full`} type="submit">
                 Continue
               </button>
             </form>
           ) : isPending ? (
-            <p className="mt-6 text-sm text-ink-faint">Checking your session…</p>
+            <p className="mt-6 text-[15px] text-ink-faint">Checking your session…</p>
           ) : !session ? (
             <div className="mt-6">
-              <p className="mb-5 text-sm leading-6 text-ink-subtle">
+              <p className="mb-5 text-[15px] leading-relaxed text-ink-muted">
                 Sign in to choose whether this client may access your Hark account. Signing in does
                 not authorize it.
               </p>
@@ -117,13 +113,16 @@ export function CliAuthorize() {
               </div>
             </div>
           ) : loading ? (
-            <p className="mt-6 text-sm text-ink-faint">Loading authorization request…</p>
+            <p className="mt-6 text-[15px] text-ink-faint">Loading authorization request…</p>
           ) : request ? (
             <AuthorizationDetails request={request} busy={busy} onResolve={resolve} />
           ) : null}
 
           {error ? (
-            <div className="mt-5 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger">
+            <div
+              className="mt-5 rounded-2xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger"
+              role="alert"
+            >
               {error}
             </div>
           ) : null}
@@ -145,17 +144,17 @@ function AuthorizationDetails({
   const pending = request.status === "pending";
   return (
     <div className="mt-6">
-      <div className="rounded-xl bg-surface-muted p-4">
-        <p className="text-xs text-ink-faint">Requesting client</p>
-        <p className="mt-1 font-semibold">{request.clientName}</p>
+      <div className="rounded-2xl bg-panel p-4">
+        <p className="text-[13px] text-ink-faint">Requesting client</p>
+        <p className="mt-1 font-medium text-white">{request.clientName}</p>
         <div className="mt-4 flex items-end justify-between gap-4 border-t border-line pt-4">
           <div>
-            <p className="text-xs text-ink-faint">Code</p>
-            <p className="mt-1 font-mono text-lg font-semibold tracking-[0.12em]">
+            <p className="text-[13px] text-ink-faint">Code</p>
+            <p className="mt-1 font-mono text-lg tracking-[0.12em] text-white">
               {request.userCode}
             </p>
           </div>
-          <p className="text-right text-xs leading-5 text-ink-faint">
+          <p className="text-right text-[13px] leading-5 text-ink-faint">
             Request expires
             <br />
             {new Date(request.expiresAt).toLocaleTimeString()}
@@ -164,18 +163,18 @@ function AuthorizationDetails({
       </div>
 
       <div className="mt-5">
-        <h2 className="text-sm font-semibold">Requested permissions</h2>
+        <h2 className="text-[15px] font-medium text-white">Requested permissions</h2>
         <ul className="mt-2 space-y-2">
           {request.scopes.map((scope) => (
             <li
-              className="rounded-lg border border-line px-3 py-2 font-mono text-xs text-ink-muted"
+              className="rounded-xl border border-line px-3 py-2 font-mono text-[13px] text-ink"
               key={scope}
             >
               {scope}
             </li>
           ))}
         </ul>
-        <p className="mt-3 text-xs text-ink-faint">
+        <p className="mt-3 text-[13px] text-ink-faint">
           Access token expires {new Date(request.tokenExpiresAt).toLocaleString()}.
         </p>
       </div>
@@ -183,7 +182,7 @@ function AuthorizationDetails({
       {pending ? (
         <div className="mt-6 grid grid-cols-2 gap-3">
           <button
-            className="min-h-11 rounded-full border border-line-strong px-4 text-sm font-semibold text-ink-muted hover:bg-surface-hover disabled:opacity-50"
+            className={`${secondaryButton} h-11`}
             disabled={busy}
             onClick={() => void onResolve("deny")}
             type="button"
@@ -191,7 +190,7 @@ function AuthorizationDetails({
             Deny
           </button>
           <button
-            className="bg-accent hover:bg-accent-hover min-h-11 rounded-full px-4 text-sm font-semibold text-on-accent disabled:opacity-50"
+            className={primaryButton}
             disabled={busy}
             onClick={() => void onResolve("approve")}
             type="button"
@@ -201,7 +200,7 @@ function AuthorizationDetails({
         </div>
       ) : (
         <div
-          className={`mt-6 rounded-xl px-4 py-3 text-sm font-medium ${request.status === "approved" || request.status === "consumed" ? "bg-accent-soft text-accent-text" : "bg-surface-hover text-ink-muted"}`}
+          className={`mt-6 rounded-2xl px-4 py-3 text-[15px] ${request.status === "approved" || request.status === "consumed" ? "bg-white/12 text-white" : "bg-surface-hover text-ink-muted"}`}
         >
           {request.status === "approved" || request.status === "consumed"
             ? "Authorized. You can return to your terminal."

@@ -1,5 +1,6 @@
 import { Route, Routes } from "react-router";
 import { Analytics } from "./components/Analytics";
+import { DitherBackground } from "./components/DitherBackground";
 import { DocumentMetadata } from "./components/DocumentMetadata";
 import { CliAuthorize } from "./pages/CliAuthorize";
 import { Dashboard } from "./pages/Dashboard";
@@ -7,11 +8,13 @@ import { Docs } from "./pages/Docs";
 import { Landing } from "./pages/Landing";
 import { Launched } from "./pages/Launched";
 import { Privacy, Terms } from "./pages/Legal";
+import { NotFound } from "./pages/NotFound";
 import { Pricing } from "./pages/Pricing";
 
 export function App() {
   return (
     <>
+      <DitherBackground />
       <Analytics />
       <DocumentMetadata />
       <Routes>
@@ -23,6 +26,7 @@ export function App() {
         <Route path="/a/launched" element={<Launched />} />
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/terms" element={<Terms />} />
+        <Route path="*" element={<NotFound />} />
       </Routes>
     </>
   );

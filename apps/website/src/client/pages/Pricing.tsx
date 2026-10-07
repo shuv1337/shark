@@ -4,6 +4,8 @@ import { Link } from "react-router";
 import { staticPricingPlans } from "../../shared/pricing";
 import { AppleButton } from "../components/AppleButton";
 import { GoogleButton } from "../components/GoogleButton";
+import { PAGE_COLUMN, SiteFooter, SiteHeader } from "../components/SiteChrome";
+import { primaryButton, secondaryButton } from "../components/ui";
 import { api } from "../lib/api";
 import { signInWithApple, signInWithGoogle, useSession } from "../lib/auth";
 
@@ -48,53 +50,32 @@ export function Pricing() {
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <header className="mx-auto flex h-20 w-full max-w-3xl items-center justify-between px-6">
-        <Link to="/" className="text-lg font-semibold">
-          Hark
-        </Link>
-        <nav className="flex items-center gap-4" aria-label="Primary">
-          <Link className="text-ink-subtle hover:text-ink text-sm transition" to="/docs">
-            Docs
-          </Link>
-          <span aria-current="page" className="text-ink text-sm font-medium">
-            Pricing
-          </span>
-          {session ? (
-            <Link
-              to="/dashboard"
-              className="bg-accent hover:bg-accent-hover text-on-accent rounded-full px-4 py-2 text-sm font-medium transition"
-            >
-              Open dashboard
-            </Link>
-          ) : null}
-        </nav>
-      </header>
+      <SiteHeader current="pricing" />
 
-      <main className="mx-auto w-full max-w-3xl flex-1 px-6 pb-24">
-        <h1 className="text-4xl font-semibold text-balance">Pricing</h1>
-        <p className="text-ink-subtle mt-4 max-w-xl text-base leading-relaxed">
+      <main className={`${PAGE_COLUMN} flex-1 pt-7 pb-16 sm:pt-10`}>
+        <h1 className="text-[clamp(38px,6vw,54px)] leading-[1.08] font-medium tracking-[-0.02em] text-white">
+          Pricing
+        </h1>
+        <p className="mt-3 max-w-[30rem] text-lg leading-[1.55] text-pretty text-ink-muted">
           Start free with one iPhone and 10,000 notifications a month. Upgrade when your webhooks
           outgrow it.
         </p>
 
         {failed ? (
-          <p className="text-ink-subtle border-line mt-12 rounded-2xl border p-6 text-sm">
+          <p className="mt-10 border-t border-line pt-8 text-ink-muted">
             Could not load plans right now. The current numbers are always listed in the{" "}
-            <Link className="text-accent-text font-medium" to="/docs">
+            <Link className="hark-link" to="/docs">
               docs
             </Link>
             .
           </p>
         ) : (
-          <div className="mt-12 grid gap-6 sm:grid-cols-2">
+          <div className="mt-10 grid gap-4 sm:grid-cols-2">
             {data.plans.map((plan) => (
               <PlanCard key={plan.id} plan={plan}>
                 {plan.priceMonthly === 0 ? (
                   session ? (
-                    <Link
-                      to="/dashboard"
-                      className="border-line text-ink hover:bg-surface-hover inline-flex rounded-full border px-5 py-2.5 text-sm font-medium transition"
-                    >
+                    <Link to="/dashboard" className={secondaryButton}>
                       Open dashboard
                     </Link>
                   ) : (
@@ -105,7 +86,7 @@ export function Pricing() {
                     type="button"
                     onClick={() => void upgrade()}
                     disabled={checkoutPending}
-                    className="bg-accent hover:bg-accent-hover text-on-accent inline-flex rounded-full px-5 py-2.5 text-sm font-medium transition disabled:opacity-50"
+                    className={primaryButton}
                   >
                     {checkoutPending ? "Opening checkout…" : "Upgrade to Pro"}
                   </button>
@@ -117,32 +98,26 @@ export function Pricing() {
           </div>
         )}
 
-        {checkoutError ? <p className="text-danger mt-4 text-sm">{checkoutError}</p> : null}
+        {checkoutError ? (
+          <p className="mt-4 text-sm text-danger" role="alert">
+            {checkoutError}
+          </p>
+        ) : null}
 
-        <p className="text-ink-faint mt-10 text-xs">
+        <p className="mt-8 max-w-[34rem] text-sm text-ink-faint">
           Prices in USD. Cancel anytime from the dashboard. Notifications, interactive responses,
           and Live Activity updates share the same monthly allowance.
         </p>
       </main>
 
-      <footer className="text-ink-faint mx-auto flex w-full max-w-3xl items-center justify-between px-6 py-6 text-xs">
-        <span>Hark · webhook → iPhone, nothing else in between.</span>
-        <nav className="flex items-center gap-3" aria-label="Legal">
-          <Link className="hover:text-ink-muted transition" to="/privacy">
-            Privacy
-          </Link>
-          <Link className="hover:text-ink-muted transition" to="/terms">
-            Terms
-          </Link>
-        </nav>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }
 
 function SignInButtons({ disabled }: { disabled: boolean }) {
   return (
-    <div className="flex flex-col items-start gap-3">
+    <div className="flex w-full flex-col gap-2.5">
       <AppleButton onClick={() => void signInWithApple()} disabled={disabled} />
       <GoogleButton onClick={() => void signInWithGoogle()} disabled={disabled} />
     </div>
@@ -165,26 +140,23 @@ function PlanCard({ plan, children }: { plan: PricingPlanDto; children: React.Re
   ];
 
   return (
-    <section
-      aria-label={`${plan.name} plan`}
-      className={`flex flex-col rounded-2xl border p-6 ${
-        pro ? "border-accent/40 bg-accent-wash" : "border-line"
-      }`}
-    >
-      <div className="flex items-baseline justify-between">
-        <h2 className="text-lg font-semibold">{plan.name}</h2>
-        <p className="text-ink">
-          <span className="text-2xl font-semibold">${plan.priceMonthly}</span>
-          <span className="text-ink-subtle text-sm"> / month</span>
+    <section aria-label={`${plan.name} plan`} className="hark-glass flex flex-col rounded-3xl p-6">
+      <div className="flex items-baseline justify-between gap-4">
+        <h2 className="text-xl font-medium text-white">{plan.name}</h2>
+        <p className="text-white">
+          <span className="text-[28px] leading-none font-medium tracking-[-0.015em]">
+            ${plan.priceMonthly}
+          </span>
+          <span className="text-sm text-ink-faint"> / month</span>
         </p>
       </div>
       {plan.description ? (
-        <p className="text-ink-subtle mt-2 text-sm leading-relaxed">{plan.description}</p>
+        <p className="mt-2 text-[15px] leading-relaxed text-ink-muted">{plan.description}</p>
       ) : null}
-      <ul className="mt-5 flex flex-col gap-2.5">
+      <ul className="mt-5 flex flex-col gap-2.5 border-t border-line pt-5">
         {rows.map((row) => (
-          <li key={row} className="text-ink-muted flex items-baseline gap-2.5 text-sm">
-            <span aria-hidden="true" className="text-accent-text text-xs">
+          <li key={row} className="flex items-baseline gap-2.5 text-[15px] text-ink">
+            <span aria-hidden="true" className="text-[13px] text-mint">
               ✓
             </span>
             {row}

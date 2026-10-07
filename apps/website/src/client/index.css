@@ -1,143 +1,77 @@
 @import "tailwindcss";
 
 /*
- * The theme mirrors the OS setting and is deliberately not configurable, so
- * there is no class on `<html>` and no stored preference. `dark:` therefore
- * uses Tailwind's default `prefers-color-scheme` variant.
+ * One theme: white type on Hark's deep green, over a dithered canvas
+ * (`DitherBackground`). There is no light/dark switch, so the semantic tokens
+ * below are final values and no utility needs a `dark:` counterpart.
  *
- * Semantic tokens. Light values live here; the dark media query below remaps
- * the same custom properties, so utilities such as `bg-surface` or
- * `text-ink-subtle` need no `dark:` counterpart.
- *
- * Surfaces get *lighter* as they rise in dark mode and darker in light mode,
- * so elevation reads correctly in both directions. `field` is the exception:
- * inputs are recessed, so they sit below their panel in dark mode.
+ * Text is white at three strengths (ink, muted, faint); every strength keeps
+ * at least 4.5:1 against the green and against glass surfaces on top of it.
  */
 @theme {
-  --font-sans:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-sans: "Inter Tight", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-ios: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
 
-  /* Surfaces */
-  --color-paper: oklch(0.985 0.002 100);
-  --color-surface: oklch(1 0 0);
-  --color-surface-muted: oklch(0.975 0.002 260);
-  --color-surface-hover: oklch(0.962 0.003 260);
-  --color-field: oklch(1 0 0);
+  /* Surfaces: translucent white over the green, so they read as raised. */
+  --color-paper: #023f33;
+  --color-green: #035b49;
+  --color-surface: oklch(1 0 0 / 0.08);
+  --color-surface-muted: oklch(1 0 0 / 0.06);
+  --color-surface-hover: oklch(1 0 0 / 0.12);
+  --color-field: rgb(1 30 24 / 0.5);
+  --color-panel: rgb(1 30 24 / 0.5);
 
   /* Text */
-  --color-ink: oklch(0.21 0.02 260);
-  --color-ink-muted: oklch(0.44 0.014 260);
-  --color-ink-subtle: oklch(0.505 0.012 260);
-  --color-ink-faint: oklch(0.54 0.011 260);
-  --color-ink-disabled: oklch(0.75 0.008 260);
+  --color-ink: rgb(255 255 255 / 0.94);
+  --color-ink-strong: #ffffff;
+  --color-ink-muted: rgb(255 255 255 / 0.8);
+  --color-ink-subtle: rgb(255 255 255 / 0.8);
+  --color-ink-faint: rgb(255 255 255 / 0.66);
+  --color-ink-disabled: rgb(255 255 255 / 0.4);
 
-  /* Hairlines. `media-line` is the neutral outline used on images and video:
-     pure black/white at 10% so it never tints the media underneath it. */
-  --color-line: oklch(0.922 0.003 260);
-  --color-line-strong: oklch(0.87 0.005 260);
-  --color-media-line: oklch(0 0 0 / 0.1);
+  /* Hairlines */
+  --color-line: rgb(255 255 255 / 0.16);
+  --color-line-strong: rgb(255 255 255 / 0.28);
+  --color-media-line: rgb(255 255 255 / 0.12);
 
-  /* Accent. `accent` is a fill, `accent-text` is the same brand green tuned for
-     use as text/iconography, and `on-accent` is the label colour on a fill. */
-  --color-accent: oklch(0.421 0.08 173);
-  --color-accent-hover: oklch(0.362 0.068 174);
-  --color-accent-text: oklch(0.421 0.08 173);
-  --color-on-accent: oklch(1 0 0);
-  --color-accent-soft: oklch(0.948 0.01 174);
-  --color-accent-wash: oklch(0.421 0.08 173 / 0.03);
+  /* Accent: the primary fill is white with green type on it. */
+  --color-accent: #ffffff;
+  --color-accent-hover: rgb(255 255 255 / 0.88);
+  --color-accent-text: #ffffff;
+  --color-on-accent: #035b49;
+  --color-accent-soft: rgb(255 255 255 / 0.12);
+  --color-accent-wash: rgb(255 255 255 / 0.05);
+  --color-mint: #5ed8b7;
 
-  /* Status */
-  --color-danger: oklch(0.505 0.19 27.5);
-  --color-danger-strong: oklch(0.577 0.215 27);
-  --color-danger-soft: oklch(0.971 0.013 17);
-  --color-danger-line: oklch(0.885 0.059 18);
-  --color-warn: oklch(0.769 0.165 70);
-  --color-info: oklch(0.623 0.188 260);
-  --color-idle: oklch(0.87 0.005 260);
+  /* Status. `danger` is text/outline (6:1 on the green, 5:1 on glass); `danger-strong` is
+     a fill that keeps white labels above 5:1. */
+  --color-danger: #ffb3aa;
+  --color-danger-strong: #c4302b;
+  --color-danger-strong-hover: #d23a34;
+  --color-danger-soft: rgb(255 110 95 / 0.14);
+  --color-danger-line: rgb(255 179 170 / 0.45);
+  --color-warn: #f3c53c;
+  --color-info: #8fb8ff;
+  --color-idle: rgb(255 255 255 / 0.35);
 
-  /* Code blocks. The surface stays dark in both themes, so the syntax colours
-     below are tuned once against a dark background and need no dark variant.
-     Hues are kept far apart so tokens are distinguishable at 12px. */
-  --color-code: oklch(0.205 0.012 260);
-  --color-code-ink: oklch(0.97 0.002 260);
-  --color-code-key: oklch(0.81 0.098 220);
-  --color-code-string: oklch(0.83 0.115 150);
-  --color-code-number: oklch(0.85 0.11 75);
-  --color-code-literal: oklch(0.79 0.12 300);
-  --color-code-punct: oklch(0.63 0.012 260);
-  --color-code-comment: oklch(0.62 0.022 200);
-  --color-code-flag: oklch(0.81 0.1 175);
-  --color-code-command: oklch(0.97 0.002 260);
-  --color-code-url: oklch(0.78 0.098 240);
-
-  /* App Store blue, kept recognisable but lifted for dark surfaces */
-  --color-brand-blue: oklch(0.632 0.183 253);
+  /* Code blocks: a dark panel under the green. Syntax hues are spaced apart
+     so tokens stay distinguishable at 13px. */
+  --color-code: rgb(1 24 19 / 0.62);
+  --color-code-ink: rgb(255 255 255 / 0.92);
+  --color-code-key: oklch(0.84 0.09 220);
+  --color-code-string: oklch(0.86 0.11 150);
+  --color-code-number: oklch(0.87 0.11 80);
+  --color-code-literal: oklch(0.82 0.11 300);
+  --color-code-punct: oklch(0.74 0.012 200);
+  --color-code-comment: oklch(0.74 0.03 190);
+  --color-code-flag: oklch(0.85 0.1 175);
+  --color-code-command: #ffffff;
+  --color-code-url: oklch(0.82 0.09 240);
 }
 
-/* Non-utility theme values used by the hand-written rules below. */
 :root {
-  color-scheme: light;
-  --hark-edge-tint: oklch(0.421 0.08 173 / 0.14);
-  --hark-noise-opacity: 0.1;
-  --hark-noise-blend: multiply;
-  --hark-backdrop: oklch(0.21 0.02 260 / 0.2);
-  --hark-panel-border: var(--color-line);
-  --hark-panel-shadow: 0 24px 70px oklch(0.21 0.02 260 / 0.15);
-  --hark-ambient-glow: oklch(0.63 0.09 173 / 0.18);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-
-    --color-paper: oklch(0.178 0.008 260);
-    --color-surface: oklch(0.228 0.009 260);
-    --color-surface-muted: oklch(0.262 0.01 260);
-    --color-surface-hover: oklch(0.3 0.011 260);
-    --color-field: oklch(0.2 0.009 260);
-
-    --color-ink: oklch(0.958 0.003 260);
-    --color-ink-muted: oklch(0.82 0.008 260);
-    --color-ink-subtle: oklch(0.755 0.009 260);
-    --color-ink-faint: oklch(0.7 0.01 260);
-    --color-ink-disabled: oklch(0.46 0.012 260);
-
-    --color-line: oklch(0.31 0.011 260);
-    --color-line-strong: oklch(0.53 0.013 260);
-    --color-media-line: oklch(1 0 0 / 0.1);
-
-    --color-accent: oklch(0.735 0.12 170);
-    --color-accent-hover: oklch(0.8 0.115 170);
-    --color-accent-text: oklch(0.8 0.11 170);
-    --color-on-accent: oklch(0.19 0.032 173);
-    --color-accent-soft: oklch(0.3 0.038 172);
-    --color-accent-wash: oklch(0.735 0.12 170 / 0.07);
-
-    --color-danger: oklch(0.76 0.13 25);
-    --color-danger-strong: oklch(0.7 0.17 25);
-    --color-danger-soft: oklch(0.29 0.06 25);
-    --color-danger-line: oklch(0.42 0.09 25);
-    --color-warn: oklch(0.8 0.15 75);
-    --color-info: oklch(0.7 0.16 259);
-    --color-idle: oklch(0.45 0.012 260);
-
-    --color-code: oklch(0.145 0.008 260);
-    --color-code-ink: oklch(0.9 0.004 260);
-
-    --color-brand-blue: oklch(0.75 0.13 253);
-
-    --hark-edge-tint: oklch(0.735 0.12 170 / 0.1);
-    /* `multiply` has nothing to darken on a dark page, so the grain flips to
-     `screen` and drops in opacity to stay a texture rather than a haze. */
-    --hark-noise-opacity: 0.055;
-    --hark-noise-blend: screen;
-    --hark-backdrop: oklch(0.12 0.006 260 / 0.6);
-    /* Large soft shadows read as smudges on dark surfaces, so elevation comes
-     from a light hairline ring plus a tight, deep shadow. */
-    --hark-panel-border: oklch(1 0 0 / 0.1);
-    --hark-panel-shadow: inset 0 1px 0 oklch(1 0 0 / 0.04), 0 16px 50px oklch(0 0 0 / 0.55);
-    --hark-ambient-glow: oklch(0.67 0.1 173 / 0.15);
-  }
+  color-scheme: dark;
 }
 
 /* Anchor navigation on the docs page relies on native smooth scrolling rather
@@ -164,50 +98,22 @@ html {
 }
 
 body {
-  position: relative;
-  @apply bg-paper text-ink font-sans;
-  font-style: normal;
-  letter-spacing: -0.02em;
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.6;
 }
 
-body::before,
-body::after {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  content: "";
+::selection {
+  background: #ffffff;
+  color: var(--color-green);
 }
 
-body::before {
-  background:
-    linear-gradient(90deg, var(--hark-edge-tint), transparent) left / 10vw 100% no-repeat,
-    linear-gradient(270deg, var(--hark-edge-tint), transparent) right / 10vw 100% no-repeat;
-}
-
-body::after {
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.72' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='.9'/%3E%3C/svg%3E");
-  background-size: 180px 180px;
-  opacity: var(--hark-noise-opacity);
-  mix-blend-mode: var(--hark-noise-blend);
-  mask-image: linear-gradient(
-    90deg,
-    black 0%,
-    black 1%,
-    transparent 10%,
-    transparent 90%,
-    black 99%,
-    black 100%
-  );
-  -webkit-mask-image: linear-gradient(
-    90deg,
-    black 0%,
-    black 1%,
-    transparent 10%,
-    transparent 90%,
-    black 99%,
-    black 100%
-  );
+:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
 }
 
 #root {
@@ -215,108 +121,15 @@ body::after {
   z-index: 1;
 }
 
-.hark-landing {
-  position: relative;
-  isolation: isolate;
-}
-
-:root:has(.hark-landing) body::before {
-  background: none;
-}
-
-.hark-landing-ambient {
+/* Mounted inside #root's stacking context; -1 keeps it under in-flow content. */
+.hark-dither {
   position: fixed;
   inset: 0;
   z-index: -1;
-  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+  image-rendering: pixelated;
   pointer-events: none;
-}
-
-.hark-landing-ambient::before {
-  position: absolute;
-  top: 8%;
-  left: 12%;
-  width: min(70vw, 60rem);
-  height: min(54vw, 44rem);
-  content: "";
-  background: radial-gradient(
-    ellipse closest-side at center,
-    var(--hark-ambient-glow),
-    transparent
-  );
-  filter: blur(54px);
-  animation: hark-haze-drift-a 34s ease-in-out infinite alternate;
-}
-
-.hark-landing-ambient::after {
-  position: absolute;
-  right: 8%;
-  bottom: 2%;
-  width: min(62vw, 52rem);
-  height: min(48vw, 40rem);
-  content: "";
-  background: radial-gradient(
-    ellipse closest-side at center,
-    var(--hark-ambient-glow),
-    transparent
-  );
-  filter: blur(64px);
-  opacity: 0.78;
-  animation: hark-haze-drift-b 39s ease-in-out -18s infinite alternate;
-}
-
-/* The stage is sized to the phone's opaque bounds inside the render
-   (x 100-629, y 0-621 of the 960x754 asset), so layout anchors on the phone
-   itself. The surrounding shadow and padding overflow the box freely. */
-.hark-demo-stage {
-  position: relative;
-  width: min(100%, 24rem);
-  aspect-ratio: 529 / 621;
-  pointer-events: none;
-}
-
-/* In the desktop hero the demo sits in a content-sized grid track, where a
-   percentage width cannot resolve; the anchor needs a definite width there. */
-@media (width >= 64rem) {
-  .hark-demo-stage {
-    width: 24rem;
-  }
-}
-
-.hark-demo-video {
-  position: absolute;
-  top: 0;
-  left: -18.9036%; /* 100 / 529 */
-  width: 181.4745%; /* 960 / 529 */
-  max-width: none;
-  height: auto;
-  -webkit-mask-image: linear-gradient(to bottom, transparent, black 16%);
-  mask-image: linear-gradient(to bottom, transparent, black 16%);
-}
-
-@keyframes hark-haze-drift-a {
-  from {
-    transform: translate3d(-7vw, -3vh, 0) rotate(-7deg) scale(0.92);
-  }
-  to {
-    transform: translate3d(13vw, 9vh, 0) rotate(9deg) scale(1.08);
-  }
-}
-
-@keyframes hark-haze-drift-b {
-  from {
-    transform: translate3d(8vw, 5vh, 0) rotate(8deg) scale(1.06);
-  }
-  to {
-    transform: translate3d(-12vw, -8vh, 0) rotate(-10deg) scale(0.9);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .hark-landing-ambient::before,
-  .hark-landing-ambient::after {
-    animation: none;
-  }
 }
 
 button,
@@ -331,6 +144,397 @@ address {
   letter-spacing: inherit;
 }
 
+@layer components {
+  /*
+   * Liquid glass: a thin, clear body that blurs and brightens what is behind
+   * it, lit by an inset top highlight and a gradient specular rim. Used for
+   * panels, dialogs and menus. The landing notifications add SVG refraction
+   * on top (see `.hark-note`).
+   */
+  .hark-glass {
+    position: relative;
+    background:
+      radial-gradient(120% 90% at 12% 0%, rgb(255 255 255 / 0.1), transparent 55%),
+      rgb(255 255 255 / 0.07);
+    -webkit-backdrop-filter: blur(14px) saturate(1.1) brightness(1.08);
+    backdrop-filter: blur(14px) saturate(1.1) brightness(1.08);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.3),
+      inset 0 -1px 0 rgb(255 255 255 / 0.06),
+      inset 0 0 18px rgb(255 255 255 / 0.04),
+      0 10px 30px rgb(0 16 12 / 0.22);
+  }
+
+  .hark-glass::before {
+    position: absolute;
+    inset: 0;
+    padding: 1px;
+    border-radius: inherit;
+    content: "";
+    pointer-events: none;
+    background: linear-gradient(
+      135deg,
+      rgb(255 255 255 / 0.55),
+      rgb(255 255 255 / 0.1) 32%,
+      rgb(255 255 255 / 0.04) 60%,
+      rgb(255 255 255 / 0.26)
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+
+  /* Dialogs and menus sit over busier content, so their body is darker. */
+  .hark-glass-strong {
+    background:
+      radial-gradient(120% 90% at 12% 0%, rgb(255 255 255 / 0.1), transparent 55%),
+      rgb(6 52 43 / 0.82);
+    -webkit-backdrop-filter: blur(22px) saturate(1.15);
+    backdrop-filter: blur(22px) saturate(1.15);
+  }
+
+  /* Recessed text field on dark glass. */
+  .hark-field {
+    width: 100%;
+    border: 1px solid rgb(255 255 255 / 0.2);
+    border-radius: 0.75rem;
+    background: var(--color-field);
+    color: #ffffff;
+    box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.25);
+    transition:
+      border-color 160ms ease,
+      box-shadow 160ms ease;
+  }
+
+  .hark-field::placeholder {
+    color: rgb(255 255 255 / 0.5);
+  }
+
+  .hark-field:focus,
+  .hark-field:focus-visible {
+    border-color: rgb(255 255 255 / 0.85);
+    outline: none;
+    box-shadow:
+      inset 0 1px 2px rgb(0 0 0 / 0.25),
+      0 0 0 3px rgb(255 255 255 / 0.22);
+  }
+
+  /* Long-form prose links: always underlined so they read without colour. */
+  .hark-link {
+    color: #ffffff;
+    text-decoration-line: underline;
+    text-decoration-color: rgb(255 255 255 / 0.45);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+    transition: text-decoration-color 160ms ease;
+  }
+
+  .hark-link:hover {
+    text-decoration-color: #ffffff;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Landing: iOS notification stack                                            */
+/* -------------------------------------------------------------------------- */
+
+/* Fixed height: arrivals animate inside it and never move the page. */
+.hark-note-stack {
+  position: relative;
+  height: 150px;
+}
+
+.hark-note {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px 13px 12px;
+  overflow: hidden;
+  border-radius: 24px;
+  background:
+    radial-gradient(120% 90% at 12% 0%, rgb(255 255 255 / 0.16), transparent 55%),
+    rgb(255 255 255 / 0.1);
+  -webkit-backdrop-filter: blur(6px) saturate(1.1) brightness(1.12);
+  backdrop-filter: blur(6px) saturate(1.1) brightness(1.12);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.42),
+    inset 0 -1px 0 rgb(255 255 255 / 0.08),
+    inset 0 0 18px rgb(255 255 255 / 0.06),
+    0 10px 30px rgb(0 16 12 / 0.28);
+  color: #ffffff;
+  font-family: var(--font-ios);
+  font-size: 15px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  transform-origin: 50% 100%;
+  will-change: transform, opacity;
+  transition:
+    transform 560ms cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 480ms cubic-bezier(0.32, 0.72, 0, 1),
+    height 560ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Chromium can bend the backdrop through an SVG lens map; others keep the blur. */
+.hark-refract .hark-note {
+  backdrop-filter: blur(3px) url(#hark-glass-lens) saturate(1.1) brightness(1.12);
+}
+
+.hark-note::before {
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  content: "";
+  pointer-events: none;
+  background: linear-gradient(
+    135deg,
+    rgb(255 255 255 / 0.75),
+    rgb(255 255 255 / 0.12) 32%,
+    rgb(255 255 255 / 0.04) 60%,
+    rgb(255 255 255 / 0.35)
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.hark-note-sender,
+.hark-note-content {
+  transition: opacity 320ms ease;
+}
+
+.hark-note.is-behind .hark-note-sender,
+.hark-note.is-behind .hark-note-content {
+  opacity: 0;
+}
+
+.hark-note-sender {
+  position: relative;
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+}
+
+.hark-note-avatar {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  overflow: hidden;
+  border-radius: 50%;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.hark-note-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.hark-note-badge {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 17px;
+  height: 17px;
+  border-radius: 4.5px;
+  background: var(--color-green);
+}
+
+.hark-note-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.hark-note-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.hark-note-title {
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.hark-note time {
+  flex-shrink: 0;
+  color: rgb(255 255 255 / 0.58);
+  font-size: 13px;
+}
+
+.hark-note-msg {
+  display: -webkit-box;
+  margin-top: 1px;
+  overflow: hidden;
+  color: rgb(255 255 255 / 0.88);
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.hark-note-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.hark-note-actions span {
+  flex: 1;
+  padding: 7px 0;
+  border-radius: 13px;
+  background: rgb(255 255 255 / 0.12);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.22);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.hark-note-actions .is-primary {
+  background: rgb(255 255 255 / 0.92);
+  color: var(--color-paper);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Landing: Live Activity and Dynamic Island                                  */
+/* -------------------------------------------------------------------------- */
+
+.hark-la {
+  padding: 15px 17px 16px;
+  border-radius: 24px;
+  background: rgb(18 20 19 / 0.86);
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
+  box-shadow:
+    0 0 0 0.5px rgb(255 255 255 / 0.08) inset,
+    0 10px 30px rgb(1 25 20 / 0.25);
+  color: #ffffff;
+  font-family: var(--font-ios);
+  letter-spacing: -0.01em;
+}
+
+.hark-la-label {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  color: rgb(235 235 245 / 0.6);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.hark-la-pct {
+  color: var(--color-mint);
+  font-size: 15px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.hark-la-status {
+  margin-top: 6px;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.15;
+  transition: opacity 200ms ease;
+}
+
+.hark-la-detail {
+  margin-top: 3px;
+  overflow: hidden;
+  color: rgb(235 235 245 / 0.6);
+  font-size: 14px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transition: opacity 200ms ease;
+}
+
+.hark-la-bar {
+  height: 4px;
+  margin-top: 12px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: rgb(255 255 255 / 0.12);
+}
+
+.hark-la-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--color-mint);
+  transition: width 700ms cubic-bezier(0.3, 0.8, 0.3, 1);
+}
+
+.hark-gear {
+  width: 15px;
+  height: 15px;
+  color: var(--color-mint);
+}
+
+.hark-island-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  color: #ffffff;
+  font-family: var(--font-ios);
+}
+
+.hark-island-clock {
+  width: 72px;
+  padding-left: 10px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.hark-island {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 176px;
+  height: 36px;
+  padding: 0 13px 0 11px;
+  border-radius: 18px;
+  background: #000000;
+}
+
+.hark-island .hark-la-pct {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.hark-island-sys {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 72px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hark-note,
+  .hark-la-bar i,
+  .hark-la-status,
+  .hark-la-detail {
+    transition: none;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Modals                                                                     */
+/* -------------------------------------------------------------------------- */
+
 .hark-modal-backdrop {
   position: fixed;
   inset: 0;
@@ -338,8 +542,9 @@ address {
   display: grid;
   place-items: center;
   padding: 1rem;
-  background: var(--hark-backdrop);
-  backdrop-filter: blur(3px);
+  background: rgb(1 22 18 / 0.55);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
   animation: hark-backdrop-in 120ms ease-out both;
 }
 
@@ -348,10 +553,7 @@ address {
   z-index: 1;
   width: min(100%, 30rem);
   padding: 1.5rem;
-  border: 1px solid var(--hark-panel-border);
-  border-radius: 1rem;
-  background: var(--color-surface);
-  box-shadow: var(--hark-panel-shadow);
+  border-radius: 1.5rem;
   animation: hark-panel-in 160ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 

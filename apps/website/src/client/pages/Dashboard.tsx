@@ -1,5 +1,6 @@
 import type {
   ApiTokenDto,
+  AppDto,
   BillingDto,
   DeviceDto,
   EventDto,
@@ -12,6 +13,15 @@ import { Link, useNavigate } from "react-router";
 import { AppDownloadBanner } from "../components/AppDownloadBanner";
 import { useConfirm } from "../components/ConfirmDialog";
 import { CopyField } from "../components/CopyField";
+import { Brand, PAGE_COLUMN } from "../components/SiteChrome";
+import {
+  closeButton,
+  primaryButton,
+  primaryButtonSmall,
+  rowButton,
+  rowDangerButton,
+  secondaryButton,
+} from "../components/ui";
 import { api } from "../lib/api";
 import { signOut, useSession } from "../lib/auth";
 
@@ -105,6 +115,7 @@ export function Dashboard() {
   const [liveActivities, setLiveActivities] = useState<LiveActivityDto[] | null>(null);
   const [devices, setDevices] = useState<DeviceDto[] | null>(null);
   const [apiTokens, setApiTokens] = useState<ApiTokenDto[] | null>(null);
+  const [apps, setApps] = useState<AppDto[] | null>(null);
   const [billing, setBilling] = useState<BillingDto | null>(null);
   const [billingActivating, setBillingActivating] = useState(
     () => new URLSearchParams(window.location.search).get("billing") === "success",
@@ -119,15 +130,18 @@ export function Dashboard() {
 
   const refresh = useCallback(async () => {
     try {
-      const [svc, dev, tokenState, activity, liveActivityState, billingState] = await Promise.all([
-        api.listServices(),
-        api.listDevices(),
-        api.listApiTokens(),
-        api.listEvents(),
-        api.listLiveActivities(),
-        api.getBilling(),
-      ]);
+      const [svc, dev, tokenState, activity, liveActivityState, billingState, appState] =
+        await Promise.all([
+          api.listServices(),
+          api.listDevices(),
+          api.listApiTokens(),
+          api.listEvents(),
+          api.listLiveActivities(),
+          api.getBilling(),
+          api.listApps(),
+        ]);
       setServices(svc.services);
+      setApps(appState.apps);
       setDevices(dev.devices);
       setApiTokens(tokenState.tokens);
       setEvents(activity.events);
@@ -197,7 +211,18 @@ export function Dashboard() {
   }, [session, billingActivating]);
 
   if (isPending || !session) {
-    return <div className="flex min-h-dvh items-center justify-center text-ink-faint">…</div>;
+    return (
+      <div className="flex min-h-dvh flex-col">
+        <header className={`${PAGE_COLUMN} flex h-16 items-center`}>
+          <Brand />
+        </header>
+        <main className={`${PAGE_COLUMN} flex-1 pt-8`}>
+          <p className="text-ink-faint" role="status">
+            Loading your dashboard…
+          </p>
+        </main>
+      </div>
+    );
   }
 
   const activeDeviceCount = devices?.filter((device) => device.active).length ?? null;
@@ -207,53 +232,55 @@ export function Dashboard() {
       : Math.min(activeDeviceCount, billing?.limits.devices ?? activeDeviceCount);
 
   return (
-    <div className="min-h-dvh">
-      <header>
-        <div className="mx-auto flex h-20 w-full max-w-3xl items-center justify-between px-6">
-          <Link to="/" className="text-lg font-semibold">
-            Hark
+    <div className="flex min-h-dvh flex-col">
+      <header className={`${PAGE_COLUMN} flex h-16 items-center justify-between gap-4`}>
+        <Brand />
+        <div className="flex min-w-0 items-center gap-[18px] text-[15px]">
+          <span className="hidden max-w-56 truncate text-ink-faint md:inline">
+            {session.user.email}
+          </span>
+          <Link
+            className="hidden text-ink-muted transition-colors hover:text-white sm:inline"
+            to="/docs"
+          >
+            Docs
           </Link>
-          <div className="flex items-center gap-3">
-            <Link className="text-ink-subtle hover:text-ink text-sm transition" to="/docs">
-              Docs
-            </Link>
-            {session.user.image ? (
-              <img
-                src={session.user.image}
-                alt=""
-                className="border-media-line size-7 rounded-full border"
-                referrerPolicy="no-referrer"
-              />
-            ) : null}
-            <span className="hidden text-sm text-ink-subtle sm:block">{session.user.email}</span>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => void signOut().then(() => navigate("/"))}
-                className="min-h-10 rounded-full border border-line bg-surface pr-3.5 pl-[5.75rem] text-xs font-medium text-ink-muted shadow-xs transition-colors hover:bg-surface-hover"
-              >
-                Sign out
-              </button>
-              <button
-                type="button"
-                disabled={billing === null}
-                onClick={() => setPlanOpen(true)}
-                className="bg-accent hover:bg-accent-hover absolute inset-y-0 left-0 z-10 min-h-10 rounded-full px-4 text-xs font-semibold text-on-accent shadow-md transition-transform active:scale-[0.96] disabled:opacity-50"
-              >
-                {billingActivating ? "Activating…" : billing?.plan === "pro" ? "Pro" : "Upgrade"}
-              </button>
-            </div>
-          </div>
+          <button
+            type="button"
+            onClick={() => void signOut().then(() => navigate("/"))}
+            className="text-ink-muted transition-colors hover:text-white"
+          >
+            Sign out
+          </button>
+          <button
+            type="button"
+            disabled={billing === null}
+            onClick={() => setPlanOpen(true)}
+            className={primaryButtonSmall}
+          >
+            {billingActivating ? "Activating…" : billing?.plan === "pro" ? "Pro" : "Upgrade"}
+          </button>
+          {session.user.image ? (
+            <img
+              src={session.user.image}
+              alt=""
+              className="size-8 shrink-0 rounded-full ring-1 ring-white/20"
+              referrerPolicy="no-referrer"
+              title={session.user.email}
+            />
+          ) : null}
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-3xl px-6 py-10">
+      <main className={`${PAGE_COLUMN} flex-1 pt-6 pb-16`}>
         <AppDownloadBanner />
 
-        <div className="mb-8 flex items-end justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold">Services</h1>
-            <p className="mt-1 text-sm text-ink-subtle">
+        <div className="mb-5 flex items-end justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-[28px] leading-[1.15] font-medium tracking-[-0.015em] text-white">
+              Services
+            </h1>
+            <p className="mt-1.5 text-ink-muted">
               {deliveryDeviceCount === null
                 ? "Each service gets a secret webhook URL."
                 : deliveryDeviceCount === 0
@@ -264,14 +291,17 @@ export function Dashboard() {
           <button
             type="button"
             onClick={() => setCreating(true)}
-            className="bg-accent hover:bg-accent-hover rounded-full px-4 py-2 text-sm font-medium text-on-accent transition"
+            className={`${primaryButtonSmall} shrink-0`}
           >
             New service
           </button>
         </div>
 
         {error ? (
-          <div className="mb-6 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger">
+          <div
+            className="mb-6 rounded-2xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger"
+            role="alert"
+          >
             {error}
           </div>
         ) : null}
@@ -330,6 +360,14 @@ export function Dashboard() {
 
         <Devices devices={devices} billing={billing} onRemoved={() => void refresh()} />
 
+        <Apps
+          apps={apps}
+          onChanged={(next) =>
+            setApps((current) => current?.map((app) => (app.id === next.id ? next : app)) ?? null)
+          }
+          onRemoved={(id) => setApps((current) => current?.filter((app) => app.id !== id) ?? null)}
+        />
+
         <LiveActivities activities={liveActivities} />
 
         <ActivityLog events={events} onRefresh={refreshActivity} />
@@ -365,9 +403,9 @@ function WebhookReveal({
   };
 
   return (
-    <section className="mb-10">
-      <div className="mb-1 flex items-center justify-between">
-        <h2 className="text-accent-text text-sm font-semibold">
+    <section className="hark-glass mb-8 rounded-3xl p-5">
+      <div className="mb-1 flex items-center justify-between gap-4">
+        <h2 className="text-lg font-medium text-white">
           {reveal.kind === "created"
             ? `“${reveal.service.title}” is ready`
             : `New webhook URL for “${reveal.service.title}”`}
@@ -375,22 +413,22 @@ function WebhookReveal({
         <button
           type="button"
           onClick={onDismiss}
-          className="text-accent-text text-xs font-medium underline-offset-2 hover:underline"
+          className="text-[15px] text-ink-muted transition-colors hover:text-white"
         >
           Done
         </button>
       </div>
-      <p className="text-accent-text mb-4 text-xs">
+      <p className="mb-4 text-sm text-ink-muted">
         This URL is encrypted at rest and remains available from your service's copy button.
       </p>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div className="min-w-0 flex-1">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 flex-1 rounded-2xl bg-panel py-1 pr-1 pl-4">
           <CopyField value={reveal.webhookUrl} />
         </div>
         <button
           type="button"
           onClick={copyAgentPrompt}
-          className="bg-accent hover:bg-accent-hover shrink-0 self-start rounded-full px-4 py-2 text-sm font-medium text-on-accent transition sm:self-auto"
+          className={`${primaryButtonSmall} shrink-0 self-start sm:self-auto`}
         >
           {agentPromptCopied ? "Agent prompt copied" : "Copy agent prompt"}
         </button>
@@ -456,21 +494,21 @@ function PlanModal({
       <section
         aria-labelledby="plans-title"
         aria-modal="true"
-        className="hark-modal-panel hark-plan-panel"
+        className="hark-modal-panel hark-plan-panel hark-glass hark-glass-strong"
         role="dialog"
       >
         <div className="flex items-start justify-between gap-6">
           <div>
-            <h2 id="plans-title" className="text-xl font-semibold">
+            <h2 id="plans-title" className="text-[22px] leading-[1.2] font-medium text-white">
               Choose how far Hark can reach.
             </h2>
-            <p className="mt-1 text-sm text-ink-subtle">
+            <p className="mt-1.5 text-[15px] text-ink-muted">
               Start free, then upgrade when you need more devices or volume.
             </p>
           </div>
           <button
             aria-label="Close"
-            className="grid size-10 shrink-0 place-items-center rounded-full text-xl leading-none text-ink-faint transition-colors hover:bg-surface-hover hover:text-ink-muted active:scale-[0.96]"
+            className={closeButton}
             disabled={busy}
             onClick={close}
             type="button"
@@ -510,19 +548,26 @@ function PlanModal({
         </div>
 
         {activating ? (
-          <p className="bg-accent-soft text-accent-text mt-4 rounded-xl px-4 py-3 text-sm font-medium">
+          <p
+            className="mt-4 rounded-2xl bg-white/12 px-4 py-3 text-[15px] text-white"
+            role="status"
+          >
             Payment received. Activating your Pro entitlements…
           </p>
         ) : null}
-        {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
+        {error ? (
+          <p className="mt-3 text-sm text-danger" role="alert">
+            {error}
+          </p>
+        ) : null}
 
         <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs text-ink-faint">Cancel anytime.</p>
+          <p className="text-sm text-ink-faint">Cancel anytime.</p>
           <button
             type="button"
             disabled={busy || billing === null || !billing.configured || activating}
             onClick={() => void redirectToBilling(billing?.plan === "pro" ? "portal" : "checkout")}
-            className="bg-accent hover:bg-accent-hover min-h-11 rounded-full px-5 text-sm font-semibold text-on-accent transition-transform active:scale-[0.96] disabled:opacity-50"
+            className={primaryButton}
           >
             {busy
               ? "Opening…"
@@ -559,31 +604,31 @@ function PlanTier({
 }) {
   return (
     <article
-      className={`rounded-xl border p-4 ${
-        featured ? "border-accent bg-accent-wash" : "border-line bg-surface-muted"
+      className={`rounded-2xl border p-4 ${
+        featured ? "border-white/45 bg-white/10" : "border-line bg-panel"
       }`}
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h3 className={`text-sm font-semibold ${featured ? "text-accent-text" : ""}`}>{name}</h3>
-          <p className="mt-1 text-2xl font-semibold tracking-tight tabular-nums">
+          <h3 className="text-[15px] font-medium text-white">{name}</h3>
+          <p className="mt-1 text-[26px] leading-tight font-medium tracking-[-0.015em] text-white tabular-nums">
             {price}
             {priceSuffix ? (
-              <span className="ml-1 text-xs font-normal text-ink-faint">{priceSuffix}</span>
+              <span className="ml-1 text-sm font-normal text-ink-faint">{priceSuffix}</span>
             ) : null}
           </p>
         </div>
         {current ? (
-          <span className="bg-accent-soft text-accent-text rounded-full px-2 py-1 text-[11px] font-semibold">
+          <span className="rounded-full bg-white px-2.5 py-0.5 text-[13px] font-medium text-green">
             Current
           </span>
         ) : null}
       </div>
-      <p className="mt-2 text-xs leading-5 text-ink-subtle">{description}</p>
+      <p className="mt-2 text-sm leading-relaxed text-ink-muted">{description}</p>
       <ul className="mt-4 space-y-2.5">
         {features.map((feature) => (
-          <li className="flex gap-2 text-xs leading-4 text-ink-muted" key={feature}>
-            <span className="bg-accent mt-1.5 size-1.5 shrink-0 rounded-full" aria-hidden="true" />
+          <li className="flex gap-2 text-sm leading-snug text-ink" key={feature}>
+            <span className="mt-[7px] size-1.5 shrink-0 rounded-full bg-mint" aria-hidden="true" />
             <span>{feature}</span>
           </li>
         ))}
@@ -627,35 +672,34 @@ function Devices({
   };
 
   return (
-    <section className="mt-16" aria-labelledby="devices-heading">
-      <div className="mb-4">
-        <h2 id="devices-heading" className="text-lg font-semibold">
+    <section className="mt-10 border-t border-line pt-8" aria-labelledby="devices-heading">
+      <div className="mb-5">
+        <h2
+          id="devices-heading"
+          className="text-[22px] leading-[1.2] font-medium tracking-[-0.01em] text-white"
+        >
           Devices
         </h2>
-        <p className="mt-1 text-sm text-ink-subtle">
-          Omit <code className="font-mono text-xs text-ink-muted">deviceIds</code> to notify all
-          active devices. Pro can route a webhook to specific IDs.
+        <p className="mt-1.5 text-ink-muted">
+          Omit <InlineCode>deviceIds</InlineCode> to notify all active devices. Pro can route a
+          webhook to specific IDs.
         </p>
       </div>
-      {devices === null ? <p className="py-6 text-sm text-ink-faint">Loading devices…</p> : null}
-      {devices?.length === 0 ? (
-        <p className="border-y border-line py-8 text-sm text-ink-faint">
-          No iPhones registered yet.
-        </p>
-      ) : null}
+      {devices === null ? <p className="py-4 text-ink-faint">Loading devices…</p> : null}
+      {devices?.length === 0 ? <EmptyState title="No iPhones registered yet." /> : null}
       {devices && devices.length > 0 ? (
-        <ul className="divide-y divide-line border-y border-line">
+        <ul className={LIST_PANEL}>
           {devices.map((device) => (
-            <li className="flex items-center justify-between gap-4 py-3" key={device.id}>
+            <li className="flex items-center justify-between gap-4 py-3.5" key={device.id}>
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium">
+                <p className="truncate font-medium text-white">
                   {device.deviceName ?? "iPhone"}
                   {!device.active ? (
-                    <span className="ml-2 text-xs text-ink-faint">Inactive</span>
+                    <span className="ml-2 text-sm font-normal text-ink-faint">Inactive</span>
                   ) : null}
                 </p>
-                <p className="truncate font-mono text-[11px] text-ink-faint">{device.id}</p>
-                <p className="mt-0.5 text-[11px] text-ink-faint">
+                <p className="truncate font-mono text-xs text-ink-faint">{device.id}</p>
+                <p className="mt-0.5 text-[13px] text-ink-faint">
                   {device.liveActivitiesCapable
                     ? `Live Activities ready · ${device.liveActivityTokenEnvironment} · refreshed ${new Date(
                         device.liveActivityTokenUpdatedAt ?? device.lastSeenAt,
@@ -667,7 +711,7 @@ function Devices({
                 <button
                   type="button"
                   onClick={() => void navigator.clipboard.writeText(device.id)}
-                  className="rounded-full border border-line px-3 py-1.5 text-xs font-medium text-ink-muted transition hover:bg-surface-hover"
+                  className={rowButton}
                 >
                   Copy ID
                 </button>
@@ -675,7 +719,7 @@ function Devices({
                   type="button"
                   disabled={busyId === device.id}
                   onClick={() => void remove(device)}
-                  className="rounded-full border border-danger-line px-3 py-1.5 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-50"
+                  className={rowDangerButton}
                 >
                   Remove
                 </button>
@@ -685,11 +729,252 @@ function Devices({
         </ul>
       ) : null}
       {billing?.plan === "free" && activeDevices.length >= 1 ? (
-        <p className="mt-3 text-xs text-ink-faint">
+        <p className="mt-3 text-sm text-ink-faint">
           Free includes one active iPhone. Upgrade to Pro before registering another.
         </p>
       ) : null}
-      {error ? <p className="mt-3 text-xs text-danger">{error}</p> : null}
+      {error ? (
+        <p className="mt-3 text-sm text-danger" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {dialog}
+    </section>
+  );
+}
+
+/** Glass panel that holds a list; rows are separated by hairlines. */
+const LIST_PANEL = "hark-glass divide-y divide-line rounded-3xl px-4 sm:px-5";
+
+function InlineCode({ children }: { children: React.ReactNode }) {
+  return (
+    <code className="rounded-md bg-white/8 px-1 py-px font-mono text-[0.86em] text-white">
+      {children}
+    </code>
+  );
+}
+
+function EmptyState({ title, children }: { title: string; children?: React.ReactNode }) {
+  return (
+    <div className="rounded-3xl border border-dashed border-line-strong px-6 py-10 text-center">
+      <p className="font-medium text-white">{title}</p>
+      {children ? <p className="mx-auto mt-1.5 max-w-sm text-ink-muted">{children}</p> : null}
+    </div>
+  );
+}
+
+/** Accessible on/off control styled as an iOS switch. */
+function Switch({
+  checked,
+  disabled,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  label: string;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <button
+      aria-checked={checked}
+      className="group inline-flex items-center gap-2 text-sm text-ink-muted disabled:opacity-50"
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      role="switch"
+      type="button"
+    >
+      <span
+        aria-hidden="true"
+        className={`relative inline-flex h-[22px] w-9 shrink-0 rounded-full transition-colors duration-200 ${
+          checked ? "bg-white" : "bg-white/18 group-hover:bg-white/24"
+        }`}
+      >
+        <span
+          className={`absolute top-[3px] left-[3px] size-4 rounded-full shadow-sm transition-transform duration-200 ${
+            checked ? "translate-x-[14px] bg-green" : "bg-white"
+          }`}
+        />
+      </span>
+      {label}
+    </button>
+  );
+}
+
+function AppIcon({ app }: { app: AppDto }) {
+  if (app.iconUrl) {
+    return (
+      <img
+        alt=""
+        className="size-10 shrink-0 rounded-[11px] object-cover ring-1 ring-white/15"
+        src={app.iconUrl}
+      />
+    );
+  }
+  return (
+    <span className="grid size-10 shrink-0 place-items-center rounded-[11px] bg-white font-medium text-green">
+      {app.name.slice(0, 1).toUpperCase()}
+    </span>
+  );
+}
+
+function Apps({
+  apps,
+  onChanged,
+  onRemoved,
+}: {
+  apps: AppDto[] | null;
+  onChanged: (app: AppDto) => void;
+  onRemoved: (id: string) => void;
+}) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const { confirm, dialog } = useConfirm();
+
+  const run = async (id: string, action: () => Promise<void>, failure: string) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      await action();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : failure);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const share = (app: AppDto, field: "shareName" | "shareEmail", value: boolean) =>
+    run(
+      app.id,
+      async () => onChanged((await api.updateAppSharing(app.id, { [field]: value })).app),
+      "Could not update sharing",
+    );
+
+  const revoke = async (app: AppDto) => {
+    const confirmed = await confirm({
+      title: "Stop signing in",
+      message: `${app.name} stops receiving Hark sign-in passes. You can approve it again the next time you open it.`,
+      confirmLabel: "Stop signing in",
+    });
+    if (!confirmed) return;
+    await run(app.id, async () => onChanged((await api.revokeApp(app.id)).app), "Could not revoke");
+  };
+
+  const remove = async (app: AppDto) => {
+    const confirmed = await confirm({
+      title: "Remove app",
+      message: `Remove ${app.name} from Hark? It disappears from your iPhone and stops receiving sign-in passes.`,
+      confirmLabel: "Remove",
+      destructive: true,
+    });
+    if (!confirmed) return;
+    await run(
+      app.id,
+      async () => {
+        await api.deleteApp(app.id);
+        onRemoved(app.id);
+      },
+      "Could not remove this app",
+    );
+  };
+
+  return (
+    <section className="mt-10 border-t border-line pt-8" aria-labelledby="apps-heading">
+      <div className="mb-5">
+        <h2
+          id="apps-heading"
+          className="text-[22px] leading-[1.2] font-medium tracking-[-0.01em] text-white"
+        >
+          Apps
+        </h2>
+        <p className="mt-1.5 text-ink-muted">
+          Web apps that open in Hark, already signed in. Each gets a private Hark ID, plus only what
+          you choose to share.
+        </p>
+      </div>
+      {apps === null ? <p className="py-4 text-ink-faint">Loading apps…</p> : null}
+      {apps?.length === 0 ? (
+        <EmptyState title="No apps yet">
+          Ask your agent to add one with <InlineCode>harkctl</InlineCode>, or see the{" "}
+          <Link className="hark-link" to="/docs">
+            docs
+          </Link>
+          .
+        </EmptyState>
+      ) : null}
+      {apps && apps.length > 0 ? (
+        <ul className={LIST_PANEL}>
+          {apps.map((app) => {
+            const busy = busyId === app.id;
+            return (
+              <li className="py-4" key={app.id}>
+                <div className="flex items-center gap-3">
+                  <AppIcon app={app} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-white">{app.name}</p>
+                    <p className="truncate font-mono text-[13px] text-ink-faint" title={app.url}>
+                      {app.origin}
+                    </p>
+                  </div>
+                  <span
+                    className={`shrink-0 rounded-full px-2.5 py-0.5 text-[13px] ${
+                      app.consentedAt
+                        ? "bg-white/12 text-white"
+                        : "border border-line text-ink-faint"
+                    }`}
+                  >
+                    {app.consentedAt ? "Signed in" : "Not signed in"}
+                  </span>
+                </div>
+                <p className="mt-2 text-[13px] text-ink-faint sm:pl-[52px]">
+                  {app.lastOpenedAt ? `Opened ${relativeTime(app.lastOpenedAt)}` : "Never opened"}
+                  {app.projectName ? ` · ${app.projectName}` : ""}
+                  {app.createdBy ? ` · added by ${app.createdBy}` : ""}
+                </p>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-x-5 gap-y-3 sm:pl-[52px]">
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                    <Switch
+                      checked={app.shareName}
+                      disabled={busy}
+                      label="Share name"
+                      onChange={(value) => void share(app, "shareName", value)}
+                    />
+                    <Switch
+                      checked={app.shareEmail}
+                      disabled={busy}
+                      label="Share email"
+                      onChange={(value) => void share(app, "shareEmail", value)}
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      className={rowButton}
+                      disabled={busy || app.consentedAt === null}
+                      onClick={() => void revoke(app)}
+                      type="button"
+                    >
+                      Stop signing in
+                    </button>
+                    <button
+                      className={rowDangerButton}
+                      disabled={busy}
+                      onClick={() => void remove(app)}
+                      type="button"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      {error ? (
+        <p className="mt-3 text-sm text-danger" role="alert">
+          {error}
+        </p>
+      ) : null}
       {dialog}
     </section>
   );
@@ -774,8 +1059,7 @@ function ServiceModal({
     }
   };
 
-  const inputClass =
-    "focus:border-accent w-full rounded-lg border border-line-strong bg-field px-3 py-2 text-base text-ink placeholder:text-ink-faint focus:outline-none sm:text-sm";
+  const inputClass = "hark-field px-3 py-2.5 text-base sm:text-[15px]";
 
   return (
     <div className={`hark-modal-backdrop ${closing ? "is-closing" : ""}`}>
@@ -789,22 +1073,22 @@ function ServiceModal({
       <form
         aria-labelledby="service-form-title"
         aria-modal="true"
-        className="hark-modal-panel"
+        className="hark-modal-panel hark-glass hark-glass-strong"
         onSubmit={submit}
         role="dialog"
       >
         <div className="mb-6 flex items-start justify-between gap-6">
           <div>
-            <h2 id="service-form-title" className="text-lg font-semibold">
+            <h2 id="service-form-title" className="text-xl font-medium text-white">
               {service ? "Edit service" : "New service"}
             </h2>
-            <p className="mt-1 text-sm text-ink-subtle">
+            <p className="mt-1 text-[15px] text-ink-muted">
               {service ? "Update this webhook's defaults." : "Set the defaults for this webhook."}
             </p>
           </div>
           <button
             aria-label="Close"
-            className="grid size-9 shrink-0 place-items-center rounded-full text-xl leading-none text-ink-faint transition hover:bg-surface-hover hover:text-ink-muted"
+            className={closeButton}
             disabled={busy}
             onClick={() => close()}
             type="button"
@@ -814,9 +1098,7 @@ function ServiceModal({
         </div>
         <div className="space-y-4">
           <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-ink-subtle">
-              Title (sender name)
-            </span>
+            <span className="mb-1.5 block text-sm text-ink-muted">Title (sender name)</span>
             <input
               className={inputClass}
               ref={titleInputRef}
@@ -828,7 +1110,7 @@ function ServiceModal({
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-ink-subtle">
+            <span className="mb-1.5 block text-sm text-ink-muted">
               Avatar image URL <span className="font-normal">(optional)</span>
             </span>
             <input
@@ -840,7 +1122,7 @@ function ServiceModal({
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-ink-subtle">
+            <span className="mb-1.5 block text-sm text-ink-muted">
               Destination URL <span className="font-normal">(optional, opened on tap)</span>
             </span>
             <input
@@ -850,25 +1132,24 @@ function ServiceModal({
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://example.com/dashboard"
             />
-            <span className="mt-1.5 block text-xs text-ink-faint">
+            <span className="mt-1.5 block text-[13px] text-ink-faint">
               Supports web URLs, app deep links, and shortcuts://run-shortcut URLs.
             </span>
           </label>
         </div>
-        {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
+        {error ? (
+          <p className="mt-3 text-sm text-danger" role="alert">
+            {error}
+          </p>
+        ) : null}
         <div className="mt-6 flex justify-end gap-2">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => close()}
-            className="rounded-full px-4 py-2 text-sm font-medium text-ink-subtle transition hover:bg-surface-hover disabled:opacity-50"
-          >
+          <button type="button" disabled={busy} onClick={() => close()} className={secondaryButton}>
             Cancel
           </button>
           <button
             type="submit"
             disabled={busy || title.trim().length === 0}
-            className="bg-accent hover:bg-accent-hover rounded-full px-4 py-2 text-sm font-medium text-on-accent transition disabled:opacity-50"
+            className={primaryButtonSmall}
           >
             {busy
               ? service
@@ -887,18 +1168,21 @@ function ServiceModal({
 function LiveActivities({ activities }: { activities: LiveActivityDto[] | null }) {
   if (activities === null || activities.length === 0) return null;
   return (
-    <section className="mt-16" aria-labelledby="live-activities-heading">
-      <h2 id="live-activities-heading" className="text-lg font-semibold">
+    <section className="mt-10 border-t border-line pt-8" aria-labelledby="live-activities-heading">
+      <h2
+        id="live-activities-heading"
+        className="text-[22px] leading-[1.2] font-medium tracking-[-0.01em] text-white"
+      >
         Live Activities
       </h2>
-      <ul className="mt-4 divide-y divide-line border-y border-line">
+      <ul className={`${LIST_PANEL} mt-5`}>
         {activities.map((activity) => (
-          <li className="flex items-center justify-between gap-4 py-3" key={activity.id}>
+          <li className="flex items-center justify-between gap-4 py-3.5" key={activity.id}>
             <div className="min-w-0">
-              <p className="truncate text-sm font-medium">{activity.props.title}</p>
-              <p className="truncate text-xs text-ink-subtle">{activity.props.status}</p>
+              <p className="truncate font-medium text-white">{activity.props.title}</p>
+              <p className="truncate text-sm text-ink-muted">{activity.props.status}</p>
             </div>
-            <p className="shrink-0 font-mono text-[11px] text-ink-faint">
+            <p className="shrink-0 font-mono text-xs text-ink-faint">
               seq {activity.sequence} · {activity.status}
             </p>
           </li>
@@ -916,39 +1200,36 @@ function ActivityLog({
   onRefresh: () => Promise<void>;
 }) {
   return (
-    <section className="mt-16" aria-labelledby="activity-heading">
-      <div className="mb-4 flex items-center justify-between">
+    <section className="mt-10 border-t border-line pt-8" aria-labelledby="activity-heading">
+      <div className="mb-5 flex items-end justify-between gap-4">
         <div>
-          <h2 id="activity-heading" className="text-lg font-semibold">
+          <h2
+            id="activity-heading"
+            className="text-[22px] leading-[1.2] font-medium tracking-[-0.01em] text-white"
+          >
             Activity
           </h2>
-          <p className="mt-1 text-sm text-ink-subtle">Latest webhook delivery attempts.</p>
+          <p className="mt-1.5 text-ink-muted">Latest webhook delivery attempts.</p>
         </div>
-        <button
-          type="button"
-          onClick={() => void onRefresh()}
-          className="rounded-full px-3 py-1.5 text-xs font-medium text-ink-subtle transition hover:bg-surface-hover hover:text-ink"
-        >
+        <button type="button" onClick={() => void onRefresh()} className={rowButton}>
           Refresh
         </button>
       </div>
 
-      {events === null ? <p className="py-6 text-sm text-ink-faint">Loading activity…</p> : null}
-      {events?.length === 0 ? (
-        <p className="border-t border-line py-8 text-sm text-ink-faint">No webhook activity yet.</p>
-      ) : null}
+      {events === null ? <p className="py-4 text-ink-faint">Loading activity…</p> : null}
+      {events?.length === 0 ? <EmptyState title="No webhook activity yet." /> : null}
       {events && events.length > 0 ? (
-        <ol className="divide-y divide-line border-y border-line">
+        <ol className={LIST_PANEL}>
           {events.map((activityEvent) => (
-            <li className="flex gap-2.5 py-3" key={activityEvent.id}>
+            <li className="flex gap-3 py-3.5" key={activityEvent.id}>
               <ActivityAvatar activityEvent={activityEvent} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline justify-between gap-4">
-                  <p className="truncate text-sm leading-5 font-medium">
+                  <p className="truncate leading-5 font-medium text-white">
                     {activityEvent.serviceTitle} · {activityEvent.title}
                   </p>
                   <time
-                    className="shrink-0 text-xs text-ink-faint"
+                    className="shrink-0 text-[13px] text-ink-faint"
                     dateTime={activityEvent.createdAt}
                     title={new Date(activityEvent.createdAt).toLocaleString()}
                   >
@@ -958,10 +1239,10 @@ function ActivityLog({
                     })}
                   </time>
                 </div>
-                <p className="mt-0.5 truncate text-xs leading-4 text-ink-subtle">
+                <p className="mt-0.5 truncate text-sm leading-5 text-ink-muted">
                   {activityEvent.body}
                 </p>
-                <p className="mt-0.5 text-[11px] leading-4 text-ink-faint">
+                <p className="mt-0.5 text-[13px] leading-5 text-ink-faint">
                   {activityLabel(activityEvent)}
                   {activityEvent.error ? ` · ${activityEvent.error}` : ""}
                 </p>
@@ -977,7 +1258,7 @@ function ActivityLog({
 function StatusDot({ status }: { status: string }) {
   const color =
     status === "accepted" || status === "delivered"
-      ? "bg-accent"
+      ? "bg-mint"
       : status === "withdrawn"
         ? "bg-info"
         : status === "failed"
@@ -992,19 +1273,19 @@ function StatusDot({ status }: { status: string }) {
 
 function ActivityAvatar({ activityEvent }: { activityEvent: EventDto }) {
   return (
-    <span className="relative size-8 shrink-0">
+    <span className="relative size-9 shrink-0">
       {activityEvent.imageUrl ? (
         <img
           alt=""
-          className="border-media-line size-8 rounded-full border object-cover"
+          className="size-9 rounded-full object-cover ring-1 ring-white/15"
           src={activityEvent.imageUrl}
         />
       ) : (
-        <span className="bg-accent-soft text-accent-text grid size-8 place-items-center rounded-full text-xs font-medium">
+        <span className="grid size-9 place-items-center rounded-full bg-white/12 text-sm font-medium text-white">
           {activityEvent.serviceTitle.slice(0, 1).toUpperCase()}
         </span>
       )}
-      <span className="absolute -right-0.5 -bottom-0.5 grid size-3 place-items-center rounded-full bg-surface">
+      <span className="absolute -right-0.5 -bottom-0.5 grid size-3.5 place-items-center rounded-full bg-paper">
         <StatusDot status={activityEvent.status} />
       </span>
     </span>
@@ -1047,17 +1328,14 @@ function ServiceList({
   const activeTokens = tokens?.filter((token) => token.revokedAt === null) ?? [];
 
   if (services === null) {
-    return <div className="py-12 text-center text-sm text-ink-faint">Loading…</div>;
+    return <p className="py-4 text-ink-faint">Loading services…</p>;
   }
   if (services.length === 0 && activeTokens.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-line-strong py-14 text-center">
-        <p className="text-sm font-medium text-ink-muted">No services yet</p>
-        <p className="mx-auto mt-1 max-w-sm text-sm text-ink-faint">
-          Create your first service to get a secret webhook URL you can POST to from CI, cron jobs,
-          or anything else.
-        </p>
-      </div>
+      <EmptyState title="No services yet">
+        Create your first service to get a secret webhook URL you can POST to from CI, cron jobs, or
+        anything else.
+      </EmptyState>
     );
   }
 
@@ -1129,28 +1407,28 @@ function ServiceList({
 
   return (
     <>
-      <ul className="divide-y divide-line border-y border-line">
+      <ul className={LIST_PANEL}>
         {services.map((svc) => (
-          <li key={svc.id} className="flex items-center gap-3 py-3">
+          <li key={svc.id} className="flex flex-wrap items-center gap-x-3 gap-y-2.5 py-3.5">
             {svc.imageUrl ? (
               <img
                 src={svc.imageUrl}
                 alt=""
-                className="border-media-line size-8 shrink-0 rounded-full border object-cover"
+                className="size-9 shrink-0 rounded-full object-cover ring-1 ring-white/15"
               />
             ) : (
-              <div className="bg-accent flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-on-accent">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-white text-sm font-medium text-green">
                 {svc.title.slice(0, 1).toUpperCase()}
               </div>
             )}
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold">{svc.title}</p>
-              <p className="truncate text-xs text-ink-faint">
+              <p className="truncate font-medium text-white">{svc.title}</p>
+              <p className="truncate text-[13px] text-ink-faint">
                 {svc.url ?? "No destination URL"} · created{" "}
                 {new Date(svc.createdAt).toLocaleDateString()}
               </p>
             </div>
-            <div className="flex shrink-0 flex-wrap justify-end gap-2">
+            <div className="flex w-full flex-wrap gap-2 pl-12 sm:w-auto sm:shrink-0 sm:justify-end sm:pl-0">
               <button
                 type="button"
                 disabled={!svc.webhookUrl}
@@ -1160,7 +1438,7 @@ function ServiceList({
                     : "Rotate this legacy token once to make its URL copyable"
                 }
                 onClick={() => void copy(svc)}
-                className="rounded-full border border-line px-3 py-1.5 text-xs font-medium text-ink-muted transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:text-ink-disabled"
+                className={rowButton}
               >
                 {copiedId === svc.id ? "Copied" : "Copy webhook"}
               </button>
@@ -1168,7 +1446,7 @@ function ServiceList({
                 type="button"
                 disabled={busyId === svc.id}
                 onClick={() => onEdit(svc)}
-                className="rounded-full border border-line px-3 py-1.5 text-xs font-medium text-ink-muted transition hover:bg-surface-hover disabled:opacity-50"
+                className={rowButton}
               >
                 Edit
               </button>
@@ -1176,7 +1454,7 @@ function ServiceList({
                 type="button"
                 disabled={busyId === svc.id}
                 onClick={() => void rotate(svc)}
-                className="rounded-full border border-line px-3 py-1.5 text-xs font-medium text-ink-muted transition hover:bg-surface-hover disabled:opacity-50"
+                className={rowButton}
               >
                 Rotate token
               </button>
@@ -1184,7 +1462,7 @@ function ServiceList({
                 type="button"
                 disabled={busyId === svc.id}
                 onClick={() => void remove(svc)}
-                className="rounded-full border border-danger-line px-3 py-1.5 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-50"
+                className={rowDangerButton}
               >
                 Delete
               </button>
@@ -1192,18 +1470,18 @@ function ServiceList({
           </li>
         ))}
         {activeTokens.map((token) => (
-          <li key={token.id} className="flex items-center gap-3 py-3">
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-full border border-line bg-surface-muted font-mono text-[11px] font-semibold text-accent-text">
+          <li key={token.id} className="flex items-center gap-3 py-3.5">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-panel font-mono text-xs text-mint ring-1 ring-white/15">
               ❯_
             </div>
             <div className="min-w-0 flex-1">
-              <p className="flex items-center gap-2 text-sm font-semibold">
+              <p className="flex items-center gap-2 font-medium text-white">
                 <span className="truncate">{token.name}</span>
-                <span className="shrink-0 rounded-full border border-line bg-surface-muted px-2 py-0.5 text-[10px] font-medium leading-4 text-ink-muted">
+                <span className="shrink-0 rounded-full bg-white/12 px-2 py-0.5 text-xs leading-4 font-normal text-ink">
                   Agent
                 </span>
               </p>
-              <p className="truncate text-xs text-ink-faint" title={token.scopes.join(", ")}>
+              <p className="truncate text-[13px] text-ink-faint" title={token.scopes.join(", ")}>
                 {token.prefix}… · {token.scopes.length}{" "}
                 {token.scopes.length === 1 ? "scope" : "scopes"} · last used{" "}
                 {token.lastUsedAt ? relativeTime(token.lastUsedAt) : "never"}
@@ -1217,7 +1495,7 @@ function ServiceList({
                 type="button"
                 disabled={busyId === token.id}
                 onClick={() => void revokeToken(token)}
-                className="rounded-full border border-danger-line px-3 py-1.5 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-50"
+                className={rowDangerButton}
               >
                 Revoke
               </button>
@@ -1225,7 +1503,11 @@ function ServiceList({
           </li>
         ))}
       </ul>
-      {tokenError ? <p className="mt-3 text-xs text-danger">{tokenError}</p> : null}
+      {tokenError ? (
+        <p className="mt-3 text-sm text-danger" role="alert">
+          {tokenError}
+        </p>
+      ) : null}
       {dialog}
     </>
   );

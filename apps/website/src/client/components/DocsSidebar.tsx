@@ -58,7 +58,7 @@ export function DocsSidebar() {
   const active = useScrollSpy(DOC_ANCHOR_IDS);
 
   return (
-    <div className="sticky top-14 z-20 -mx-6 border-b border-line bg-paper/90 px-6 backdrop-blur lg:top-14 lg:mx-0 lg:h-[calc(100dvh-3.5rem)] lg:w-56 lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:bg-transparent lg:px-0 lg:pt-12 lg:pb-16 lg:backdrop-blur-none">
+    <div className="sticky top-16 z-20 -mx-6 border-b border-line bg-paper/85 px-6 backdrop-blur-md lg:top-16 lg:mx-0 lg:h-[calc(100dvh-4rem)] lg:w-52 lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:bg-transparent lg:px-0 lg:pt-10 lg:pb-16 lg:backdrop-blur-none">
       <nav aria-label="Documentation" className="py-3 lg:py-0">
         {/* Below `lg` the same tree collapses into a horizontal strip of the
             three chapters; the nested anchors are hidden rather than duplicated
@@ -71,8 +71,8 @@ export function DocsSidebar() {
               <li className="shrink-0 lg:mt-7 lg:shrink lg:first:mt-0" key={section.id}>
                 <a
                   aria-current={active === section.id ? "location" : undefined}
-                  className={`block rounded-md px-2 py-1 text-sm font-medium whitespace-nowrap transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent lg:px-0 ${
-                    sectionActive ? "text-accent-text" : "text-ink hover:text-accent-text"
+                  className={`block rounded-md px-2 py-1 text-[15px] font-medium whitespace-nowrap transition-colors lg:px-0 ${
+                    sectionActive ? "text-white" : "text-ink-muted hover:text-white"
                   }`}
                   href={`#${section.id}`}
                 >
@@ -85,10 +85,10 @@ export function DocsSidebar() {
                       <li key={item.id}>
                         <a
                           aria-current={itemActive ? "location" : undefined}
-                          className={`-ml-px block border-l-2 py-1.5 pl-3 text-sm transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+                          className={`-ml-px block border-l-2 py-1.5 pl-3 text-sm transition-colors ${
                             itemActive
-                              ? "border-accent text-ink"
-                              : "border-transparent text-ink-faint hover:border-line-strong hover:text-ink"
+                              ? "border-white text-white"
+                              : "border-transparent text-ink-faint hover:border-line-strong hover:text-white"
                           }`}
                           href={`#${item.id}`}
                         >

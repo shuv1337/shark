@@ -74,7 +74,7 @@ function Block({ block }: { block: DocBlock }) {
       return <CodeBlock code={block.code} language={block.language} />;
     case "copy":
       return (
-        <div className="rounded-xl border border-line bg-surface px-4 py-3">
+        <div className="rounded-2xl bg-code py-2 pr-2 pl-4 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.08)]">
           <CopyField value={block.value} />
         </div>
       );

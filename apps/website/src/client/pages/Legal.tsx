@@ -1,32 +1,21 @@
-import { Link } from "react-router";
+import { PAGE_COLUMN, SiteFooter, SiteHeader } from "../components/SiteChrome";
 
 const updated = "August 9, 2026";
 
 function LegalLayout({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="min-h-dvh">
-      <header>
-        <div className="mx-auto flex h-20 w-full max-w-3xl items-center justify-between px-6">
-          <Link to="/" className="text-lg font-semibold">
-            Hark
-          </Link>
-          <nav className="flex items-center gap-4 text-sm text-ink-subtle" aria-label="Primary">
-            <Link className="transition hover:text-ink" to="/docs">
-              Docs
-            </Link>
-            <Link className="transition hover:text-ink" to="/">
-              Home
-            </Link>
-          </nav>
-        </div>
-      </header>
-      <main className="mx-auto w-full max-w-3xl px-6 py-10">
-        <h1 className="text-3xl font-semibold">{title}</h1>
+    <div className="flex min-h-dvh flex-col">
+      <SiteHeader />
+      <main className={`${PAGE_COLUMN} flex-1 pt-7 pb-16 sm:pt-10`}>
+        <h1 className="text-[clamp(32px,5vw,44px)] leading-[1.1] font-medium tracking-[-0.02em] text-white">
+          {title}
+        </h1>
         <p className="mt-3 text-sm text-ink-faint">Last updated {updated}</p>
-        <div className="legal-copy mt-10 max-w-2xl space-y-8 text-sm leading-relaxed text-ink-muted">
+        <div className="mt-8 max-w-[40rem] space-y-8 border-t border-line pt-8 text-[15px] leading-relaxed text-ink-muted">
           {children}
         </div>
       </main>
+      <SiteFooter />
     </div>
   );
 }
@@ -34,7 +23,7 @@ function LegalLayout({ title, children }: { title: string; children: React.React
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section>
-      <h2 className="mb-2 text-base font-semibold text-ink">{title}</h2>
+      <h2 className="mb-2 text-lg font-medium text-white">{title}</h2>
       {children}
     </section>
   );
@@ -155,10 +144,7 @@ export function Privacy() {
       <Section title="Contact">
         <p>
           Questions or privacy requests can be sent to{" "}
-          <a
-            className="text-accent-text underline underline-offset-2"
-            href="mailto:ryan@mandarin3d.com"
-          >
+          <a className="hark-link" href="mailto:ryan@mandarin3d.com">
             ryan@mandarin3d.com
           </a>
           .
@@ -259,10 +245,7 @@ export function Terms() {
       <Section title="Contact">
         <p>
           Questions about these terms can be sent to{" "}
-          <a
-            className="text-accent-text underline underline-offset-2"
-            href="mailto:ryan@mandarin3d.com"
-          >
+          <a className="hark-link" href="mailto:ryan@mandarin3d.com">
             ryan@mandarin3d.com
           </a>
           .

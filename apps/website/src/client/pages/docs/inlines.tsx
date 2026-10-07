@@ -14,17 +14,16 @@ export function Inlines({ source }: { source: string }) {
   for (const node of parseInline(source)) {
     if (node.kind === "code") {
       nodes.push(
-        <code className="font-mono text-xs text-ink-muted" key={offset}>
+        <code
+          className="rounded-md bg-white/8 px-1 py-px font-mono text-[0.86em] text-white"
+          key={offset}
+        >
           {node.text}
         </code>,
       );
     } else if (node.kind === "link") {
       nodes.push(
-        <a
-          className="text-accent-text underline decoration-line underline-offset-2 hover:decoration-current"
-          href={node.href}
-          key={offset}
-        >
+        <a className="hark-link" href={node.href} key={offset}>
           {node.text}
         </a>,
       );

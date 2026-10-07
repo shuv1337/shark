@@ -1,166 +1,211 @@
-import { useEffect, useRef, useState } from "react";
-import { NotificationCard } from "./NotificationCard";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { usePrefersReducedMotion } from "../lib/motion";
 
-export interface NotificationItem {
-  title: string;
-  image: string;
-  description: string;
-  /** Optional destination; the card becomes a link (untabbable in the stack). */
-  link?: string;
+interface FeedItem {
+  sender: string;
+  avatar: { text: string; bg: string } | { img: string };
+  body: string;
+  actions?: string[];
 }
 
-interface Props {
-  /** Arrival order; the last item ends up on top of the stack. */
-  items: NotificationItem[];
-  /** Milliseconds between arrivals during the load-in sequence. */
-  interval?: number;
+const FEED: FeedItem[] = [
+  {
+    sender: "Release agent",
+    avatar: { text: "▲", bg: "#171713" },
+    body: "Deploy version 2.4.1 to production?",
+    actions: ["Deny", "Approve"],
+  },
+  {
+    sender: "OpenCode",
+    avatar: { img: "/agents/opencode.png" },
+    body: "Refactor finished. 14 files changed, all tests passing.",
+  },
+  {
+    sender: "GitHub",
+    avatar: { text: "G", bg: "#24292F" },
+    body: "Production deployed successfully.",
+  },
+  {
+    sender: "Stripe",
+    avatar: { text: "S", bg: "#635BFF" },
+    body: "New subscription: Pro plan, $8.00/month.",
+  },
+  {
+    sender: "Claude Code",
+    avatar: { img: "/agents/claude.png" },
+    body: "Allow `pnpm test` in ~/dev/hark?",
+    actions: ["Deny", "Allow"],
+  },
+  {
+    sender: "Uptime",
+    avatar: { text: "U", bg: "#C93B2C" },
+    body: "api.acme.dev is responding again after 3 minutes.",
+  },
+  {
+    sender: "Support bot",
+    avatar: { text: "S", bg: "#2F55D4" },
+    body: "How should I reply to the customer asking for an extension?",
+    actions: ["Reply"],
+  },
+];
+
+/** Front card, then older ones tucked behind it: smaller, dimmer, peeking out below. */
+const DEPTHS = [
+  { y: 0, scale: 1, opacity: 1 },
+  { y: 10, scale: 0.94, opacity: 0.7 },
+  { y: 19, scale: 0.88, opacity: 0.4 },
+];
+const ARRIVAL_MS = 3000;
+const EXIT_MS = 700;
+
+interface Note {
+  id: number;
+  item: FeedItem;
+  /** Arrival time; `null` for the cards present on first paint. */
+  at: number | null;
+  entered: boolean;
+  gone: boolean;
+}
+
+const INITIAL: Note[] = [2, 1, 0].map((index) => ({
+  id: index,
+  item: FEED[index] as FeedItem,
+  at: null,
+  entered: true,
+  gone: false,
+}));
+
+function ageLabel(at: number | null, mountedAt: number, now: number): string {
+  const seconds = (now - (at ?? mountedAt)) / 1000;
+  return seconds < 50 ? "now" : `${Math.round(seconds / 60)}m ago`;
 }
 
 /**
- * iOS-style notification load-in. The first card is present on load; each
- * following card becomes the front of a compact deck while the cards already
- * there shift down and scale back enough to leave their edges visible. Once
- * every message has arrived the stack stays put — nothing cycles out.
- *
- * Descriptions wrap, so card heights vary: each card is measured and the deck
- * height follows the furthest visible card edge. Deck position and depth live
- * on the wrapper as inline `translate` and `scale` values; the entry pop lives
- * on an inner element via `@starting-style`, so the animations never fight
- * over one property.
- *
- * The newest card gets the highest z-index and remains fully readable. Older
- * cards recede behind it in arrival order.
- *
- * Wrappers never animate `opacity` or `filter`: an ancestor with opacity
- * below 1 becomes a backdrop root, which cuts the cards' `backdrop-filter`
- * off from the page and makes the glass snap in when the fade ends. The
- * entry fade is a paper-coloured overlay INSIDE the card wrapper instead —
- * it sits above the card, so its opacity never isolates the glass, and
- * fading from the page colour reads as the card materialising.
- *
- * Under reduced motion every card renders immediately in its settled
- * position.
+ * A live iOS notification stack built in code: a new message drops into the
+ * front every few seconds while older ones recede. Cards are absolutely
+ * positioned inside a fixed-height stage, so arrivals never move the page.
+ * Every change is a transform/opacity transition; behind cards also take the
+ * front card's height so the deck edge stays even.
  */
-const STACK_PEEK = 8;
-const STACK_SCALE_STEP = 0.018;
-const FALLBACK_HEIGHT = 98;
-
-const EASING = "duration-[550ms] ease-[cubic-bezier(0.3,1.15,0.35,1)]";
-
-export function NotificationStack({ items, interval = 1600 }: Props) {
-  const [reducedMotion, setReducedMotion] = useState(false);
-  const [visible, setVisible] = useState(items.length > 0 ? 1 : 0);
-  const [heights, setHeights] = useState<Record<number, number>>({});
-  const cardRefs = useRef(new Map<number, HTMLDivElement>());
+export function NotificationStack() {
+  const reduced = usePrefersReducedMotion();
+  const [notes, setNotes] = useState<Note[]>(INITIAL);
+  const [now, setNow] = useState(0);
+  const nextIndex = useRef(INITIAL.length);
+  const mountedAt = useRef(0);
+  const elements = useRef(new Map<number, HTMLDivElement>());
 
   useEffect(() => {
-    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const update = () => {
-      setReducedMotion(query.matches);
-      if (query.matches) setVisible(items.length);
-    };
-    update();
-    query.addEventListener("change", update);
-    return () => query.removeEventListener("change", update);
-  }, [items.length]);
+    mountedAt.current = Date.now();
+    setNow(Date.now());
+  }, []);
 
   useEffect(() => {
-    if (reducedMotion || visible >= items.length) return;
-    const timer = setTimeout(
-      () => setVisible((previous) => Math.min(previous + 1, items.length)),
-      interval,
-    );
-    return () => clearTimeout(timer);
-  }, [reducedMotion, visible, items.length, interval]);
-
-  const stack = items
-    .slice(0, visible)
-    .map((item, index) => ({ key: index, item }))
-    .reverse();
-
-  // One observer measures every card: the initial observation fires before
-  // paint, and later ones track wrapping changes as the viewport resizes.
-  const observerRef = useRef<ResizeObserver | null>(null);
-  const getObserver = () => {
-    observerRef.current ??= new ResizeObserver(() => {
-      setHeights((previous) => {
-        let changed = false;
-        const next = { ...previous };
-        for (const [key, element] of cardRefs.current) {
-          const height = element.offsetHeight;
-          if (height > 0 && next[key] !== height) {
-            next[key] = height;
-            changed = true;
-          }
-        }
-        return changed ? next : previous;
+    if (reduced) return;
+    const timeouts = new Set<number>();
+    const interval = window.setInterval(() => {
+      const id = nextIndex.current++;
+      const item = FEED[id % FEED.length] as FeedItem;
+      setNow(Date.now());
+      setNotes((current) => {
+        const visible = current.filter((note) => !note.gone);
+        const next = [{ id, item, at: Date.now(), entered: false, gone: false }, ...visible];
+        return next.map((note, depth) => (depth >= DEPTHS.length ? { ...note, gone: true } : note));
       });
-    });
-    return observerRef.current;
-  };
-
-  useEffect(() => () => observerRef.current?.disconnect(), []);
-
-  const front = stack[0];
-  const frontHeight = front ? (heights[front.key] ?? FALLBACK_HEIGHT) : 0;
-  const rows = stack.map(({ key, item }, slot) => {
-    const height = heights[key] ?? FALLBACK_HEIGHT;
-    const scale = Math.max(1 - slot * STACK_SCALE_STEP, 0.946);
-    return {
-      key,
-      item,
-      slot,
-      scale,
-      offset: slot === 0 ? 0 : frontHeight + slot * STACK_PEEK - height * scale,
+      const cleanup = window.setTimeout(() => {
+        timeouts.delete(cleanup);
+        setNotes((current) => current.filter((note) => !note.gone));
+      }, EXIT_MS);
+      timeouts.add(cleanup);
+    }, ARRIVAL_MS);
+    return () => {
+      window.clearInterval(interval);
+      for (const timeout of timeouts) window.clearTimeout(timeout);
     };
-  });
-  const totalHeight = frontHeight + Math.max(rows.length - 1, 0) * STACK_PEEK + 2;
+  }, [reduced]);
 
+  // Behind cards match the front card's height (actions make cards taller).
+  useLayoutEffect(() => {
+    // A new card has been laid out in its start pose (above, small, clear).
+    // Flushing styles here and then moving it lets the transition run from
+    // that pose, without waiting on animation frames.
+    const arriving = notes.find((note) => !note.entered);
+    if (arriving) {
+      void elements.current.get(arriving.id)?.offsetHeight;
+      setNotes((current) =>
+        current.map((note) => (note.id === arriving.id ? { ...note, entered: true } : note)),
+      );
+    }
+    const visible = notes.filter((note) => !note.gone);
+    const front = visible[0] ? elements.current.get(visible[0].id) : undefined;
+    if (!front) return;
+    front.style.height = "";
+    const frontHeight = front.offsetHeight;
+    for (const note of visible.slice(1)) {
+      const el = elements.current.get(note.id);
+      if (!el) continue;
+      if (!el.style.height) {
+        el.style.height = `${el.offsetHeight}px`;
+        void el.offsetHeight;
+      }
+      el.style.height = `${frontHeight}px`;
+    }
+  }, [notes]);
+
+  let depth = 0;
   return (
-    <div
-      aria-hidden="true"
-      className={`relative w-full max-w-[559px] overflow-hidden transition-[height] ${EASING}`}
-      style={{ height: totalHeight }}
-    >
-      {rows.map(({ key, item, slot, offset: rowOffset, scale }) => (
-        <div
-          key={key}
-          ref={(element) => {
-            if (element) {
-              cardRefs.current.set(key, element);
-              getObserver().observe(element);
-            } else {
-              const previous = cardRefs.current.get(key);
-              if (previous) observerRef.current?.unobserve(previous);
-              cardRefs.current.delete(key);
-            }
-          }}
-          className={`absolute inset-x-0 top-0 transition-[translate,scale,clip-path] ${EASING}`}
-          style={{
-            translate: `0 ${rowOffset}px`,
-            scale,
-            clipPath:
-              slot === 0
-                ? undefined
-                : `inset(calc(100% - ${STACK_PEEK / scale}px) 0 0 round 0 0 31px 31px)`,
-            transformOrigin: "top center",
-            zIndex: visible - slot,
-          }}
-        >
+    <div className="hark-note-stack">
+      {notes.map((note) => {
+        const d = note.gone ? DEPTHS.length : depth++;
+        const pose = note.gone
+          ? { transform: `translateY(${DEPTHS.length * 9}px) scale(0.82)`, opacity: 0 }
+          : !note.entered
+            ? { transform: "translateY(-22px) scale(0.97)", opacity: 0 }
+            : {
+                transform: `translateY(${DEPTHS[d]?.y}px) scale(${DEPTHS[d]?.scale})`,
+                opacity: DEPTHS[d]?.opacity,
+              };
+        return (
           <div
-            className={`relative transition-[translate,scale] ${EASING} ${
-              key === 0 || reducedMotion ? "" : "starting:translate-y-3 starting:scale-90"
-            }`}
+            className={`hark-note ${d > 0 ? "is-behind" : ""}`}
+            key={note.id}
+            ref={(el) => {
+              if (el) elements.current.set(note.id, el);
+              else elements.current.delete(note.id);
+            }}
+            style={{ ...pose, zIndex: DEPTHS.length - d }}
           >
-            <NotificationCard {...item} tabIndex={-1} concealed={slot > 0} />
-            <span
-              className={`pointer-events-none absolute inset-0 rounded-[24px] bg-paper opacity-0 transition-opacity sm:rounded-[31px] ${EASING} ${
-                key === 0 || reducedMotion ? "" : "starting:opacity-100"
-              }`}
-            />
+            <div className="hark-note-sender">
+              {"img" in note.item.avatar ? (
+                <div className="hark-note-avatar">
+                  <img alt="" src={note.item.avatar.img} />
+                </div>
+              ) : (
+                <div className="hark-note-avatar" style={{ background: note.item.avatar.bg }}>
+                  {note.item.avatar.text}
+                </div>
+              )}
+              <span className="hark-note-badge" />
+            </div>
+            <div className="hark-note-content">
+              <div className="hark-note-row">
+                <span className="hark-note-title">{note.item.sender}</span>
+                <time>{now === 0 ? "now" : ageLabel(note.at, mountedAt.current, now)}</time>
+              </div>
+              <div className="hark-note-msg">{note.item.body}</div>
+              {note.item.actions ? (
+                <div className="hark-note-actions">
+                  {note.item.actions.map((action, index, all) => (
+                    <span className={index === all.length - 1 ? "is-primary" : ""} key={action}>
+                      {action}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

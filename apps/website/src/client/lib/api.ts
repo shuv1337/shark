@@ -3,6 +3,8 @@ import type {
   ApiTokenCreatedResponse,
   ApiTokenCreateInput,
   ApiTokenDto,
+  AppDto,
+  AppSharingInput,
   BillingDto,
   BillingRedirectResponse,
   DeviceAuthorizationRequestDto,
@@ -86,4 +88,12 @@ export const api = {
     request<BillingRedirectResponse>("/api/billing/portal", { method: "POST" }),
   listEvents: (limit = 50) => request<{ events: EventDto[] }>(`/api/events?limit=${limit}`),
   listLiveActivities: () => request<{ activities: LiveActivityDto[] }>("/api/activities"),
+  listApps: () => request<{ apps: AppDto[] }>("/api/apps"),
+  updateAppSharing: (id: string, input: AppSharingInput) =>
+    request<{ app: AppDto }>(`/api/apps/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+  revokeApp: (id: string) => request<{ app: AppDto }>(`/api/apps/${id}/revoke`, { method: "POST" }),
+  deleteApp: (id: string) => request<{ ok: true }>(`/api/apps/${id}`, { method: "DELETE" }),
 };

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { dangerButtonSmall, primaryButtonSmall, secondaryButton } from "./ui";
 
 export interface ConfirmOptions {
   title: string;
@@ -99,13 +100,13 @@ function ConfirmDialog({
         aria-describedby="confirm-dialog-message"
         aria-labelledby="confirm-dialog-title"
         aria-modal="true"
-        className="hark-modal-panel"
+        className="hark-modal-panel hark-glass hark-glass-strong"
         role="alertdialog"
       >
-        <h2 id="confirm-dialog-title" className="text-lg font-semibold">
+        <h2 id="confirm-dialog-title" className="text-xl font-medium text-white">
           {options.title}
         </h2>
-        <p id="confirm-dialog-message" className="mt-2 text-sm leading-relaxed text-ink-subtle">
+        <p id="confirm-dialog-message" className="mt-2 text-[15px] leading-relaxed text-ink-muted">
           {options.message}
         </p>
         <div className="mt-6 flex justify-end gap-2">
@@ -113,18 +114,14 @@ function ConfirmDialog({
             ref={cancelRef}
             type="button"
             onClick={() => close(false)}
-            className="rounded-full border border-line px-4 py-2 text-sm font-medium text-ink-muted transition hover:bg-surface-hover"
+            className={secondaryButton}
           >
             Cancel
           </button>
           <button
             type="button"
             onClick={() => close(true)}
-            className={
-              options.destructive
-                ? "rounded-full bg-danger px-4 py-2 text-sm font-medium text-white transition hover:bg-danger-strong"
-                : "bg-accent hover:bg-accent-hover rounded-full px-4 py-2 text-sm font-medium text-on-accent transition"
-            }
+            className={options.destructive ? dangerButtonSmall : primaryButtonSmall}
           >
             {options.confirmLabel ?? "Confirm"}
           </button>

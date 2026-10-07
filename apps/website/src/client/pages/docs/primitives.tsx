@@ -12,7 +12,7 @@ export function DocSection({ id, children }: { id: DocSectionId; children: React
   return (
     <section aria-labelledby={`${id}-heading`} id={id}>
       <h2
-        className="border-b border-line pb-4 text-2xl font-semibold tracking-tight"
+        className="border-t border-line pt-8 text-[clamp(24px,3.2vw,28px)] leading-[1.15] font-medium tracking-[-0.015em] text-white"
         id={`${id}-heading`}
       >
         {docLabel(id)}
@@ -26,7 +26,7 @@ export function DocSection({ id, children }: { id: DocSectionId; children: React
 export function DocSub({ id, children }: { id: DocAnchorId; children: React.ReactNode }) {
   return (
     <section aria-labelledby={`${id}-heading`} className="mt-10" id={id}>
-      <h3 className="text-base font-semibold" id={`${id}-heading`}>
+      <h3 className="text-lg font-medium text-white" id={`${id}-heading`}>
         {docLabel(id)}
       </h3>
       <div className="mt-3 space-y-4">{children}</div>
@@ -35,16 +35,20 @@ export function DocSub({ id, children }: { id: DocAnchorId; children: React.Reac
 }
 
 export function P({ children }: { children: React.ReactNode }) {
-  return <p className="text-sm leading-relaxed text-ink-subtle">{children}</p>;
+  return <p className="text-[15px] leading-[1.7] text-ink-muted">{children}</p>;
 }
 
 export function Lead({ children }: { children: React.ReactNode }) {
-  return <p className="mt-4 max-w-2xl text-base leading-relaxed text-ink-subtle">{children}</p>;
+  return (
+    <p className="mt-2 max-w-[36rem] text-[17px] leading-[1.6] text-pretty text-ink-muted">
+      {children}
+    </p>
+  );
 }
 
 export function Steps({ children }: { children: React.ReactNode }) {
   return (
-    <ol className="list-decimal space-y-2 pl-5 text-sm leading-relaxed text-ink-subtle">
+    <ol className="list-decimal space-y-2 pl-5 text-[15px] leading-[1.7] text-ink-muted marker:text-ink-faint">
       {children}
     </ol>
   );
@@ -52,14 +56,16 @@ export function Steps({ children }: { children: React.ReactNode }) {
 
 export function Bullets({ children }: { children: React.ReactNode }) {
   return (
-    <ul className="list-disc space-y-2 pl-5 text-sm leading-relaxed text-ink-subtle">{children}</ul>
+    <ul className="list-disc space-y-2 pl-5 text-[15px] leading-[1.7] text-ink-muted marker:text-ink-faint">
+      {children}
+    </ul>
   );
 }
 
 /** Aside for a caveat that would otherwise get lost in a paragraph. */
 export function Note({ children }: { children: React.ReactNode }) {
   return (
-    <p className="border-l-2 border-accent bg-accent-wash py-2 pl-4 text-sm leading-relaxed text-ink-subtle">
+    <p className="rounded-r-xl border-l-2 border-white/70 bg-white/6 py-2.5 pr-4 pl-4 text-[15px] leading-[1.7] text-ink">
       {children}
     </p>
   );
@@ -78,7 +84,7 @@ function TableShell({ caption, children }: { caption: string; children: React.Re
 
 function HeadRow({ headers }: { headers: string[] }) {
   return (
-    <thead className="text-xs text-ink-faint">
+    <thead className="text-[13px] text-ink-faint">
       <tr>
         {headers.map((header) => (
           <th className="pb-3 font-medium" key={header} scope="col">
@@ -106,15 +112,15 @@ export function FieldTable({
         {rows.map((row) => (
           <tr key={row.name}>
             <th
-              className="py-3 pr-5 align-top font-mono text-xs font-normal whitespace-nowrap text-ink-muted"
+              className="py-3 pr-5 align-top font-mono text-[13px] font-normal whitespace-nowrap text-white"
               scope="row"
             >
               {row.name}
             </th>
-            <td className="py-3 pr-5 align-top text-xs whitespace-nowrap text-ink-faint">
+            <td className="py-3 pr-5 align-top text-[13px] whitespace-nowrap text-ink-faint">
               {row.type}
             </td>
-            <td className="py-3 align-top text-sm text-ink-subtle">
+            <td className="py-3 align-top text-sm leading-relaxed text-ink-muted">
               <Inlines source={row.detail} />
             </td>
           </tr>
@@ -132,12 +138,12 @@ export function RouteTable({ caption, rows }: { caption: string; rows: DocRouteR
         {rows.map((row) => (
           <tr key={`${row.method} ${row.path}`}>
             <th
-              className="py-3 pr-5 align-top font-mono text-xs font-normal text-ink-muted"
+              className="py-3 pr-5 align-top font-mono text-[13px] font-normal text-white"
               scope="row"
             >
-              <span className="text-accent-text">{row.method}</span> {row.path}
+              <span className="text-mint">{row.method}</span> {row.path}
             </th>
-            <td className="py-3 align-top text-sm text-ink-subtle">
+            <td className="py-3 align-top text-sm leading-relaxed text-ink-muted">
               <Inlines source={row.detail} />
             </td>
           </tr>
@@ -391,7 +397,7 @@ export function StylePreviews({ styles }: { styles: DocStylePreview[] }) {
           {style.nativeScreenshot === false ? (
             <LaPreviewCard name={style.name} />
           ) : (
-            <div className="overflow-hidden rounded-2xl border border-line bg-black shadow-lg">
+            <div className="overflow-hidden rounded-2xl bg-black shadow-[0_10px_30px_rgb(0_16_12/0.28),inset_0_0_0_1px_rgb(255_255_255/0.1)]">
               <img
                 alt={`${style.name} Live Activity on the Lock Screen and Dynamic Island`}
                 className="block h-auto w-full"
@@ -403,11 +409,11 @@ export function StylePreviews({ styles }: { styles: DocStylePreview[] }) {
               />
             </div>
           )}
-          <figcaption className="mt-2.5 text-xs leading-relaxed text-ink-subtle">
-            <code className="font-mono text-ink-muted">{style.name}</code> — {style.description}
+          <figcaption className="mt-2.5 text-sm leading-relaxed text-ink-muted">
+            <code className="font-mono text-white">{style.name}</code> — {style.description}
           </figcaption>
           {style.nativeScreenshot === false ? null : (
-            <details className="mt-2 text-[11px] text-ink-muted">
+            <details className="mt-2 text-[13px] text-ink-faint">
               <summary className="cursor-pointer select-none">Layout illustration</summary>
               <div className="mt-2">
                 <LaPreviewCard name={style.name} />
@@ -427,11 +433,11 @@ export function PlanTable({ caption, rows }: { caption: string; rows: DocPlanRow
       <tbody className="divide-y divide-line border-y border-line">
         {rows.map((row) => (
           <tr key={row.limit}>
-            <th className="py-3 pr-5 text-sm font-normal text-ink-subtle" scope="row">
+            <th className="py-3 pr-5 text-sm font-normal text-ink-muted" scope="row">
               {row.limit}
             </th>
-            <td className="py-3 pr-5 font-mono text-xs text-ink-muted">{row.free}</td>
-            <td className="py-3 font-mono text-xs text-ink-muted">{row.pro}</td>
+            <td className="py-3 pr-5 font-mono text-[13px] text-white">{row.free}</td>
+            <td className="py-3 font-mono text-[13px] text-white">{row.pro}</td>
           </tr>
         ))}
       </tbody>

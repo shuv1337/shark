@@ -1,8 +1,8 @@
 import { type TokenKind, tokenize } from "../lib/highlight";
 
 /**
- * The code surface is dark in both themes, so a single set of syntax colours
- * works everywhere and none of these need a `dark:` counterpart.
+ * The code surface is a dark panel under the green, so one set of syntax
+ * colours tuned for dark backgrounds works everywhere.
  */
 const KIND_CLASS: Record<Exclude<TokenKind, "plain">, string> = {
   key: "text-code-key",
@@ -35,7 +35,7 @@ export function CodeBlock({ code, language }: { code: string; language: "json" |
   }
 
   return (
-    <pre className="bg-code text-code-ink overflow-x-auto rounded-xl p-4 font-mono text-xs leading-relaxed">
+    <pre className="overflow-x-auto rounded-2xl bg-code p-4 font-mono text-[13px] leading-relaxed text-code-ink shadow-[inset_0_0_0_1px_rgb(255_255_255/0.08)]">
       <code>{nodes}</code>
     </pre>
   );
