@@ -4,7 +4,9 @@ import { HTTPException } from "hono/http-exception";
 import { auth } from "./auth";
 import { env } from "./env";
 import { databaseIsReady } from "./lib/readiness";
+import { safeReturnPath } from "./lib/return-path";
 import { beginAppleWebSignIn } from "./lib/web-sign-in";
+import { verifyFirstPartyPass } from "./lib/web-view-session";
 import { requireAuth } from "./middleware";
 import { activitiesAgentRoute, activitiesSessionRoute } from "./routes/activities";
 import { activityHooksRoute } from "./routes/activity-hooks";
@@ -55,7 +57,24 @@ if (process.env.NODE_ENV !== "test") {
 app.get("/api/health", (c) =>
   databaseIsReady() ? c.json({ ok: true }) : c.json({ ok: false }, 503),
 );
-app.get("/login", () => beginAppleWebSignIn(auth.handler, env.APP_URL));
+app.get("/login", (c) =>
+  beginAppleWebSignIn(auth.handler, env.APP_URL, safeReturnPath(c.req.query("next"), env.APP_URL)),
+);
+// The iPhone web view trades a pass for its own browser session; see web-view-session.ts.
+app.post("/apps/enter", async (c) => {
+  const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
+  const pass = typeof form.pass === "string" ? form.pass : "";
+  const userId = pass ? await verifyFirstPartyPass(pass) : null;
+  c.header("Cache-Control", "no-store");
+  if (!userId) return c.text("Sign-in pass is invalid or expired", 401);
+  const { headers } = await auth.api.createWebViewSession({
+    body: { userId },
+    returnHeaders: true,
+  });
+  for (const cookie of headers.getSetCookie()) c.header("Set-Cookie", cookie, { append: true });
+  const next = typeof form.next === "string" ? form.next : null;
+  return c.redirect(safeReturnPath(next, env.APP_URL), 303);
+});
 app.get("/oss", requireAuth, (c) => c.redirect("https://github.com/shuv1337/shark/"));
 
 // Mounted before the static handler in index.ts so the generated markdown wins

@@ -9,6 +9,7 @@ import {
   pickStripColor,
   resolveLaunchUrl,
   webAppFromNotificationData,
+  webViewSource,
 } from "./web-apps";
 
 const app = { url: "https://shark.example/board", origin: "https://shark.example" };
@@ -81,5 +82,20 @@ describe("web app helpers", () => {
   it("tints letter tiles deterministically", () => {
     expect(fallbackTint("Sharkboard")).toEqual(fallbackTint("Sharkboard"));
     expect(fallbackTint("")).toBeDefined();
+  });
+
+  it("posts the pass to enter only for apps on SHark's own origin", () => {
+    const shark = "https://shark.example";
+    expect(webViewSource(`${shark}/board/ask/bask_1?x=1`, shark, shark, "p.a+ss")).toEqual({
+      uri: `${shark}/apps/enter`,
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "pass=p.a%2Bss&next=%2Fboard%2Fask%2Fbask_1%3Fx%3D1",
+    });
+    expect(webViewSource("https://other.example/", "https://other.example", shark, "pass")).toEqual(
+      { uri: "https://other.example/" },
+    );
+    expect(webViewSource(`${shark}/board`, shark, shark, null)).toEqual({ uri: `${shark}/board` });
+    expect(webViewSource(`${shark}/board`, shark, null, "pass")).toEqual({ uri: `${shark}/board` });
   });
 });

@@ -7,6 +7,7 @@ import * as schema from "./db/schema";
 import { env } from "./env";
 import { ADMISSION_DENIED_MESSAGE, isEmailAllowed } from "./lib/admission";
 import { appleAuthConfig, generateAppleClientSecret, revokeAppleGrantsForUser } from "./lib/apple";
+import { webViewSessionPlugin } from "./lib/web-view-session";
 
 export const auth = betterAuth({
   appName: "SHark",
@@ -89,7 +90,7 @@ export const auth = betterAuth({
       };
     },
   },
-  plugins: [expo()],
+  plugins: [expo(), webViewSessionPlugin()],
   trustedOrigins: [env.APP_URL, "https://appleid.apple.com", "shark://", "shark://*"],
   advanced: env.APP_URL.startsWith("https://")
     ? {

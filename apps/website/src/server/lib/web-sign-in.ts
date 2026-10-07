@@ -17,6 +17,7 @@ function unavailable(): Response {
 export async function beginAppleWebSignIn(
   authHandler: AuthHandler,
   appUrl: string,
+  callbackURL = "/dashboard",
 ): Promise<Response> {
   const response = await authHandler(
     new Request(new URL("/api/auth/sign-in/social", appUrl), {
@@ -27,7 +28,7 @@ export async function beginAppleWebSignIn(
       },
       body: JSON.stringify({
         provider: "apple",
-        callbackURL: "/dashboard",
+        callbackURL,
       }),
     }),
   );

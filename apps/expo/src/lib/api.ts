@@ -32,6 +32,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const cookie = getCookie();
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
+    // The session travels only in the explicit header. On iOS the shared cookie
+    // jar (which in-app web views also write to) otherwise replaces it.
+    credentials: "omit",
     headers: {
       "content-type": "application/json",
       ...(cookie ? { cookie } : {}),

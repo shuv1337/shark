@@ -32,7 +32,10 @@ export const requireAuth = createMiddleware<AuthedEnv>(async (c, next) => {
   const session = await auth.api.getSession({ headers: c.req.raw.headers });
   if (!session) {
     if (c.req.header("accept")?.includes("text/html")) {
-      return c.redirect("/login");
+      // Sign-in returns to the page that asked for it; the root lands on the dashboard anyway.
+      const { pathname, search } = new URL(c.req.url);
+      if (pathname === "/") return c.redirect("/login");
+      return c.redirect(`/login?next=${encodeURIComponent(`${pathname}${search}`)}`);
     }
     return c.json({ error: "Unauthorized" }, 401);
   }
