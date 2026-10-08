@@ -302,6 +302,13 @@ export const appSigningKey = sqliteTable("app_signing_key", {
   retiredAt: integer("retired_at", { mode: "timestamp_ms" }),
 });
 
+/** Sign-in passes already traded at `POST /apps/enter`; each `jti` enters once. */
+export const appPassUse = sqliteTable("app_pass_use", {
+  jti: text("jti").primaryKey(),
+  /** Pass expiry; rows past it may be pruned. */
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+});
+
 export const deviceAuthorizationRequest = sqliteTable(
   "device_authorization_request",
   {

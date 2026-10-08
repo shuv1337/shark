@@ -89,7 +89,7 @@ describe("web app helpers", () => {
     expect(webViewSource(`${shark}/board/ask/bask_1?x=1`, shark, shark, "p.a+ss")).toEqual({
       uri: `${shark}/apps/enter`,
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Shark-Entry": "1" },
       body: "pass=p.a%2Bss&next=%2Fboard%2Fask%2Fbask_1%3Fx%3D1",
     });
     expect(webViewSource("https://other.example/", "https://other.example", shark, "pass")).toEqual(

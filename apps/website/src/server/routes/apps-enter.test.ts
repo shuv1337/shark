@@ -28,14 +28,12 @@ vi.mock("../auth", () => ({
 
 let app: typeof import("../app")["app"];
 let issueAppPass: typeof import("../lib/app-pass")["issueAppPass"];
-let resetUsedPasses: typeof import("../lib/web-view-session")["resetUsedPasses"];
 
 const USER = { id: "user_1", name: "Cap", email: "test@example.com" };
 
 beforeAll(async () => {
   ({ app } = await import("../app"));
   ({ issueAppPass } = await import("../lib/app-pass"));
-  ({ resetUsedPasses } = await import("../lib/web-view-session"));
   const { db } = await import("../db");
   const schema = await import("../db/schema");
   const { runMigrations } = await import("../db/migrate");
@@ -82,8 +80,19 @@ beforeAll(async () => {
 beforeEach(() => {
   sessions.length = 0;
   signIns.length = 0;
-  resetUsedPasses();
 });
+
+const UNSAFE_NEXT = [
+  "//evil.example/x",
+  "https://evil.example/",
+  "/api/board",
+  "\\\\evil",
+  "/.//evil.example",
+  "/..//evil.example",
+  "/%2e//evil.example",
+  "/%2e%2e//evil.example",
+  "/foo/%2e%2e//evil.example",
+];
 
 async function pass(appId: string, origin = "https://shark.example"): Promise<string> {
   const issued = await issueAppPass({
@@ -93,10 +102,13 @@ async function pass(appId: string, origin = "https://shark.example"): Promise<st
   return issued.token;
 }
 
-async function enter(fields: Record<string, string>): Promise<Response> {
+async function enter(
+  fields: Record<string, string>,
+  headers: Record<string, string> = { "x-shark-entry": "1" },
+): Promise<Response> {
   return app.request("/apps/enter", {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
+    headers: { "content-type": "application/x-www-form-urlencoded", ...headers },
     body: new URLSearchParams(fields).toString(),
   });
 }
@@ -130,10 +142,31 @@ describe("POST /apps/enter", () => {
   });
 
   it("never redirects off the site", async () => {
-    for (const next of ["//evil.example/x", "https://evil.example/", "/api/board", "\\\\evil"]) {
+    for (const next of UNSAFE_NEXT) {
       const response = await enter({ pass: await pass("app_board0000"), next });
       expect(response.headers.get("location")).toBe("/dashboard");
     }
+  });
+
+  it("refuses cross-site form posts before spending the pass", async () => {
+    const token = await pass("app_board0000");
+    const crossSite: Array<Record<string, string>> = [
+      { origin: "https://evil.example" },
+      { origin: "https://evil.example", "x-shark-entry": "1" },
+      { "sec-fetch-site": "cross-site", "x-shark-entry": "1" },
+      { "sec-fetch-site": "same-site", "x-shark-entry": "1" },
+    ];
+    for (const headers of crossSite) {
+      const response = await enter({ pass: token, next: "/board" }, headers);
+      expect(response.status).toBe(403);
+      expect(response.headers.get("set-cookie")).toBeNull();
+    }
+    expect(sessions).toEqual([]);
+    const allowed = await enter(
+      { pass: token, next: "/board" },
+      { "x-shark-entry": "1", origin: "https://shark.example", "sec-fetch-site": "none" },
+    );
+    expect(allowed.status).toBe(303);
   });
 });
 
@@ -148,8 +181,12 @@ describe("sign-in return path", () => {
   });
 
   it("falls back to the dashboard for unsafe targets", async () => {
-    await app.request("/login?next=%2F%2Fevil.example");
+    for (const next of UNSAFE_NEXT) {
+      const response = await app.request(`/login?next=${encodeURIComponent(next)}`);
+      expect(response.status).toBe(302);
+    }
     await app.request("/login");
-    expect(signIns).toEqual(["/dashboard", "/dashboard"]);
+    expect(new Set(signIns)).toEqual(new Set(["/dashboard"]));
+    expect(signIns).toHaveLength(UNSAFE_NEXT.length + 1);
   });
 });

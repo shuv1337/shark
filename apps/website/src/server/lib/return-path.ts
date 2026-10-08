@@ -17,5 +17,12 @@ export function safeReturnPath(value: string | null | undefined, appUrl: string)
     return DEFAULT_RETURN_PATH;
   }
   if (/^\/(api|hooks|login)(\/|$)/.test(url.pathname)) return DEFAULT_RETURN_PATH;
-  return `${url.pathname}${url.search}`;
+  // Check the normalized result too: dot segments such as `/.//evil.example`
+  // collapse to a protocol-relative path that browsers resolve off-site.
+  const path = `${url.pathname}${url.search}`;
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting control characters is the point.
+  if (!path.startsWith("/") || path.startsWith("//") || /[\\\u0000-\u001f\u007f]/.test(path)) {
+    return DEFAULT_RETURN_PATH;
+  }
+  return path;
 }

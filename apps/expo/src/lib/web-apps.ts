@@ -74,7 +74,8 @@ export function webViewSource(
   return {
     uri: `${sharkOrigin}/apps/enter`,
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    // A header no HTML form can send: the server refuses entry without it.
+    headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Shark-Entry": "1" },
     body: `pass=${encodeURIComponent(pass)}&next=${encodeURIComponent(`${target.pathname}${target.search}`)}`,
   };
 }

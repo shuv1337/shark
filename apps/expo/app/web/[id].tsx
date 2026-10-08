@@ -379,9 +379,14 @@ export default function WebAppScreen() {
           // A spent entry pass cannot be posted again; fetch a fresh one first.
           if (app.origin !== SHARK_ORIGIN) return setReloadKey((key) => key + 1);
           void issuePass()
-            .then((pass) => setEntryPass(pass.token))
-            .catch(() => {})
-            .finally(() => setReloadKey((key) => key + 1));
+            .then((pass) => {
+              setEntryPass(pass.token);
+              setReloadKey((key) => key + 1);
+            })
+            .catch(() => {
+              setErrorMessage("The page stopped and couldn’t sign in again.");
+              setPhase("error");
+            });
         }}
         onError={(event) => {
           setErrorMessage(event.nativeEvent.description || "The page couldn’t be loaded.");

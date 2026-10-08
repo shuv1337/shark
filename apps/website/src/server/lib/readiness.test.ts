@@ -34,6 +34,7 @@ function makeDatabase(options?: { migrationCount?: number; latest?: number }) {
       "inbox_item_event",
       "app",
       "app_signing_key",
+      "app_pass_use",
       "board_ask",
       "board_ask_event",
       "board_work_item",

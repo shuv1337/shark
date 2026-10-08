@@ -2,11 +2,11 @@ import { APP_PASS_ALGORITHM, APP_PASS_JWT_TYPE } from "@hark/contracts";
 import type { BetterAuthPlugin } from "better-auth";
 import { APIError, createAuthEndpoint } from "better-auth/api";
 import { setSessionCookie } from "better-auth/cookies";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, lte } from "drizzle-orm";
 import { importJWK, type JWK, jwtVerify } from "jose";
 import * as z from "zod";
 import { db } from "../db";
-import { app, appSigningKey } from "../db/schema";
+import { app, appPassUse, appSigningKey } from "../db/schema";
 import { appPassIssuer, pairwiseSubject } from "./app-pass";
 
 /**
@@ -16,22 +16,32 @@ import { appPassIssuer, pairwiseSubject } from "./app-pass";
  * that web view. Passes for any other origin never reach a SHark session.
  */
 
-// Each pass enters once. Entries live only until the pass would have expired.
-const usedPasses = new Map<string, number>();
-
-function claimPass(jti: string, exp: number): boolean {
-  const now = Date.now() / 1000;
-  for (const [key, expiry] of usedPasses) {
-    if (expiry <= now) usedPasses.delete(key);
+/**
+ * Records a pass as spent. The primary key makes this atomic across processes
+ * and restarts: a second insert of the same `jti` fails, which means reuse.
+ */
+async function claimPass(jti: string, exp: number): Promise<boolean> {
+  const now = new Date();
+  await db.delete(appPassUse).where(lte(appPassUse.expiresAt, now));
+  try {
+    await db.insert(appPassUse).values({ jti, expiresAt: new Date(exp * 1000) });
+    return true;
+  } catch {
+    return false;
   }
-  if (usedPasses.has(jti)) return false;
-  usedPasses.set(jti, exp);
-  return true;
 }
 
-/** Test hook: forget which passes were used. */
-export function resetUsedPasses(): void {
-  usedPasses.clear();
+/**
+ * Whether a request to `POST /apps/enter` came from the SHark web view rather
+ * than a form on another site. HTML forms cannot set the custom header, and
+ * browsers mark cross-site navigations in `Origin` and `Sec-Fetch-Site`.
+ */
+export function isWebViewEntryRequest(request: Request): boolean {
+  if (request.headers.get("x-shark-entry") !== "1") return false;
+  const origin = request.headers.get("origin");
+  if (origin !== null && origin !== appPassIssuer()) return false;
+  const site = request.headers.get("sec-fetch-site");
+  return site === null || site === "none" || site === "same-origin";
 }
 
 /**
@@ -76,7 +86,7 @@ export async function verifyFirstPartyPass(token: string): Promise<string | null
     .limit(1);
   if (!owner || owner.origin !== origin || !owner.consentedAt) return null;
   if (sub !== pairwiseSubject(owner.userId, origin)) return null;
-  if (!claimPass(jti, exp)) return null;
+  if (!(await claimPass(jti, exp))) return null;
   return owner.userId;
 }
 
