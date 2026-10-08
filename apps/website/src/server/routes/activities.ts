@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  type InteractiveLiveActivityStyle,
   LIVE_ACTIVITY_DEFAULT_STALE_AFTER_SECONDS,
   LIVE_ACTIVITY_END_FIELDS,
   LIVE_ACTIVITY_SCHEMA_VERSION,
@@ -21,6 +22,7 @@ import { Hono } from "hono";
 import { db } from "../db";
 import {
   agentNotification,
+  apiToken,
   device,
   event,
   interaction,
@@ -620,6 +622,7 @@ type DeviceRow = typeof device.$inferSelect;
 export async function startInteractionLiveActivity(
   interactionRow: InteractionRow,
   targets: DeviceRow[],
+  style: InteractiveLiveActivityStyle = "approval",
 ): Promise<{ activityId: string | null; accepted: number; failed: number; errors: string[] }> {
   const capableTargets = targets.filter(
     (target) =>
@@ -648,7 +651,7 @@ export async function startInteractionLiveActivity(
     symbol: "warning",
     privacyMode: "standard",
     accentColor: "#D35C46",
-    style: "approval",
+    style,
     interaction: {
       id: interactionRow.id,
       kind: interactionKind,
@@ -689,6 +692,7 @@ export async function startInteractionLiveActivity(
         requesterTokenId: interactionRow.requesterTokenId,
         requesterServiceId: interactionRow.requesterServiceId,
         event: "start",
+        props,
         sequence: 0,
         createdAt: now,
       })
@@ -803,6 +807,7 @@ export async function resolveInteractionLiveActivity(
         requesterTokenId: row.requesterTokenId,
         requesterServiceId: row.requesterServiceId,
         event: "end",
+        props,
         sequence: row.sequence,
         createdAt: now,
       })
@@ -1312,6 +1317,7 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       activityId: row.id,
       requesterTokenId: token.id,
       event: "start",
+      props,
       sequence: row.sequence,
       idempotencyKey: key ?? null,
       requestHash: key ? requestHash : null,
@@ -1479,6 +1485,7 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
             activityId: updated.id,
             requesterTokenId: token.id,
             event: "update",
+            props,
             sequence: updated.sequence,
             idempotencyKey: key ?? null,
             requestHash: key ? requestHash : null,
@@ -1640,6 +1647,7 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
             activityId: updated.id,
             requesterTokenId: token.id,
             event: "end",
+            props,
             sequence: updated.sequence,
             idempotencyKey: key ?? null,
             requestHash: key ? requestHash : null,
@@ -1696,8 +1704,15 @@ export const activitiesSessionRoute = new Hono<AuthedEnv>()
   .use("*", requireAuth)
   .get("/", async (c) => {
     const rows = await db
-      .select()
+      .select({
+        row: liveActivity,
+        tokenName: apiToken.name,
+        serviceName: service.title,
+        serviceImageUrl: service.imageUrl,
+      })
       .from(liveActivity)
+      .leftJoin(apiToken, eq(liveActivity.requesterTokenId, apiToken.id))
+      .leftJoin(service, eq(liveActivity.requesterServiceId, service.id))
       .where(
         and(
           eq(liveActivity.userId, c.get("user").id),
@@ -1707,9 +1722,19 @@ export const activitiesSessionRoute = new Hono<AuthedEnv>()
       )
       .orderBy(desc(liveActivity.updatedAt))
       .limit(20);
+    const activities = await Promise.all(
+      rows.map(async ({ row, tokenName, serviceName, serviceImageUrl }) => ({
+        ...toLiveActivityDto(await expireLiveActivity(row)),
+        sourceName:
+          serviceName ??
+          tokenName ??
+          (typeof row.props.title === "string" ? row.props.title : "SHark"),
+        sourceImageUrl: serviceImageUrl,
+      })),
+    );
     return c.json({
-      activities: await Promise.all(rows.map(expireLiveActivity)).then((items) =>
-        items.map(toLiveActivityDto),
+      activities: activities.filter((item) =>
+        ["starting", "active", "partial"].includes(item.status),
       ),
     });
   });

@@ -27,8 +27,7 @@ changes.
   endpoint. Do not copy Hark's `hark.ryan.ceo` URL from upstream patches.
 - Delivered notification withdrawal fans out silent commands to Expo, web push, and macOS.
   Upstream Hark is iOS-only. SHark also cancels a still-pending interaction, projects
-  `withdrawn` / `withdraw_partial` through the durable inbox, and marks `inbox_item.readAt`
-  instead of an `event.readAt` column. Notification Center removal remains best effort.
+  `withdrawn` / `withdraw_partial` through the durable inbox, and synchronizes read state between source rows and `inbox_item.readAt`. Notification Center removal remains best effort.
 - Coding-agent permission bridges (`sharkctl permissions`) are ported from Hark with SHark names
   and paths: LaunchAgent `dev.shuv.shark-permission-bridge`, state under
   `~/Library/Application Support/SHark/permission-bridge`, and no Hark artwork URLs. Setup and
@@ -57,8 +56,8 @@ changes.
   shuvcode/OpenCode v2 protocol only; Codex/Claude fail closed. This adds no harness-aware server
   state and changes no SHark API or credential boundary. See [broker setup and limits](../packages/shark-broker/README.md).
 
-- Web apps and signed passes are ported from upstream Hark `8e14ede`/`a84813a` without the
-  upstream project link, home-screen swap, or font change: `app` and `app_signing_key` tables,
+- Web apps and signed passes are ported from upstream Hark `8e14ede`/`a84813a` with the
+  upstream project link and apps home screen, retaining the SHark font and theme: `app` and `app_signing_key` tables,
   nullable `app_id` on `event` and `agent_notification`, `/api/agent/apps`, `/api/apps`, the
   anonymous `/.well-known/jwks.json`, `sharkctl apps` and `notify --app`, and the iPhone web view.
   The JWT `typ` `hark-pass+jwt` and the `app_` id prefix stay as protocol identifiers.
@@ -66,10 +65,47 @@ changes.
   `board_*` tables, `board:read`/`board:write` scopes, a per-user server-sent event stream, and a
   callback worker beside the interaction one. Upstream tables are referenced, never altered. No
   token scope can answer an ask; answers come only from an admitted same-origin session.
-- Upstream review 2026-10-06 (upstream `main` at `a84813a`): a probe merge produced 66 conflicts
-  across 168 files and both histories carry a different migration `0019`, so `upstream/main` is
-  still never merged. Skipped: `f743f61` project inbox and app icons, `2647efe` contracts CI fix,
-  `c98ccfa` version bump. See `PLAN-sharkboard.md`.
+- Integration 2026-10-08 merges upstream `d9237a9` as a real second parent, superseding the
+  earlier selective-port-only policy. The website visual redesign is excluded. Existing migrations
+  `0000` through `0022` remain byte-for-byte unchanged; all missing upstream schema changes are
+  consolidated into additive `0023_upstream_project_inbox` against SHark's actual schema.
+
+## Full upstream integration, 2026-10-08
+
+Included: project grouping, full notification bodies and summaries, markdown/link rendering, read
+state and opaque mark-all-read boundaries, pending prompts and activity history, app metadata and
+apps-as-home navigation, alternate icons, modular standard and interactive Live Activity layouts,
+service/device/app/token management APIs and CLI commands, fixed-entitlement lookup, and authenticated
+OpenAPI. The original durable inbox and board remain accessible. Project inbox read state is synced
+both ways, including interactive webhook deliveries and lazily materialized durable rows.
+
+Deliberate merge resolutions:
+
+- Keep the existing website client, CSS, public assets, private shells, marketing removal, and
+  private documentation surfaces. Server/API code under `apps/website` is included because the
+  iOS and CLI functionality depends on it.
+- Keep SHark names/artwork, adaptive red/navy theme, Apple-only allowlist auth, operator signing and
+  bundle configuration, version/build settings, local analytics, deployment/backup tooling, broker,
+  and newer dependency/Expo patch versions. Do not import upstream broadcast or product analytics.
+- Add alternate icons using the SHark mark, not upstream solid-color icons. The old solid-color
+  generator is excluded; `brand:generate` owns every generated icon.
+- Keep multi-platform delivery and withdrawal, HTTP(S)-only tap destinations, SSHuv handoff,
+  durable inline replies, late Live Activity token replay/diagnostics, and existing wait/expiry
+  semantics. Agent withdrawal uses the same claim/rollback/idempotent lifecycle as webhook withdrawal.
+- Keep transport-time push fitting: one oversized target must not prevent other transports from
+  settling. Long bodies remain intact in storage and summaries feed push previews.
+- Keep stable JSON CLI output (upstream human-readable app output is not adopted), native protocol
+  identifiers, `sharkctl` package location, and the `skills/shark` skill.
+- OpenAPI requires an admitted API credential. Billing returns the fixed self-host entitlement.
+  Token management cannot mint credentials, agent scopes cannot answer prompts or approve app consent.
+
+This branch is an integration candidate. Automated validation does not establish physical iPhone
+rendering, notification removal, app-icon switching, or production readiness. Validation: 734 automated tests passed (2 existing broker tests skipped), workspace type checks,
+production build, iOS Hermes export, lint (one existing optional-chain warning), and deterministic
+brand checks passed. Existing migration files and website frontend were verified unchanged.
+
+Native app rebuilding
+is required for the new alternate-icon plugin. Deploy and device acceptance remain separate work.
 
 ## CLI and compatibility names
 

@@ -277,3 +277,32 @@ object; diagnostics use stderr.
 
 Exit codes: `0` success/approved/yes/replied, `1` API error, `2` usage error, `3` authentication or
 scope error, `4` timeout/canceled/expired, `5` denied/no, `6` network error, `7` no push accepted.
+
+## Project inbox and account commands
+
+Notifications accept `--project <name>`, `--summary <text>`, and `--markdown`. Bodies may hold
+8,000 characters and 16 KiB of UTF-8; summaries hold 500 characters. Push previews are byte-fit
+at transport time while the full body stays in the inbox. Interactive Live Activities also accept
+`--style approval|shell|verdict|signal` with `notify ask --live-activity`.
+
+- `inbox projects`, `inbox list [--project <id|unfiled>] [--unread] [--limit <n>] [--cursor <c>]`,
+  and `inbox get <event:evt_id|notification:anot_id>` read the project inbox (`inbox:read`).
+- `inbox read <id>`, `inbox unread <id>`, and `inbox read-all [--project <id|unfiled>]` require
+  `inbox:write`. Read-all captures an opaque boundary so concurrent arrivals remain unread.
+- `interaction list` reads pending prompts; agents cannot answer them.
+- `activity feed [--filter all|notification|live_activity|response] [--page <n>]` requires the
+  opt-in `events:read` scope and returns 20 history entries per page.
+- `notify withdraw <id>` sends a silent removal command across supported devices, persists the
+  result, and marks the inbox copy read. Replays do not resend. Removal on a device is best effort.
+- `services get <id>`, `services update <id>`, `services rotate <id>`, and `services remove <id>`
+  manage existing services. Rotation returns a secret webhook URL once and invalidates the old URL.
+- `devices remove <id>` requires `devices:write`; device registration still requires the app.
+- `apps create` accepts `--project`; `apps get`, `apps update`, and `apps revoke` manage existing
+  apps. Updates accept `--name`, `--url`, `--icon` / `--no-icon`, and `--project` / `--no-project`.
+  Moving origin clears consent. All SHark CLI success output remains JSON, including these commands.
+- `billing` reports the fixed self-hosted entitlement (`billing:read`); there is no paid checkout.
+- `tokens list` and `tokens revoke <id>` require opt-in `tokens:manage`. Agents cannot mint tokens.
+
+New logins include inbox, device-write, and billing-read scopes; older credentials do not gain
+scopes automatically. The authenticated `/api/agent/openapi.json` describes the full agent API,
+including SHark's board routes. Read-state changes are shared with the original durable inbox.

@@ -34,6 +34,8 @@ export interface ResolvedNotification {
   body: string;
   imageUrl?: string;
   url?: string;
+  /** Sender-supplied digest; when present it replaces the body in push text. */
+  summary?: string;
 }
 
 /** Webhook overrides win; otherwise fall back to the service defaults. */
@@ -46,6 +48,7 @@ export function resolveNotification(
     body: request.body,
     imageUrl: request.imageUrl ?? service.imageUrl ?? undefined,
     url: request.url ?? service.url ?? undefined,
+    ...(request.summary !== undefined ? { summary: request.summary } : {}),
   };
 }
 
@@ -57,6 +60,7 @@ export interface BuildPushInput {
   conversationKey?: string;
   /** Web app opened on tap; never dropped when the payload is byte-fit. */
   appId?: string;
+  projectId?: string | null;
   resolved: ResolvedNotification;
 }
 
@@ -90,7 +94,7 @@ export function buildWelcomePushMessages(to: string): ExpoPushMessage[] {
 }
 
 export function buildPushMessages(input: BuildPushInput): ExpoPushMessage[] {
-  const { to, eventId, serviceId, conversationKey, appId, resolved } = input;
+  const { to, eventId, serviceId, conversationKey, appId, projectId, resolved } = input;
   const data: PushData = {
     v: PUSH_SCHEMA_VERSION,
     eventId,
@@ -101,12 +105,13 @@ export function buildPushMessages(input: BuildPushInput): ExpoPushMessage[] {
     ...(resolved.url ? { url: resolved.url } : {}),
     conversationId: `hark-${conversationKey ?? serviceId}`,
     ...(appId ? { appId } : {}),
+    ...(projectId ? { projectId } : {}),
   };
 
   return to.map((token) => ({
     to: token,
     title: resolved.title,
-    body: resolved.body,
+    body: resolved.summary ?? resolved.body,
     priority: "high",
     mutableContent: true,
     ...(resolved.imageUrl ? { richContent: { image: resolved.imageUrl } } : {}),

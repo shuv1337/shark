@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import {
   type AgentNotificationDto,
+  type AgentNotificationWithdrawResponse,
   agentNotificationCreateSchema,
+  type InboxInteractionDto,
   type InteractionDto,
   type InteractionKind,
   type InteractionStatus,
@@ -9,7 +11,6 @@ import {
   interactionCredentialResponseSchema,
   interactionResponseSchema,
   liveActivityInteractionResponseSchema,
-  serviceCreateSchema,
 } from "@hark/contracts";
 import { and, count, desc, eq, gt, gte, inArray, isNull, lte } from "drizzle-orm";
 import { Hono } from "hono";
@@ -35,6 +36,8 @@ import { checkNotificationAllowance, getBilling, trackNotification } from "../li
 import { newId } from "../lib/id";
 import { deliverInteractionCallbacks } from "../lib/interaction-callbacks";
 import { verifyLiveActivityInteractionCredential } from "../lib/live-activity-interaction";
+import { notificationEventTag } from "../lib/notification-withdrawal";
+import { resolveProjectForDelivery } from "../lib/projects";
 import { buildInteractionPushMessages, buildPushMessages, sendPushFanout } from "../lib/push";
 import { hashInteractionResponseToken } from "../lib/token";
 import {
@@ -49,7 +52,7 @@ import {
   resolveInteractionLiveActivity,
   startInteractionLiveActivity,
 } from "./activities";
-import { createServiceForUser } from "./services";
+import { pushWithdrawalCommand } from "./hooks";
 
 type InteractionRow = typeof interaction.$inferSelect;
 
@@ -203,6 +206,9 @@ type NotificationRow = typeof agentNotification.$inferSelect;
 function toNotificationDto(row: NotificationRow): AgentNotificationDto {
   return {
     id: row.id,
+    projectId: row.projectId,
+    summary: row.summary,
+    bodyFormat: row.bodyFormat === "markdown" ? "markdown" : "text",
     title: row.title,
     body: row.body,
     imageUrl: row.imageUrl,
@@ -246,6 +252,43 @@ async function insertAgentNotification(
   }
 }
 
+/** The account's answerable prompts from every source, newest first. */
+async function listPendingInteractions(userId: string): Promise<InboxInteractionDto[]> {
+  const now = new Date();
+  const rows = await db
+    .select({
+      row: interaction,
+      tokenName: apiToken.name,
+      serviceName: service.title,
+      serviceImageUrl: service.imageUrl,
+      projectId: event.projectId,
+    })
+    .from(interaction)
+    .leftJoin(apiToken, eq(interaction.requesterTokenId, apiToken.id))
+    .leftJoin(service, eq(interaction.requesterServiceId, service.id))
+    .leftJoin(event, eq(interaction.eventId, event.id))
+    .where(
+      and(
+        eq(interaction.userId, userId),
+        eq(interaction.status, "pending"),
+        gt(interaction.expiresAt, now),
+      ),
+    )
+    .orderBy(desc(interaction.createdAt))
+    .limit(50);
+  return rows.map(({ row, tokenName, serviceName, serviceImageUrl, projectId }) => ({
+    ...toDto(row),
+    sourceName: serviceName ?? tokenName ?? row.title,
+    sourceImageUrl: row.imageUrl ?? serviceImageUrl,
+    projectId,
+  }));
+}
+
+/** Accepts the bare `anot_…` ID or the inbox composite `notification:anot_…`. */
+function agentNotificationIdFrom(value: string): string {
+  return value.startsWith("notification:") ? value.slice("notification:".length) : value;
+}
+
 export const agentRoute = new Hono<AgentEnv>()
   .use("*", requireApiToken)
   .get("/auth/status", (c) => {
@@ -270,101 +313,6 @@ export const agentRoute = new Hono<AgentEnv>()
       .where(and(eq(apiToken.id, c.get("apiToken").id), isNull(apiToken.revokedAt)));
     track({ name: "api_token_revoked", userId: c.get("apiToken").userId, outcome: "agent" });
     return c.json({ ok: true });
-  })
-  .get("/devices", requireScopes("devices:read"), async (c) => {
-    const userId = c.get("apiToken").userId;
-    const [rows, webRows, macosRows] = await Promise.all([
-      db
-        .select({
-          id: device.id,
-          platform: device.platform,
-          deviceName: device.deviceName,
-          active: device.active,
-          liveActivityPushToStartTokenCiphertext: device.liveActivityPushToStartTokenCiphertext,
-          liveActivityTokenEnvironment: device.liveActivityTokenEnvironment,
-          liveActivityTokenUpdatedAt: device.liveActivityTokenUpdatedAt,
-          liveActivityInteractionVersion: device.liveActivityInteractionVersion,
-          createdAt: device.createdAt,
-          lastSeenAt: device.lastSeenAt,
-        })
-        .from(device)
-        .where(eq(device.userId, userId)),
-      db.select().from(webPushSubscription).where(eq(webPushSubscription.userId, userId)),
-      db.select().from(macosDevice).where(eq(macosDevice.userId, userId)),
-    ]);
-    return c.json({
-      devices: [
-        ...rows.map((row) => ({
-          id: row.id,
-          platform: "ios" as const,
-          deviceName: row.deviceName,
-          active: row.active,
-          liveActivitiesCapable: Boolean(row.liveActivityPushToStartTokenCiphertext),
-          liveActivityTokenEnvironment:
-            row.liveActivityTokenEnvironment === "sandbox" ||
-            row.liveActivityTokenEnvironment === "production"
-              ? row.liveActivityTokenEnvironment
-              : null,
-          liveActivityTokenUpdatedAt: row.liveActivityTokenUpdatedAt?.toISOString() ?? null,
-          interactiveLiveActivitiesCapable: row.liveActivityInteractionVersion === 1,
-          createdAt: row.createdAt.toISOString(),
-          lastSeenAt: row.lastSeenAt.toISOString(),
-        })),
-        ...webRows.map((row) => ({
-          id: row.id,
-          platform: "web" as const,
-          deviceName: row.deviceName,
-          active: row.active,
-          liveActivitiesCapable: false,
-          liveActivityTokenEnvironment: null,
-          liveActivityTokenUpdatedAt: null,
-          interactiveLiveActivitiesCapable: false,
-          createdAt: row.createdAt.toISOString(),
-          lastSeenAt: row.lastSeenAt.toISOString(),
-        })),
-        ...macosRows.map((row) => ({
-          id: row.id,
-          platform: "macos" as const,
-          deviceName: row.deviceName,
-          active: row.active,
-          liveActivitiesCapable: false,
-          liveActivityTokenEnvironment: null,
-          liveActivityTokenUpdatedAt: null,
-          interactiveLiveActivitiesCapable: false,
-          createdAt: row.createdAt.toISOString(),
-          lastSeenAt: row.lastSeenAt.toISOString(),
-        })),
-      ].sort((a, b) => Date.parse(b.lastSeenAt) - Date.parse(a.lastSeenAt)),
-    });
-  })
-  .get("/services", requireScopes("services:read"), async (c) => {
-    const rows = await db
-      .select({
-        id: service.id,
-        title: service.title,
-        imageUrl: service.imageUrl,
-        url: service.url,
-        createdAt: service.createdAt,
-        updatedAt: service.updatedAt,
-      })
-      .from(service)
-      .where(eq(service.userId, c.get("apiToken").userId))
-      .orderBy(desc(service.createdAt));
-    return c.json({
-      services: rows.map((row) => ({
-        ...row,
-        createdAt: row.createdAt.toISOString(),
-        updatedAt: row.updatedAt.toISOString(),
-      })),
-    });
-  })
-  .post("/services", requireScopes("services:write"), async (c) => {
-    const parsed = serviceCreateSchema.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) {
-      return c.json({ error: "Invalid service", issues: parsed.error.issues }, 400);
-    }
-    const response = await createServiceForUser(c.get("apiToken").userId, parsed.data);
-    return c.json(response, 201);
   })
   .get("/events", requireScopes("events:read"), async (c) => {
     const requested = Number.parseInt(c.req.query("limit") ?? "50", 10);
@@ -468,6 +416,13 @@ export const agentRoute = new Hono<AgentEnv>()
       return c.json({ error: "Monthly notification limit reached" }, 429);
     }
 
+    // Resolved after the idempotency replay checks above and before the
+    // insert below, so replays keep their originally stored project and a
+    // full account never fails the delivery.
+    const projectResolution = parsed.data.project
+      ? await resolveProjectForDelivery(token.userId, parsed.data.project)
+      : { projectId: null };
+
     const notificationId = newId("anot");
     const values: typeof agentNotification.$inferInsert = {
       id: notificationId,
@@ -484,6 +439,9 @@ export const agentRoute = new Hono<AgentEnv>()
       idempotencyKey: idempotencyKey ?? null,
       requestHash: idempotencyKey ? requestHash : null,
       appId: parsed.data.appId ?? null,
+      projectId: projectResolution.projectId,
+      summary: parsed.data.summary ?? null,
+      bodyFormat: parsed.data.bodyFormat ?? null,
       createdAt: new Date(),
     };
 
@@ -529,6 +487,7 @@ export const agentRoute = new Hono<AgentEnv>()
       to: selectedDevices.map((selected) => selected.expoPushToken),
       eventId: notificationId,
       serviceId: token.id,
+      projectId: projectResolution.projectId,
       // Thread per sender name: each distinct --title from an agent
       // connection behaves like its own source, matching per-service
       // threading on the webhook surface.
@@ -539,7 +498,7 @@ export const agentRoute = new Hono<AgentEnv>()
       ...(parsed.data.appId ? { appId: parsed.data.appId } : {}),
       resolved: {
         title: parsed.data.title,
-        body: parsed.data.body,
+        body: parsed.data.summary ?? parsed.data.body,
         imageUrl: parsed.data.imageUrl,
         url: parsed.data.url,
       },
@@ -549,17 +508,22 @@ export const agentRoute = new Hono<AgentEnv>()
       webSubscriptions: selectedWebSubscriptions,
       webPayload: {
         title: parsed.data.title,
-        body: parsed.data.body,
+        body: parsed.data.summary ?? parsed.data.body,
         url: parsed.data.url ?? "/dashboard",
         ...(parsed.data.imageUrl ? { imageUrl: parsed.data.imageUrl } : {}),
-        tag: `agent-${token.id}`,
+        eventId: notificationId,
+        tag: notificationEventTag(notificationId),
       },
       macosDevices: selectedMacosDevices,
       macosPayload: {
         title: parsed.data.title,
-        body: parsed.data.body,
+        body: parsed.data.summary ?? parsed.data.body,
         threadId: `agent-${token.id}`,
-        data: { notificationId, ...(parsed.data.url ? { url: parsed.data.url } : {}) },
+        data: {
+          notificationId,
+          eventId: notificationId,
+          ...(parsed.data.url ? { url: parsed.data.url } : {}),
+        },
       },
     });
     if (result.staleTokens.length > 0) {
@@ -633,11 +597,80 @@ export const agentRoute = new Hono<AgentEnv>()
         // Provider errors can embed push tokens, so the reason is deliberately coarse.
         ...(result.accepted === 0
           ? { message: "No notification provider accepted the request." }
-          : {}),
+          : projectResolution.message
+            ? { message: projectResolution.message }
+            : {}),
       },
       201,
     );
   })
+  // Claim before fanout so concurrent withdrawals cannot duplicate commands.
+  .post("/notifications/:id/withdraw", requireScopes("notifications:send"), async (c) => {
+    const userId = c.get("apiToken").userId;
+    const [row] = await db
+      .select()
+      .from(agentNotification)
+      .where(
+        and(
+          eq(agentNotification.id, agentNotificationIdFrom(c.req.param("id"))),
+          eq(agentNotification.userId, userId),
+        ),
+      )
+      .limit(1);
+    if (!row) return c.json({ error: "Notification not found" }, 404);
+    if (row.status === "withdrawn" || row.status === "withdraw_partial") {
+      return c.json<AgentNotificationWithdrawResponse>({
+        ok: true,
+        notificationId: row.id,
+        status: row.status,
+        accepted: 0,
+        idempotent: true,
+      });
+    }
+    if (!["accepted", "delivered", "partial", "failed", "no_devices"].includes(row.status)) {
+      return c.json({ error: "Notification is still processing" }, 409);
+    }
+    const [claimed] = await db
+      .update(agentNotification)
+      .set({ status: "withdraw_processing" })
+      .where(and(eq(agentNotification.id, row.id), eq(agentNotification.status, row.status)))
+      .returning({ id: agentNotification.id });
+    if (!claimed) return c.json({ error: "Withdrawal already in progress" }, 409);
+    const restore = () =>
+      db
+        .update(agentNotification)
+        .set({ status: row.status })
+        .where(
+          and(
+            eq(agentNotification.id, row.id),
+            eq(agentNotification.status, "withdraw_processing"),
+          ),
+        );
+    try {
+      const result = await pushWithdrawalCommand(userId, row.id);
+      if (result.targets > 0 && result.accepted === 0) {
+        await restore();
+        return c.json({ error: "Withdrawal delivery failed" }, 502);
+      }
+      const status = result.accepted < result.targets ? "withdraw_partial" : "withdrawn";
+      await db
+        .update(agentNotification)
+        .set({ status, readAt: row.readAt ?? new Date() })
+        .where(eq(agentNotification.id, row.id));
+      return c.json<AgentNotificationWithdrawResponse>({
+        ok: true,
+        notificationId: row.id,
+        status,
+        accepted: result.accepted,
+      });
+    } catch (error) {
+      await restore();
+      throw error;
+    }
+  })
+  .get("/interactions", requireScopes("interactions:read"), async (c) =>
+    c.json({ interactions: await listPendingInteractions(c.get("apiToken").userId) }),
+  )
   .post("/interactions", requireScopes("interactions:create", "notifications:send"), async (c) => {
     const token = c.get("apiToken");
     const parsed = interactionCreateSchema.safeParse(await c.req.json().catch(() => null));
@@ -775,10 +808,21 @@ export const agentRoute = new Hono<AgentEnv>()
         : parsed.data.kind === "yes_no"
           ? ["yes", "no"]
           : ["reply"];
+    const liveActivityStyle = parsed.data.style ?? "approval";
     const primaryLabel =
-      parsed.data.primaryLabel ?? (parsed.data.kind === "approval" ? "Approve" : "Yes");
+      parsed.data.primaryLabel ??
+      (parsed.data.kind === "approval"
+        ? liveActivityStyle === "verdict"
+          ? "Allow"
+          : "Approve"
+        : "Yes");
     const secondaryLabel =
-      parsed.data.secondaryLabel ?? (parsed.data.kind === "approval" ? "Deny" : "No");
+      parsed.data.secondaryLabel ??
+      (parsed.data.kind === "approval"
+        ? liveActivityStyle === "verdict"
+          ? "Don’t Allow"
+          : "Deny"
+        : "No");
     const actionDigest = digest({
       interactionId,
       title: parsed.data.title,
@@ -871,7 +915,11 @@ export const agentRoute = new Hono<AgentEnv>()
       );
     }
     if (presentation === "live_activity") {
-      const liveResult = await startInteractionLiveActivity(row, selectedDevices);
+      const liveResult = await startInteractionLiveActivity(
+        row,
+        selectedDevices,
+        liveActivityStyle,
+      );
       const [updated] = await db
         .update(interaction)
         .set({ acceptedCount: liveResult.accepted })
@@ -1094,6 +1142,7 @@ export const agentRoute = new Hono<AgentEnv>()
 
 export const interactionResponseRoute = new Hono<AuthedEnv>()
   .use("*", requireAuth)
+  .get("/", async (c) => c.json({ interactions: await listPendingInteractions(c.get("user").id) }))
   .post("/:id/respond", async (c) => {
     const parsed = interactionResponseSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) {

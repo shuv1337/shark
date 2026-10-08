@@ -175,6 +175,8 @@ export const previewApps: AppDto[] = [
     origin: "https://shark.shuv.dev",
     iconUrl: null,
     url: "https://shark.shuv.dev/board",
+    projectId: null,
+    projectName: null,
     shareName: true,
     shareEmail: false,
     consentedAt: null,

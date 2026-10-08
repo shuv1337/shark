@@ -1,19 +1,24 @@
 import { type AppDto, type AppSummaryDto, appOrigin } from "@hark/contracts";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db";
-import { apiToken, app } from "../db/schema";
+import { apiToken, app, project } from "../db/schema";
 
 export type AppRow = typeof app.$inferSelect;
 
 /** Selection shared by every AppDto read: the app plus its display joins. */
 export function selectAppsWithJoins() {
   return db
-    .select({ app, createdBy: apiToken.name })
+    .select({ app, projectName: project.name, createdBy: apiToken.name })
     .from(app)
+    .leftJoin(project, eq(project.id, app.projectId))
     .leftJoin(apiToken, eq(apiToken.id, app.createdByTokenId));
 }
 
-export function toAppDto(row: { app: AppRow; createdBy: string | null }): AppDto {
+export function toAppDto(row: {
+  app: AppRow;
+  projectName: string | null;
+  createdBy: string | null;
+}): AppDto {
   const { app: value } = row;
   return {
     id: value.id,
@@ -21,6 +26,8 @@ export function toAppDto(row: { app: AppRow; createdBy: string | null }): AppDto
     origin: value.origin,
     iconUrl: value.iconUrl,
     url: value.url,
+    projectId: value.projectId,
+    projectName: value.projectId ? row.projectName : null,
     shareName: value.shareName,
     shareEmail: value.shareEmail,
     consentedAt: value.consentedAt?.toISOString() ?? null,

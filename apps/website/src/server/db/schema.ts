@@ -111,6 +111,28 @@ export const service = sqliteTable(
   (table) => [index("service_user_id_idx").on(table.userId)],
 );
 
+/**
+ * User-scoped notification project. Identity is the case-insensitive,
+ * NFC-normalized name; the display name keeps the sender's original casing.
+ */
+export const project = sqliteTable(
+  "project",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    normalizedName: text("normalized_name").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("project_user_normalized_name_unique").on(table.userId, table.normalizedName),
+    index("project_user_created_at_idx").on(table.userId, table.createdAt),
+  ],
+);
+
 export const device = sqliteTable("device", {
   id: text("id").primaryKey(),
   userId: text("user_id")
@@ -190,11 +212,17 @@ export const event = sqliteTable(
     requestHash: text("request_hash"),
     /** Web app opened on tap; delivery survives app deletion. */
     appId: text("app_id").references(() => app.id, { onDelete: "set null" }),
+    projectId: text("project_id").references(() => project.id, { onDelete: "set null" }),
+    readAt: integer("read_at", { mode: "timestamp_ms" }),
+    bodyFormat: text("body_format"),
+    summary: text("summary"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => [
     uniqueIndex("event_service_idempotency_key_unique").on(table.serviceId, table.idempotencyKey),
     index("event_service_created_at_idx").on(table.serviceId, table.createdAt),
+    index("event_project_created_at_idx").on(table.projectId, table.createdAt),
+    index("event_unread_idx").on(table.serviceId, table.createdAt).where(sql`"read_at" is null`),
   ],
 );
 
@@ -244,6 +272,10 @@ export const agentNotification = sqliteTable(
     requestHash: text("request_hash"),
     /** Web app opened on tap; delivery survives app deletion. */
     appId: text("app_id").references(() => app.id, { onDelete: "set null" }),
+    projectId: text("project_id").references(() => project.id, { onDelete: "set null" }),
+    readAt: integer("read_at", { mode: "timestamp_ms" }),
+    bodyFormat: text("body_format"),
+    summary: text("summary"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => [
@@ -251,12 +283,17 @@ export const agentNotification = sqliteTable(
       table.requesterTokenId,
       table.idempotencyKey,
     ),
+    index("agent_notification_user_created_at_idx").on(table.userId, table.createdAt),
     index("agent_notification_token_created_at_idx").on(table.requesterTokenId, table.createdAt),
+    index("agent_notification_project_created_at_idx").on(table.projectId, table.createdAt),
+    index("agent_notification_unread_idx")
+      .on(table.userId, table.createdAt)
+      .where(sql`"read_at" is null`),
   ],
 );
 
 // ---------------------------------------------------------------------------
-// SHark upstream port: web apps (Hark 8e14ede), without the upstream project link
+// SHark web apps and project associations
 // ---------------------------------------------------------------------------
 
 /** A web app the owner opens full screen in the iPhone app, signed in with a pass. */
@@ -281,6 +318,7 @@ export const app = sqliteTable(
     createdByTokenId: text("created_by_token_id").references(() => apiToken.id, {
       onDelete: "set null",
     }),
+    projectId: text("project_id").references(() => project.id, { onDelete: "set null" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
@@ -400,6 +438,7 @@ export const interaction = sqliteTable(
     uniqueIndex("interaction_event_unique").on(table.eventId),
     index("interaction_service_created_at_idx").on(table.requesterServiceId, table.createdAt),
     index("interaction_callback_due_idx").on(table.callbackStatus, table.callbackNextAttemptAt),
+    index("interaction_user_responded_at_idx").on(table.userId, table.respondedAt),
     index("interaction_user_status_expiry_idx").on(table.userId, table.status, table.expiresAt),
   ],
 );
@@ -519,6 +558,7 @@ export const liveActivityOperation = sqliteTable(
     requesterServiceId: text("requester_service_id").references(() => service.id, {
       onDelete: "cascade",
     }),
+    props: text("props", { mode: "json" }).$type<Record<string, unknown>>(),
     event: text("event").notNull(),
     sequence: integer("sequence").notNull(),
     idempotencyKey: text("idempotency_key"),

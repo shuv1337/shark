@@ -3,6 +3,90 @@ import { z } from "zod";
 /** Version of the push `data` payload schema understood by the iOS extension. */
 export const PUSH_SCHEMA_VERSION = 1 as const;
 
+// ---------------------------------------------------------------------------
+// Notification body capacity and UTF-8 helpers
+// ---------------------------------------------------------------------------
+
+/** Maximum notification body length in UTF-16 code units (`String.length`). */
+export const NOTIFICATION_BODY_MAX_CHARS = 8_000 as const;
+/** Maximum notification body size in UTF-8 bytes (16 KiB). */
+export const NOTIFICATION_BODY_MAX_BYTES = 16_384 as const;
+/** Interactive prompts keep the original limit so approval UIs stay bounded. */
+export const INTERACTIVE_BODY_MAX_CHARS = 2_000 as const;
+/** Maximum summary length; summaries replace the body in pushes and lists. */
+export const NOTIFICATION_SUMMARY_MAX_CHARS = 500 as const;
+/** Maximum project display-name length. */
+export const PROJECT_NAME_MAX_CHARS = 80 as const;
+/** Hard cap on projects per account; deliveries above it degrade to Unfiled. */
+export const MAX_PROJECTS_PER_ACCOUNT = 500 as const;
+
+/**
+ * UTF-8 byte length computed without TextEncoder so the same code runs in
+ * Node, Hermes, and browsers. Lone surrogates count like replacement output.
+ */
+export function utf8ByteLength(value: string): number {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.codePointAt(index) as number;
+    if (code > 0xffff) index += 1;
+    bytes += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
+  }
+  return bytes;
+}
+
+/** Longest prefix of `value` that fits `maxBytes` without splitting a code point. */
+export function truncateToUtf8Bytes(value: string, maxBytes: number): string {
+  if (maxBytes <= 0) return "";
+  if (utf8ByteLength(value) <= maxBytes) return value;
+  let bytes = 0;
+  let result = "";
+  for (const character of value) {
+    const size = utf8ByteLength(character);
+    if (bytes + size > maxBytes) break;
+    bytes += size;
+    result += character;
+  }
+  return result;
+}
+
+export const NOTIFICATION_BODY_FORMATS = ["text", "markdown"] as const;
+export const notificationBodyFormatSchema = z.enum(NOTIFICATION_BODY_FORMATS);
+export type NotificationBodyFormat = z.infer<typeof notificationBodyFormatSchema>;
+
+const notificationBodySchema = z
+  .string()
+  .trim()
+  .min(1, "body is required")
+  .max(NOTIFICATION_BODY_MAX_CHARS)
+  .refine(
+    (value) => utf8ByteLength(value) <= NOTIFICATION_BODY_MAX_BYTES,
+    `body must be at most ${NOTIFICATION_BODY_MAX_BYTES} bytes of UTF-8`,
+  );
+
+const notificationSummarySchema = z.string().trim().min(1).max(NOTIFICATION_SUMMARY_MAX_CHARS);
+
+/**
+ * Lower-case NFC identity used to deduplicate project names per account.
+ * Display names keep their original casing; identity is case-insensitive.
+ */
+export function normalizeProjectName(name: string): string {
+  return name.normalize("NFC").toLowerCase();
+}
+
+const projectNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(PROJECT_NAME_MAX_CHARS)
+  .refine(
+    (value) =>
+      Array.from(value).every((character) => {
+        const code = character.charCodeAt(0);
+        return code >= 32 && code !== 127;
+      }),
+    "Project names must be a single line",
+  );
+
 import { isPublicHttpsUrl, publicHttpsUrlSchema } from "./url";
 
 export { isPublicHttpsUrl };
@@ -23,6 +107,8 @@ const webUrlSchema = z
       return false;
     }
   }, "Must be an http or https URL");
+
+export const tapDestinationUrlSchema = webUrlSchema;
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -83,6 +169,8 @@ export interface ServiceDto {
   updatedAt: string;
 }
 
+export type AgentServiceDto = Omit<ServiceDto, "webhookUrl">;
+
 /** Returned when a service is created or its token is rotated. */
 export interface ServiceCreatedResponse {
   service: ServiceDto;
@@ -120,21 +208,38 @@ const webhookResponseRequestSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
-export const webhookRequestSchema = z.object({
-  body: z.string().trim().min(1, "body is required").max(2000),
-  title: z.string().trim().min(1).max(80).optional(),
-  imageUrl: publicHttpsUrlSchema.optional(),
-  url: webUrlSchema.optional(),
-  deviceIds: z
-    .array(z.string().trim().min(1).max(100))
-    .min(1)
-    .max(50)
-    .transform((ids) => [...new Set(ids)].sort())
-    .optional(),
-  response: webhookResponseRequestSchema.optional(),
-  /** Opens this SHark web app on tap; `url`, when present, must share its origin. */
-  appId: appIdSchema.optional(),
-});
+export const webhookRequestSchema = z
+  .object({
+    body: notificationBodySchema,
+    title: z.string().trim().min(1).max(80).optional(),
+    imageUrl: publicHttpsUrlSchema.optional(),
+    url: webUrlSchema.optional(),
+    deviceIds: z
+      .array(z.string().trim().min(1).max(100))
+      .min(1)
+      .max(50)
+      .transform((ids) => [...new Set(ids)].sort())
+      .optional(),
+    response: webhookResponseRequestSchema.optional(),
+    // The fields below are additive and deliberately carry no defaults, so the
+    // parsed output of a pre-existing request is byte-identical across deploys
+    // and stored idempotency request hashes keep matching.
+    project: projectNameSchema.optional(),
+    summary: notificationSummarySchema.optional(),
+    bodyFormat: notificationBodyFormatSchema.optional(),
+    /** Opens this SHark web app on tap; `url`, when present, must share its origin. */
+    appId: appIdSchema.optional(),
+  })
+  .superRefine((value, context) => {
+    // Interactive bodies become interaction prompts, whose limit is unchanged.
+    if (value.response && value.body.length > INTERACTIVE_BODY_MAX_CHARS) {
+      context.addIssue({
+        code: "custom",
+        path: ["body"],
+        message: `Interactive notification bodies are limited to ${INTERACTIVE_BODY_MAX_CHARS} characters`,
+      });
+    }
+  });
 export type WebhookRequest = z.infer<typeof webhookRequestSchema>;
 
 export type WebhookResponse =
@@ -365,9 +470,15 @@ export const LIVE_ACTIVITY_STYLES = [
   "terminal",
   "steps",
   "approval",
+  "shell",
+  "verdict",
+  "signal",
 ] as const;
 export const liveActivityStyleSchema = z.enum(LIVE_ACTIVITY_STYLES);
 export type LiveActivityStyle = z.infer<typeof liveActivityStyleSchema>;
+export const INTERACTIVE_LIVE_ACTIVITY_STYLES = ["approval", "shell", "verdict", "signal"] as const;
+export const interactiveLiveActivityStyleSchema = z.enum(INTERACTIVE_LIVE_ACTIVITY_STYLES);
+export type InteractiveLiveActivityStyle = z.infer<typeof interactiveLiveActivityStyleSchema>;
 export const LIVE_ACTIVITY_DEFAULT_ACCENT_COLOR = "#D35C46" as const;
 export const LIVE_ACTIVITY_DEFAULT_EXPIRES_IN_SECONDS = 28_800 as const;
 export const LIVE_ACTIVITY_DEFAULT_STALE_AFTER_SECONDS = 14_400 as const;
@@ -418,11 +529,17 @@ export const liveActivityPropsSchema = z
     interaction: liveActivityInteractionSchema.optional(),
   })
   .superRefine((value, context) => {
-    if (value.style === "approval" && !value.interaction) {
+    if (
+      (value.style === "approval" ||
+        value.style === "shell" ||
+        value.style === "verdict" ||
+        value.style === "signal") &&
+      !value.interaction
+    ) {
       context.addIssue({
         code: "custom",
         path: ["interaction"],
-        message: "Approval Live Activities require an interaction",
+        message: "Interactive Live Activity styles require an interaction",
       });
     }
   });
@@ -604,6 +721,13 @@ export interface LiveActivityDto {
   endedAt: string | null;
 }
 
+export interface InboxLiveActivityDto extends LiveActivityDto {
+  sourceName: string;
+  sourceImageUrl: string | null;
+  /** Present when the activity can be associated with a project. */
+  projectId?: string | null;
+}
+
 export interface LiveActivityMutationResponse {
   activity: LiveActivityDto;
   accepted: number;
@@ -679,6 +803,11 @@ export const API_TOKEN_SCOPES = [
   "macos:register",
   "apps:read",
   "apps:write",
+  "devices:write",
+  "inbox:read",
+  "inbox:write",
+  "billing:read",
+  "tokens:manage",
   "board:read",
   "board:write",
 ] as const;
@@ -801,6 +930,7 @@ export const interactionCreateSchema = z
       .optional(),
     expiresInSeconds: z.number().int().min(30).max(86_400).default(900),
     presentation: interactionPresentationSchema.optional(),
+    style: interactiveLiveActivityStyleSchema.optional(),
     primaryLabel: interactionActionLabelSchema.optional(),
     secondaryLabel: interactionActionLabelSchema.optional(),
   })
@@ -845,6 +975,13 @@ export const interactionCreateSchema = z
         code: "custom",
         path: ["presentation"],
         message: "Custom action labels require live_activity presentation",
+      });
+    }
+    if (presentation !== "live_activity" && value.style !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["style"],
+        message: "Interactive Live Activity styles require live_activity presentation",
       });
     }
   });
@@ -969,6 +1106,35 @@ export interface InteractionDto {
   canceledAt: string | null;
 }
 
+export interface InboxInteractionDto extends InteractionDto {
+  sourceName: string;
+  sourceImageUrl: string | null;
+  /** Present for webhook interactions created from a project notification. */
+  projectId?: string | null;
+}
+
+export const INBOX_ACTIVITY_KINDS = ["notification", "live_activity", "response"] as const;
+export type InboxActivityKind = (typeof INBOX_ACTIVITY_KINDS)[number];
+
+export interface InboxActivityDto {
+  id: string;
+  kind: InboxActivityKind;
+  sourceName: string;
+  sourceImageUrl: string | null;
+  title: string;
+  detail: string | null;
+  url: string | null;
+  result: string | null;
+  createdAt: string;
+}
+
+export interface InboxActivityPageDto {
+  items: InboxActivityDto[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
 export interface InteractionCreateResponse {
   interaction: InteractionDto;
   /** Requests accepted by Expo or APNs, depending on presentation; not proof of device display. */
@@ -983,7 +1149,7 @@ export interface InteractionCreateResponse {
 // ---------------------------------------------------------------------------
 
 export const agentNotificationCreateSchema = z.object({
-  body: z.string().trim().min(1, "body is required").max(2000),
+  body: notificationBodySchema,
   title: z.string().trim().min(1).max(80).default("SHark"),
   imageUrl: publicHttpsUrlSchema.optional(),
   url: webUrlSchema.optional(),
@@ -993,12 +1159,19 @@ export const agentNotificationCreateSchema = z.object({
     .max(50)
     .transform((ids) => [...new Set(ids)].sort())
     .optional(),
+  // Additive fields without defaults: old request hashes must stay stable.
+  project: projectNameSchema.optional(),
+  summary: notificationSummarySchema.optional(),
+  bodyFormat: notificationBodyFormatSchema.optional(),
   /** Opens this SHark web app on tap; `url`, when present, must share its origin. */
   appId: appIdSchema.optional(),
 });
 export type AgentNotificationCreateInput = z.infer<typeof agentNotificationCreateSchema>;
 
 export interface AgentNotificationDto {
+  projectId?: string | null;
+  summary?: string | null;
+  bodyFormat?: NotificationBodyFormat;
   id: string;
   title: string;
   body: string;
@@ -1019,6 +1192,16 @@ export interface AgentNotificationCreateResponse {
 // ---------------------------------------------------------------------------
 // Web apps (full-screen web views signed in with a SHark pass)
 // ---------------------------------------------------------------------------
+
+export interface AgentNotificationWithdrawResponse {
+  ok: true;
+  notificationId: string;
+  /** `withdraw_partial` when only some active devices accepted the command. */
+  status: "withdrawn" | "withdraw_partial";
+  /** Silent commands accepted by push providers, not proof of removal on a device. */
+  accepted: number;
+  idempotent?: boolean;
+}
 
 export const APP_NAME_MAX_CHARS = 40 as const;
 export const MAX_APPS_PER_ACCOUNT = 100 as const;
@@ -1048,6 +1231,7 @@ export const appCreateSchema = z.object({
   name: appNameSchema,
   url: appUrlSchema,
   iconUrl: publicHttpsUrlSchema.optional(),
+  project: projectNameSchema.optional(),
 });
 export type AppCreateInput = z.infer<typeof appCreateSchema>;
 
@@ -1057,6 +1241,18 @@ export const appSharingSchema = z.object({
   shareEmail: z.boolean().optional(),
 });
 export type AppSharingInput = z.infer<typeof appSharingSchema>;
+
+export const appUpdateSchema = z
+  .strictObject({
+    name: appNameSchema.optional(),
+    url: appUrlSchema.optional(),
+    /** `null` clears the icon. */
+    iconUrl: publicHttpsUrlSchema.nullable().optional(),
+    /** Project name; `null` moves the app out of its project. */
+    project: projectNameSchema.nullable().optional(),
+  })
+  .refine((input) => Object.keys(input).length > 0, "At least one field is required");
+export type AppUpdateInput = z.infer<typeof appUpdateSchema>;
 
 export const appLaunchSchema = appSharingSchema.extend({
   /** Required (true) before the first pass is issued, and again after revoke. */
@@ -1072,6 +1268,8 @@ export interface AppSummaryDto {
 }
 
 export interface AppDto extends AppSummaryDto {
+  projectId: string | null;
+  projectName: string | null;
   /** Launch URL opened in the SHark web view. */
   url: string;
   shareName: boolean;
@@ -1115,6 +1313,96 @@ export interface AppPassClaims {
 
 /** `code` returned when a pass needs owner consent first. */
 export const API_ERROR_CODE_CONSENT_REQUIRED = "consent_required" as const;
+
+export interface ProjectDto {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Reserved project filter naming the synthetic bucket of unfiled notifications. */
+export const INBOX_UNFILED_PROJECT = "unfiled" as const;
+/** Display name of the synthetic bucket. */
+export const INBOX_UNFILED_PROJECT_NAME = "Other" as const;
+/** Character bound applied to previews returned by inbox list endpoints. */
+export const INBOX_PREVIEW_MAX_CHARS = 240 as const;
+/** Maximum page size accepted by the inbox notification list. */
+export const INBOX_PAGE_MAX_LIMIT = 50 as const;
+
+export interface InboxProjectSummaryDto {
+  /** `null` identifies the synthetic Unfiled bucket. */
+  projectId: string | null;
+  name: string;
+  unreadCount: number;
+  totalCount: number;
+  latestTitle: string | null;
+  latestPreview: string | null;
+  /** Resolved image from the latest notification; older servers omit it. */
+  latestImageUrl?: string | null;
+  latestAt: string | null;
+}
+
+export interface InboxProjectsDto {
+  projects: InboxProjectSummaryDto[];
+  totalUnread: number;
+}
+
+/** Origin half of the stable composite notification ID. */
+export const INBOX_NOTIFICATION_ORIGINS = ["event", "notification"] as const;
+export type InboxNotificationOrigin = (typeof INBOX_NOTIFICATION_ORIGINS)[number];
+
+export interface InboxNotificationSummaryDto {
+  /** Stable composite ID: `event:<id>` (webhook) or `notification:<id>` (agent). */
+  id: string;
+  origin: InboxNotificationOrigin;
+  projectId: string | null;
+  projectName: string | null;
+  sourceName: string;
+  sourceImageUrl: string | null;
+  title: string;
+  /** Bounded preview; the full body is only returned by the detail route. */
+  preview: string;
+  url: string | null;
+  bodyFormat: NotificationBodyFormat;
+  readAt: string | null;
+  createdAt: string;
+  /** Web app opened by this notification; older servers omit it. */
+  app?: AppSummaryDto | null;
+}
+
+export interface InboxNotificationPageDto {
+  items: InboxNotificationSummaryDto[];
+  /** Opaque keyset cursor; `null` when the page is the last one. */
+  nextCursor: string | null;
+  /**
+   * Opaque server-issued high-water snapshot of the requested scope, taken
+   * before the page was read. Submitting it as `readThrough` to read-all
+   * marks only rows that existed at snapshot time, so notifications arriving
+   * afterwards stay unread even when their `createdAt` collides at
+   * millisecond precision with the newest returned row.
+   */
+  readThroughToken: string;
+}
+
+export interface InboxNotificationDetailDto extends InboxNotificationSummaryDto {
+  body: string;
+  summary: string | null;
+  /** Delivery status for webhook events; `null` for agent notifications. */
+  status: string | null;
+}
+
+export const inboxMarkAllReadSchema = z.object({
+  /**
+   * Opaque `readThroughToken` from a list response. It bounds read-all to
+   * rows the client observed, so notifications arriving during the tap stay
+   * unread; the server never trusts it for ownership or project scope.
+   */
+  readThrough: z.string().min(1).max(200),
+  /** Project ID, or `unfiled` for the synthetic bucket. Omit for the account. */
+  project: z.string().trim().min(1).max(100).optional(),
+});
+export type InboxMarkAllReadInput = z.infer<typeof inboxMarkAllReadSchema>;
 
 // ---------------------------------------------------------------------------
 // Billing
@@ -1180,6 +1468,7 @@ export const webhookPushDataSchema = z.object({
   /** Destination URL to open when the notification is tapped. */
   url: z.url().optional(),
   conversationId: z.string(),
+  projectId: z.string().optional(),
   /** Web app opened in SHark on tap, at `url` when present; ignored by older builds. */
   appId: z.string().optional(),
 });
@@ -1222,3 +1511,5 @@ export interface ApiError {
   issues?: unknown;
 }
 export * from "./board";
+
+export const API_ERROR_CODE_NOT_FOUND = "not_found" as const;

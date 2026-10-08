@@ -44,6 +44,83 @@ export default ({ config: _config }: ConfigContext): ExpoConfig => {
       "expo-apple-authentication",
       "expo-secure-store",
       [
+        "expo-alternate-app-icons",
+        [
+          {
+            name: "Teal",
+            ios: "./assets/app-icons/teal.png",
+            android: {
+              foregroundImage: "./assets/app-icons/teal.png",
+              backgroundColor: "#09606B",
+            },
+          },
+          {
+            name: "Blue",
+            ios: "./assets/app-icons/blue.png",
+            android: {
+              foregroundImage: "./assets/app-icons/blue.png",
+              backgroundColor: "#245493",
+            },
+          },
+          {
+            name: "Indigo",
+            ios: "./assets/app-icons/indigo.png",
+            android: {
+              foregroundImage: "./assets/app-icons/indigo.png",
+              backgroundColor: "#414781",
+            },
+          },
+          {
+            name: "Violet",
+            ios: "./assets/app-icons/violet.png",
+            android: {
+              foregroundImage: "./assets/app-icons/violet.png",
+              backgroundColor: "#66437D",
+            },
+          },
+          {
+            name: "Rose",
+            ios: "./assets/app-icons/rose.png",
+            android: {
+              foregroundImage: "./assets/app-icons/rose.png",
+              backgroundColor: "#84465F",
+            },
+          },
+          {
+            name: "Red",
+            ios: "./assets/app-icons/red.png",
+            android: {
+              foregroundImage: "./assets/app-icons/red.png",
+              backgroundColor: "#8D403D",
+            },
+          },
+          {
+            name: "Orange",
+            ios: "./assets/app-icons/orange.png",
+            android: {
+              foregroundImage: "./assets/app-icons/orange.png",
+              backgroundColor: "#925134",
+            },
+          },
+          {
+            name: "Gold",
+            ios: "./assets/app-icons/gold.png",
+            android: {
+              foregroundImage: "./assets/app-icons/gold.png",
+              backgroundColor: "#80651F",
+            },
+          },
+          {
+            name: "Black",
+            ios: "./assets/app-icons/black.png",
+            android: {
+              foregroundImage: "./assets/app-icons/black.png",
+              backgroundColor: "#292D2C",
+            },
+          },
+        ],
+      ],
+      [
         "expo-notifications",
         {
           enableBackgroundRemoteNotifications: true,

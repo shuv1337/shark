@@ -3,37 +3,38 @@ import type {
   AppLaunchInput,
   AppPassResponse,
   AppSharingInput,
+  DeviceDto,
   DeviceRegisterInput,
   DeviceUnregisterInput,
   EventDto,
+  InboxActivityKind,
+  InboxActivityPageDto,
   InboxDetailDto,
   InboxFilter,
+  InboxInteractionDto,
+  InboxLiveActivityDto,
+  InboxMarkAllReadInput,
+  InboxNotificationDetailDto,
+  InboxNotificationPageDto,
   InboxPageDto,
+  InboxProjectsDto,
   InteractionCredentialResponseInput,
   InteractionDto,
   InteractionResponseInput,
   LiveActivityPushToStartTokenInput,
   LiveActivityUpdateTokenInput,
 } from "@hark/contracts";
+import { apiErrorFromBody } from "./api-error";
 import { API_URL, getCookie } from "./auth";
 
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-    /** Machine-readable `code` from the error body, when the server sends one. */
-    readonly code?: string,
-  ) {
-    super(message);
-  }
-}
+export type { NotificationDetailFailure } from "./api-error";
+export { ApiError, classifyNotificationDetailFailure } from "./api-error";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const cookie = getCookie();
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
-    // The session travels only in the explicit header. On iOS the shared cookie
-    // jar (which in-app web views also write to) otherwise replaces it.
+    // Keep the native session separate from the web view cookie jar.
     credentials: "omit",
     headers: {
       "content-type": "application/json",
@@ -41,20 +42,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init?.headers,
     },
   });
-  const body = (await response.json().catch(() => null)) as
-    | (T & { error?: string; code?: string })
-    | null;
+  const body = (await response.json().catch(() => null)) as T | null;
   if (!response.ok || body === null) {
-    throw new ApiError(
-      body?.error ?? `Request failed (${response.status})`,
-      response.status,
-      typeof body?.code === "string" ? body.code : undefined,
-    );
+    throw apiErrorFromBody(response.status, body);
   }
   return body;
 }
 
 export const api = {
+  listDevices: () => request<{ devices: DeviceDto[] }>("/api/devices"),
   registerDevice: (input: DeviceRegisterInput) =>
     request<{ device: { id: string } }>("/api/devices", {
       method: "POST",
@@ -76,6 +72,51 @@ export const api = {
       body: JSON.stringify(input),
     }),
   listEvents: (limit = 20) => request<{ events: EventDto[] }>(`/api/events?limit=${limit}`),
+  listPendingInteractions: () =>
+    request<{ interactions: InboxInteractionDto[] }>("/api/interactions"),
+  listActiveActivities: () => request<{ activities: InboxLiveActivityDto[] }>("/api/activities"),
+  listActivityFeed: (filter: "all" | InboxActivityKind, page: number) =>
+    request<InboxActivityPageDto>(`/api/activity-feed?filter=${filter}&page=${page}`),
+  respondToInteraction: (id: string, input: InteractionResponseInput) =>
+    request<{ interaction: InteractionDto }>(`/api/interactions/${id}/respond`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  respondToInteractionWithToken: (id: string, input: InteractionCredentialResponseInput) =>
+    request<{ ok: true; status: string }>(`/api/interaction-responses/${id}/respond`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  // Project inbox endpoints. Older or self-hosted servers 404 on these; the
+  // app treats that as "no project inbox" and keeps the legacy behavior.
+  listInboxProjects: () => request<InboxProjectsDto>("/api/inbox/projects"),
+  listInboxNotifications: (params: {
+    project?: string;
+    unread?: boolean;
+    cursor?: string;
+    limit?: number;
+  }) => {
+    const query = new URLSearchParams();
+    if (params.project) query.set("project", params.project);
+    if (params.unread) query.set("unread", "1");
+    if (params.cursor) query.set("cursor", params.cursor);
+    query.set("limit", String(params.limit ?? 20));
+    return request<InboxNotificationPageDto>(`/api/inbox/notifications?${query.toString()}`);
+  },
+  getInboxNotification: (id: string) =>
+    request<{ notification: InboxNotificationDetailDto }>(
+      `/api/inbox/notifications/${encodeURIComponent(id)}`,
+    ),
+  markNotificationRead: (id: string) =>
+    request<{ ok: true; readAt: string }>(
+      `/api/inbox/notifications/${encodeURIComponent(id)}/read`,
+      { method: "POST", body: JSON.stringify({}) },
+    ),
+  markNotificationUnread: (id: string) =>
+    request<{ ok: true; readAt: null }>(
+      `/api/inbox/notifications/${encodeURIComponent(id)}/unread`,
+      { method: "POST", body: JSON.stringify({}) },
+    ),
   listInbox: (filter: InboxFilter, cursor?: string | null, limit = 30) => {
     const params = new URLSearchParams({ filter, limit: String(limit) });
     if (cursor) params.set("cursor", cursor);
@@ -105,13 +146,8 @@ export const api = {
     }),
   removeApp: (id: string) =>
     request<{ ok: true }>(`/api/apps/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  respondToInteraction: (id: string, input: InteractionResponseInput) =>
-    request<{ interaction: InteractionDto }>(`/api/interactions/${id}/respond`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    }),
-  respondToInteractionWithToken: (id: string, input: InteractionCredentialResponseInput) =>
-    request<{ ok: true; status: string }>(`/api/interaction-responses/${id}/respond`, {
+  markAllNotificationsRead: (input: InboxMarkAllReadInput) =>
+    request<{ ok: true; updated: number }>("/api/inbox/notifications/read-all", {
       method: "POST",
       body: JSON.stringify(input),
     }),

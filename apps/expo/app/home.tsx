@@ -94,7 +94,7 @@ export default function DeviceScreen() {
         setRegistration("registered");
         void flushInteractionResponses();
         refreshLiveActivityTokenSync(registered.device.id);
-        if (!preserveReadyState) router.replace("/inbox");
+        if (!preserveReadyState) router.replace("/apps");
       } catch (error) {
         if (!preserveReadyState) {
           setRegistration("error");

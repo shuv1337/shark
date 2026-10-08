@@ -20,6 +20,10 @@ const DEFAULT_SCOPES = [
   "services:write",
   "apps:read",
   "apps:write",
+  "devices:write",
+  "inbox:read",
+  "inbox:write",
+  "billing:read",
 ];
 const TERMINAL = new Set(["approved", "denied", "yes", "no", "replied", "canceled", "expired"]);
 
@@ -43,10 +47,20 @@ function parseAccentColor(value) {
 }
 
 const ACTIVITY_STYLES = ["standard", "ring", "hero", "terminal", "steps"];
+const INTERACTIVE_ACTIVITY_STYLES = ["approval", "shell", "verdict", "signal"];
 
 function parseStyle(value) {
   if (!ACTIVITY_STYLES.includes(String(value))) {
     throw new UsageError(`--style must be one of: ${ACTIVITY_STYLES.join(", ")}`);
+  }
+  return String(value);
+}
+
+function parseInteractiveStyle(value) {
+  if (!INTERACTIVE_ACTIVITY_STYLES.includes(String(value))) {
+    throw new UsageError(
+      `--style must be one of: ${INTERACTIVE_ACTIVITY_STYLES.join(", ")} for --live-activity`,
+    );
   }
   return String(value);
 }
@@ -69,6 +83,33 @@ function parseActionLabel(value, flag) {
     throw new UsageError(`--${flag} must be a single line of 1 to 24 characters`);
   }
   return label;
+}
+
+/** Server limits for notification bodies: 8,000 characters and 16 KiB of UTF-8. */
+const BODY_MAX_CHARS = 8000;
+const BODY_MAX_BYTES = 16384;
+
+function assertNotificationBody(value) {
+  const body = String(value).trim();
+  if (body.length === 0) throw new UsageError("notify requires a message body");
+  if (body.length > BODY_MAX_CHARS || Buffer.byteLength(body, "utf8") > BODY_MAX_BYTES) {
+    throw new UsageError(
+      `notify body must be at most ${BODY_MAX_CHARS} characters and ${BODY_MAX_BYTES} bytes of UTF-8`,
+    );
+  }
+  return String(value);
+}
+
+function resolveBodyFormat(options) {
+  const explicit = options["body-format"];
+  if (explicit !== undefined && explicit !== "text" && explicit !== "markdown") {
+    throw new UsageError("--body-format must be text or markdown");
+  }
+  if (options.markdown && explicit === "text") {
+    throw new UsageError("--markdown conflicts with --body-format text");
+  }
+  if (options.markdown) return "markdown";
+  return explicit;
 }
 
 export function parseArgs(argv) {
@@ -123,6 +164,12 @@ export function parseArgs(argv) {
     "outcome",
     "waiting-ask",
     "heartbeat-ttl",
+    "project",
+    "summary",
+    "body-format",
+    "cursor",
+    "filter",
+    "page",
   ]);
   const booleanFlags = new Set([
     "approval",
@@ -140,6 +187,10 @@ export function parseArgs(argv) {
     "allow-text",
     "no-later",
     "clear",
+    "markdown",
+    "unread",
+    "no-icon",
+    "no-project",
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -396,32 +447,62 @@ function help() {
   sharkctl auth logout
   sharkctl auth status
   sharkctl notify <body> [--title <name>] [--image <url>] [--url <url>] [--device <id>]
+                 [--project <name>] [--summary <text>] [--markdown | --body-format <text|markdown>]
                  [--app <app_id>] [--idempotency-key <key>] [--stdin]
   sharkctl notify ask <prompt> (--approval|--yes-no|--text) [--title <name>] [--image <url>]
                   [--url <url>] [--device <id>] [--expires-in <duration>]
-                  [--live-activity [--primary-label <label>] [--secondary-label <label>]]
+                  [--live-activity [--style <approval|shell|verdict|signal>]
+                                   [--primary-label <label>] [--secondary-label <label>]]
                   [--idempotency-key <key>] [--stdin] [--wait [--timeout <duration>] | --poll]
+  sharkctl notify withdraw <notification_id>
+  sharkctl interaction list
   sharkctl interaction get <id>
   sharkctl interaction wait <id> [--timeout <duration>]
-  sharkctl activity start --title <title> --status <status> [--progress <0..1>] [--key <key>]
-                         [--style <standard|ring|hero|terminal|steps>]
-                         [--accent-color <#RRGGBB>] [--replace]
-  sharkctl activity update <id|key> [--status <status>] [--detail <text>] [--progress <0..1>]
-                            [--style <standard|ring|hero|terminal|steps>]
-                            [--if-sequence <n>] [--idempotency-key <key>]
-  sharkctl activity end <id|key> [--status <status>] [--dismiss-after <duration>]
-                         [--if-sequence <n>] [--idempotency-key <key>]
+  sharkctl activity start --title <title> --status <status> [--key <key>] [--detail <text>]
+                         [--progress <0..1>] [--symbol <symbol>] [--privacy <standard|private>]
+                         [--style <standard|ring|hero|terminal|steps>] [--accent-color <#RRGGBB>]
+                         [--device <id>...] [--expires-in <duration>] [--stale-after <duration>]
+                         [--replace] [--idempotency-key <key>] [--stdin]
+  sharkctl activity update <id|key> [--title <title>] [--status <status>] [--detail <text>]
+                            [--progress <0..1>] [--symbol <symbol>] [--privacy <standard|private>]
+                            [--style <standard|ring|hero|terminal|steps>] [--accent-color <#RRGGBB>]
+                            [--stale-after <duration>] [--if-sequence <n>]
+                            [--idempotency-key <key>] [--stdin]
+  sharkctl activity end <id|key> [--status <status>] [--detail <text>] [--progress <0..1>]
+                         [--symbol <symbol>] [--accent-color <#RRGGBB>]
+                         [--dismiss-after <duration>] [--if-sequence <n>]
+                         [--idempotency-key <key>] [--stdin]
   sharkctl activity get <id|key>
   sharkctl activity list [--limit <n>]
+  sharkctl activity feed [--filter <all|notification|live_activity|response>] [--page <n>]
   sharkctl permissions setup [claude|codex|opencode|all]
   sharkctl permissions uninstall [claude|codex|opencode|all]
   sharkctl permissions doctor
   sharkctl devices list
+  sharkctl devices remove <device_id>
   sharkctl services list
   sharkctl services create --title <title> [--image <url>] [--url <url>] [--stdin]
-  sharkctl apps create --name <name> --url <url> [--icon <url>]
-  sharkctl apps list
-  sharkctl apps remove <app_id>
+  sharkctl services get <service_id>
+  sharkctl services update <service_id> [--title <title>] [--image <url>] [--url <url>] [--stdin]
+  sharkctl services rotate <service_id>
+  sharkctl services remove <service_id>
+  sharkctl inbox projects
+  sharkctl inbox list [--project <project_id|unfiled>] [--unread] [--limit <n>] [--cursor <c>]
+  sharkctl inbox get <notification_id>
+  sharkctl inbox read <notification_id>
+  sharkctl inbox unread <notification_id>
+  sharkctl inbox read-all [--project <project_id|unfiled>]
+  sharkctl apps create --name <name> --url <url> [--icon <url>] [--project <name>] [--json]
+  sharkctl apps list [--json]
+  sharkctl apps get <app_id> [--json]
+  sharkctl apps update <app_id> [--name <name>] [--url <url>] [--icon <url> | --no-icon]
+                      [--project <name> | --no-project] [--json]
+  sharkctl apps revoke <app_id> [--json]
+  sharkctl apps remove <app_id> [--json]
+  sharkctl billing
+  sharkctl tokens list
+  sharkctl tokens revoke <token_id>
+
 ${BOARD_HELP}
 
 notify sends a one-shot push; notify ask sends a push that elicits an answer.
@@ -434,6 +515,8 @@ to 30 s through 24 h (8 h for Live Activities). A timed-out poll or wait does
 not end the prompt: it stays answerable on the phone until it expires, and
 sharkctl interaction wait <id> resumes waiting at any time.
 
+notify supports --project, --summary, and --markdown for long project notifications.
+
 apps registers a web app (an HTTPS site you control) that opens full-screen in the SHark
 iPhone app, which hands the page a short-lived signed pass. Creating an app with an
 existing URL updates it. notify --app <app_id> opens that app when tapped; --url must
@@ -445,6 +528,18 @@ it bumps the revision and sends one push (p0 and p1 only; p2 stays board-only). 
 captain's signed-in session can answer; read answers with board wait, board get, or
 board answers --since <cursor>, then board ack --key. The callback token is read from a
 file, never from argv. Needs the board:read and board:write scopes (not granted by default).
+
+notify withdraw removes an agent notification from your phones (a silent command) and marks
+it read; "sharkctl notify -- withdraw" sends the literal body "withdraw". interaction list
+shows every pending prompt on the account; agents can read prompts but only a human on the
+phone can answer them. inbox read-all marks only notifications that existed when it ran.
+
+apps update changes metadata only; sharing and sign-in approval are decided on the phone,
+and moving an app to a new origin asks for approval again. apps revoke signs the app out.
+
+Default logins exclude events:read (activity feed) and tokens:manage (tokens list/revoke);
+request them with --scope. No command creates tokens: new tokens always need a signed-in
+human (sharkctl auth login).
 
 Authentication: run sharkctl auth login, or set HARK_TOKEN for an advanced manual setup.
 Tokens are never accepted as command arguments.
@@ -469,6 +564,39 @@ async function appsRequest(config, path, init) {
     }
     throw error;
   }
+}
+
+/** Adds a re-login hint naming the scopes a 403 reported as missing. */
+async function scopedRequest(config, path, init) {
+  try {
+    return await request(config, path, init);
+  } catch (error) {
+    const required = error instanceof RequestError ? error.body?.required : undefined;
+    if (error instanceof RequestError && error.status === 403 && Array.isArray(required)) {
+      throw new RequestError(
+        `${error.message}. Run sharkctl auth login --scope ... to grant ${required.join(", ")}.`,
+        error.status,
+        error.body,
+      );
+    }
+    throw error;
+  }
+}
+
+function requireId(id, usage) {
+  if (!id) throw new UsageError(`${usage} requires an ID`);
+  return encodeURIComponent(id);
+}
+
+function parseNonNegativeInteger(value, flag) {
+  if (!/^\d+$/.test(String(value))) {
+    throw new UsageError(`--${flag} must be a non-negative integer`);
+  }
+  return String(Number.parseInt(value, 10));
+}
+
+function formatApp(app) {
+  return `${app.id}  ${app.name}  ${app.url}`;
 }
 
 export async function execute(argv, env = process.env, overrides = {}) {
@@ -563,6 +691,134 @@ export async function execute(argv, env = process.env, overrides = {}) {
       throw error;
     }
   }
+  if (group === "devices" && action === "remove") {
+    const path = `/api/agent/devices/${requireId(id, "devices remove")}`;
+    return { body: await scopedRequest(config, path, { method: "DELETE" }), exitCode: 0 };
+  }
+  if (group === "services" && ["get", "update", "rotate", "remove"].includes(action)) {
+    const path = `/api/agent/services/${requireId(id, `services ${action}`)}`;
+    if (action === "get") return { body: await scopedRequest(config, path), exitCode: 0 };
+    if (action === "rotate") {
+      return {
+        body: await scopedRequest(config, `${path}/rotate`, { method: "POST" }),
+        exitCode: 0,
+      };
+    }
+    if (action === "remove") {
+      return { body: await scopedRequest(config, path, { method: "DELETE" }), exitCode: 0 };
+    }
+    const stdin = options.stdin ? await readStdinJson(runtime) : {};
+    const payload = {
+      ...stdin,
+      ...(options.title ? { title: options.title } : {}),
+      ...(options.image ? { imageUrl: options.image } : {}),
+      ...(options.url ? { url: options.url } : {}),
+    };
+    if (Object.keys(payload).length === 0) {
+      throw new UsageError("services update requires --title, --image, --url, or --stdin");
+    }
+    return {
+      body: await scopedRequest(config, path, { method: "PATCH", body: JSON.stringify(payload) }),
+      exitCode: 0,
+    };
+  }
+  if (group === "inbox") {
+    if (action === "projects") {
+      return { body: await scopedRequest(config, "/api/agent/inbox/projects"), exitCode: 0 };
+    }
+    if (action === "list" || action === "read-all") {
+      const query = new URLSearchParams();
+      if (options.project) query.set("project", options.project);
+      if (action === "list") {
+        if (options.limit) query.set("limit", parseNonNegativeInteger(options.limit, "limit"));
+        if (options.unread) query.set("unread", "1");
+        if (options.cursor) query.set("cursor", options.cursor);
+      } else {
+        // The read-through token bounds read-all to notifications that existed
+        // when this command ran, so anything arriving meanwhile stays unread.
+        query.set("limit", "1");
+      }
+      const suffix = query.size > 0 ? `?${query}` : "";
+      const page = await scopedRequest(config, `/api/agent/inbox/notifications${suffix}`);
+      if (action === "list") return { body: page, exitCode: 0 };
+      const body = await scopedRequest(config, "/api/agent/inbox/notifications/read-all", {
+        method: "POST",
+        body: JSON.stringify({
+          readThrough: page.readThroughToken,
+          ...(options.project ? { project: options.project } : {}),
+        }),
+      });
+      return { body, exitCode: 0 };
+    }
+    if (["get", "read", "unread"].includes(action)) {
+      const path = `/api/agent/inbox/notifications/${requireId(id, `inbox ${action}`)}`;
+      if (action === "get") return { body: await scopedRequest(config, path), exitCode: 0 };
+      return {
+        body: await scopedRequest(config, `${path}/${action}`, { method: "POST" }),
+        exitCode: 0,
+      };
+    }
+  }
+  if (group === "billing" && action === undefined) {
+    return { body: await scopedRequest(config, "/api/agent/billing"), exitCode: 0 };
+  }
+  if (group === "tokens" && action === "list") {
+    return { body: await scopedRequest(config, "/api/agent/tokens"), exitCode: 0 };
+  }
+  if (group === "tokens" && action === "revoke") {
+    const path = `/api/agent/tokens/${requireId(id, "tokens revoke")}`;
+    return { body: await scopedRequest(config, path, { method: "DELETE" }), exitCode: 0 };
+  }
+  if (group === "interaction" && action === "list") {
+    return { body: await scopedRequest(config, "/api/agent/interactions"), exitCode: 0 };
+  }
+  if (group === "activity" && action === "feed") {
+    const query = new URLSearchParams();
+    if (options.filter) query.set("filter", options.filter);
+    if (options.page) query.set("page", parseNonNegativeInteger(options.page, "page"));
+    const suffix = query.size > 0 ? `?${query}` : "";
+    return { body: await scopedRequest(config, `/api/agent/activity-feed${suffix}`), exitCode: 0 };
+  }
+  if (group === "apps" && ["get", "update", "revoke"].includes(action)) {
+    const path = `/api/agent/apps/${requireId(id, `apps ${action}`)}`;
+    let body;
+    if (action === "get") body = await appsRequest(config, path);
+    else if (action === "revoke") {
+      body = await appsRequest(config, `${path}/revoke`, { method: "POST" });
+    } else {
+      if (options.icon && options["no-icon"]) {
+        throw new UsageError("--icon and --no-icon cannot be used together");
+      }
+      if (options.project && options["no-project"]) {
+        throw new UsageError("--project and --no-project cannot be used together");
+      }
+      const payload = {
+        ...(options.name ? { name: options.name } : {}),
+        ...(options.url ? { url: options.url } : {}),
+        ...(options.icon ? { iconUrl: options.icon } : {}),
+        ...(options["no-icon"] ? { iconUrl: null } : {}),
+        ...(options.project ? { project: options.project } : {}),
+        ...(options["no-project"] ? { project: null } : {}),
+      };
+      if (Object.keys(payload).length === 0) {
+        throw new UsageError(
+          "apps update requires --name, --url, --icon, --no-icon, --project, or --no-project",
+        );
+      }
+      body = await appsRequest(config, path, { method: "PATCH", body: JSON.stringify(payload) });
+    }
+    const suffix =
+      action === "revoke"
+        ? " (sign-in revoked)"
+        : action === "update" && body.app.consentedAt === null
+          ? " (approve sign-in on your phone)"
+          : "";
+    return {
+      body,
+      exitCode: 0,
+      ...(options.json ? {} : { output: `${formatApp(body.app)}${suffix}` }),
+    };
+  }
   if (group === "apps" && action === "create") {
     if (!options.name || !options.url)
       throw new UsageError("apps create requires --name and --url");
@@ -570,6 +826,7 @@ export async function execute(argv, env = process.env, overrides = {}) {
       name: options.name,
       url: options.url,
       ...(options.icon ? { iconUrl: options.icon } : {}),
+      ...(options.project ? { project: options.project } : {}),
     };
     const body = await appsRequest(config, "/api/agent/apps", {
       method: "POST",
@@ -745,9 +1002,19 @@ export async function execute(argv, env = process.env, overrides = {}) {
     };
   }
   if (group === "notify") {
-    // A first positional of exactly `ask` selects the subcommand unless it came
-    // after a bare `--`, which forces it to be the literal notification body.
-    const isAsk = positionals[1] === "ask" && (separatorAt === null || separatorAt > 1);
+    // A first positional of exactly `ask` or `withdraw` selects the subcommand
+    // unless it came after a bare `--`, which forces it to be the literal body.
+    const isSubcommand = separatorAt === null || separatorAt > 1;
+    if (positionals[1] === "withdraw" && isSubcommand) {
+      if (positionals.length !== 3) {
+        throw new UsageError(
+          'notify withdraw takes exactly one notification ID; use "sharkctl notify -- withdraw ..." to send that text',
+        );
+      }
+      const path = `/api/agent/notifications/${encodeURIComponent(positionals[2])}/withdraw`;
+      return { body: await scopedRequest(config, path, { method: "POST" }), exitCode: 0 };
+    }
+    const isAsk = positionals[1] === "ask" && isSubcommand;
     if (isAsk) {
       const selectors = [
         options.approval ? "approval" : null,
@@ -764,6 +1031,11 @@ export async function execute(argv, env = process.env, overrides = {}) {
       }
       if (options.timeout !== undefined && !options.wait) {
         throw new UsageError("--timeout requires --wait");
+      }
+      if (options.project || options.summary || options.markdown || options["body-format"]) {
+        throw new UsageError(
+          "--project, --summary and body format apply to notify, not notify ask",
+        );
       }
       if (options.app) throw new UsageError("--app applies to notify, not notify ask");
       const stdin = options.stdin ? await readStdinJson(runtime) : {};
@@ -796,6 +1068,9 @@ export async function execute(argv, env = process.env, overrides = {}) {
       if (!liveActivity && (options["primary-label"] || options["secondary-label"])) {
         throw new UsageError("custom action labels require --live-activity");
       }
+      if (!liveActivity && options.style) {
+        throw new UsageError("interactive --style requires --live-activity");
+      }
       if (liveActivity && expiresInSeconds > 28_800) {
         throw new UsageError("--live-activity requests must expire within 8 hours");
       }
@@ -806,6 +1081,7 @@ export async function execute(argv, env = process.env, overrides = {}) {
         kind: selectors[0],
         expiresInSeconds,
         ...(liveActivity ? { presentation: "live_activity" } : {}),
+        ...(liveActivity && options.style ? { style: parseInteractiveStyle(options.style) } : {}),
         ...(options["primary-label"]
           ? { primaryLabel: parseActionLabel(options["primary-label"], "primary-label") }
           : {}),
@@ -835,6 +1111,8 @@ export async function execute(argv, env = process.env, overrides = {}) {
     const stdin = options.stdin ? await readStdinJson(runtime) : {};
     const notificationBody = positionals.slice(1).join(" ") || stdin.body;
     if (!notificationBody) throw new UsageError("notify requires a message body");
+    assertNotificationBody(notificationBody);
+    const bodyFormat = resolveBodyFormat(options);
     const payload = {
       ...stdin,
       body: notificationBody,
@@ -842,6 +1120,9 @@ export async function execute(argv, env = process.env, overrides = {}) {
       ...(options.image ? { imageUrl: options.image } : {}),
       ...(options.url ? { url: options.url } : {}),
       ...(options.device.length > 0 ? { deviceIds: options.device } : {}),
+      ...(options.project ? { project: options.project } : {}),
+      ...(options.summary ? { summary: options.summary } : {}),
+      ...(bodyFormat ? { bodyFormat } : {}),
       ...(options.app ? { appId: options.app } : {}),
     };
     const body = await request(config, "/api/agent/notifications", {

@@ -6,6 +6,7 @@ import {
   buildWelcomePushMessages,
   resolveNotification,
 } from "./push";
+import { fitPushMessage } from "./push-preview";
 
 const service = {
   title: "Acme CRM",
@@ -31,6 +32,29 @@ describe("buildWelcomePushMessages", () => {
         conversationId: "hark-welcome",
       },
     });
+  });
+});
+
+describe("buildNotificationWithdrawalPushMessages", () => {
+  it("builds data-only background commands for every device", () => {
+    const messages = buildNotificationWithdrawalPushMessages(
+      ["ExponentPushToken[a]", "ExponentPushToken[b]"],
+      "evt_1",
+    );
+
+    expect(messages).toEqual([
+      {
+        to: "ExponentPushToken[a]",
+        data: { v: 1, command: "notification.withdraw", eventId: "evt_1" },
+        _contentAvailable: true,
+      },
+      {
+        to: "ExponentPushToken[b]",
+        data: { v: 1, command: "notification.withdraw", eventId: "evt_1" },
+        _contentAvailable: true,
+      },
+    ]);
+    expect(messages.every((message) => !("title" in message) && !("body" in message))).toBe(true);
   });
 });
 
@@ -189,5 +213,87 @@ describe("buildPushMessages", () => {
     expect(message?.richContent).toBeUndefined();
     const data = (message?.data ?? {}) as Record<string, unknown>;
     expect(data.avatarUrl).toBeUndefined();
+    expect("projectId" in data).toBe(false);
+  });
+
+  it("adds projectId to data only when a project is associated", () => {
+    const [message] = buildPushMessages({
+      to: ["ExponentPushToken[a]"],
+      eventId: "evt_1",
+      serviceId: "svc_1",
+      projectId: "prj_1",
+      resolved,
+    });
+    expect(((message?.data ?? {}) as Record<string, unknown>).projectId).toBe("prj_1");
+  });
+
+  it("prefers the sender summary over the body for push text", () => {
+    const [message] = buildPushMessages({
+      to: ["ExponentPushToken[a]"],
+      eventId: "evt_1",
+      serviceId: "svc_1",
+      resolved: { title: "T", body: "x".repeat(7_000), summary: "Deploy finished: 3 services" },
+    });
+    expect(message?.body).toBe("Deploy finished: 3 services");
+    expect(JSON.stringify(message).length).toBeLessThan(1_500);
+  });
+
+  it("byte-fits an oversized multibyte body instead of shipping it whole", () => {
+    const [rawMessage] = buildPushMessages({
+      to: ["ExponentPushToken[a]"],
+      eventId: "evt_1",
+      serviceId: "svc_1",
+      resolved: { title: "T", body: "気配り🚀".repeat(1_500) },
+    });
+    if (!rawMessage) throw new Error("Missing push fixture");
+    const message = fitPushMessage(rawMessage);
+    expect(Buffer.byteLength(JSON.stringify(message), "utf8")).toBeLessThanOrEqual(4_096);
+    expect(message?.body?.endsWith("…")).toBe(true);
+  });
+
+  it("byte-fits interaction prompts the same way", () => {
+    const [rawMessage] = buildInteractionPushMessages({
+      to: ["ExponentPushToken[a]"],
+      interactionId: "int_1",
+      kind: "approval",
+      title: "Release",
+      prompt: "🚀".repeat(1_990),
+      actionDigest: "a".repeat(64),
+      responseToken: "r".repeat(43),
+      url: "https://example.com/deploy",
+    });
+    if (!rawMessage) throw new Error("Missing push fixture");
+    const message = fitPushMessage(rawMessage);
+    expect(Buffer.byteLength(JSON.stringify(message), "utf8")).toBeLessThanOrEqual(4_096);
+    expect(message?.data).toMatchObject({ actionDigest: "a".repeat(64) });
+  });
+
+  it("keeps short bodies byte-identical to the previous builder output", () => {
+    const [message] = buildPushMessages({
+      to: ["ExponentPushToken[a]"],
+      eventId: "evt_1",
+      serviceId: "svc_1",
+      resolved,
+    });
+    expect(JSON.stringify(message)).toBe(
+      JSON.stringify({
+        to: "ExponentPushToken[a]",
+        title: "Acme CRM",
+        body: "New sign-up",
+        priority: "high",
+        mutableContent: true,
+        richContent: { image: "https://example.com/a.png" },
+        data: {
+          v: 1,
+          eventId: "evt_1",
+          serviceId: "svc_1",
+          sourceId: "svc_1",
+          sourceName: "Acme CRM",
+          avatarUrl: "https://example.com/a.png",
+          url: "https://example.com/app",
+          conversationId: "hark-svc_1",
+        },
+      }),
+    );
   });
 });

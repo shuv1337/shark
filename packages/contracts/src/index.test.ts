@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   API_TOKEN_SCOPES,
@@ -10,6 +11,7 @@ import {
   boardAskUpsertSchema,
   deviceRegisterSchema,
   findBoardSecret,
+  inboxMarkAllReadSchema,
   interactionCreateSchema,
   interactionResponseSchema,
   isInboxItemActive,
@@ -27,8 +29,12 @@ import {
   liveActivityUpdateSchema,
   macosDeviceRegisterSchema,
   macosInteractionResponseSchema,
+  NOTIFICATION_BODY_MAX_CHARS,
+  normalizeProjectName,
   pushDataSchema,
   serviceCreateSchema,
+  truncateToUtf8Bytes,
+  utf8ByteLength,
   webhookRequestSchema,
   webPushSubscriptionRegisterSchema,
 } from "./index";
@@ -154,6 +160,51 @@ describe("webhookRequestSchema", () => {
 
   it("rejects an empty device routing list", () => {
     expect(webhookRequestSchema.safeParse({ body: "Targeted", deviceIds: [] }).success).toBe(false);
+  });
+
+  it("accepts the raised body capacity while enforcing the UTF-8 byte cap", () => {
+    expect(
+      webhookRequestSchema.safeParse({ body: "x".repeat(NOTIFICATION_BODY_MAX_CHARS) }).success,
+    ).toBe(true);
+    expect(
+      webhookRequestSchema.safeParse({ body: "x".repeat(NOTIFICATION_BODY_MAX_CHARS + 1) }).success,
+    ).toBe(false);
+    // 6,000 characters of a 3-byte glyph is 18,000 bytes: over the byte cap.
+    expect(webhookRequestSchema.safeParse({ body: "気".repeat(6_000) }).success).toBe(false);
+    expect(webhookRequestSchema.safeParse({ body: "気".repeat(5_000) }).success).toBe(true);
+  });
+
+  it("keeps interactive bodies within the unchanged prompt limit", () => {
+    const long = "x".repeat(2_001);
+    expect(webhookRequestSchema.safeParse({ body: long }).success).toBe(true);
+    expect(
+      webhookRequestSchema.safeParse({ body: long, response: { type: "approval" } }).success,
+    ).toBe(false);
+    expect(
+      webhookRequestSchema.safeParse({
+        body: "x".repeat(2_000),
+        response: { type: "approval" },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("accepts optional project, summary, and bodyFormat metadata", () => {
+    const result = webhookRequestSchema.safeParse({
+      body: "Deploy finished",
+      project: "Acme App",
+      summary: "Deploy finished",
+      bodyFormat: "markdown",
+    });
+    expect(result.success).toBe(true);
+    expect(webhookRequestSchema.safeParse({ body: "x", bodyFormat: "html" }).success).toBe(false);
+    expect(webhookRequestSchema.safeParse({ body: "x", project: "" }).success).toBe(false);
+    expect(webhookRequestSchema.safeParse({ body: "x", project: "a\nb" }).success).toBe(false);
+    expect(webhookRequestSchema.safeParse({ body: "x", project: "p".repeat(81) }).success).toBe(
+      false,
+    );
+    expect(webhookRequestSchema.safeParse({ body: "x", summary: "s".repeat(501) }).success).toBe(
+      false,
+    );
   });
 
   it("accepts fixed interactive response types and validates callbacks", () => {
@@ -738,5 +789,118 @@ describe("board schemas", () => {
       boardAskUpsertSchema.safeParse({ ...base, title: "T", body: "line\u2060break" }).success,
     ).toBe(false);
     expect(findBoardSecret(`hark_${"a".repeat(43)}`)).toBe("SHark API token");
+  });
+});
+
+describe("UTF-8 helpers", () => {
+  it("counts bytes exactly like UTF-8 encoding", () => {
+    for (const sample of [
+      "",
+      "plain ascii",
+      "naïve café",
+      "気配りのできる",
+      "🚀🔥👩‍👩‍👧‍👦",
+      "a".repeat(9000),
+    ]) {
+      expect(utf8ByteLength(sample)).toBe(Buffer.byteLength(sample, "utf8"));
+    }
+  });
+
+  it("truncates on code-point boundaries without splitting surrogate pairs", () => {
+    expect(truncateToUtf8Bytes("abc", 10)).toBe("abc");
+    expect(truncateToUtf8Bytes("abcdef", 3)).toBe("abc");
+    expect(truncateToUtf8Bytes("🚀🚀", 5)).toBe("🚀");
+    expect(truncateToUtf8Bytes("🚀🚀", 3)).toBe("");
+    expect(truncateToUtf8Bytes("気配り", 7)).toBe("気配");
+    expect(truncateToUtf8Bytes("anything", 0)).toBe("");
+    // Every truncation is itself valid UTF-8 of bounded size.
+    for (let budget = 0; budget <= 12; budget += 1) {
+      const cut = truncateToUtf8Bytes("aé気🚀aé気🚀", budget);
+      expect(Buffer.byteLength(cut, "utf8")).toBeLessThanOrEqual(budget);
+      expect(cut.includes("\uFFFD")).toBe(false);
+    }
+  });
+});
+
+describe("project name normalization", () => {
+  it("is case-insensitive and NFC-normalized", () => {
+    expect(normalizeProjectName("Acme App")).toBe("acme app");
+    // U+0065 U+0301 (e + combining acute) folds into U+00E9 (é).
+    expect(normalizeProjectName("Cafe\u0301")).toBe(normalizeProjectName("Café"));
+    expect(normalizeProjectName("ÄPFEL")).toBe("äpfel");
+  });
+});
+
+describe("inboxMarkAllReadSchema", () => {
+  it("requires an opaque read-through token and accepts an optional project filter", () => {
+    expect(inboxMarkAllReadSchema.safeParse({}).success).toBe(false);
+    expect(inboxMarkAllReadSchema.safeParse({ readThrough: "" }).success).toBe(false);
+    expect(inboxMarkAllReadSchema.safeParse({ readThrough: "x".repeat(201) }).success).toBe(false);
+    // The retired timestamp boundary alone is no longer a valid request.
+    expect(inboxMarkAllReadSchema.safeParse({ before: "2026-08-09T12:00:00.000Z" }).success).toBe(
+      false,
+    );
+    const parsed = inboxMarkAllReadSchema.safeParse({
+      readThrough: "cnQxOjQyOjc",
+      project: "unfiled",
+    });
+    expect(parsed.success).toBe(true);
+  });
+});
+
+describe("cross-deploy request-hash stability", () => {
+  function hash(payload: unknown): string {
+    return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+  }
+
+  it("keeps parsed webhook payloads and hashes identical to the pre-project schema", () => {
+    // Serialized forms produced by the schema that shipped before projects
+    // existed. If any fixture changes, replayed Idempotency-Key requests from
+    // an old deploy would 409 against rows written by a new deploy.
+    const fixtures: Array<{ input: unknown; expected: string }> = [
+      { input: { body: "Deploy finished" }, expected: '{"body":"Deploy finished"}' },
+      {
+        input: { title: "CI", body: "Build failed", url: "https://example.com/build/1" },
+        expected: '{"body":"Build failed","title":"CI","url":"https://example.com/build/1"}',
+      },
+      {
+        input: { body: "Targeted", deviceIds: ["dev_b", "dev_a", "dev_b"] },
+        expected: '{"body":"Targeted","deviceIds":["dev_a","dev_b"]}',
+      },
+      {
+        input: { body: "Deploy?", response: { type: "approval", correlationId: "deploy-1" } },
+        expected:
+          '{"body":"Deploy?","response":{"type":"approval","expiresInSeconds":900,"correlationId":"deploy-1"}}',
+      },
+    ];
+    for (const fixture of fixtures) {
+      const parsed = webhookRequestSchema.parse(fixture.input);
+      expect(JSON.stringify(parsed)).toBe(fixture.expected);
+      expect(hash(parsed)).toBe(hash(JSON.parse(fixture.expected)));
+    }
+  });
+
+  it("keeps parsed agent notification payloads identical to the pre-project schema", () => {
+    const fixtures: Array<{ input: unknown; expected: string }> = [
+      { input: { body: "Done" }, expected: '{"body":"Done","title":"SHark"}' },
+      {
+        input: { body: "Done", title: "Deploybot", imageUrl: "https://example.com/a.png" },
+        expected: '{"body":"Done","title":"Deploybot","imageUrl":"https://example.com/a.png"}',
+      },
+    ];
+    for (const fixture of fixtures) {
+      const parsed = agentNotificationCreateSchema.parse(fixture.input);
+      expect(JSON.stringify(parsed)).toBe(fixture.expected);
+    }
+  });
+
+  it("appends new optional fields after every legacy key", () => {
+    const parsed = webhookRequestSchema.parse({
+      project: "Acme",
+      body: "x",
+      title: "T",
+      summary: "s",
+    });
+    expect(JSON.stringify(parsed)).toBe('{"body":"x","title":"T","project":"Acme","summary":"s"}');
   });
 });
