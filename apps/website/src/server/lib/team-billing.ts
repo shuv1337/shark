@@ -20,6 +20,18 @@ const autumn = env.AUTUMN_API_KEY
 
 const planCache = new Map<string, { paid: boolean; expiresAt: number }>();
 
+const unlimitedOwners = new Set(
+  (env.UNLIMITED_TEAM_OWNER_EMAILS ?? "")
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean),
+);
+
+/** Comped team: its owner is listed in UNLIMITED_TEAM_OWNER_EMAILS. Never billed. */
+export function teamIsComped(team: Pick<TeamCustomer, "email">): boolean {
+  return Boolean(team.email && unlimitedOwners.has(team.email.toLowerCase()));
+}
+
 export function teamBillingConfigured(): boolean {
   return autumn !== null;
 }
@@ -67,6 +79,7 @@ export async function teamSeats(
   used: number,
 ): Promise<Pick<TeamDto, "seats" | "plan">> {
   if (!autumn) return { plan: "free", seats: { used, available: null, billable: 0 } };
+  if (teamIsComped(team)) return { plan: "team", seats: { used, available: null, billable: 0 } };
   const paid = await teamHasPaidPlan(team);
   return paid
     ? {
@@ -78,13 +91,13 @@ export async function teamSeats(
 
 /** Whether the team can grow to `nextCount` members. */
 export async function teamCanSeat(team: TeamCustomer, nextCount: number): Promise<boolean> {
-  if (!autumn || nextCount <= TEAM_FREE_SEATS) return true;
+  if (!autumn || nextCount <= TEAM_FREE_SEATS || teamIsComped(team)) return true;
   return teamHasPaidPlan(team, false);
 }
 
 /** Reports the current member count as seat usage. Best effort; never throws. */
 export async function syncTeamSeats(team: TeamCustomer, memberCount: number): Promise<void> {
-  if (!autumn) return;
+  if (!autumn || teamIsComped(team)) return;
   try {
     if (!(await teamHasPaidPlan(team))) return;
     await autumn.balances.update({

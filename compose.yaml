@@ -24,6 +24,7 @@ services:
       APNS_BUNDLE_ID: ${APNS_BUNDLE_ID:-ceo.ryan.hark}
       APNS_ENVIRONMENT: ${APNS_ENVIRONMENT:-sandbox}
       AUTUMN_API_KEY: ${AUTUMN_API_KEY:-}
+      UNLIMITED_TEAM_OWNER_EMAILS: ${UNLIMITED_TEAM_OWNER_EMAILS:-}
       # Only set this to a header the edge overwrites; see env.ts for why.
       TRUSTED_CLIENT_IP_HEADER: ${TRUSTED_CLIENT_IP_HEADER:-}
       SERVICE_RATE_LIMIT_PER_MINUTE: ${SERVICE_RATE_LIMIT_PER_MINUTE:-60}

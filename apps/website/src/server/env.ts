@@ -30,6 +30,12 @@ const envSchema = z.object({
   /** Autumn production secret key. Kept server-side and never exposed to clients. */
   AUTUMN_API_KEY: z.string().optional(),
   /**
+   * Comma-separated owner emails whose teams get unlimited seats without a
+   * team plan (comped accounts). Matched case-insensitively against the
+   * current team owner's email.
+   */
+  UNLIMITED_TEAM_OWNER_EMAILS: z.string().optional(),
+  /**
    * Header carrying the real client IP, set (and overwritten) by a trusted edge.
    * Leave unset when the edge does not provide one: client-supplied forwarded
    * headers are spoofable and would let a caller reset its own rate-limit bucket.
