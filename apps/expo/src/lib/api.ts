@@ -2,6 +2,7 @@ import type {
   AppDto,
   AppLaunchInput,
   AppPassResponse,
+  AppShareInput,
   AppSharingInput,
   DeviceDto,
   DeviceRegisterInput,
@@ -20,6 +21,16 @@ import type {
   InteractionResponseInput,
   LiveActivityPushToStartTokenInput,
   LiveActivityUpdateTokenInput,
+  OncallGroupDto,
+  OncallPageDto,
+  OncallShiftDto,
+  TeamDto,
+  TeamInviteCreateResponse,
+  TeamInviteDto,
+  TeamInvitePreviewDto,
+  TeamJoinResponse,
+  TeamMemberDto,
+  TeamRole,
 } from "@hark/contracts";
 import { apiErrorFromBody } from "./api-error";
 import { API_URL, getCookie } from "./auth";
@@ -137,4 +148,109 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  /** Moves a personal app into a team, or (`teamId: null`) back to the caller's apps. */
+  shareApp: (id: string, input: AppShareInput) =>
+    request<{ app: AppDto }>(`/api/apps/${encodeURIComponent(id)}/share`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+
+  // Teams and on-call. Older servers 404 on these; screens hide team UI then.
+  listTeams: () => request<{ teams: TeamDto[] }>("/api/teams"),
+  createTeam: (name: string) =>
+    request<{ team: TeamDto }>("/api/teams", { method: "POST", body: JSON.stringify({ name }) }),
+  getTeam: (id: string) =>
+    request<{ team: TeamDto; members: TeamMemberDto[] }>(`/api/teams/${encodeURIComponent(id)}`),
+  renameTeam: (id: string, name: string) =>
+    request<{ team: TeamDto }>(`/api/teams/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    }),
+  deleteTeam: (id: string) =>
+    request<{ ok: true }>(`/api/teams/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  leaveTeam: (id: string) =>
+    request<{ ok: true }>(`/api/teams/${encodeURIComponent(id)}/leave`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  updateTeamMember: (teamId: string, userId: string, role: TeamRole) =>
+    request<{ member: TeamMemberDto }>(
+      `/api/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userId)}`,
+      { method: "PATCH", body: JSON.stringify({ role }) },
+    ),
+  removeTeamMember: (teamId: string, userId: string) =>
+    request<{ ok: true }>(
+      `/api/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userId)}`,
+      { method: "DELETE" },
+    ),
+  listTeamInvites: (teamId: string) =>
+    request<{ invites: TeamInviteDto[] }>(`/api/teams/${encodeURIComponent(teamId)}/invites`),
+  createTeamInvite: (teamId: string, input: { email?: string; role: "admin" | "member" }) =>
+    request<TeamInviteCreateResponse>(`/api/teams/${encodeURIComponent(teamId)}/invites`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  revokeTeamInvite: (teamId: string, inviteId: string) =>
+    request<{ ok: true }>(
+      `/api/teams/${encodeURIComponent(teamId)}/invites/${encodeURIComponent(inviteId)}`,
+      { method: "DELETE" },
+    ),
+  /** Public: works signed out. */
+  previewTeamInvite: (code: string) =>
+    request<TeamInvitePreviewDto>(`/api/team-invites/${encodeURIComponent(code)}`),
+  /** Fails with 402 `seat_limit` when the team needs more seats. */
+  acceptTeamInvite: (code: string) =>
+    request<TeamJoinResponse>(`/api/team-invites/${encodeURIComponent(code)}/accept`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  listTeamApps: (teamId: string) =>
+    request<{ apps: AppDto[] }>(`/api/teams/${encodeURIComponent(teamId)}/apps`),
+  listOncallGroups: (teamId: string) =>
+    request<{ groups: OncallGroupDto[] }>(`/api/teams/${encodeURIComponent(teamId)}/oncall`),
+  getOncallGroup: (groupId: string) =>
+    request<{ group: OncallGroupDto }>(`/api/oncall/${encodeURIComponent(groupId)}`),
+  getMyOncall: () => request<OncallMeDto>("/api/oncall/me"),
+  listTeamPages: (teamId: string, params: { status?: "open" | "all"; cursor?: string } = {}) => {
+    const query = new URLSearchParams({ status: params.status ?? "open" });
+    if (params.cursor) query.set("cursor", params.cursor);
+    return request<{ pages: OncallPageDto[]; nextCursor: string | null }>(
+      `/api/teams/${encodeURIComponent(teamId)}/pages?${query.toString()}`,
+    );
+  },
+  getPage: (id: string) => request<{ page: OncallPageDto }>(`/api/pages/${encodeURIComponent(id)}`),
+  /** 409 when someone else acknowledged first. */
+  acknowledgePage: (id: string) =>
+    request<{ page: OncallPageDto }>(`/api/pages/${encodeURIComponent(id)}/acknowledge`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  escalatePage: (id: string) =>
+    request<{ page: OncallPageDto }>(`/api/pages/${encodeURIComponent(id)}/escalate`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  resolvePage: (id: string, note?: string) =>
+    request<{ page: OncallPageDto }>(`/api/pages/${encodeURIComponent(id)}/resolve`, {
+      method: "POST",
+      body: JSON.stringify(note ? { note } : {}),
+    }),
+  /** Lock-screen acknowledge with the push's one-shot token; needs no session. */
+  acknowledgePageWithToken: (id: string, responseToken: string) =>
+    request<{ ok: true; status: string }>(
+      `/api/page-responses/${encodeURIComponent(id)}/acknowledge`,
+      { method: "POST", body: JSON.stringify({ responseToken }) },
+    ),
 };
+
+export type OncallMeShiftDto = OncallShiftDto & {
+  groupId: string;
+  groupName: string;
+  teamId: string;
+  teamName: string;
+};
+
+export interface OncallMeDto {
+  shifts: OncallMeShiftDto[];
+  pages: OncallPageDto[];
+}
