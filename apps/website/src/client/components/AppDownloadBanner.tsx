@@ -1,9 +1,9 @@
-import { APP_STORE_URL } from "./SiteChrome";
+import { IOS_DOWNLOAD_URL } from "./SiteChrome";
 
 export function AppDownloadBanner() {
   return (
     <a
-      href={APP_STORE_URL}
+      href={IOS_DOWNLOAD_URL}
       target="_blank"
       rel="noopener noreferrer"
       className="hark-glass group mb-8 flex items-center gap-3.5 rounded-3xl p-4 transition-[filter] hover:brightness-110"
@@ -17,10 +17,10 @@ export function AppDownloadBanner() {
       />
       <span className="min-w-0 flex-1">
         <span className="block text-[15px] font-medium text-white">
-          Hark for iPhone is now available
+          Get the latest Hark for iPhone
         </span>
         <span className="mt-0.5 block truncate text-sm text-ink-muted">
-          Download it from the App Store to receive notifications.
+          Join the TestFlight beta to receive notifications.
         </span>
       </span>
       <span

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { LiveActivityDemo } from "../components/LiveActivityDemo";
 import { NotificationStack } from "../components/NotificationStack";
-import { APP_STORE_URL, PAGE_COLUMN, SiteFooter, SiteHeader } from "../components/SiteChrome";
+import { IOS_DOWNLOAD_URL, PAGE_COLUMN, SiteFooter, SiteHeader } from "../components/SiteChrome";
 import { primaryButton, textLink } from "../components/ui";
 
 const SAMPLE_APPS = [
@@ -183,7 +183,7 @@ export function Landing() {
           <div className="mt-[22px] flex flex-wrap items-center gap-[22px]">
             <a
               className={primaryButton}
-              href={APP_STORE_URL}
+              href={IOS_DOWNLOAD_URL}
               rel="noopener noreferrer"
               target="_blank"
             >

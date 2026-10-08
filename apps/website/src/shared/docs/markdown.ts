@@ -121,7 +121,7 @@ export function llmsTxt(): string {
 
 - [Home](https://hark.ryan.ceo/): product overview and webhook example.
 - [Pricing](https://hark.ryan.ceo/pricing): current Free and Pro capabilities.
-- [Hark for iPhone](https://apps.apple.com/us/app/hark-developer-notifications/id6794121509): required iOS app.
+- [Hark for iPhone](https://testflight.apple.com/join/PjCnKETB): required iOS app (TestFlight beta).
 - [Source](https://github.com/R44VC0RP/hark): Hark website, iOS app, CLI, and agent skill.
 
 ## Agent tools

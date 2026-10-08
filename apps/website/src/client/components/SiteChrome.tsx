@@ -7,6 +7,12 @@ import { GoogleButton } from "./GoogleButton";
 export const APP_STORE_URL =
   "https://apps.apple.com/us/app/hark-developer-notifications/id6794121509";
 
+/**
+ * Where download links point. The public TestFlight beta gets new builds
+ * (teams, on-call, web apps) before App Store review finishes.
+ */
+export const IOS_DOWNLOAD_URL = "https://testflight.apple.com/join/PjCnKETB";
+
 /** Shared page column: left-aligned content in a 48rem measure. */
 export const PAGE_COLUMN = "mx-auto w-full max-w-3xl px-6";
 

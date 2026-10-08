@@ -4,7 +4,7 @@ import { Link, useParams } from "react-router";
 import { AppleButton } from "../components/AppleButton";
 import { TeamMark } from "../components/DashboardKit";
 import { GoogleButton } from "../components/GoogleButton";
-import { APP_STORE_URL, Brand, PAGE_COLUMN } from "../components/SiteChrome";
+import { Brand, IOS_DOWNLOAD_URL, PAGE_COLUMN } from "../components/SiteChrome";
 import { primaryButton, secondaryButton, textLink } from "../components/ui";
 import { ApiRequestError, api } from "../lib/api";
 import { signInWithApple, signInWithGoogle, useSession } from "../lib/auth";
@@ -220,11 +220,11 @@ function Joined({ code, response }: { code: string; response: TeamJoinResponse }
         </a>
         <a
           className={`${secondaryButton} h-11 w-full`}
-          href={APP_STORE_URL}
+          href={IOS_DOWNLOAD_URL}
           rel="noopener noreferrer"
           target="_blank"
         >
-          Get Hark from the App Store
+          Get Hark on TestFlight
         </a>
       </div>
       <Link className={`${textLink} mt-5`} to={`/dashboard/teams/${response.team.id}`}>
