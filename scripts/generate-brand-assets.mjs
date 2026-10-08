@@ -171,6 +171,24 @@ const generated = new Map([
   ["apps/website/src/client/assets/shark-devil-mark.png", mark],
 ]);
 
+// Alternate icons use the approved transparent SHark mark over the selected color.
+for (const [name, backgroundColor] of Object.entries({
+  teal: "#09606B",
+  blue: "#245493",
+  indigo: "#414781",
+  violet: "#66437D",
+  rose: "#84465F",
+  red: "#8D403D",
+  orange: "#925134",
+  gold: "#80651F",
+  black: "#292D2C",
+})) {
+  generated.set(
+    `apps/expo/assets/app-icons/${name}.png`,
+    opaquePng(render(sourceImageSvg({ backgroundColor, source: sourceMarkDataUrl }), 1024)),
+  );
+}
+
 const manifest = {
   renderer: "@resvg/resvg-js@2.6.2",
   pngEncoding: "fflate@0.8.3 zlib level 9; PNG 8-bit truecolor; filter none; no ancillary metadata",

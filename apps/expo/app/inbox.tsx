@@ -130,6 +130,13 @@ export default function InboxScreen() {
           <Text style={styles.eyebrow}>SHark</Text>
           <Text style={styles.title}>Inbox</Text>
         </View>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => router.push("/projects")}
+          style={styles.actionCount}
+        >
+          <Text style={styles.actionCountText}>Projects</Text>
+        </Pressable>
         {unresolvedCount > 0 ? (
           <View style={styles.actionCount}>
             <Text style={styles.actionCountText}>{unresolvedCount} waiting</Text>

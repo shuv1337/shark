@@ -176,6 +176,7 @@ export default function AppDetailScreen() {
           </Pressable>
 
           <View style={styles.metaBlock}>
+            {app.projectName ? <MetaRow label="Project" value={app.projectName} /> : null}
             <MetaRow label="Added by" value={app.createdBy ?? "Unknown"} />
             <MetaRow label="Added" value={formatDate(app.createdAt)} />
             <MetaRow label="Last opened" value={formatDate(app.lastOpenedAt)} />

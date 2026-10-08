@@ -82,6 +82,8 @@ export async function syncInboxForUser(userId: string): Promise<void> {
            when n.status = 'partial' then 'Partially accepted'
            when n.status = 'failed' then coalesce(n.error, 'Failed')
            when n.status = 'no_devices' then 'No active devices'
+           when n.status = 'withdrawn' then 'Withdrawn'
+           when n.status = 'withdraw_partial' then 'Partially withdrawn'
            else 'Processing' end,
       n.accepted_count, n.failed_count, 0, n.created_at, n.created_at
     from agent_notification n
@@ -247,6 +249,8 @@ export async function syncInboxForUser(userId: string): Promise<void> {
            when n.status = 'partial' then 'Partially accepted'
            when n.status = 'failed' then coalesce(n.error, 'Failed')
            when n.status = 'no_devices' then 'No active devices'
+           when n.status = 'withdrawn' then 'Withdrawn'
+           when n.status = 'withdraw_partial' then 'Partially withdrawn'
            else 'Processing' end,
       n.accepted_count, n.failed_count, n.created_at
     from agent_notification n

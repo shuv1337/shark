@@ -23,7 +23,13 @@ import { newId } from "../lib/id";
 import { buildWelcomePushMessages, sendPushMessages } from "../lib/push";
 import { isSameOrigin } from "../lib/same-origin";
 import { encryptLiveActivityToken } from "../lib/token";
-import { type AuthedEnv, requireAuth } from "../middleware";
+import {
+  type AgentEnv,
+  type AuthedEnv,
+  requireApiToken,
+  requireAuth,
+  requireScopes,
+} from "../middleware";
 import { replayLateTerminalDelivery, unsentTerminalDelivery } from "./activities";
 
 function toDto(row: typeof device.$inferSelect): DeviceDto {
@@ -75,31 +81,60 @@ function macosToDto(row: typeof macosDevice.$inferSelect): DeviceDto {
   };
 }
 
+async function listDevices(userId: string): Promise<DeviceDto[]> {
+  const [rows, webRows, macosRows] = await Promise.all([
+    db.select().from(device).where(eq(device.userId, userId)).orderBy(desc(device.lastSeenAt)),
+    db
+      .select()
+      .from(webPushSubscription)
+      .where(eq(webPushSubscription.userId, userId))
+      .orderBy(desc(webPushSubscription.lastSeenAt)),
+    db
+      .select()
+      .from(macosDevice)
+      .where(eq(macosDevice.userId, userId))
+      .orderBy(desc(macosDevice.lastSeenAt)),
+  ]);
+  return [...rows.map(toDto), ...webRows.map(webToDto), ...macosRows.map(macosToDto)].sort(
+    (a, b) => Date.parse(b.lastSeenAt) - Date.parse(a.lastSeenAt),
+  );
+}
+
+async function removeDeviceForUser(userId: string, id: string): Promise<boolean> {
+  const [removed, removedWeb, removedMacos] = await Promise.all([
+    db
+      .delete(device)
+      .where(and(eq(device.userId, userId), eq(device.id, id)))
+      .returning({ id: device.id }),
+    db
+      .delete(webPushSubscription)
+      .where(and(eq(webPushSubscription.userId, userId), eq(webPushSubscription.id, id)))
+      .returning({ id: webPushSubscription.id }),
+    db
+      .delete(macosDevice)
+      .where(and(eq(macosDevice.userId, userId), eq(macosDevice.id, id)))
+      .returning({ id: macosDevice.id }),
+  ]);
+  if (removed.length > 0 || removedWeb.length > 0 || removedMacos.length > 0) {
+    track({
+      name: "device_unregistered",
+      userId: userId,
+      deviceId: removed[0]?.id ?? removedWeb[0]?.id ?? removedMacos[0]?.id ?? null,
+      outcome: "by_id",
+      value: removed.length + removedWeb.length + removedMacos.length,
+    });
+  }
+
+  return removed.length + removedWeb.length + removedMacos.length > 0;
+}
+
 const wait = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
 export const devicesRoute = new Hono<AuthedEnv>()
   .use("*", requireAuth)
   .get("/", async (c) => {
-    const user = c.get("user");
-    const [rows, webRows, macosRows] = await Promise.all([
-      db.select().from(device).where(eq(device.userId, user.id)).orderBy(desc(device.lastSeenAt)),
-      db
-        .select()
-        .from(webPushSubscription)
-        .where(eq(webPushSubscription.userId, user.id))
-        .orderBy(desc(webPushSubscription.lastSeenAt)),
-      db
-        .select()
-        .from(macosDevice)
-        .where(eq(macosDevice.userId, user.id))
-        .orderBy(desc(macosDevice.lastSeenAt)),
-    ]);
-    return c.json({
-      devices: [...rows.map(toDto), ...webRows.map(webToDto), ...macosRows.map(macosToDto)].sort(
-        (a, b) => Date.parse(b.lastSeenAt) - Date.parse(a.lastSeenAt),
-      ),
-    });
+    return c.json({ devices: await listDevices(c.get("user").id) });
   })
   .post("/live-activity/push-to-start", async (c) => {
     const parsed = liveActivityPushToStartTokenSchema.safeParse(
@@ -416,35 +451,7 @@ export const devicesRoute = new Hono<AuthedEnv>()
   })
   .delete("/:id", async (c) => {
     if (!isSameOrigin(c.req.raw)) return c.json({ error: "Invalid request origin" }, 403);
-    const user = c.get("user");
-    const [removed, removedWeb, removedMacos] = await Promise.all([
-      db
-        .delete(device)
-        .where(and(eq(device.userId, user.id), eq(device.id, c.req.param("id"))))
-        .returning({ id: device.id }),
-      db
-        .delete(webPushSubscription)
-        .where(
-          and(
-            eq(webPushSubscription.userId, user.id),
-            eq(webPushSubscription.id, c.req.param("id")),
-          ),
-        )
-        .returning({ id: webPushSubscription.id }),
-      db
-        .delete(macosDevice)
-        .where(and(eq(macosDevice.userId, user.id), eq(macosDevice.id, c.req.param("id"))))
-        .returning({ id: macosDevice.id }),
-    ]);
-    if (removed.length > 0 || removedWeb.length > 0 || removedMacos.length > 0) {
-      track({
-        name: "device_unregistered",
-        userId: user.id,
-        deviceId: removed[0]?.id ?? removedWeb[0]?.id ?? removedMacos[0]?.id ?? null,
-        outcome: "by_id",
-        value: removed.length + removedWeb.length + removedMacos.length,
-      });
-    }
+    await removeDeviceForUser(c.get("user").id, c.req.param("id"));
     return c.json({ ok: true });
   })
   .delete("/", async (c) => {
@@ -466,5 +473,20 @@ export const devicesRoute = new Hono<AuthedEnv>()
         value: removed.length,
       });
     }
+    return c.json({ ok: true });
+  });
+
+/**
+ * Agent-token device routes, mounted at `/api/agent/devices`. Registration
+ * stays phone-only: only the Hark app holds a push token to register.
+ */
+export const devicesAgentRoute = new Hono<AgentEnv>()
+  .use("*", requireApiToken)
+  .get("/", requireScopes("devices:read"), async (c) =>
+    c.json({ devices: await listDevices(c.get("apiToken").userId) }),
+  )
+  .delete("/:id", requireScopes("devices:write"), async (c) => {
+    const removed = await removeDeviceForUser(c.get("apiToken").userId, c.req.param("id"));
+    if (!removed) return c.json({ error: "Device not found" }, 404);
     return c.json({ ok: true });
   });

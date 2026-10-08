@@ -18,7 +18,7 @@ export default function SignInScreen() {
 
   // Keep the sign-in screen mounted until the native authorization code is
   // exchanged and its revocation token is safely stored server-side.
-  if ((session || isSimulatorPreview) && busy !== "apple") return <Redirect href="/inbox" />;
+  if ((session || isSimulatorPreview) && busy !== "apple") return <Redirect href="/apps" />;
 
   const continueWithApple = async () => {
     if (signInInFlight.current) return;

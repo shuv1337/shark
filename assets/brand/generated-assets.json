@@ -12,6 +12,15 @@
     "apps/website/public/favicon.png": "4d2baf4fe5a92714c714f5d2e09fa7d22d2babea1628bd99ae458f8af04b47c2",
     "apps/website/public/app-store-icon.png": "163790d4016e51c3e7475c12979c02866f74c76cf021540fbea5eeec1d8f5630",
     "apps/website/public/ogimage.png": "2b632ce3fa9addd369e2edd034a78927f4a6e7a921e2c8208350bfecb687d366",
-    "apps/website/src/client/assets/shark-devil-mark.png": "9d3029e9d31c71ef84cebc5a50ec687655a92381c6276d946b6bfe6751ed5b05"
+    "apps/website/src/client/assets/shark-devil-mark.png": "9d3029e9d31c71ef84cebc5a50ec687655a92381c6276d946b6bfe6751ed5b05",
+    "apps/expo/assets/app-icons/teal.png": "3bfb14ef9eae191c85ffc796b2a742953d713478e486269af859a68819cabc6e",
+    "apps/expo/assets/app-icons/blue.png": "6f20c31127e174f13bd85905509e0197b98729822c4a420f084e6eb8ad5cb9fa",
+    "apps/expo/assets/app-icons/indigo.png": "abd8fb544f2a01037f9c2306029cd40bd2d6e863e4a2b9ac5b85f2068c73a63d",
+    "apps/expo/assets/app-icons/violet.png": "3aea4d214e1ca6b869106991803f58e402c47a5c9061ea21fc865ffc8490d959",
+    "apps/expo/assets/app-icons/rose.png": "3a764d6120517675dcb89772cba228ca184139b272d60e29036272dc3ccb8c09",
+    "apps/expo/assets/app-icons/red.png": "566a9c60f8d76ee079de3ec95ac8db6195b4ccdcc012a45522440db7b3e19422",
+    "apps/expo/assets/app-icons/orange.png": "cd5b2d3976eb2d939960ea826e73d168257f09011e6df33c692f9f7745f49f9d",
+    "apps/expo/assets/app-icons/gold.png": "dd63f27574f21d37c90d3846dd768439f37c4831eff406c791ac18b44f0a47ac",
+    "apps/expo/assets/app-icons/black.png": "2d41fa65397b271fb3f83a45a8c52eb752d6139742a6c36847a33c4977dc9849"
   }
 }

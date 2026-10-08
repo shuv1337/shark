@@ -26,6 +26,7 @@ import { checkNotificationAllowance, getBilling, trackNotification } from "../li
 import { newId } from "../lib/id";
 import { syncInboxForUser } from "../lib/inbox";
 import { notificationEventTag } from "../lib/notification-withdrawal";
+import { resolveProjectForDelivery } from "../lib/projects";
 import {
   buildInteractionPushMessages,
   buildPushMessages,
@@ -288,6 +289,9 @@ export const hooksRoute = new Hono()
       if (parsed.data.url) resolved.url = parsed.data.url;
       else delete resolved.url;
     }
+    const projectResolution = parsed.data.project
+      ? await resolveProjectForDelivery(svc.userId, parsed.data.project)
+      : { projectId: null };
     const eventId = newId("evt");
     const eventValues: typeof event.$inferInsert = {
       id: eventId,
@@ -302,6 +306,9 @@ export const hooksRoute = new Hono()
       idempotencyKey: idempotencyKey ?? null,
       requestHash: idempotencyKey ? requestHash : null,
       appId: parsed.data.appId ?? null,
+      projectId: projectResolution.projectId,
+      summary: parsed.data.summary ?? null,
+      bodyFormat: parsed.data.bodyFormat ?? null,
       createdAt: new Date(),
     };
 
@@ -480,6 +487,7 @@ export const hooksRoute = new Hono()
           eventId,
           serviceId: svc.id,
           ...(parsed.data.appId ? { appId: parsed.data.appId } : {}),
+          projectId: projectResolution.projectId,
           resolved,
         });
     const result = await sendPushFanout({
@@ -487,7 +495,7 @@ export const hooksRoute = new Hono()
       webSubscriptions,
       webPayload: {
         title: resolved.title,
-        body: resolved.body,
+        body: resolved.summary ?? resolved.body,
         url: resolved.url ?? "/dashboard",
         eventId,
         ...(resolved.imageUrl ? { imageUrl: resolved.imageUrl } : {}),
@@ -609,6 +617,7 @@ export const hooksRoute = new Hono()
             },
           }
         : {}),
+      ...(projectResolution.message ? { message: projectResolution.message } : {}),
     });
   })
   .get("/:token/events/:eventId", async (c) => {
@@ -858,4 +867,36 @@ async function expireIfNeededForWebhook(row: typeof interaction.$inferSelect) {
     .where(and(eq(interaction.id, row.id), eq(interaction.status, "pending")))
     .returning();
   return expired ?? row;
+}
+
+export async function pushWithdrawalCommand(
+  userId: string,
+  eventId: string,
+): Promise<{ targets: number; accepted: number }> {
+  const [devices, webSubscriptions, macosDevices] = await Promise.all([
+    db
+      .select()
+      .from(device)
+      .where(and(eq(device.userId, userId), eq(device.active, true), eq(device.platform, "ios"))),
+    db
+      .select()
+      .from(webPushSubscription)
+      .where(and(eq(webPushSubscription.userId, userId), eq(webPushSubscription.active, true))),
+    db
+      .select()
+      .from(macosDevice)
+      .where(and(eq(macosDevice.userId, userId), eq(macosDevice.active, true))),
+  ]);
+  const targetCount = devices.length + webSubscriptions.length + macosDevices.length;
+
+  if (targetCount === 0) return { targets: 0, accepted: 0 };
+  const result = await sendWithdrawalFanout({
+    expoTokens: devices.map((registeredDevice) => registeredDevice.expoPushToken),
+    webSubscriptions,
+    macosDevices,
+    eventId,
+  });
+  await deactivateStaleWithdrawalTargets(result);
+
+  return { targets: targetCount, accepted: result.accepted };
 }

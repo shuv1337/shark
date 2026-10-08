@@ -2,12 +2,12 @@
  * Dev-only Live Activity lab.
  *
  * Deliberately unauthenticated and unlinked from the app's navigation so a
- * simulator can reach it without an Apple sign-in:
+ * simulator can reach it without a Apple sign-in:
  *   xcrun simctl openurl booted "shark://la-lab"
  *
- * Layout changes in src/widgets/HarkAgentActivity.tsx are picked up on a Metro
- * reload — the layout function is re-serialized into the App Group every time
- * createLiveActivity() runs — so styling iterates without a native rebuild.
+ * Layout changes in src/widgets/live-activities/ are picked up on a Metro
+ * reload — the style functions are re-serialized into the App Group every
+ * time createLiveActivity() runs — so styling iterates without a native rebuild.
  */
 import {
   LIVE_ACTIVITY_DEFAULT_ACCENT_COLOR,
@@ -15,17 +15,18 @@ import {
   LIVE_ACTIVITY_SYMBOLS,
   type LiveActivityProps,
   type LiveActivitySymbol,
+  liveActivityStyleSchema,
 } from "@hark/contracts";
-import { Redirect } from "expo-router";
+import { Redirect, useLocalSearchParams } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import type { LiveActivity } from "expo-widgets";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import HarkAgentActivity from "../src/widgets/HarkAgentActivity";
 
 const PROGRESS_STEPS = [0, 0.25, 0.5, 0.75, 1] as const;
-const ACCENTS = ["#D35C46", "#FF9F0A", "#64D2FF", "#FF6B8A"] as const;
+const ACCENTS = ["#5ED8B7", "#FF9F0A", "#64D2FF", "#FF6B8A"] as const;
 
 export default function LiveActivityLab() {
   if (!__DEV__) return <Redirect href="/" />;
@@ -38,7 +39,7 @@ function Lab() {
   const [title, setTitle] = useState("Deploy #184");
   const [status, setStatus] = useState("Building");
   const [detail, setDetail] = useState<string | undefined>(
-    "Compiling packages/website-runtime for SHark",
+    "Compiling packages/website-runtime on raven-cobra",
   );
   const [progress, setProgress] = useState<number | undefined>(0.25);
   const [symbol, setSymbol] = useState<LiveActivitySymbol>("build");
@@ -64,6 +65,71 @@ function Lab() {
     }),
     [title, status, detail, progress, symbol, privacy, accentColor],
   );
+
+  // A unique ts value retriggers the effect when recapturing the same style.
+  const params = useLocalSearchParams<{ ts?: string; style?: string }>();
+  useEffect(() => {
+    const styleParam = liveActivityStyleSchema.safeParse(params.style);
+    if (!styleParam.success) return;
+    (async () => {
+      try {
+        const existing = HarkAgentActivity.getInstances();
+        const isInteractive =
+          styleParam.data === "approval" ||
+          styleParam.data === "shell" ||
+          styleParam.data === "verdict" ||
+          styleParam.data === "signal";
+        const nextProps: LiveActivityProps = {
+          schemaVersion: LIVE_ACTIVITY_SCHEMA_VERSION,
+          activityId: `lab-style-${styleParam.data}-${params.ts ?? "manual"}`,
+          title: "Deploy #184",
+          status: isInteractive ? "Approval needed" : "Building",
+          detail: isInteractive
+            ? "sharkctl requests approval to deploy to production"
+            : "Compiling packages/website-runtime on raven-cobra",
+          ...(isInteractive ? {} : { progress: 0.25 }),
+          updatedAt: new Date().toISOString(),
+          symbol: isInteractive ? "terminal" : "build",
+          privacyMode: "standard",
+          accentColor: LIVE_ACTIVITY_DEFAULT_ACCENT_COLOR,
+          style: styleParam.data,
+          ...(isInteractive
+            ? {
+                interaction: {
+                  id: "lab-style-approval-interaction",
+                  kind: "approval" as const,
+                  prompt: "Deploy build #184 to production on raven-cobra?",
+                  primaryLabel: styleParam.data === "verdict" ? "Allow" : "Approve",
+                  secondaryLabel: styleParam.data === "verdict" ? "Don’t Allow" : "Deny",
+                  primaryAction: "approve",
+                  secondaryAction: "deny",
+                  state: "pending" as const,
+                },
+                labInteractionPreview: true,
+              }
+            : {}),
+        };
+        const active = existing[0];
+        if (active) {
+          await active.update(nextProps);
+          instance.current = active;
+          for (const extra of existing.slice(1)) {
+            try {
+              await extra.end("immediate");
+            } catch {
+              // already gone
+            }
+          }
+          note(`auto-updated style ${styleParam.data}`);
+        } else {
+          instance.current = await HarkAgentActivity.start(nextProps);
+          note(`auto-started style ${styleParam.data}`);
+        }
+      } catch (error) {
+        note(`auto-start failed: ${String(error)}`);
+      }
+    })();
+  }, [params.style, params.ts, note]);
 
   const start = async () => {
     try {
@@ -113,7 +179,7 @@ function Lab() {
           <Btn label="End" onPress={end} kind="danger" />
         </Row>
 
-        <Section label="Progress">
+        <Section>
           <Row>
             {PROGRESS_STEPS.map((step) => (
               <Btn
@@ -131,7 +197,7 @@ function Lab() {
           </Row>
         </Section>
 
-        <Section label="Symbol">
+        <Section>
           <Row>
             {LIVE_ACTIVITY_SYMBOLS.map((value) => (
               <Btn
@@ -144,7 +210,7 @@ function Lab() {
           </Row>
         </Section>
 
-        <Section label="Accent">
+        <Section>
           <Row>
             {ACCENTS.map((value) => (
               <Btn
@@ -157,7 +223,7 @@ function Lab() {
           </Row>
         </Section>
 
-        <Section label="Content">
+        <Section>
           <Row>
             <Btn
               label="Building"
@@ -173,13 +239,16 @@ function Lab() {
           </Row>
           <Row>
             <Btn label="short title" onPress={() => setTitle("Deploy")} />
-            <Btn label="long title" onPress={() => setTitle("Deploy #184 to SHark production")} />
+            <Btn
+              label="long title"
+              onPress={() => setTitle("Deploy #184 to raven-cobra production")}
+            />
           </Row>
           <Row>
             <Btn
               label="detail on"
               selected={detail !== undefined}
-              onPress={() => setDetail("Compiling packages/website-runtime for SHark")}
+              onPress={() => setDetail("Compiling packages/website-runtime on raven-cobra")}
             />
             <Btn
               label="detail off"
@@ -201,7 +270,7 @@ function Lab() {
           </Row>
         </Section>
 
-        <Section label="Log">
+        <Section>
           {log.length === 0 ? <Text style={styles.logLine}>—</Text> : null}
           {log.map((line) => (
             <Text key={line} style={styles.logLine}>
@@ -214,13 +283,8 @@ function Lab() {
   );
 }
 
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.section}>
-      <Text style={styles.sectionLabel}>{label}</Text>
-      {children}
-    </View>
-  );
+function Section({ children }: { children: React.ReactNode }) {
+  return <View style={styles.section}>{children}</View>;
 }
 
 function Row({ children }: { children: React.ReactNode }) {
@@ -255,25 +319,24 @@ function Btn({
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#0C1119" },
+  screen: { flex: 1, backgroundColor: "#0B1512" },
   content: { padding: 16, gap: 14 },
-  heading: { color: "#E7ECF3", fontSize: 22, fontWeight: "700" },
-  caption: { color: "#8995A6", fontSize: 13, lineHeight: 18 },
+  heading: { color: "#F2FBF8", fontSize: 22, fontWeight: "700" },
+  caption: { color: "#8FA8A1", fontSize: 13, lineHeight: 18 },
   section: { gap: 8 },
-  sectionLabel: { color: "#D35C46", fontSize: 11, fontWeight: "700", textTransform: "uppercase" },
   row: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   btn: {
     paddingHorizontal: 12,
     paddingVertical: 9,
     borderRadius: 10,
-    backgroundColor: "#0F1621",
+    backgroundColor: "#16302A",
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.06)",
+    borderColor: "#22453D",
   },
-  btnSelected: { backgroundColor: "#51231D", borderColor: "#D35C46" },
-  btnPrimary: { backgroundColor: "#B64E36", borderColor: "#D35C46" },
+  btnSelected: { backgroundColor: "#1E5145", borderColor: "#5ED8B7" },
+  btnPrimary: { backgroundColor: "#08715D", borderColor: "#5ED8B7" },
   btnDanger: { backgroundColor: "#5A1F1F", borderColor: "#B4514F" },
   btnPressed: { opacity: 0.7 },
-  btnText: { color: "#E7ECF3", fontSize: 13, fontWeight: "600" },
-  logLine: { color: "#8995A6", fontSize: 12, fontFamily: "Menlo" },
+  btnText: { color: "#F2FBF8", fontSize: 13, fontWeight: "600" },
+  logLine: { color: "#8FA8A1", fontSize: 12, fontFamily: "Menlo" },
 });
