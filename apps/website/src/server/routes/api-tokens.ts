@@ -11,7 +11,13 @@ import {
   hashApiToken,
   MAX_ACTIVE_API_TOKENS,
 } from "../lib/token";
-import { type AuthedEnv, requireAuth } from "../middleware";
+import {
+  type AgentEnv,
+  type AuthedEnv,
+  requireApiToken,
+  requireAuth,
+  requireScopes,
+} from "../middleware";
 
 function toDto(row: typeof apiToken.$inferSelect): ApiTokenDto {
   return {
@@ -26,16 +32,33 @@ function toDto(row: typeof apiToken.$inferSelect): ApiTokenDto {
   };
 }
 
+async function listTokens(userId: string): Promise<ApiTokenDto[]> {
+  const rows = await db
+    .select()
+    .from(apiToken)
+    .where(eq(apiToken.userId, userId))
+    .orderBy(desc(apiToken.createdAt));
+  return rows.map(toDto);
+}
+
+async function revokeToken(
+  userId: string,
+  tokenId: string,
+  outcome: "dashboard" | "agent",
+): Promise<boolean> {
+  const rows = await db
+    .update(apiToken)
+    .set({ revokedAt: new Date() })
+    .where(and(eq(apiToken.id, tokenId), eq(apiToken.userId, userId), isNull(apiToken.revokedAt)))
+    .returning({ id: apiToken.id });
+  if (rows.length === 0) return false;
+  track({ name: "api_token_revoked", userId, outcome });
+  return true;
+}
+
 export const apiTokensRoute = new Hono<AuthedEnv>()
   .use("*", requireAuth)
-  .get("/", async (c) => {
-    const rows = await db
-      .select()
-      .from(apiToken)
-      .where(eq(apiToken.userId, c.get("user").id))
-      .orderBy(desc(apiToken.createdAt));
-    return c.json({ tokens: rows.map(toDto) });
-  })
+  .get("/", async (c) => c.json({ tokens: await listTokens(c.get("user").id) }))
   .post("/", async (c) => {
     const parsed = apiTokenCreateSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) {
@@ -94,18 +117,24 @@ export const apiTokensRoute = new Hono<AuthedEnv>()
     return c.json({ token: toDto(row), secret }, 201);
   })
   .delete("/:id", async (c) => {
-    const rows = await db
-      .update(apiToken)
-      .set({ revokedAt: new Date() })
-      .where(
-        and(
-          eq(apiToken.id, c.req.param("id")),
-          eq(apiToken.userId, c.get("user").id),
-          isNull(apiToken.revokedAt),
-        ),
-      )
-      .returning({ id: apiToken.id });
-    if (rows.length === 0) return c.json({ error: "API token not found" }, 404);
-    track({ name: "api_token_revoked", userId: c.get("user").id, outcome: "dashboard" });
+    const revoked = await revokeToken(c.get("user").id, c.req.param("id"), "dashboard");
+    if (!revoked) return c.json({ error: "API token not found" }, 404);
+    return c.json({ ok: true });
+  });
+
+/**
+ * Agent-token management, mounted at `/api/agent/tokens`. Listing never
+ * returns secrets (only the stored hash exists), and there is deliberately no
+ * create route: a token that could mint tokens could grant itself any scope
+ * and survive its own revocation, so new tokens always need a signed-in human.
+ */
+export const apiTokensAgentRoute = new Hono<AgentEnv>()
+  .use("*", requireApiToken)
+  .get("/", requireScopes("tokens:manage"), async (c) =>
+    c.json({ tokens: await listTokens(c.get("apiToken").userId) }),
+  )
+  .delete("/:id", requireScopes("tokens:manage"), async (c) => {
+    const revoked = await revokeToken(c.get("apiToken").userId, c.req.param("id"), "agent");
+    if (!revoked) return c.json({ error: "API token not found" }, 404);
     return c.json({ ok: true });
   });
