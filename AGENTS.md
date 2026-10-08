@@ -20,7 +20,6 @@ The repository is a minimally rebranded Hark fork. Preserve protocol-compatibili
 - Package manager: `pnpm@11.10.0`.
 - Runtime: Node.js 22 or newer.
 - Formatting/linting: Biome.
-- Version control: use Jujutsu (`jj`) for local work.
 - Treat credentials, webhook URLs, device tokens, and token prefixes/metadata as sensitive. Tests must use synthetic values; never print live secrets while debugging.
 
 ## Validation
