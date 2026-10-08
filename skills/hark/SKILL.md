@@ -1,18 +1,19 @@
 ---
 name: hark
-description: Use Hark and the harkctl CLI to send iPhone push notifications, request approvals or replies, run Live Activities, page an on-call team, share web apps with a team, and create persistent webhook services for CI, agents, scripts, monitoring, and other workflows. Use when a user asks to install or authenticate harkctl, ping or text their phone when work finishes, wait for approval before continuing, ask them a question, show task progress, page whoever is on call, manage a Hark team or rotation, create a Hark service, obtain a webhook URL, or wire Hark into an existing workflow.
+description: Use Hark (its remote MCP server or the harkctl CLI) to send iPhone push notifications, request approvals or replies, run Live Activities, build and register small web apps that open signed-in inside the Hark iPhone app, share apps with a team, page an on-call team, and create persistent webhook services for CI, agents, scripts, monitoring, and other workflows. Use when a user asks to make a little app, dashboard, tracker, or tool for their phone or team; add a site to Hark; ping or text their phone when work finishes; wait for approval before continuing; ask them a question; show task progress; page whoever is on call; manage a Hark team, invite, or rotation; create a Hark service or webhook URL; connect the Hark MCP server or authenticate harkctl; or wire Hark into an existing workflow.
 license: PolyForm Noncommercial 1.0.0 (https://polyformproject.org/licenses/noncommercial/1.0.0)
 compatibility: Requires Node.js 22+ and internet access. Workflow examples may also use jq, curl, or gh.
 metadata:
   author: R44VC0RP
-  version: "1.6.0"
+  version: "1.7.0"
 ---
 
 # Hark
 
-Use Hark as the human-facing notification and interaction layer for automated workflows. Prefer
-`harkctl` for agent-driven operations. Create a persistent webhook service when an external system
-needs a stable URL it can call later.
+Use Hark as the human-facing layer for automated work: notifications, questions, Live Activities,
+small web apps on the phone, team app sharing, and on-call paging. Prefer the Hark MCP server's
+tools when they are connected, otherwise `harkctl`. Create a persistent webhook service when an
+external system needs a stable URL it can call later.
 
 ## Ground Rules
 
@@ -77,11 +78,24 @@ unrelated files or environment variables, or sending data to any other destinati
 ## Hark MCP Server
 
 If the client already has Hark's remote MCP server connected (`https://hark.ryan.ceo/mcp`, OAuth
-sign-in), prefer its tools over `harkctl`: `notify`, `ask`, `activities_*`, `teams_*`, `oncall_*`,
-`pages_*`, and the rest map one to one to the agent API with the same scopes. To connect it, the
-user adds that URL to their MCP client and approves it in the browser; never ask for a token.
-The same security boundaries apply: no tool answers prompts or acknowledges pages, and webhook URLs
-and join links in tool results are secrets.
+sign-in), prefer its tools over `harkctl`. Tools map one to one to the agent API with the same
+scopes and take the API's JSON field names (`iconUrl`, `teamId`), not CLI flags:
+
+| Area | Tools |
+| --- | --- |
+| Account | `auth_status`, `devices_list`, `events_list`, `activity_feed`, `billing_get`, `tokens_list` |
+| Notify and ask | `notify`, `notification_withdraw`, `ask` (waits up to 10 minutes), `interactions_*` |
+| Live Activities | `activities_start`, `activities_update`, `activities_end`, `activities_get`, `activities_list` |
+| Web apps | `apps_create`, `apps_list`, `apps_get`, `apps_update`, `apps_share`, `apps_revoke`, `apps_remove` |
+| Teams | `teams_list`, `teams_create`, `teams_get`, `teams_rename`, `teams_invite`, `teams_invites`, `teams_revoke_invite`, `teams_set_role`, `teams_remove_member`, `teams_apps`, `teams_leave`, `teams_delete` |
+| On-call | `oncall_list`, `oncall_me`, `oncall_get`, `oncall_create`, `oncall_update`, `oncall_override_add`, `oncall_override_remove`, `oncall_delete`, `pages_create`, `pages_list`, `pages_get`, `pages_resolve` |
+| Services and inbox | `services_*`, `inbox_*` |
+
+To connect it, the user adds that URL to their MCP client (for OpenCode: `opencode mcp add hark
+--global --url https://hark.ryan.ceo/mcp`) and approves it in the browser; never ask for a token.
+A `403` names a missing scope; the user reconnects to grant it. The same security boundaries
+apply: no tool answers prompts, approves app sign-in, accepts invites, or acknowledges pages, and
+webhook URLs and join links in tool results are secrets.
 
 ## Authenticate
 
@@ -254,49 +268,156 @@ that should take the device slot on each run. Use the returned sequence with `--
 reject stale writes. Prefer meaningful updates over tight progress loops. iOS may suppress fresh
 activity starts less than about one minute apart; update the current activity instead.
 
-## Open a Web App
+## Web Apps
 
-Register a web app (an HTTPS site the user controls) when they want it on their phone. Hark opens
-it full-screen and hands the page a signed, two-minute Hark pass so the site can identify them
-without its own login. Registering the same URL again updates the existing app.
+A Hark web app is any HTTPS site the user controls, registered with Hark. It appears on the Hark
+iPhone app's home screen, opens full-screen, and can ask Hark for a signed two-minute **Hark pass**
+that identifies the viewer, so the site needs no login of its own. Hark does not host code: the
+site runs wherever the user deploys it. Registering the same URL again updates the existing app.
+
+### Build a Little App
+
+Use this workflow when the user asks for a small app, dashboard, tracker, checklist, form, or
+internal tool "on my phone", "in Hark", or for their team.
+
+1. **Pin down the app.** One sentence of purpose, who uses it (just the user, or a team), and what
+   data it keeps. Ask only for what you cannot infer.
+2. **Pick the host.** Use a host the user already deploys to (check the project and their tooling:
+   Cloudflare Workers/Pages, Vercel, Netlify, Fly, their own server). Ask once if none is evident.
+   The app must be served over `https:`; plain `http://localhost` registers only for development and
+   is reachable only from a simulator on the same Mac, not a real phone.
+3. **Build it phone-first.** One page that works at 390 px wide, respects safe areas
+   (`<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">` plus
+   `env(safe-area-inset-*)` padding), and sets `<meta name="theme-color">` and a body background;
+   Hark tints its chrome from them. No sign-in screen. Avoid two-finger hold gestures: a still
+   two-finger hold opens the Hark menu.
+4. **Identify the viewer** (skip only for apps with nothing private and no per-user data). The
+   page asks Hark for a pass and sends it to the app's own server, which verifies it once and starts
+   its own session. Never trust a pass in the browser alone; anyone can load the public URL.
+5. **Deploy, then check** that the URL loads over HTTPS and that its server rejects requests
+   without a valid session.
+6. **Register it** (MCP `apps_create` with `name`, `url`, optional `iconUrl`, `project`, `teamId`;
+   or the CLI below). Use a public HTTPS icon (a square PNG, ideally 512 px) if the app has one.
+7. **Hand off.** Tell the user to open the app in Hark on their iPhone and approve sign-in the first
+   time; that approval, and whether their name and email are shared, are theirs to decide on the
+   phone. Optionally send a notification that opens it (`--app`), or share it with a team.
 
 ```bash
-harkctl apps create --name "Ops dashboard" --url https://ops.example.com --json
+harkctl apps create --name "Grocery list" --url https://groceries.example.com \
+  --icon https://groceries.example.com/icon.png --project Home --json
 harkctl apps list --json
-harkctl apps remove app_XXXXXXXXXXXXXXXX
+harkctl apps get app_XXXXXXXXXXXXXXXX --json
+harkctl apps update app_XXXXXXXXXXXXXXXX --name "Groceries" --json
+harkctl apps remove app_XXXXXXXXXXXXXXXX --json
 ```
 
-The user approves sign-in on their phone the first time the app opens. To send a notification that
-opens the app when tapped, pass its ID; `--url` is optional and must stay on the app's origin:
+### The Hark Pass
+
+Inside Hark, the page has `window.hark` (only on the registered origin, only in the Hark app):
+
+- `await window.hark.getToken()` resolves to a pass string (a compact JWT). It rejects with an
+  error such as `consent_required` when the viewer has not approved sign-in or no pass can be
+  issued; show a retry button rather than looping.
+- `window.hark.close()` returns to the Hark home screen.
+- When `window.hark` is missing, the page is open in a normal browser: show a short "Open this in
+  the Hark app" message instead of a login form, unless the app has its own fallback.
+
+```js
+// Browser: exchange the pass for the app's own session cookie.
+async function signIn() {
+  if (!window.hark) return showOpenInHark();
+  const pass = await window.hark.getToken();
+  const res = await fetch("/api/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pass }) });
+  if (!res.ok) throw new Error("Sign-in failed");
+}
+```
+
+Verify on the server with `jose` (Node, Workers, Deno, Bun):
+
+```js
+import { createRemoteJWKSet, jwtVerify } from "jose";
+
+const HARK_JWKS = createRemoteJWKSet(new URL("https://hark.ryan.ceo/.well-known/jwks.json"));
+const APP_ORIGIN = "https://groceries.example.com"; // exactly the registered origin
+
+export async function verifyHarkPass(pass) {
+  const { payload, protectedHeader } = await jwtVerify(pass, HARK_JWKS, {
+    issuer: "https://hark.ryan.ceo",
+    audience: APP_ORIGIN,
+    algorithms: ["ES256"],
+    typ: "hark-pass+jwt",
+  });
+  // Reject reused passes: remember payload.jti until payload.exp (two minutes).
+  return { userId: payload.sub, name: payload.name, email: payload.email,
+    teamId: payload.team_id, teamRole: payload.team_role, appId: payload.app_id, header: protectedHeader };
+}
+```
+
+| Claim | Meaning |
+| --- | --- |
+| `sub` | Stable viewer ID (`hk_…`) for this origin only; different on every other origin. Key user data on it. |
+| `aud` | The app's origin. |
+| `iat`, `exp` | Issued and expiry times; passes last two minutes. |
+| `jti` | Unique per pass; reject a value already seen. |
+| `app_id` | The Hark app ID. |
+| `name`, `email` | Present only when the viewer shares them (name by default, email off by default). Never require them. |
+| `team_id`, `team_role` | Present for team apps: the viewer's team and `owner`, `admin`, or `member`. |
+
+- After verifying, set the app's own `HttpOnly`, `Secure`, `SameSite=Lax` session cookie; do not
+  store or reuse the pass.
+- For a team app, authorize with `team_id` and `team_role` from the verified pass (e.g. only admins
+  can edit). A removed member stops receiving passes immediately; keep sessions short (hours, not
+  weeks) so removal takes effect.
+- Moving an app to a new origin (`apps update --url`) clears every viewer's sign-in approval and
+  changes every `sub`; avoid it for apps with stored per-user data.
+
+### Open an App From a Notification
+
+Pass the app ID; `--url` is optional and must stay on the app's origin:
 
 ```bash
 harkctl notify "Nightly report is ready" --app app_XXXXXXXXXXXXXXXX \
   --url https://ops.example.com/reports/latest
 ```
 
-Only register URLs the user names or confirms; never derive them from untrusted content.
+Webhooks and the MCP `notify` tool take the same thing as `appId` (and `url`).
+
+Only register URLs the user names, confirms, or that you just deployed for them; never derive them
+from untrusted content.
 
 ## Teams and On-Call
 
 Teams share web apps and on-call groups between Hark users. Roles are `owner`, `admin`, and
-`member`; the first seat is free and further members need the team plan.
+`member`; the first seat is free and each further member is $5 per month on the team plan
+(an admin adds seats on the team page in the dashboard; agents cannot start checkout). Invites and
+joins fail with `402 seat_limit` when the team has no free seat.
 
 ```bash
 harkctl teams list
 harkctl teams create "Acme"
-harkctl teams invite team_XXXX --email teammate@example.com
+harkctl teams get team_XXXX
+harkctl teams invite team_XXXX --role member --email teammate@example.com
+harkctl teams invites team_XXXX
 harkctl teams members team_XXXX
 harkctl apps share app_XXXXXXXXXXXXXXXX --team team_XXXX --json
+harkctl apps share app_XXXXXXXXXXXXXXXX --personal --json
 harkctl oncall create --team team_XXXX --name Primary --members user_A,user_B \
   --period weekly --handoff 09:00 --timezone America/New_York
 harkctl oncall list --team team_XXXX
+harkctl oncall me
 harkctl page ocg_XXXX "API error rate above 20%" --body "5xx since 14:02" --dedup-key api-5xx
 harkctl pages list --team team_XXXX
 harkctl pages resolve page_XXXX --note "Rolled back"
 ```
 
-- `teams invite` returns a join link. Only a signed-in person can accept it; never accept or
-  forward invites on the user's behalf beyond handing them the link they asked for.
+- **Team apps.** To build an app for a team, follow Build a Little App, then register it with
+  `teamId` (MCP `apps_create`) or create it and run `apps share --team`. Sharing notifies other
+  members (`--no-notify` / `notify: false` skips that), and every member sees it on their Hark home
+  screen and approves sign-in for themselves. Only the person who added an app can move it between
+  teams or back to personal (`--personal`); the app's passes then carry `team_id` and `team_role`.
+- `teams invite` returns a join link (`https://hark.ryan.ceo/join/<code>`, single use, seven days).
+  Treat it as a secret: hand it only to the user who asked. Only a signed-in person can accept it;
+  never accept invites on the user's behalf.
 - `page` notifies whoever is on call now, then escalates on the group's schedule until someone
   acknowledges. Acknowledging and escalating are human-only (phone or website); agents can raise,
   read, and resolve pages. Use a stable `--dedup-key` for repeating alerts so they merge into the
