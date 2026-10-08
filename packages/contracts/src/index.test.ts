@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
+  API_TOKEN_SCOPE_DESCRIPTIONS,
+  API_TOKEN_SCOPES,
   agentNotificationCreateSchema,
   appleNativeTokenExchangeSchema,
   deviceRegisterSchema,
@@ -15,6 +17,8 @@ import {
   liveActivityUpdateSchema,
   NOTIFICATION_BODY_MAX_CHARS,
   normalizeProjectName,
+  OAUTH_DEFAULT_SCOPES,
+  OAUTH_SCOPES,
   pushDataSchema,
   serviceCreateSchema,
   truncateToUtf8Bytes,
@@ -722,5 +726,18 @@ describe("cross-deploy request-hash stability", () => {
       summary: "s",
     });
     expect(JSON.stringify(parsed)).toBe('{"body":"x","title":"T","project":"Acme","summary":"s"}');
+  });
+});
+
+describe("OAuth scopes", () => {
+  it("map 1:1 to API token scopes plus offline_access", () => {
+    expect(OAUTH_SCOPES).toEqual([...API_TOKEN_SCOPES, "offline_access"]);
+    expect(Object.keys(API_TOKEN_SCOPE_DESCRIPTIONS).sort()).toEqual([...API_TOKEN_SCOPES].sort());
+  });
+
+  it("default to everything except tokens:manage", () => {
+    expect(OAUTH_DEFAULT_SCOPES).not.toContain("tokens:manage");
+    expect(OAUTH_DEFAULT_SCOPES).toContain("offline_access");
+    expect(OAUTH_DEFAULT_SCOPES).toHaveLength(OAUTH_SCOPES.length - 1);
   });
 });

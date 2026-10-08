@@ -316,6 +316,19 @@ describe("pages", () => {
     });
     expect(await acked.json()).toEqual({ ok: true, status: "acknowledged" });
     await settle();
+    // The credential is single-use: replaying it answers 409 and acts on nothing.
+    const replay = await call("POST", `/api/page-responses/${first.page.id}/escalate`, {
+      responseToken: bToken,
+    });
+    expect(replay.status).toBe(409);
+    expect(await replay.json()).toEqual({
+      error: "Page is already acknowledged",
+      status: "acknowledged",
+    });
+    const reack = await call("POST", `/api/page-responses/${first.page.id}/acknowledge`, {
+      responseToken: bToken,
+    });
+    expect(reack.status).toBe(409);
     // Everyone else who was paged gets a silent page.claimed.
     expect(sent.map((message) => message.to).sort()).toEqual([
       "ExponentPushToken[user_a]",

@@ -10,6 +10,7 @@ import { Landing } from "./pages/Landing";
 import { Launched } from "./pages/Launched";
 import { Privacy, Terms } from "./pages/Legal";
 import { NotFound } from "./pages/NotFound";
+import { OAuthConsent } from "./pages/OAuthConsent";
 import { Pricing } from "./pages/Pricing";
 import { TeamPage } from "./pages/Team";
 
@@ -30,6 +31,7 @@ export function App() {
         <Route path="/a/launched" element={<Launched />} />
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/terms" element={<Terms />} />
+        <Route path="/oauth/consent" element={<OAuthConsent />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </>

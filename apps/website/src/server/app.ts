@@ -1,7 +1,9 @@
+import { MCP_PATH } from "@hark/contracts";
 import { type Context, Hono, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { auth } from "./auth";
+import { INTERNAL_AGENT_TOKEN } from "./middleware";
 import { activitiesAgentRoute, activitiesSessionRoute } from "./routes/activities";
 import { activityFeedAgentRoute, activityFeedRoute } from "./routes/activity-feed";
 import { activityHooksRoute } from "./routes/activity-hooks";
@@ -24,6 +26,8 @@ import {
   liveActivityInteractionResponseRoute,
 } from "./routes/interactions";
 import { liveActivityRegistrationRoute } from "./routes/live-activity-registration";
+import { createMcpRoute, MCP_MAX_BODY_BYTES } from "./routes/mcp";
+import { oauthClientsRoute, oauthWellKnownRoute } from "./routes/oauth";
 import {
   oncallAgentRoute,
   oncallSessionRoute,
@@ -48,7 +52,10 @@ async function accessLog(c: Context, next: Next): Promise<void> {
 }
 
 // Bounds memory use for unauthenticated POST bodies; accepted payloads are far smaller.
-app.use("*", bodyLimit({ maxSize: 64 * 1024 }));
+// MCP tool calls wrap agent payloads in JSON-RPC, so /mcp gets more headroom.
+const defaultBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
+const mcpBodyLimit = bodyLimit({ maxSize: MCP_MAX_BODY_BYTES });
+app.use("*", (c, next) => (c.req.path === MCP_PATH ? mcpBodyLimit : defaultBodyLimit)(c, next));
 
 if (process.env.NODE_ENV !== "test") {
   app.use("*", accessLog);
@@ -63,6 +70,14 @@ app.route("/", docsTextRoute);
 app.route("/", appPassJwksRoute);
 
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
+// OAuth discovery for the MCP server, and the server itself. Tool calls are
+// dispatched through the agent routes below as the caller's grant token.
+app.route("/", oauthWellKnownRoute);
+app.route(
+  "/",
+  createMcpRoute(async (request, token) => app.fetch(request, { [INTERNAL_AGENT_TOKEN]: token })),
+);
+app.route("/api/oauth", oauthClientsRoute);
 
 app.route("/api/services", servicesRoute);
 app.route("/api/analytics", analyticsRoute);
@@ -103,7 +118,11 @@ app.route("/hooks", activityHooksRoute);
 app.route("/hooks", hooksRoute);
 
 app.notFound((c) => {
-  if (c.req.path.startsWith("/api") || c.req.path.startsWith("/hooks")) {
+  if (
+    c.req.path.startsWith("/api") ||
+    c.req.path.startsWith("/hooks") ||
+    c.req.path.startsWith("/.well-known/oauth")
+  ) {
     return c.json({ error: "Not found" }, 404);
   }
   return c.text("Not found", 404);

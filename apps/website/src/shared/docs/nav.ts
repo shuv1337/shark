@@ -100,6 +100,15 @@ export const DOC_NAV = [
       { id: "agent-api-openapi", label: "OpenAPI document" },
     ],
   },
+  {
+    id: "mcp",
+    label: "MCP server",
+    items: [
+      { id: "mcp-connect", label: "Connect a client" },
+      { id: "mcp-oauth", label: "Sign-in and permissions" },
+      { id: "mcp-tools", label: "Tools" },
+    ],
+  },
 ] as const;
 
 type DocNavSection = (typeof DOC_NAV)[number];

@@ -25,6 +25,10 @@ harkctl
 └─ tokens       list · revoke
 ```
 
+Prefer MCP? The same operations are available as tools from Hark's remote MCP server at
+`https://hark.ryan.ceo/mcp`, which signs in with OAuth instead of a token
+([setup](https://hark.ryan.ceo/docs#mcp)).
+
 Start a browser authorization flow and approve the requested scopes with your signed-in Hark account:
 
 ```sh

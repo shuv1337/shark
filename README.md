@@ -236,6 +236,62 @@ Claude Code, Codex, OpenCode V1, and OpenCode V2 details.
 Only an explicit phone approval allows a request. Other outcomes deny it, and raw commands, patches,
 prompts, file contents, and absolute paths are not sent to Hark.
 
+## MCP
+
+Hark runs a remote [MCP](https://modelcontextprotocol.io) server at `https://hark.ryan.ceo/mcp`
+(Streamable HTTP). Add the URL to your client; it signs in with OAuth, so there is no token to
+paste.
+
+OpenCode (`opencode.json`):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "hark": { "type": "remote", "url": "https://hark.ryan.ceo/mcp" }
+  }
+}
+```
+
+Claude Code:
+
+```sh
+claude mcp add --transport http hark https://hark.ryan.ceo/mcp
+```
+
+Cursor (`~/.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "hark": { "url": "https://hark.ryan.ceo/mcp" }
+  }
+}
+```
+
+The first tool call opens a browser: sign in to Hark, review the permissions the client asks for
+(untick any you do not want), and approve. Under the hood this is OAuth 2.1 per the MCP
+authorization spec: protected resource metadata at `/.well-known/oauth-protected-resource/mcp`,
+authorization server metadata at `/.well-known/oauth-authorization-server`, dynamic client
+registration for public clients, PKCE (S256) required, tokens bound to the `/mcp` resource,
+one-hour access tokens, and refresh tokens when you allow "Stay connected". Hark remembers your
+consent per client and permission set. Connected clients are listed on the dashboard, where
+**Disconnect** revokes their access and refresh tokens immediately; agents with `tokens:manage` see
+them as `kind: "oauth"` entries in `GET /api/agent/tokens`.
+
+OAuth scopes are the [agent API](#agent-api) scopes one to one (`notifications:send`,
+`interactions:create`, `interactions:read`, `activities:read`/`write`, `services:read`/`write`,
+`devices:read`/`write`, `events:read`, `apps:read`/`write`, `inbox:read`/`write`,
+`billing:read`, `tokens:manage`, `teams:read`/`write`, `oncall:read`/`write`) plus
+`offline_access`. A client that requests no scope gets everything except `tokens:manage`.
+
+There is one tool per agent API operation (65 in all), from `notify`, `ask` (sends a prompt and
+waits up to ten minutes for your answer, with progress updates), and `activities_*` to services,
+the inbox, web apps, teams, on-call, and pages. Each tool runs through the same handler, validation,
+and scope check as its `/api/agent` route. Human-only actions are never tools: answering prompts,
+acknowledging or escalating pages, accepting team invites, approving app sign-in, changing app
+sharing or issuing Hark passes, creating tokens, and billing checkout or the billing portal.
+
 ## Agent API
 
 Everything you can do in the dashboard or the phone inbox is also available to a scoped agent token

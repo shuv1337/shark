@@ -74,6 +74,15 @@ needs a stable URL it can call later.
 These capabilities do not authorize package installation, arbitrary command execution, reading
 unrelated files or environment variables, or sending data to any other destination.
 
+## Hark MCP Server
+
+If the client already has Hark's remote MCP server connected (`https://hark.ryan.ceo/mcp`, OAuth
+sign-in), prefer its tools over `harkctl`: `notify`, `ask`, `activities_*`, `teams_*`, `oncall_*`,
+`pages_*`, and the rest map one to one to the agent API with the same scopes. To connect it, the
+user adds that URL to their MCP client and approves it in the browser; never ask for a token.
+The same security boundaries apply: no tool answers prompts or acknowledges pages, and webhook URLs
+and join links in tool results are secrets.
+
 ## Authenticate
 
 1. Check the current connection:

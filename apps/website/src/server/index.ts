@@ -39,7 +39,7 @@ if (existsSync(clientDir)) {
   }
   // Client-routed private pages reuse the noindex dashboard shell.
   if (existsSync(resolve(clientDir, "dashboard/index.html"))) {
-    for (const path of ["/dashboard/teams/:teamId", "/join/:code"]) {
+    for (const path of ["/dashboard/teams/:teamId", "/join/:code", "/oauth/consent"]) {
       app.get(path, serveStatic({ path: "./dist/client/dashboard/index.html" }));
     }
   }

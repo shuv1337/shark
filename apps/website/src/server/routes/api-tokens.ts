@@ -5,6 +5,7 @@ import { db } from "../db";
 import { apiToken } from "../db/schema";
 import { track } from "../lib/analytics";
 import { newId } from "../lib/id";
+import { oauthClientNames, revokeOAuthGrant } from "../lib/oauth";
 import {
   apiTokenPrefix,
   generateApiToken,
@@ -19,7 +20,10 @@ import {
   requireScopes,
 } from "../middleware";
 
-function toDto(row: typeof apiToken.$inferSelect): ApiTokenDto {
+function toDto(
+  row: typeof apiToken.$inferSelect,
+  clientNames: Map<string, string> = new Map(),
+): ApiTokenDto {
   return {
     id: row.id,
     name: row.name,
@@ -29,18 +33,43 @@ function toDto(row: typeof apiToken.$inferSelect): ApiTokenDto {
     lastUsedAt: row.lastUsedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     revokedAt: row.revokedAt?.toISOString() ?? null,
+    kind: row.oauthClientId ? "oauth" : "token",
+    oauthClient: row.oauthClientId
+      ? {
+          clientId: row.oauthClientId,
+          name: clientNames.get(row.oauthClientId) ?? row.name,
+        }
+      : null,
   };
 }
 
-async function listTokens(userId: string): Promise<ApiTokenDto[]> {
+/**
+ * Lists the account's tokens. Connected OAuth (MCP) clients appear as
+ * `kind: "oauth"` rows for agents; the dashboard lists them separately.
+ */
+async function listTokens(
+  userId: string,
+  { includeOAuth }: { includeOAuth: boolean },
+): Promise<ApiTokenDto[]> {
   const rows = await db
     .select()
     .from(apiToken)
-    .where(eq(apiToken.userId, userId))
+    .where(
+      includeOAuth
+        ? eq(apiToken.userId, userId)
+        : and(eq(apiToken.userId, userId), isNull(apiToken.oauthClientId)),
+    )
     .orderBy(desc(apiToken.createdAt));
-  return rows.map(toDto);
+  const clientNames = await oauthClientNames([
+    ...new Set(rows.flatMap((row) => (row.oauthClientId ? [row.oauthClientId] : []))),
+  ]);
+  return rows.map((row) => toDto(row, clientNames));
 }
 
+/**
+ * Revokes a token. Revoking a connected OAuth client's grant also deletes
+ * its access and refresh tokens, so it cannot silently reconnect.
+ */
 async function revokeToken(
   userId: string,
   tokenId: string,
@@ -50,15 +79,22 @@ async function revokeToken(
     .update(apiToken)
     .set({ revokedAt: new Date() })
     .where(and(eq(apiToken.id, tokenId), eq(apiToken.userId, userId), isNull(apiToken.revokedAt)))
-    .returning({ id: apiToken.id });
-  if (rows.length === 0) return false;
+    .returning({ id: apiToken.id, oauthClientId: apiToken.oauthClientId });
+  const [row] = rows;
+  if (!row) return false;
+  if (row.oauthClientId) {
+    revokeOAuthGrant(userId, row.oauthClientId, outcome);
+    return true;
+  }
   track({ name: "api_token_revoked", userId, outcome });
   return true;
 }
 
 export const apiTokensRoute = new Hono<AuthedEnv>()
   .use("*", requireAuth)
-  .get("/", async (c) => c.json({ tokens: await listTokens(c.get("user").id) }))
+  .get("/", async (c) =>
+    c.json({ tokens: await listTokens(c.get("user").id, { includeOAuth: false }) }),
+  )
   .post("/", async (c) => {
     const parsed = apiTokenCreateSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) {
@@ -79,6 +115,8 @@ export const apiTokensRoute = new Hono<AuthedEnv>()
           and(
             eq(apiToken.userId, c.get("user").id),
             isNull(apiToken.revokedAt),
+            // Connected OAuth clients do not count against the token limit.
+            isNull(apiToken.oauthClientId),
             or(isNull(apiToken.expiresAt), gt(apiToken.expiresAt, now)),
           ),
         )
@@ -131,7 +169,7 @@ export const apiTokensRoute = new Hono<AuthedEnv>()
 export const apiTokensAgentRoute = new Hono<AgentEnv>()
   .use("*", requireApiToken)
   .get("/", requireScopes("tokens:manage"), async (c) =>
-    c.json({ tokens: await listTokens(c.get("apiToken").userId) }),
+    c.json({ tokens: await listTokens(c.get("apiToken").userId, { includeOAuth: true }) }),
   )
   .delete("/:id", requireScopes("tokens:manage"), async (c) => {
     const revoked = await revokeToken(c.get("apiToken").userId, c.req.param("id"), "agent");

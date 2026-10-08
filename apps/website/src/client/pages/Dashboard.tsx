@@ -22,6 +22,7 @@ import {
   LIST_PANEL,
   relativeTime,
 } from "../components/DashboardKit";
+import { McpClientsSection } from "../components/McpClientsSection";
 import { Brand, PAGE_COLUMN } from "../components/SiteChrome";
 import { TeamsSection } from "../components/TeamsSection";
 import {
@@ -368,6 +369,7 @@ export function Dashboard() {
         />
 
         <Devices devices={devices} billing={billing} onRemoved={() => void refresh()} />
+        <McpClientsSection />
 
         {teams !== "unsupported" ? (
           <TeamsSection

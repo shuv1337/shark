@@ -789,6 +789,127 @@ export interface ApiTokenDto {
   lastUsedAt: string | null;
   createdAt: string;
   revokedAt: string | null;
+  /**
+   * `oauth` marks the grant behind a connected MCP/OAuth client. Revoking it
+   * signs that client out (access and refresh tokens). Omitted by older
+   * servers, which only had `token`.
+   */
+  kind?: ApiTokenKind;
+  /** The connected OAuth client, for `kind: "oauth"`. */
+  oauthClient?: { clientId: string; name: string } | null;
+}
+
+export const API_TOKEN_KINDS = ["token", "oauth"] as const;
+export type ApiTokenKind = (typeof API_TOKEN_KINDS)[number];
+
+/** Plain-language labels for consent screens and token pickers. */
+export const API_TOKEN_SCOPE_DESCRIPTIONS: Record<
+  ApiTokenScope,
+  { label: string; description: string }
+> = {
+  "notifications:send": {
+    label: "Send notifications",
+    description: "Push notifications to your devices and withdraw them.",
+  },
+  "interactions:create": {
+    label: "Ask questions",
+    description: "Send approvals, yes/no questions, and reply prompts, and cancel them.",
+  },
+  "interactions:read": {
+    label: "Read answers",
+    description: "See your pending prompts and wait for your answers.",
+  },
+  "activities:read": {
+    label: "Read Live Activities",
+    description: "See the Live Activities it started.",
+  },
+  "activities:write": {
+    label: "Run Live Activities",
+    description: "Start, update, and end Live Activities on your Lock Screen.",
+  },
+  "services:read": {
+    label: "Read webhook services",
+    description: "List your webhook services (without their URLs).",
+  },
+  "services:write": {
+    label: "Manage webhook services",
+    description: "Create, edit, rotate, and delete webhook services.",
+  },
+  "devices:read": { label: "Read devices", description: "List your registered devices." },
+  "devices:write": { label: "Remove devices", description: "Remove registered devices." },
+  "events:read": {
+    label: "Read history",
+    description: "See webhook deliveries and your activity history.",
+  },
+  "apps:read": { label: "Read web apps", description: "List your Hark web apps." },
+  "apps:write": {
+    label: "Manage web apps",
+    description: "Add, edit, move, and remove web apps, and revoke their sign-in.",
+  },
+  "inbox:read": { label: "Read your inbox", description: "Read notifications in your inbox." },
+  "inbox:write": { label: "Mark inbox read", description: "Mark notifications read or unread." },
+  "billing:read": { label: "Read your plan", description: "See your plan, limits, and usage." },
+  "tokens:manage": {
+    label: "Manage API tokens",
+    description: "List and revoke your API tokens and connected clients. It can never create one.",
+  },
+  "teams:read": { label: "Read teams", description: "See your teams, members, and invites." },
+  "teams:write": {
+    label: "Manage teams",
+    description: "Create and rename teams, invite and remove members, and change roles.",
+  },
+  "oncall:read": {
+    label: "Read on-call",
+    description: "See on-call schedules, your shifts, and pages.",
+  },
+  "oncall:write": {
+    label: "Page and manage on-call",
+    description: "Page people, edit schedules and overrides, and resolve pages.",
+  },
+};
+
+// ---------------------------------------------------------------------------
+// OAuth and the remote MCP server
+// ---------------------------------------------------------------------------
+
+/** The MCP endpoint path; its absolute URL is the OAuth resource/audience. */
+export const MCP_PATH = "/mcp" as const;
+
+/** Lets an OAuth client refresh its access without asking again. */
+export const OAUTH_OFFLINE_ACCESS_SCOPE = "offline_access" as const;
+
+/** Every OAuth scope Hark issues: the API token scopes 1:1 plus `offline_access`. */
+export const OAUTH_SCOPES = [...API_TOKEN_SCOPES, OAUTH_OFFLINE_ACCESS_SCOPE] as const;
+export type OAuthScope = (typeof OAUTH_SCOPES)[number];
+
+/**
+ * Requested when a client asks for no scope: everything except
+ * `tokens:manage`, which a client must request explicitly.
+ */
+export const OAUTH_DEFAULT_SCOPES: readonly OAuthScope[] = OAUTH_SCOPES.filter(
+  (scope) => scope !== "tokens:manage",
+);
+
+/** A connected MCP/OAuth client as shown in the dashboard. */
+export interface OAuthClientGrantDto {
+  clientId: string;
+  name: string;
+  iconUrl: string | null;
+  clientUri: string | null;
+  /** Hosts the client redirects to after sign-in (for example `localhost`). */
+  redirectHosts: string[];
+  /** The scopes you granted, excluding `offline_access`. */
+  scopes: ApiTokenScope[];
+  /** Whether the client may refresh its access without asking again. */
+  offlineAccess: boolean;
+  createdAt: string;
+  lastUsedAt: string | null;
+  /** The `kind: "oauth"` API token row that represents this grant. */
+  tokenId: string | null;
+}
+
+export interface OAuthClientGrantListResponse {
+  clients: OAuthClientGrantDto[];
 }
 
 export interface ApiTokenCreatedResponse {

@@ -6,14 +6,15 @@ import {
   oncallPageResolveSchema,
 } from "@hark/contracts";
 import { and, asc, eq } from "drizzle-orm";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db";
-import { oncallGroup, oncallOverride, team, teamMember } from "../db/schema";
+import { oncallGroup, oncallOverride, oncallPage, team, teamMember } from "../db/schema";
 import { newId } from "../lib/id";
 import {
   acknowledgePage,
   checkRotation,
+  claimPageResponseToken,
   escalatePage,
   memberGroup,
   memberPage,
@@ -21,6 +22,7 @@ import {
   pageRecipientByToken,
   people,
   raisePage,
+  releasePageResponseToken,
   resolvePage,
   rotationOf,
   toGroupDto,
@@ -306,8 +308,14 @@ export const pageResponsesRoute = new Hono()
     if (!parsed.success) return c.json({ error: "Invalid page response" }, 400);
     const found = await pageRecipientByToken(c.req.param("id"), parsed.data.responseToken);
     if (!found) return c.json({ error: "Page not found" }, 404);
+    if (found.usedAt || !(await claimPageResponseToken(found.page.id, found.userId))) {
+      return spentCredential(c, found.page);
+    }
     const outcome = await acknowledgePage(found.page, found.userId);
-    if (!outcome.ok) return c.json({ error: outcome.error, status: outcome.page.status }, 409);
+    if (!outcome.ok) {
+      await releasePageResponseToken(found.page.id, found.userId);
+      return c.json({ error: outcome.error, status: outcome.page.status }, 409);
+    }
     return c.json({ ok: true, status: outcome.page.status });
   })
   .post("/:id/escalate", async (c) => {
@@ -315,8 +323,12 @@ export const pageResponsesRoute = new Hono()
     if (!parsed.success) return c.json({ error: "Invalid page response" }, 400);
     const found = await pageRecipientByToken(c.req.param("id"), parsed.data.responseToken);
     if (!found) return c.json({ error: "Page not found" }, 404);
+    if (found.usedAt || !(await claimPageResponseToken(found.page.id, found.userId))) {
+      return spentCredential(c, found.page);
+    }
     const outcome = await escalatePage(found.page.id, true);
     if (!outcome.ok) {
+      await releasePageResponseToken(found.page.id, found.userId);
       return c.json(
         { error: outcome.error, status: outcome.page?.status ?? found.page.status },
         outcome.status,
@@ -324,6 +336,30 @@ export const pageResponsesRoute = new Hono()
     }
     return c.json({ ok: true, status: outcome.page.status });
   });
+
+/**
+ * A lock-screen credential is spent by its first successful action. Reusing
+ * it answers 409 with the page's current status, like acting on a page that
+ * is no longer triggered, and never acts again.
+ */
+async function spentCredential(c: Context, page: { id: string; status: string }) {
+  const [latest] = await db
+    .select({ status: oncallPage.status })
+    .from(oncallPage)
+    .where(eq(oncallPage.id, page.id))
+    .limit(1);
+  const status = latest?.status ?? page.status;
+  return c.json(
+    {
+      error:
+        status === "triggered"
+          ? "This page response was already used"
+          : `Page is already ${status}`,
+      status,
+    },
+    409,
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Agent routes
