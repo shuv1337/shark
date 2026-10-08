@@ -1274,6 +1274,12 @@ harkctl apps remove app_...`,
                 detail:
                   "Present only when the owner shares them. Name is shared by default; email is not.",
               },
+              {
+                name: "team_id / team_role",
+                type: "string",
+                detail:
+                  "Present for [team apps](#teams-apps): the viewer's team and their current role (`owner`, `admin`, or `member`).",
+              },
             ],
           },
           {
@@ -1303,6 +1309,205 @@ harkctl apps remove app_...`,
     ],
   },
   {
+    id: "teams",
+    lead: "A team shares web apps and on-call groups between Hark accounts. Everyone keeps their own phone, inbox, and sign-in decisions; the team only decides what is shared.",
+    subsections: [
+      {
+        id: "teams-roles",
+        blocks: [
+          {
+            kind: "p",
+            text: "Create a team in the dashboard or with `harkctl teams create`. You become its owner. Each member has one role:",
+          },
+          {
+            kind: "table",
+            variant: "field",
+            caption: "Team roles",
+            rows: [
+              {
+                name: "owner",
+                type: "one per team",
+                detail:
+                  "Everything an admin can do, plus deleting the team, managing billing, and transferring ownership. The owner must transfer ownership before leaving.",
+              },
+              {
+                name: "admin",
+                type: "role",
+                detail:
+                  "Renames the team, invites and removes members, changes roles, removes any team app, and creates and edits on-call groups.",
+              },
+              {
+                name: "member",
+                type: "role",
+                detail:
+                  "Uses and adds team apps, raises and acknowledges pages, and schedules overrides for themselves.",
+              },
+            ],
+          },
+          {
+            kind: "p",
+            text: "Transferring ownership (setting someone's role to `owner`) makes the previous owner an admin. Removing a member takes effect immediately: they stop receiving Hark passes for the team's apps and leave every rotation.",
+          },
+        ],
+      },
+      {
+        id: "teams-seats",
+        blocks: [
+          {
+            kind: "p",
+            text: "Every member uses a seat. The first seat is free, so a team of one costs nothing. Each additional member needs the team plan at $5 per seat per month, billed to the team (not to anyone's personal plan) and prorated as people join and leave.",
+          },
+          {
+            kind: "p",
+            text: "Without the team plan, creating or accepting an invite for a second member returns `402` with code `seat_limit`. Owners and admins start checkout or open the billing portal from the team page in the dashboard.",
+          },
+          {
+            kind: "note",
+            text: "Pages count against the notification allowance of whoever raised them (the agent's or service's owner), like any other notification. Team notices such as invites and shared apps are free.",
+          },
+        ],
+      },
+      {
+        id: "teams-invites",
+        blocks: [
+          {
+            kind: "p",
+            text: "Owners and admins create invite links. Each link joins one person, expires after seven days, and can be revoked. Add an email to also push the invite to an existing Hark user with that address.",
+          },
+          {
+            kind: "code",
+            language: "bash",
+            code: `harkctl teams invite team_... --email teammate@example.com --role member
+# { "invite": { ... }, "code": "…", "url": "https://hark.ryan.ceo/join/…" }`,
+          },
+          {
+            kind: "p",
+            text: "Opening the link shows the team, who invited you, and the role. Joining requires signing in: agents can create invites but never accept them.",
+          },
+        ],
+      },
+      {
+        id: "teams-apps",
+        blocks: [
+          {
+            kind: "p",
+            text: "Any member can add a [web app](#web-apps) to a team, or move one of their own apps into it with `harkctl apps share app_... --team team_...` (`--personal` moves it back). The other members are notified and see the app next to their own.",
+          },
+          {
+            kind: "bullets",
+            items: [
+              "Every member approves sign-in and chooses whether their name and email are shared for themselves; nobody approves on someone else's behalf.",
+              "Passes for team apps carry the usual pairwise `sub` plus `team_id` and `team_role`, checked at issue time, so your site can authorize by team.",
+              "The person who added an app, and team admins, can rename or remove it. Deleting a team returns its apps to the people who added them.",
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: "oncall",
+    lead: "On-call groups page whoever is on call right now, then escalate until someone takes it. Pages arrive as time-sensitive notifications with Acknowledge and Escalate actions on the Lock Screen.",
+    subsections: [
+      {
+        id: "oncall-rotations",
+        blocks: [
+          {
+            kind: "p",
+            text: "Team owners and admins create on-call groups. A rotation is an ordered list of team members who hand off daily or weekly at a local time in an IANA time zone. Handoffs follow the local clock across daylight-saving changes, so a 09:00 handoff stays at 09:00.",
+          },
+          {
+            kind: "code",
+            language: "bash",
+            code: `harkctl oncall create --team team_... --name Primary \\
+  --members user_a,user_b,user_c --period weekly \\
+  --handoff 09:00 --timezone America/New_York`,
+          },
+          {
+            kind: "p",
+            text: "Without `startsAt`, the first member is on call from the latest handoff. Overrides put someone on call for a window (covering a shift, a holiday) and replace the rotation while they last; any member can schedule one for themselves. Each group lists its current shift and the next few.",
+          },
+        ],
+      },
+      {
+        id: "oncall-paging",
+        blocks: [
+          {
+            kind: "p",
+            text: "A page goes first to the person on call. If nobody is on call, the whole group is paged. Escalation steps then run until someone acknowledges:",
+          },
+          {
+            kind: "table",
+            variant: "field",
+            caption: "Escalation steps",
+            rows: [
+              {
+                name: "afterMinutes",
+                type: "integer",
+                detail: "Minutes after the previous step (or the page) without an acknowledgement.",
+              },
+              {
+                name: "target",
+                type: "next | group",
+                detail:
+                  "`next` pages the next person in the rotation; `group` pages everyone in it who has not been paged yet.",
+              },
+            ],
+          },
+          {
+            kind: "p",
+            text: "The default is the next person after 5 minutes, then the whole group 10 minutes later. Pages with the same `dedupKey` merge into the open page (its `repeatCount` grows) instead of paging again.",
+          },
+          {
+            kind: "code",
+            language: "bash",
+            code: `harkctl page ocg_... "API error rate above 20%" \\
+  --body "5xx since 14:02" --dedup-key api-5xx`,
+          },
+        ],
+      },
+      {
+        id: "oncall-webhook",
+        blocks: [
+          {
+            kind: "p",
+            text: "Add `oncall` to a webhook payload to page a group instead of notifying your own devices. The service owner must belong to the group's team, and `oncall` cannot be combined with `deviceIds` or `response`. The `Idempotency-Key` header becomes the page's dedup key, so retries merge into the open page.",
+          },
+          {
+            kind: "code",
+            language: "json",
+            code: `{
+  "title": "Checkout API",
+  "body": "Error rate above 20% for 5 minutes",
+  "oncall": "ocg_..."
+}`,
+          },
+          {
+            kind: "p",
+            text: "The response carries `pageId` and `delivered`. Page bodies are limited to 2,000 characters. Agents page with `harkctl page` or `harkctl notify --oncall`.",
+          },
+        ],
+      },
+      {
+        id: "oncall-acknowledge",
+        blocks: [
+          {
+            kind: "p",
+            text: "Anyone on the team can acknowledge a page from the Lock Screen, the app, or the website. The first acknowledgement wins: escalation stops, the page clears from everyone else's phone, and later acknowledgements are refused. Escalate pages the next step right away.",
+          },
+          {
+            kind: "note",
+            text: "Acknowledging and escalating are human-only. An acknowledgement tells the team a person is on it, so agents can raise, read, and resolve pages but have no route to acknowledge or escalate them.",
+          },
+          {
+            kind: "p",
+            text: 'Resolve a page when the incident is over, from the website or with `harkctl pages resolve page_... --note "Rolled back"`. Resolving an unacknowledged page also stops its escalation.',
+          },
+        ],
+      },
+    ],
+  },
+  {
     id: "agent-api",
     lead: "Everything you can do in the dashboard or the phone inbox is also available to a scoped agent token, except the few decisions only you should make. `harkctl` wraps every route.",
     subsections: [
@@ -1317,7 +1522,7 @@ harkctl apps remove app_...`,
             kind: "bullets",
             items: [
               "Default `harkctl` logins request every scope except `events:read` and `tokens:manage`; add those with `--scope`.",
-              "`devices:write`, `inbox:read`, `inbox:write`, `billing:read`, and `tokens:manage` were added with this API; older logins must sign in again to use them.",
+              "`devices:write`, `inbox:read`, `inbox:write`, `billing:read`, and `tokens:manage` were added with this API, and `teams:read`, `teams:write`, `oncall:read`, and `oncall:write` with teams; older logins must sign in again to use them.",
               "Agent reads of services never include webhook URLs. Only create and rotate return a URL, once.",
             ],
           },
@@ -1460,6 +1665,48 @@ harkctl apps remove app_...`,
                 detail: "Sign the app out until the owner approves it again. `apps:write`.",
               },
               {
+                method: "POST",
+                path: "/api/agent/apps/:id/share",
+                detail: "Move an app you added into a team, or back. `apps:write`.",
+              },
+              {
+                method: "GET",
+                path: "/api/agent/teams",
+                detail:
+                  "Your teams, or `/:id` for one with its members. `teams:read`; `POST`, `PATCH`, and `DELETE` need `teams:write`.",
+              },
+              {
+                method: "POST",
+                path: "/api/agent/teams/:id/invites",
+                detail: "Create a join link; `GET` lists them. `teams:write` / `teams:read`.",
+              },
+              {
+                method: "PATCH",
+                path: "/api/agent/teams/:id/members/:userId",
+                detail: "Change a role; `DELETE` removes the member. `teams:write`.",
+              },
+              {
+                method: "GET",
+                path: "/api/agent/teams/:id/oncall",
+                detail:
+                  "The team's on-call groups; `POST` creates one. `oncall:read` / `oncall:write`.",
+              },
+              {
+                method: "PATCH",
+                path: "/api/agent/oncall/:groupId",
+                detail: "Edit a group, its `/overrides`, or raise `/pages`. `oncall:write`.",
+              },
+              {
+                method: "GET",
+                path: "/api/agent/teams/:id/pages",
+                detail: "The team's pages: `status`, `cursor`, `limit`. `oncall:read`.",
+              },
+              {
+                method: "POST",
+                path: "/api/agent/pages/:id/resolve",
+                detail: "Resolve a page; `GET /api/agent/pages/:id` reads one. `oncall:write`.",
+              },
+              {
                 method: "GET",
                 path: "/api/agent/activities",
                 detail:
@@ -1510,7 +1757,9 @@ harkctl tokens list   # needs --scope tokens:manage at login`,
               "Creating API tokens: a token that could mint tokens could grant itself any scope and outlive its own revocation. Agents can list and revoke tokens with `tokens:manage`.",
               "App sign-in: approving sign-in, issuing Hark passes, and choosing whether your name and email are shared stay on the phone. Moving an app's URL to a new origin clears its approval.",
               "Registering devices, which needs the iPhone's push token.",
-              "Starting checkout or opening the billing portal.",
+              "Starting checkout or opening the billing portal, for you or a team.",
+              "Accepting a team invite: joining a team is your decision.",
+              "Acknowledging or escalating a page: an acknowledgement tells the team a person is on it.",
             ],
           },
         ],

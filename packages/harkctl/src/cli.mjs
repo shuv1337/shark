@@ -21,6 +21,10 @@ const DEFAULT_SCOPES = [
   "inbox:read",
   "inbox:write",
   "billing:read",
+  "teams:read",
+  "teams:write",
+  "oncall:read",
+  "oncall:write",
 ];
 const TERMINAL = new Set(["approved", "denied", "yes", "no", "replied", "canceled", "expired"]);
 
@@ -148,6 +152,20 @@ export function parseArgs(argv) {
     "cursor",
     "filter",
     "page",
+    "team",
+    "email",
+    "role",
+    "members",
+    "period",
+    "handoff",
+    "timezone",
+    "starts-at",
+    "ends-at",
+    "user",
+    "body",
+    "dedup-key",
+    "note",
+    "oncall",
   ]);
   const booleanFlags = new Set([
     "approval",
@@ -166,6 +184,9 @@ export function parseArgs(argv) {
     "unread",
     "no-icon",
     "no-project",
+    "personal",
+    "all",
+    "no-notify",
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -442,7 +463,7 @@ function help() {
   harkctl auth status
   harkctl notify <body> [--title <name>] [--image <url>] [--url <url>] [--device <id>]
                  [--project <name>] [--summary <text>] [--markdown | --body-format <text|markdown>]
-                 [--app <app_id>] [--idempotency-key <key>] [--stdin]
+                 [--app <app_id>] [--oncall <group_id>] [--idempotency-key <key>] [--stdin]
   harkctl notify ask <prompt> (--approval|--yes-no|--text) [--title <name>] [--image <url>]
                   [--url <url>] [--device <id>] [--expires-in <duration>]
                   [--live-activity [--style <approval|shell|verdict|signal>]
@@ -486,13 +507,42 @@ function help() {
   harkctl inbox read <notification_id>
   harkctl inbox unread <notification_id>
   harkctl inbox read-all [--project <project_id|unfiled>]
-  harkctl apps create --name <name> --url <url> [--icon <url>] [--project <name>] [--json]
+  harkctl apps create --name <name> --url <url> [--icon <url>] [--project <name>]
+                      [--team <team_id>] [--json]
   harkctl apps list [--json]
   harkctl apps get <app_id> [--json]
   harkctl apps update <app_id> [--name <name>] [--url <url>] [--icon <url> | --no-icon]
                       [--project <name> | --no-project] [--json]
   harkctl apps revoke <app_id> [--json]
   harkctl apps remove <app_id> [--json]
+  harkctl apps share <app_id> (--team <team_id> | --personal) [--no-notify] [--json]
+  harkctl teams list
+  harkctl teams create <name>
+  harkctl teams get <team_id>
+  harkctl teams rename <team_id> <name>
+  harkctl teams delete <team_id>
+  harkctl teams leave <team_id>
+  harkctl teams members <team_id>
+  harkctl teams role <team_id> <user_id> <owner|admin|member>
+  harkctl teams remove-member <team_id> <user_id>
+  harkctl teams invite <team_id> [--email <email>] [--role <member|admin>]
+  harkctl teams invites <team_id>
+  harkctl teams revoke-invite <team_id> <invite_id>
+  harkctl oncall list --team <team_id>
+  harkctl oncall me
+  harkctl oncall get <group_id>
+  harkctl oncall create --team <team_id> --name <name> --members <user_id,...>
+                        [--period <daily|weekly>] [--handoff <HH:MM>] [--timezone <zone>]
+                        [--starts-at <iso>] [--stdin]
+  harkctl oncall update <group_id> [--name <name>] [--members <user_id,...>] [--period <p>]
+                        [--handoff <HH:MM>] [--timezone <zone>] [--starts-at <iso>] [--stdin]
+  harkctl oncall override <group_id> --user <user_id> --starts-at <iso> --ends-at <iso>
+  harkctl oncall remove-override <group_id> <override_id>
+  harkctl page <group_id> <title> [--body <text>] [--url <url>] [--app <app_id>]
+                [--dedup-key <key>]
+  harkctl pages list --team <team_id> [--all] [--limit <n>] [--cursor <c>]
+  harkctl pages get <page_id>
+  harkctl pages resolve <page_id> [--note <text>]
   harkctl billing
   harkctl tokens list
   harkctl tokens revoke <token_id>
@@ -522,6 +572,15 @@ then be on the app's origin.
 
 apps update changes metadata only; sharing and sign-in approval are decided on the phone,
 and moving an app to a new origin asks for approval again. apps revoke signs the app out.
+
+teams share apps and on-call groups with other Hark users. Inviting returns a join link;
+only a signed-in person can accept it. apps share --team moves an app you added into a
+team (every member then approves sign-in on their own phone); --personal moves it back.
+
+page alerts whoever is on call in an on-call group, then escalates until someone
+acknowledges. Acknowledging and escalating are deliberately human-only (on the phone or
+the website); agents can raise, read, and resolve pages. --dedup-key (or, with
+notify --oncall, --idempotency-key) merges repeats into the open page.
 
 Default logins exclude events:read (activity feed) and tokens:manage (tokens list/revoke);
 request them with --scope. No command creates tokens: new tokens always need a signed-in
@@ -578,6 +637,188 @@ function parseNonNegativeInteger(value, flag) {
 
 function formatApp(app) {
   return `${app.id}  ${app.name}  ${app.url}`;
+}
+
+/** A page that reached nobody exits 7 like an undelivered notify; merged repeats exit 0. */
+function pageExitCode(body) {
+  return body.accepted === 0 && !body.deduplicated ? 7 : 0;
+}
+
+function parseMembers(value) {
+  const members = String(value)
+    .split(",")
+    .map((member) => member.trim())
+    .filter(Boolean);
+  if (members.length === 0) throw new UsageError("--members needs at least one user ID");
+  return members;
+}
+
+const TEAM_ROLES = ["owner", "admin", "member"];
+
+async function teamsCommand(config, args, options) {
+  const [action, teamId, ...rest] = args;
+  const base = "/api/agent/teams";
+  const teamPath = () => `${base}/${requireId(teamId, `teams ${action}`)}`;
+  switch (action) {
+    case "list":
+      return scopedRequest(config, base);
+    case "create": {
+      const name = [teamId, ...rest].filter(Boolean).join(" ") || options.name;
+      if (!name) throw new UsageError("teams create requires a name");
+      return scopedRequest(config, base, { method: "POST", body: JSON.stringify({ name }) });
+    }
+    case "get":
+      return scopedRequest(config, teamPath());
+    case "members":
+      return { members: (await scopedRequest(config, teamPath())).members };
+    case "rename": {
+      const name = rest.join(" ") || options.name;
+      if (!name) throw new UsageError("teams rename requires a new name");
+      return scopedRequest(config, teamPath(), { method: "PATCH", body: JSON.stringify({ name }) });
+    }
+    case "delete":
+      return scopedRequest(config, teamPath(), { method: "DELETE" });
+    case "leave":
+      return scopedRequest(config, `${teamPath()}/leave`, { method: "POST" });
+    case "role": {
+      const [userId, role] = rest;
+      if (!userId || !TEAM_ROLES.includes(role)) {
+        throw new UsageError("teams role requires <team_id> <user_id> <owner|admin|member>");
+      }
+      return scopedRequest(config, `${teamPath()}/members/${encodeURIComponent(userId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ role }),
+      });
+    }
+    case "remove-member": {
+      const [userId] = rest;
+      if (!userId) throw new UsageError("teams remove-member requires <team_id> <user_id>");
+      return scopedRequest(config, `${teamPath()}/members/${encodeURIComponent(userId)}`, {
+        method: "DELETE",
+      });
+    }
+    case "invite": {
+      if (options.role && !["admin", "member"].includes(options.role)) {
+        throw new UsageError("--role must be member or admin");
+      }
+      return scopedRequest(config, `${teamPath()}/invites`, {
+        method: "POST",
+        body: JSON.stringify({
+          ...(options.email ? { email: options.email } : {}),
+          ...(options.role ? { role: options.role } : {}),
+        }),
+      });
+    }
+    case "invites":
+      return scopedRequest(config, `${teamPath()}/invites`);
+    case "revoke-invite": {
+      const [inviteId] = rest;
+      if (!inviteId) throw new UsageError("teams revoke-invite requires <team_id> <invite_id>");
+      return scopedRequest(config, `${teamPath()}/invites/${encodeURIComponent(inviteId)}`, {
+        method: "DELETE",
+      });
+    }
+    default:
+      throw new UsageError("Unknown teams command. Run harkctl --help.");
+  }
+}
+
+function rotationFromOptions(options, stdinRotation) {
+  const rotation = {
+    ...(stdinRotation ?? {}),
+    ...(options.members ? { memberIds: parseMembers(options.members) } : {}),
+    ...(options.period ? { period: options.period } : {}),
+    ...(options.handoff ? { handoffAt: options.handoff } : {}),
+    ...(options.timezone ? { timezone: options.timezone } : {}),
+    ...(options["starts-at"] ? { startsAt: options["starts-at"] } : {}),
+  };
+  return Object.keys(rotation).length > 0 ? rotation : undefined;
+}
+
+async function oncallCommand(config, args, options) {
+  const [action, groupId, ...rest] = args;
+  const groupPath = () => `/api/agent/oncall/${requireId(groupId, `oncall ${action}`)}`;
+  switch (action) {
+    case "list":
+      if (!options.team) throw new UsageError("oncall list requires --team <team_id>");
+      return scopedRequest(config, `/api/agent/teams/${encodeURIComponent(options.team)}/oncall`);
+    case "me":
+      return scopedRequest(config, "/api/agent/oncall/me");
+    case "get":
+      return scopedRequest(config, groupPath());
+    case "create": {
+      const stdin = options.stdin ? await readStdinJson() : {};
+      if (!options.team) throw new UsageError("oncall create requires --team <team_id>");
+      const name = options.name ?? stdin.name;
+      const rotation = rotationFromOptions(options, stdin.rotation);
+      if (!name || !rotation?.memberIds) {
+        throw new UsageError("oncall create requires --name and --members");
+      }
+      const payload = {
+        ...stdin,
+        name,
+        rotation: {
+          period: "daily",
+          handoffAt: "09:00",
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+          ...rotation,
+        },
+      };
+      return scopedRequest(config, `/api/agent/teams/${encodeURIComponent(options.team)}/oncall`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    }
+    case "update": {
+      const stdin = options.stdin ? await readStdinJson() : {};
+      let rotation = rotationFromOptions(options, stdin.rotation);
+      if (rotation) {
+        // The server replaces the whole rotation, so fill unchanged fields
+        // (including the original start, which keeps the order) from the group.
+        const { group } = await scopedRequest(config, groupPath());
+        rotation = {
+          memberIds: group.rotation.members.map((member) => member.userId),
+          period: group.rotation.period,
+          handoffAt: group.rotation.handoffAt,
+          timezone: group.rotation.timezone,
+          startsAt: group.rotation.startsAt,
+          ...rotation,
+        };
+      }
+      const payload = {
+        ...stdin,
+        ...(options.name ? { name: options.name } : {}),
+        ...(rotation ? { rotation } : {}),
+      };
+      if (Object.keys(payload).length === 0) {
+        throw new UsageError("oncall update requires a field to change (or --stdin)");
+      }
+      return scopedRequest(config, groupPath(), { method: "PATCH", body: JSON.stringify(payload) });
+    }
+    case "override": {
+      if (!options.user || !options["starts-at"] || !options["ends-at"]) {
+        throw new UsageError("oncall override requires --user, --starts-at, and --ends-at");
+      }
+      return scopedRequest(config, `${groupPath()}/overrides`, {
+        method: "POST",
+        body: JSON.stringify({
+          userId: options.user,
+          startsAt: options["starts-at"],
+          endsAt: options["ends-at"],
+        }),
+      });
+    }
+    case "remove-override": {
+      const [overrideId] = rest;
+      if (!overrideId)
+        throw new UsageError("oncall remove-override requires <group_id> <override_id>");
+      return scopedRequest(config, `${groupPath()}/overrides/${encodeURIComponent(overrideId)}`, {
+        method: "DELETE",
+      });
+    }
+    default:
+      throw new UsageError("Unknown oncall command. Run harkctl --help.");
+  }
 }
 
 export async function execute(argv, env = process.env, overrides = {}) {
@@ -789,6 +1030,7 @@ export async function execute(argv, env = process.env, overrides = {}) {
       url: options.url,
       ...(options.icon ? { iconUrl: options.icon } : {}),
       ...(options.project ? { project: options.project } : {}),
+      ...(options.team ? { teamId: options.team } : {}),
     };
     const body = await appsRequest(config, "/api/agent/apps", {
       method: "POST",
@@ -970,6 +1212,72 @@ export async function execute(argv, env = process.env, overrides = {}) {
       exitCode: body.timedOut ? 4 : interactionExitCode(body.interaction),
     };
   }
+  if (group === "apps" && action === "share") {
+    if (!id) throw new UsageError("apps share requires an app ID");
+    if (Boolean(options.team) === Boolean(options.personal)) {
+      throw new UsageError("apps share requires exactly one of --team <team_id> or --personal");
+    }
+    const body = await scopedRequest(config, `/api/agent/apps/${encodeURIComponent(id)}/share`, {
+      method: "POST",
+      body: JSON.stringify({
+        teamId: options.personal ? null : options.team,
+        ...(options["no-notify"] ? { notify: false } : {}),
+      }),
+    });
+    const where = body.app.team ? `shared with ${body.app.team.name}` : "personal";
+    return {
+      body,
+      exitCode: 0,
+      ...(options.json ? {} : { output: `${formatApp(body.app)} (${where})` }),
+    };
+  }
+  if (group === "teams") {
+    return { body: await teamsCommand(config, positionals.slice(1), options), exitCode: 0 };
+  }
+  if (group === "oncall") {
+    return { body: await oncallCommand(config, positionals.slice(1), options), exitCode: 0 };
+  }
+  if (group === "page") {
+    const groupId = positionals[1];
+    const title = positionals.slice(2).join(" ");
+    if (!groupId || !title) throw new UsageError("page requires a group ID and a title");
+    const body = await scopedRequest(
+      config,
+      `/api/agent/oncall/${encodeURIComponent(groupId)}/pages`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          title,
+          ...(options.body ? { body: options.body } : {}),
+          ...(options.url ? { url: options.url } : {}),
+          ...(options.app ? { appId: options.app } : {}),
+          ...(options["dedup-key"] ? { dedupKey: options["dedup-key"] } : {}),
+        }),
+      },
+    );
+    return { body, exitCode: pageExitCode(body) };
+  }
+  if (group === "pages") {
+    if (action === "list") {
+      if (!options.team) throw new UsageError("pages list requires --team <team_id>");
+      const query = new URLSearchParams({ status: options.all ? "all" : "open" });
+      if (options.limit) query.set("limit", parseNonNegativeInteger(options.limit, "limit"));
+      if (options.cursor) query.set("cursor", options.cursor);
+      const path = `/api/agent/teams/${encodeURIComponent(options.team)}/pages?${query}`;
+      return { body: await scopedRequest(config, path), exitCode: 0 };
+    }
+    if (action === "get" || action === "resolve") {
+      const path = `/api/agent/pages/${requireId(id, `pages ${action}`)}`;
+      if (action === "get") return { body: await scopedRequest(config, path), exitCode: 0 };
+      return {
+        body: await scopedRequest(config, `${path}/resolve`, {
+          method: "POST",
+          body: JSON.stringify(options.note ? { note: options.note } : {}),
+        }),
+        exitCode: 0,
+      };
+    }
+  }
   if (group === "notify") {
     // A first positional of exactly `ask` or `withdraw` selects the subcommand
     // unless it came after a bare `--`, which forces it to be the literal body.
@@ -1081,7 +1389,11 @@ export async function execute(argv, env = process.env, overrides = {}) {
       ...(options.summary ? { summary: options.summary } : {}),
       ...(bodyFormat ? { bodyFormat } : {}),
       ...(options.app ? { appId: options.app } : {}),
+      ...(options.oncall ? { oncall: options.oncall } : {}),
     };
+    if (options.oncall && options.device.length > 0) {
+      throw new UsageError("--oncall cannot be combined with --device");
+    }
     const body = await request(config, "/api/agent/notifications", {
       method: "POST",
       headers: options["idempotency-key"]
@@ -1089,6 +1401,7 @@ export async function execute(argv, env = process.env, overrides = {}) {
         : undefined,
       body: JSON.stringify(payload),
     });
+    if (options.oncall) return { body, exitCode: pageExitCode(body) };
     return { body, exitCode: body.accepted === 0 ? 7 : 0 };
   }
   throw new UsageError("Unknown command. Run harkctl --help.");

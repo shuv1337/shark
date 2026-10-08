@@ -30,6 +30,7 @@ import {
   hashInteractionResponseToken,
   hashWebhookToken,
 } from "../lib/token";
+import { raisePageFor } from "./oncall";
 
 type EventRow = typeof event.$inferSelect;
 
@@ -106,6 +107,55 @@ export const hooksRoute = new Hono()
       return c.json<WebhookResponse>(
         { ok: false, error: "Idempotency-Key must contain between 1 and 200 characters" },
         400,
+      );
+    }
+
+    if (parsed.data.oncall) {
+      if (parsed.data.deviceIds || parsed.data.response) {
+        return c.json<WebhookResponse>(
+          { ok: false, error: "oncall cannot be combined with deviceIds or response" },
+          400,
+        );
+      }
+      // Pages merge on their dedup key, so an Idempotency-Key retry folds into
+      // the open page instead of paging again.
+      const paged = await raisePageFor(
+        svc.userId,
+        parsed.data.oncall,
+        {
+          title: parsed.data.title ?? svc.title,
+          body: parsed.data.body,
+          ...(parsed.data.url ? { url: parsed.data.url } : {}),
+          ...(parsed.data.appId ? { appId: parsed.data.appId } : {}),
+          ...(idempotencyKey ? { dedupKey: idempotencyKey } : {}),
+        },
+        svc.title,
+      );
+      if (!paged.ok) {
+        return c.json<WebhookResponse>(
+          {
+            ok: false,
+            error: paged.error,
+            ...("issues" in paged ? { issues: paged.issues } : {}),
+          },
+          paged.status,
+        );
+      }
+      track({
+        name: "webhook_received",
+        userId: svc.userId,
+        serviceId: svc.id,
+        outcome: "oncall",
+      });
+      return c.json<WebhookResponse>(
+        {
+          ok: true,
+          eventId: paged.body.page.id,
+          pageId: paged.body.page.id,
+          delivered: paged.body.accepted,
+          ...(paged.body.deduplicated ? { deduplicated: true } : {}),
+        },
+        paged.status,
       );
     }
 

@@ -116,7 +116,8 @@ export async function getPricingPlans(): Promise<PricingPlansDto> {
   try {
     const response = await autumn.plans.list();
     const plans = response.list
-      .filter((plan) => !plan.addOn && !plan.archived)
+      // Team seats are billed to the team, not shown as a personal plan.
+      .filter((plan) => !plan.addOn && !plan.archived && plan.id !== "team_monthly")
       .map((plan): PricingPlanDto => {
         const item = (featureId: string) =>
           plan.items.find((candidate) => candidate.featureId === featureId);

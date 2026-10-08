@@ -1296,10 +1296,187 @@ test("default login scopes include the account scopes but not tokens:manage", as
         /stop here/,
       );
       const { scopes } = requests[0].body;
-      for (const scope of ["devices:write", "inbox:read", "inbox:write", "billing:read"]) {
+      for (const scope of [
+        "devices:write",
+        "inbox:read",
+        "inbox:write",
+        "billing:read",
+        "teams:read",
+        "teams:write",
+        "oncall:read",
+        "oncall:write",
+      ]) {
         assert.ok(scopes.includes(scope), scope);
       }
       assert.equal(scopes.includes("tokens:manage"), false);
+    },
+  );
+});
+
+test("team and on-call commands call the matching agent routes", async () => {
+  const cases = [
+    [["teams", "list"], "GET", "/api/agent/teams", undefined],
+    [["teams", "create", "Acme", "Ops"], "POST", "/api/agent/teams", { name: "Acme Ops" }],
+    [["teams", "rename", "team_1", "New"], "PATCH", "/api/agent/teams/team_1", { name: "New" }],
+    [["teams", "delete", "team_1"], "DELETE", "/api/agent/teams/team_1", undefined],
+    [
+      ["teams", "role", "team_1", "user_2", "admin"],
+      "PATCH",
+      "/api/agent/teams/team_1/members/user_2",
+      { role: "admin" },
+    ],
+    [
+      ["teams", "remove-member", "team_1", "user_2"],
+      "DELETE",
+      "/api/agent/teams/team_1/members/user_2",
+      undefined,
+    ],
+    [
+      ["teams", "invite", "team_1", "--email", "a@example.com", "--role", "admin"],
+      "POST",
+      "/api/agent/teams/team_1/invites",
+      { email: "a@example.com", role: "admin" },
+    ],
+    [["teams", "invites", "team_1"], "GET", "/api/agent/teams/team_1/invites", undefined],
+    [
+      ["teams", "revoke-invite", "team_1", "tinv_1"],
+      "DELETE",
+      "/api/agent/teams/team_1/invites/tinv_1",
+      undefined,
+    ],
+    [["oncall", "list", "--team", "team_1"], "GET", "/api/agent/teams/team_1/oncall", undefined],
+    [["oncall", "get", "ocg_1"], "GET", "/api/agent/oncall/ocg_1", undefined],
+    [
+      ["oncall", "override", "ocg_1", "--user", "u", "--starts-at", "s", "--ends-at", "e"],
+      "POST",
+      "/api/agent/oncall/ocg_1/overrides",
+      { userId: "u", startsAt: "s", endsAt: "e" },
+    ],
+    [
+      ["oncall", "remove-override", "ocg_1", "ovr_1"],
+      "DELETE",
+      "/api/agent/oncall/ocg_1/overrides/ovr_1",
+      undefined,
+    ],
+    [
+      ["pages", "list", "--team", "team_1", "--all"],
+      "GET",
+      "/api/agent/teams/team_1/pages?status=all",
+      undefined,
+    ],
+    [["pages", "get", "page_1"], "GET", "/api/agent/pages/page_1", undefined],
+    [
+      ["pages", "resolve", "page_1", "--note", "fixed"],
+      "POST",
+      "/api/agent/pages/page_1/resolve",
+      { note: "fixed" },
+    ],
+  ];
+  for (const [argv, method, path, body] of cases) {
+    await withMockServer(
+      () => Response.json({ ok: true }),
+      async (requests) => {
+        const result = await execute(argv, AGENT_ENV);
+        assert.equal(result.exitCode, 0, argv.join(" "));
+        assert.deepEqual(requests, [{ path, method, body }], argv.join(" "));
+      },
+    );
+  }
+  await assert.rejects(
+    execute(["teams", "role", "team_1", "u", "boss"], AGENT_ENV),
+    /owner\|admin/,
+  );
+  await assert.rejects(execute(["pages", "list"], AGENT_ENV), /requires --team/);
+});
+
+test("page raises an on-call page and exits 7 when nobody was reached", async () => {
+  await withMockServer(
+    () =>
+      Response.json({ page: { id: "page_1" }, deduplicated: false, accepted: 0 }, { status: 201 }),
+    async (requests) => {
+      const result = await execute(
+        ["page", "ocg_1", "API", "down", "--body", "5xx", "--dedup-key", "api"],
+        AGENT_ENV,
+      );
+      assert.equal(result.exitCode, 7);
+      assert.deepEqual(requests, [
+        {
+          path: "/api/agent/oncall/ocg_1/pages",
+          method: "POST",
+          body: { title: "API down", body: "5xx", dedupKey: "api" },
+        },
+      ]);
+    },
+  );
+  await withMockServer(
+    () => Response.json({ page: { id: "page_1" }, deduplicated: true, accepted: 0 }),
+    async (requests) => {
+      const result = await execute(["notify", "Disk full", "--oncall", "ocg_1"], AGENT_ENV);
+      assert.equal(result.exitCode, 0);
+      assert.deepEqual(requests[0].body, { body: "Disk full", oncall: "ocg_1" });
+    },
+  );
+  await assert.rejects(
+    execute(["notify", "x", "--oncall", "ocg_1", "--device", "dev_1"], AGENT_ENV),
+    /cannot be combined/,
+  );
+});
+
+test("apps share moves an app into a team or back", async () => {
+  await withMockServer(
+    ({ body }) =>
+      Response.json({
+        app: {
+          id: "app_1",
+          name: "Ops",
+          url: "https://ops.example.com/",
+          team: body.teamId ? { id: body.teamId, name: "Acme" } : null,
+        },
+      }),
+    async (requests) => {
+      const shared = await execute(["apps", "share", "app_1", "--team", "team_1"], AGENT_ENV);
+      assert.equal(shared.output, "app_1  Ops  https://ops.example.com/ (shared with Acme)");
+      const back = await execute(
+        ["apps", "share", "app_1", "--personal", "--no-notify"],
+        AGENT_ENV,
+      );
+      assert.equal(back.output, "app_1  Ops  https://ops.example.com/ (personal)");
+      assert.deepEqual(
+        requests.map((request) => request.body),
+        [{ teamId: "team_1" }, { teamId: null, notify: false }],
+      );
+    },
+  );
+  await assert.rejects(execute(["apps", "share", "app_1"], AGENT_ENV), /exactly one of/);
+});
+
+test("oncall update keeps unchanged rotation fields, including the original start", async () => {
+  const group = {
+    rotation: {
+      members: [{ userId: "u1" }, { userId: "u2" }],
+      period: "weekly",
+      handoffAt: "10:00",
+      timezone: "Europe/Berlin",
+      startsAt: "2026-01-05T09:00:00.000Z",
+    },
+  };
+  await withMockServer(
+    () => Response.json({ group }),
+    async (requests) => {
+      await execute(["oncall", "update", "ocg_1", "--members", "u2,u1"], AGENT_ENV);
+      assert.deepEqual(requests[1], {
+        path: "/api/agent/oncall/ocg_1",
+        method: "PATCH",
+        body: {
+          rotation: {
+            memberIds: ["u2", "u1"],
+            period: "weekly",
+            handoffAt: "10:00",
+            timezone: "Europe/Berlin",
+            startsAt: "2026-01-05T09:00:00.000Z",
+          },
+        },
+      });
     },
   );
 });

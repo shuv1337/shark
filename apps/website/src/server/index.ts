@@ -8,12 +8,14 @@ import { runMigrations } from "./db/migrate";
 import { assertRuntimeEnv, env } from "./env";
 import { pruneAnalytics } from "./lib/analytics";
 import { startInteractionCallbackWorker } from "./lib/interaction-callbacks";
+import { startOncallEscalationWorker } from "./lib/oncall";
 
 assertRuntimeEnv();
 runMigrations();
 // Bounds the analytics log at startup; long-running processes prune opportunistically.
 pruneAnalytics();
 startInteractionCallbackWorker();
+startOncallEscalationWorker();
 
 // In production the same process serves prerendered public pages and explicit
 // noindex shells for private application routes. Unknown paths remain real 404s
@@ -33,6 +35,12 @@ if (existsSync(clientDir)) {
     const file = path === "/" ? "index.html" : `${path.slice(1)}/index.html`;
     if (existsSync(resolve(clientDir, file))) {
       app.get(path, serveStatic({ path: `./dist/client/${file}` }));
+    }
+  }
+  // Client-routed private pages reuse the noindex dashboard shell.
+  if (existsSync(resolve(clientDir, "dashboard/index.html"))) {
+    for (const path of ["/dashboard/teams/:teamId", "/join/:code"]) {
+      app.get(path, serveStatic({ path: "./dist/client/dashboard/index.html" }));
     }
   }
   if (existsSync(resolve(clientDir, "cli/authorize/index.html"))) {

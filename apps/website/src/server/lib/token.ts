@@ -160,6 +160,30 @@ export function generateInteractionResponseToken(): string {
   return randomBytes(32).toString("base64url");
 }
 
+/** 144-bit team join code; short enough for a link, too long to guess. */
+export function generateTeamInviteCode(): string {
+  return randomBytes(18).toString("base64url");
+}
+
+export function hashTeamInviteCode(code: string): string {
+  return createHash("sha256")
+    .update("hark:team-invite:v1\0", "utf8")
+    .update(code, "utf8")
+    .digest("hex");
+}
+
+/** One-shot lock-screen credential for acknowledging an on-call page. */
+export function generatePageResponseToken(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+export function hashPageResponseToken(token: string): string {
+  return createHash("sha256")
+    .update("hark:page-response:v1\0", "utf8")
+    .update(token, "utf8")
+    .digest("hex");
+}
+
 export function hashInteractionResponseToken(token: string): string {
   return createHash("sha256")
     .update("hark:interaction-response:v1\0", "utf8")

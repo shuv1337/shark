@@ -182,6 +182,27 @@ Passes expire after two minutes, so verify once and then store your own session.
 stable for your origin and different for every other app. Optionally reject a reused `jti` to block
 replay.
 
+## Teams and On-Call
+
+Create a team to share web apps and page whoever is on call. Roles are owner, admin, and member;
+the first seat is free and each additional member is $5/month on the team plan.
+
+```sh
+harkctl teams create "Acme"
+harkctl teams invite team_... --email teammate@example.com   # returns a 7-day join link
+harkctl apps share app_... --team team_...
+harkctl oncall create --team team_... --name Primary --members user_a,user_b --period weekly
+harkctl page ocg_... "API error rate above 20%" --dedup-key api-5xx
+```
+
+Every member approves sign-in to a team app for themselves; the Hark pass then includes `team_id`
+and `team_role`, and removing someone from the team stops their passes immediately. A page goes to
+the person on call (rotations hand off at a local time and follow DST), then escalates to the next
+person and the whole group until someone acknowledges from the lock screen or the website. Webhooks
+page by adding `"oncall": "ocg_..."` to the payload. Acknowledging is human-only; agents can raise
+and resolve pages. See the [Teams](https://hark.ryan.ceo/docs#teams) and
+[On-call](https://hark.ryan.ceo/docs#oncall) docs.
+
 ## Agent Workflows
 
 The [`harkctl`](./packages/harkctl) CLI can send one-shot notifications, ask for approvals or short
@@ -220,8 +241,8 @@ prompts, file contents, and absolute paths are not sent to Hark.
 Everything you can do in the dashboard or the phone inbox is also available to a scoped agent token
 (`Authorization: Bearer hark_…`) under `/api/agent`, and through `harkctl`: services (get, update,
 rotate, remove), devices, the project inbox (list, read, unread, read-all), the activity feed,
-pending prompts, notification withdrawal, web app metadata and sign-out, billing, and token
-list/revoke.
+pending prompts, notification withdrawal, web app metadata and sign-out, billing, token
+list/revoke, teams, on-call groups, and pages.
 
 ```sh
 harkctl inbox list --unread
@@ -231,7 +252,8 @@ harkctl services rotate svc_...
 ```
 
 A few actions stay human-only on purpose: answering prompts, creating API tokens, approving app
-sign-in or changing what an app may see, registering devices, and billing checkout. Every route,
+sign-in or changing what an app may see, registering devices, billing checkout, accepting team
+invites, and acknowledging or escalating pages. Every route,
 its scopes, and its request and response schemas are described by the public OpenAPI document at
 [`/api/agent/openapi.json`](https://hark.ryan.ceo/api/agent/openapi.json); see the
 [Agent API docs](https://hark.ryan.ceo/docs#agent-api).

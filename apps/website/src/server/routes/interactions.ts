@@ -49,6 +49,7 @@ import {
   startInteractionLiveActivity,
 } from "./activities";
 import { pushWithdrawalCommand } from "./hooks";
+import { raisePageFor } from "./oncall";
 
 type InteractionRow = typeof interaction.$inferSelect;
 
@@ -274,6 +275,36 @@ export const agentRoute = new Hono<AgentEnv>()
     const idempotencyKey = idempotencyKeyFrom(c.req.header("Idempotency-Key"));
     if (idempotencyKey === null) {
       return c.json({ error: "Idempotency-Key must contain between 1 and 200 characters" }, 400);
+    }
+    if (parsed.data.oncall) {
+      // Paging reaches other people, so it needs the on-call scope as well.
+      if (!token.scopes.includes("oncall:write")) {
+        return c.json({ error: "Insufficient scope", required: ["oncall:write"] }, 403);
+      }
+      if (parsed.data.deviceIds) {
+        return c.json({ error: "oncall cannot be combined with deviceIds" }, 400);
+      }
+      // Pages merge on their dedup key, so an Idempotency-Key retry folds
+      // into the open page instead of paging again.
+      const paged = await raisePageFor(
+        token.userId,
+        parsed.data.oncall,
+        {
+          title: parsed.data.title,
+          body: parsed.data.body,
+          ...(parsed.data.url ? { url: parsed.data.url } : {}),
+          ...(parsed.data.appId ? { appId: parsed.data.appId } : {}),
+          ...(idempotencyKey ? { dedupKey: idempotencyKey } : {}),
+        },
+        token.name,
+      );
+      if (!paged.ok) {
+        return c.json(
+          { error: paged.error, ...("issues" in paged ? { issues: paged.issues } : {}) },
+          paged.status,
+        );
+      }
+      return c.json(paged.body, paged.status);
     }
     const requestHash = digest(parsed.data);
     if (idempotencyKey) {

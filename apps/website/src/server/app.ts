@@ -24,7 +24,15 @@ import {
   liveActivityInteractionResponseRoute,
 } from "./routes/interactions";
 import { liveActivityRegistrationRoute } from "./routes/live-activity-registration";
+import {
+  oncallAgentRoute,
+  oncallSessionRoute,
+  pageResponsesRoute,
+  pagesAgentRoute,
+  pagesSessionRoute,
+} from "./routes/oncall";
 import { servicesAgentRoute, servicesRoute } from "./routes/services";
+import { teamInvitesRoute, teamsAgentRoute, teamsSessionRoute } from "./routes/teams";
 
 export const app = new Hono();
 
@@ -69,7 +77,10 @@ app.route("/api/agent/apps", appsAgentRoute);
 app.route("/api/agent/billing", billingAgentRoute);
 app.route("/api/agent/devices", devicesAgentRoute);
 app.route("/api/agent/inbox", inboxAgentRoute);
+app.route("/api/agent/oncall", oncallAgentRoute);
+app.route("/api/agent/pages", pagesAgentRoute);
 app.route("/api/agent/services", servicesAgentRoute);
+app.route("/api/agent/teams", teamsAgentRoute);
 app.route("/api/agent/tokens", apiTokensAgentRoute);
 app.route("/api/agent", agentRoute);
 app.route("/api/activities", activitiesSessionRoute);
@@ -81,6 +92,11 @@ app.route("/api/interaction-responses", interactionCredentialResponseRoute);
 app.route("/api/live-activity-interactions", liveActivityInteractionResponseRoute);
 app.route("/api/live-activity", liveActivityRegistrationRoute);
 app.route("/api/billing", billingRoute);
+app.route("/api/teams", teamsSessionRoute);
+app.route("/api/team-invites", teamInvitesRoute);
+app.route("/api/oncall", oncallSessionRoute);
+app.route("/api/pages", pagesSessionRoute);
+app.route("/api/page-responses", pageResponsesRoute);
 app.route("/api/devices", devicesRoute);
 app.route("/api/events", eventsRoute);
 app.route("/hooks", activityHooksRoute);

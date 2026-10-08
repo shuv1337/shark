@@ -27,6 +27,14 @@ export const devices = feature({
   consumable: false,
 });
 
+/** Members of a team. The Autumn customer for a team is the team itself. */
+export const seats = feature({
+  id: "seats",
+  name: "Team seats",
+  type: "metered",
+  consumable: false,
+});
+
 // Plans
 export const freeV1 = plan({
   id: "free",
@@ -72,6 +80,31 @@ export const pro = plan({
       reset: {
         interval: "month",
       },
+    }),
+  ],
+});
+
+/**
+ * Team plan, attached to the team's own customer (ID = team ID). The first
+ * seat is included (TEAM_FREE_SEATS); every further member is $5/month
+ * (TEAM_SEAT_PRICE_MONTHLY), prorated as people join and leave.
+ */
+export const teamMonthly = plan({
+  id: "team_monthly",
+  name: "Team",
+  description: "Shared apps and on-call paging for your team, per seat.",
+  group: "team",
+  items: [
+    item({
+      featureId: seats.id,
+      included: 1,
+      price: {
+        amount: 5,
+        interval: "month",
+        billingMethod: "usage_based",
+        billingUnits: 1,
+      },
+      proration: { onIncrease: "prorate", onDecrease: "prorate" },
     }),
   ],
 });
