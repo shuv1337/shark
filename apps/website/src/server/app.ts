@@ -6,7 +6,7 @@ import { env } from "./env";
 import { databaseIsReady } from "./lib/readiness";
 import { safeReturnPath } from "./lib/return-path";
 import { beginAppleWebSignIn } from "./lib/web-sign-in";
-import { isWebViewEntryRequest, verifyFirstPartyPass } from "./lib/web-view-session";
+import { verifyFirstPartyPass, webViewEntryRefusal } from "./lib/web-view-session";
 import { requireAuth } from "./middleware";
 import { activitiesAgentRoute, activitiesSessionRoute } from "./routes/activities";
 import { activityHooksRoute } from "./routes/activity-hooks";
@@ -63,7 +63,11 @@ app.get("/login", (c) =>
 // The iPhone web view trades a pass for its own browser session; see web-view-session.ts.
 app.post("/apps/enter", async (c) => {
   c.header("Cache-Control", "no-store");
-  if (!isWebViewEntryRequest(c.req.raw)) return c.text("Forbidden", 403);
+  const refusal = webViewEntryRefusal(c.req.raw);
+  if (refusal) {
+    console.warn(`[apps/enter] refused reason=${refusal}`);
+    return c.text("Forbidden", 403);
+  }
   const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
   const pass = typeof form.pass === "string" ? form.pass : "";
   const userId = pass ? await verifyFirstPartyPass(pass) : null;

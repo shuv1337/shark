@@ -168,6 +168,19 @@ describe("POST /apps/enter", () => {
     );
     expect(allowed.status).toBe(303);
   });
+
+  it("accepts the opaque origin iOS sends for an app-started navigation", async () => {
+    const response = await enter(
+      { pass: await pass("app_board0000"), next: "/board" },
+      { "x-shark-entry": "1", origin: "null", "sec-fetch-site": "none" },
+    );
+    expect(response.status).toBe(303);
+    const forged = await enter(
+      { pass: await pass("app_board0000"), next: "/board" },
+      { origin: "null" },
+    );
+    expect(forged.status).toBe(403);
+  });
 });
 
 describe("sign-in return path", () => {

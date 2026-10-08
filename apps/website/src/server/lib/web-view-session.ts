@@ -32,16 +32,18 @@ async function claimPass(jti: string, exp: number): Promise<boolean> {
 }
 
 /**
- * Whether a request to `POST /apps/enter` came from the SHark web view rather
- * than a form on another site. HTML forms cannot set the custom header, and
- * browsers mark cross-site navigations in `Origin` and `Sec-Fetch-Site`.
+ * Why a request to `POST /apps/enter` is not from the SHark web view, or null
+ * when it is. HTML forms cannot set the custom header, which is the guard; a
+ * foreign `Origin` or a cross-site `Sec-Fetch-Site` is refused as well. iOS
+ * sends `Origin: null` for a navigation the app itself starts, so that passes.
  */
-export function isWebViewEntryRequest(request: Request): boolean {
-  if (request.headers.get("x-shark-entry") !== "1") return false;
+export function webViewEntryRefusal(request: Request): string | null {
+  if (request.headers.get("x-shark-entry") !== "1") return "missing_header";
   const origin = request.headers.get("origin");
-  if (origin !== null && origin !== appPassIssuer()) return false;
+  if (origin !== null && origin !== "null" && origin !== appPassIssuer()) return "foreign_origin";
   const site = request.headers.get("sec-fetch-site");
-  return site === null || site === "none" || site === "same-origin";
+  if (site !== null && site !== "none" && site !== "same-origin") return "cross_site";
+  return null;
 }
 
 /**
