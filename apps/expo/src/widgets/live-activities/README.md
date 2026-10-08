@@ -23,8 +23,7 @@ a generated source file or native rebuild.
 1. Edit the relevant production style file.
 2. Run `pnpm --filter @hark/expo typecheck` and the widget test.
 3. Open `hark://la-lab?style=<style>&ts=<unique-value>` in the simulator.
-4. Run `/Users/vogel/dev/experiments/2026-07-30-la-captures/capture-la.sh <label>`.
-5. Inspect the combined Lock Screen, compact Island, and expanded Island image.
+4. Inspect the combined Lock Screen, compact Island, and expanded Island image.
 
 Keep every value referenced by a marked style function inside that function or in its parameters.
 Imported Expo UI components and modifiers are provided as globals by the widget runtime; arbitrary
