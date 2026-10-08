@@ -1,7 +1,7 @@
 import type { PricingPlanDto, PricingPlansDto } from "@hark/contracts";
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
-import { staticPricingPlans } from "../../shared/pricing";
+import { staticPricingPlans, TEAM_PLAN } from "../../shared/pricing";
 import { AppleButton } from "../components/AppleButton";
 import { GoogleButton } from "../components/GoogleButton";
 import { PAGE_COLUMN, SiteFooter, SiteHeader } from "../components/SiteChrome";
@@ -71,30 +71,33 @@ export function Pricing() {
           </p>
         ) : (
           <div className="mt-10 grid gap-4 sm:grid-cols-2">
-            {data.plans.map((plan) => (
-              <PlanCard key={plan.id} plan={plan}>
-                {plan.priceMonthly === 0 ? (
-                  session ? (
-                    <Link to="/dashboard" className={secondaryButton}>
-                      Open dashboard
-                    </Link>
+            {data.plans
+              .filter((plan) => !plan.id.startsWith("team"))
+              .map((plan) => (
+                <PlanCard key={plan.id} plan={plan}>
+                  {plan.priceMonthly === 0 ? (
+                    session ? (
+                      <Link to="/dashboard" className={secondaryButton}>
+                        Open dashboard
+                      </Link>
+                    ) : (
+                      <SignInButtons disabled={isPending} />
+                    )
+                  ) : session ? (
+                    <button
+                      type="button"
+                      onClick={() => void upgrade()}
+                      disabled={checkoutPending}
+                      className={primaryButton}
+                    >
+                      {checkoutPending ? "Opening checkout…" : "Upgrade to Pro"}
+                    </button>
                   ) : (
                     <SignInButtons disabled={isPending} />
-                  )
-                ) : session ? (
-                  <button
-                    type="button"
-                    onClick={() => void upgrade()}
-                    disabled={checkoutPending}
-                    className={primaryButton}
-                  >
-                    {checkoutPending ? "Opening checkout…" : "Upgrade to Pro"}
-                  </button>
-                ) : (
-                  <SignInButtons disabled={isPending} />
-                )}
-              </PlanCard>
-            ))}
+                  )}
+                </PlanCard>
+              ))}
+            <TeamPlanCard signedIn={Boolean(session)} />
           </div>
         )}
 
@@ -112,6 +115,44 @@ export function Pricing() {
 
       <SiteFooter />
     </div>
+  );
+}
+
+function TeamPlanCard({ signedIn }: { signedIn: boolean }) {
+  return (
+    <section
+      aria-label={`${TEAM_PLAN.name} plan`}
+      className="hark-glass flex flex-col rounded-3xl p-6 sm:col-span-2"
+    >
+      <div className="flex items-baseline justify-between gap-4">
+        <h2 className="text-xl font-medium text-white">{TEAM_PLAN.name}</h2>
+        <p className="text-white">
+          <span className="text-[28px] leading-none font-medium tracking-[-0.015em]">
+            ${TEAM_PLAN.seatPriceMonthly}
+          </span>
+          <span className="text-sm text-ink-faint"> per seat / month</span>
+        </p>
+      </div>
+      <p className="mt-2 text-[15px] leading-relaxed text-ink-muted">
+        {TEAM_PLAN.description} The first seat is free; each extra seat is $
+        {TEAM_PLAN.seatPriceMonthly} a month.
+      </p>
+      <div className="mt-5 flex flex-col gap-6 border-t border-line pt-5 sm:flex-row sm:items-end sm:justify-between">
+        <ul className="grid gap-x-8 gap-y-2.5 sm:grid-cols-2">
+          {TEAM_PLAN.features.map((row) => (
+            <li key={row} className="flex items-baseline gap-2.5 text-[15px] text-ink">
+              <span aria-hidden="true" className="text-[13px] text-mint">
+                ✓
+              </span>
+              {row}
+            </li>
+          ))}
+        </ul>
+        <Link className={`${secondaryButton} shrink-0`} to={signedIn ? "/dashboard" : "/docs"}>
+          {signedIn ? "Create a team" : "Read about teams"}
+        </Link>
+      </div>
+    </section>
   );
 }
 

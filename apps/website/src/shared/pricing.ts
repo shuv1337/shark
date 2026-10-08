@@ -1,4 +1,10 @@
+import type * as Contracts from "@hark/contracts";
 import type { PricingPlansDto } from "@hark/contracts";
+
+// Mirrors of contract constants, typed against them so a change fails typecheck
+// without pulling zod (the contracts runtime) into the client bundle.
+export const TEAM_SEAT_PRICE_MONTHLY: typeof Contracts.TEAM_SEAT_PRICE_MONTHLY = 5;
+export const TEAM_FREE_SEATS: typeof Contracts.TEAM_FREE_SEATS = 1;
 
 export const FREE_NOTIFICATIONS = 10_000;
 export const PRO_NOTIFICATIONS = 100_000;
@@ -48,3 +54,18 @@ export function staticPricingPlans(limits: PricingRateLimits = defaultRateLimits
     ],
   };
 }
+
+/** Per-seat team plan copy; billed per team, not part of the personal plan catalog. */
+export const TEAM_PLAN = {
+  id: "team",
+  name: "Team",
+  description: "Shared apps and on-call for the people you work with.",
+  seatPriceMonthly: TEAM_SEAT_PRICE_MONTHLY,
+  freeSeats: TEAM_FREE_SEATS,
+  features: [
+    "First seat free",
+    "Team apps, invites and roles",
+    "On-call rotations and escalation",
+    "Acknowledge, escalate and resolve from the lock screen",
+  ],
+} as const;

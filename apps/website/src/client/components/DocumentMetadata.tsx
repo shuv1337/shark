@@ -4,10 +4,26 @@ import {
   absoluteUrl,
   DEMO_VIDEO_URL,
   PAGE_SEO,
+  type PageSeo,
+  type SeoPage,
   SOCIAL_IMAGE_URL,
   seoPageForPath,
   structuredDataForPage,
 } from "../../shared/seo";
+
+/** Private pages with a path parameter; never indexed. */
+function dynamicSeo(pathname: string): PageSeo | null {
+  if (pathname.startsWith("/join/")) {
+    return {
+      path: pathname,
+      title: "Join a team — Hark",
+      description: "Accept an invite to a Hark team to share apps and on-call rotations.",
+      index: false,
+    };
+  }
+  if (pathname.startsWith("/dashboard/")) return { ...PAGE_SEO.dashboard, path: pathname };
+  return null;
+}
 
 function meta(name: string, content: string, property = false): HTMLMetaElement {
   const element = document.createElement("meta");
@@ -22,9 +38,9 @@ export function DocumentMetadata() {
   const { pathname } = useLocation();
 
   useEffect(() => {
-    const page = seoPageForPath(pathname);
-    if (!page) return;
-    const seo = PAGE_SEO[page];
+    const page: SeoPage | null = seoPageForPath(pathname);
+    const seo = page ? PAGE_SEO[page] : dynamicSeo(pathname);
+    if (!seo) return;
     const canonical = absoluteUrl(seo.path);
     const robots = seo.index
       ? "index, follow, max-image-preview:large, max-video-preview:-1"
@@ -93,7 +109,7 @@ export function DocumentMetadata() {
       document.head.append(alternate);
     }
 
-    const structuredData = structuredDataForPage(page);
+    const structuredData = page ? structuredDataForPage(page) : null;
     if (structuredData) {
       const script = document.createElement("script");
       script.type = "application/ld+json";

@@ -7,13 +7,23 @@ import type {
   LiveActivityDto,
   ServiceCreatedResponse,
   ServiceDto,
+  TeamDto,
 } from "@hark/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 import { AppDownloadBanner } from "../components/AppDownloadBanner";
+import { AppsSection } from "../components/AppsSection";
 import { useConfirm } from "../components/ConfirmDialog";
 import { CopyField } from "../components/CopyField";
+import {
+  DashboardHeader,
+  EmptyState,
+  InlineCode,
+  LIST_PANEL,
+  relativeTime,
+} from "../components/DashboardKit";
 import { Brand, PAGE_COLUMN } from "../components/SiteChrome";
+import { TeamsSection } from "../components/TeamsSection";
 import {
   closeButton,
   primaryButton,
@@ -22,8 +32,8 @@ import {
   rowDangerButton,
   secondaryButton,
 } from "../components/ui";
-import { api } from "../lib/api";
-import { signOut, useSession } from "../lib/auth";
+import { api, isMissingRoute } from "../lib/api";
+import { useSession } from "../lib/auth";
 
 function curlExample(webhookUrl: string): string {
   return [
@@ -116,10 +126,14 @@ export function Dashboard() {
   const [devices, setDevices] = useState<DeviceDto[] | null>(null);
   const [apiTokens, setApiTokens] = useState<ApiTokenDto[] | null>(null);
   const [apps, setApps] = useState<AppDto[] | null>(null);
+  /** `"unsupported"` when the server predates teams; the section stays hidden. */
+  const [teams, setTeams] = useState<TeamDto[] | "unsupported" | null>(null);
+  const [teamsError, setTeamsError] = useState<string | null>(null);
   const [billing, setBilling] = useState<BillingDto | null>(null);
-  const [billingActivating, setBillingActivating] = useState(
-    () => new URLSearchParams(window.location.search).get("billing") === "success",
-  );
+  const [billingActivating, setBillingActivating] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("billing") === "success" && !params.get("team");
+  });
   const [planOpen, setPlanOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<ServiceDto | null>(null);
@@ -152,6 +166,16 @@ export function Dashboard() {
     }
   }, []);
 
+  const refreshTeams = useCallback(async () => {
+    try {
+      setTeams((await api.listTeams()).teams);
+      setTeamsError(null);
+    } catch (err) {
+      if (isMissingRoute(err)) setTeams("unsupported");
+      else setTeamsError("Could not load your teams.");
+    }
+  }, []);
+
   const refreshActivity = useCallback(async () => {
     try {
       const [activity, liveActivityState] = await Promise.all([
@@ -165,13 +189,26 @@ export function Dashboard() {
     }
   }, []);
 
+  // Team checkout returns here with `?team=<id>&billing=success`; the team page
+  // shows that activation instead of the personal Pro one.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const teamId = params.get("team");
+    if (teamId && params.get("billing") === "success") {
+      navigate(`/dashboard/teams/${encodeURIComponent(teamId)}?billing=success`, { replace: true });
+    }
+  }, [navigate]);
+
   useEffect(() => {
     if (!isPending && !session) {
       navigate("/", { replace: true });
       return;
     }
-    if (session) void refresh();
-  }, [session, isPending, navigate, refresh]);
+    if (session) {
+      void refresh();
+      void refreshTeams();
+    }
+  }, [session, isPending, navigate, refresh, refreshTeams]);
 
   useEffect(() => {
     if (!session) return;
@@ -233,44 +270,16 @@ export function Dashboard() {
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <header className={`${PAGE_COLUMN} flex h-16 items-center justify-between gap-4`}>
-        <Brand />
-        <div className="flex min-w-0 items-center gap-[18px] text-[15px]">
-          <span className="hidden max-w-56 truncate text-ink-faint md:inline">
-            {session.user.email}
-          </span>
-          <Link
-            className="hidden text-ink-muted transition-colors hover:text-white sm:inline"
-            to="/docs"
-          >
-            Docs
-          </Link>
-          <button
-            type="button"
-            onClick={() => void signOut().then(() => navigate("/"))}
-            className="text-ink-muted transition-colors hover:text-white"
-          >
-            Sign out
-          </button>
-          <button
-            type="button"
-            disabled={billing === null}
-            onClick={() => setPlanOpen(true)}
-            className={primaryButtonSmall}
-          >
-            {billingActivating ? "Activating…" : billing?.plan === "pro" ? "Pro" : "Upgrade"}
-          </button>
-          {session.user.image ? (
-            <img
-              src={session.user.image}
-              alt=""
-              className="size-8 shrink-0 rounded-full ring-1 ring-white/20"
-              referrerPolicy="no-referrer"
-              title={session.user.email}
-            />
-          ) : null}
-        </div>
-      </header>
+      <DashboardHeader>
+        <button
+          type="button"
+          disabled={billing === null}
+          onClick={() => setPlanOpen(true)}
+          className={primaryButtonSmall}
+        >
+          {billingActivating ? "Activating…" : billing?.plan === "pro" ? "Pro" : "Upgrade"}
+        </button>
+      </DashboardHeader>
 
       <main className={`${PAGE_COLUMN} flex-1 pt-6 pb-16`}>
         <AppDownloadBanner />
@@ -360,12 +369,24 @@ export function Dashboard() {
 
         <Devices devices={devices} billing={billing} onRemoved={() => void refresh()} />
 
-        <Apps
+        {teams !== "unsupported" ? (
+          <TeamsSection
+            error={teamsError}
+            onCreated={(team) =>
+              setTeams((current) => [...(Array.isArray(current) ? current : []), team])
+            }
+            teams={teams}
+          />
+        ) : null}
+
+        <AppsSection
           apps={apps}
           onChanged={(next) =>
             setApps((current) => current?.map((app) => (app.id === next.id ? next : app)) ?? null)
           }
           onRemoved={(id) => setApps((current) => current?.filter((app) => app.id !== id) ?? null)}
+          teams={Array.isArray(teams) ? teams : null}
+          viewerName={session.user.name}
         />
 
         <LiveActivities activities={liveActivities} />
@@ -741,253 +762,6 @@ function Devices({
       {dialog}
     </section>
   );
-}
-
-/** Glass panel that holds a list; rows are separated by hairlines. */
-const LIST_PANEL = "hark-glass divide-y divide-line rounded-3xl px-4 sm:px-5";
-
-function InlineCode({ children }: { children: React.ReactNode }) {
-  return (
-    <code className="rounded-md bg-white/8 px-1 py-px font-mono text-[0.86em] text-white">
-      {children}
-    </code>
-  );
-}
-
-function EmptyState({ title, children }: { title: string; children?: React.ReactNode }) {
-  return (
-    <div className="rounded-3xl border border-dashed border-line-strong px-6 py-10 text-center">
-      <p className="font-medium text-white">{title}</p>
-      {children ? <p className="mx-auto mt-1.5 max-w-sm text-ink-muted">{children}</p> : null}
-    </div>
-  );
-}
-
-/** Accessible on/off control styled as an iOS switch. */
-function Switch({
-  checked,
-  disabled,
-  label,
-  onChange,
-}: {
-  checked: boolean;
-  disabled?: boolean;
-  label: string;
-  onChange: (next: boolean) => void;
-}) {
-  return (
-    <button
-      aria-checked={checked}
-      className="group inline-flex items-center gap-2 text-sm text-ink-muted disabled:opacity-50"
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      role="switch"
-      type="button"
-    >
-      <span
-        aria-hidden="true"
-        className={`relative inline-flex h-[22px] w-9 shrink-0 rounded-full transition-colors duration-200 ${
-          checked ? "bg-white" : "bg-white/18 group-hover:bg-white/24"
-        }`}
-      >
-        <span
-          className={`absolute top-[3px] left-[3px] size-4 rounded-full shadow-sm transition-transform duration-200 ${
-            checked ? "translate-x-[14px] bg-green" : "bg-white"
-          }`}
-        />
-      </span>
-      {label}
-    </button>
-  );
-}
-
-function AppIcon({ app }: { app: AppDto }) {
-  if (app.iconUrl) {
-    return (
-      <img
-        alt=""
-        className="size-10 shrink-0 rounded-[11px] object-cover ring-1 ring-white/15"
-        src={app.iconUrl}
-      />
-    );
-  }
-  return (
-    <span className="grid size-10 shrink-0 place-items-center rounded-[11px] bg-white font-medium text-green">
-      {app.name.slice(0, 1).toUpperCase()}
-    </span>
-  );
-}
-
-function Apps({
-  apps,
-  onChanged,
-  onRemoved,
-}: {
-  apps: AppDto[] | null;
-  onChanged: (app: AppDto) => void;
-  onRemoved: (id: string) => void;
-}) {
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const { confirm, dialog } = useConfirm();
-
-  const run = async (id: string, action: () => Promise<void>, failure: string) => {
-    setBusyId(id);
-    setError(null);
-    try {
-      await action();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : failure);
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const share = (app: AppDto, field: "shareName" | "shareEmail", value: boolean) =>
-    run(
-      app.id,
-      async () => onChanged((await api.updateAppSharing(app.id, { [field]: value })).app),
-      "Could not update sharing",
-    );
-
-  const revoke = async (app: AppDto) => {
-    const confirmed = await confirm({
-      title: "Stop signing in",
-      message: `${app.name} stops receiving Hark sign-in passes. You can approve it again the next time you open it.`,
-      confirmLabel: "Stop signing in",
-    });
-    if (!confirmed) return;
-    await run(app.id, async () => onChanged((await api.revokeApp(app.id)).app), "Could not revoke");
-  };
-
-  const remove = async (app: AppDto) => {
-    const confirmed = await confirm({
-      title: "Remove app",
-      message: `Remove ${app.name} from Hark? It disappears from your iPhone and stops receiving sign-in passes.`,
-      confirmLabel: "Remove",
-      destructive: true,
-    });
-    if (!confirmed) return;
-    await run(
-      app.id,
-      async () => {
-        await api.deleteApp(app.id);
-        onRemoved(app.id);
-      },
-      "Could not remove this app",
-    );
-  };
-
-  return (
-    <section className="mt-10 border-t border-line pt-8" aria-labelledby="apps-heading">
-      <div className="mb-5">
-        <h2
-          id="apps-heading"
-          className="text-[22px] leading-[1.2] font-medium tracking-[-0.01em] text-white"
-        >
-          Apps
-        </h2>
-        <p className="mt-1.5 text-ink-muted">
-          Web apps that open in Hark, already signed in. Each gets a private Hark ID, plus only what
-          you choose to share.
-        </p>
-      </div>
-      {apps === null ? <p className="py-4 text-ink-faint">Loading apps…</p> : null}
-      {apps?.length === 0 ? (
-        <EmptyState title="No apps yet">
-          Ask your agent to add one with <InlineCode>harkctl</InlineCode>, or see the{" "}
-          <Link className="hark-link" to="/docs">
-            docs
-          </Link>
-          .
-        </EmptyState>
-      ) : null}
-      {apps && apps.length > 0 ? (
-        <ul className={LIST_PANEL}>
-          {apps.map((app) => {
-            const busy = busyId === app.id;
-            return (
-              <li className="py-4" key={app.id}>
-                <div className="flex items-center gap-3">
-                  <AppIcon app={app} />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium text-white">{app.name}</p>
-                    <p className="truncate font-mono text-[13px] text-ink-faint" title={app.url}>
-                      {app.origin}
-                    </p>
-                  </div>
-                  <span
-                    className={`shrink-0 rounded-full px-2.5 py-0.5 text-[13px] ${
-                      app.consentedAt
-                        ? "bg-white/12 text-white"
-                        : "border border-line text-ink-faint"
-                    }`}
-                  >
-                    {app.consentedAt ? "Signed in" : "Not signed in"}
-                  </span>
-                </div>
-                <p className="mt-2 text-[13px] text-ink-faint sm:pl-[52px]">
-                  {app.lastOpenedAt ? `Opened ${relativeTime(app.lastOpenedAt)}` : "Never opened"}
-                  {app.projectName ? ` · ${app.projectName}` : ""}
-                  {app.createdBy ? ` · added by ${app.createdBy}` : ""}
-                </p>
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-x-5 gap-y-3 sm:pl-[52px]">
-                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-                    <Switch
-                      checked={app.shareName}
-                      disabled={busy}
-                      label="Share name"
-                      onChange={(value) => void share(app, "shareName", value)}
-                    />
-                    <Switch
-                      checked={app.shareEmail}
-                      disabled={busy}
-                      label="Share email"
-                      onChange={(value) => void share(app, "shareEmail", value)}
-                    />
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      className={rowButton}
-                      disabled={busy || app.consentedAt === null}
-                      onClick={() => void revoke(app)}
-                      type="button"
-                    >
-                      Stop signing in
-                    </button>
-                    <button
-                      className={rowDangerButton}
-                      disabled={busy}
-                      onClick={() => void remove(app)}
-                      type="button"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
-      {error ? (
-        <p className="mt-3 text-sm text-danger" role="alert">
-          {error}
-        </p>
-      ) : null}
-      {dialog}
-    </section>
-  );
-}
-
-function relativeTime(iso: string): string {
-  const deltaMinutes = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
-  if (deltaMinutes < 1) return "just now";
-  if (deltaMinutes < 60) return `${deltaMinutes} minute${deltaMinutes === 1 ? "" : "s"} ago`;
-  const hours = Math.floor(deltaMinutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-  const days = Math.floor(hours / 24);
-  return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 function ServiceModal({

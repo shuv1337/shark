@@ -115,6 +115,40 @@ function Feature({
   );
 }
 
+/**
+ * A static on-call page in the notification style: the front card sizes the
+ * block and a second card peeks out behind it, so nothing moves or reflows.
+ */
+function OncallPagePreview() {
+  return (
+    <div className="relative pb-3">
+      <div
+        className="hark-note is-behind"
+        style={{ top: 0, bottom: 12, transform: "translateY(10px) scale(0.94)", opacity: 0.7 }}
+      />
+      <div className="hark-note" style={{ position: "relative", zIndex: 1 }}>
+        <div className="hark-note-sender">
+          <div className="hark-note-avatar" style={{ background: "#C93B2C" }}>
+            P
+          </div>
+          <span className="hark-note-badge" />
+        </div>
+        <div className="hark-note-content">
+          <div className="hark-note-row">
+            <span className="hark-note-title">Platform on-call</span>
+            <time>now</time>
+          </div>
+          <div className="hark-note-msg">Database CPU at 95% on db-primary.</div>
+          <div className="hark-note-actions">
+            <span>Escalate</span>
+            <span className="is-primary">Acknowledge</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Landing() {
   const lensMap = useLensMap();
 
@@ -204,6 +238,19 @@ export function Landing() {
                 {app.name}
               </div>
             ))}
+          </div>
+        </Feature>
+
+        <Feature
+          id="teams"
+          lede="Share apps with your team and page whoever's on call."
+          title="For your team."
+        >
+          <div
+            aria-hidden="true"
+            className={`mt-[18px] max-w-[24.5rem] ${lensMap ? "hark-refract" : ""}`}
+          >
+            <OncallPagePreview />
           </div>
         </Feature>
 

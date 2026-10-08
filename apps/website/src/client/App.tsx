@@ -5,11 +5,13 @@ import { DocumentMetadata } from "./components/DocumentMetadata";
 import { CliAuthorize } from "./pages/CliAuthorize";
 import { Dashboard } from "./pages/Dashboard";
 import { Docs } from "./pages/Docs";
+import { Join } from "./pages/Join";
 import { Landing } from "./pages/Landing";
 import { Launched } from "./pages/Launched";
 import { Privacy, Terms } from "./pages/Legal";
 import { NotFound } from "./pages/NotFound";
 import { Pricing } from "./pages/Pricing";
+import { TeamPage } from "./pages/Team";
 
 export function App() {
   return (
@@ -20,6 +22,8 @@ export function App() {
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/dashboard/teams/:teamId" element={<TeamPage />} />
+        <Route path="/join/:code" element={<Join />} />
         <Route path="/cli/authorize" element={<CliAuthorize />} />
         <Route path="/docs" element={<Docs />} />
         <Route path="/pricing" element={<Pricing />} />

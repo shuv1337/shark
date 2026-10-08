@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 
 interface Props {
   value: string;
+  /** What is being copied, for the button's accessible name. */
+  label?: string;
 }
 
-export function CopyField({ value }: Props) {
+export function CopyField({ value, label = "webhook URL" }: Props) {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -35,8 +37,8 @@ export function CopyField({ value }: Props) {
           type="button"
           onClick={copy}
           className="grid size-9 shrink-0 place-items-center rounded-full text-ink-muted transition-colors hover:bg-surface-hover hover:text-white"
-          aria-label={copied ? "Webhook URL copied" : "Copy webhook URL"}
-          title={copied ? "Copied" : "Copy webhook URL"}
+          aria-label={copied ? `Copied ${label}` : `Copy ${label}`}
+          title={copied ? "Copied" : `Copy ${label}`}
         >
           {copied ? (
             <svg aria-hidden="true" className="size-4" fill="none" viewBox="0 0 16 16">
