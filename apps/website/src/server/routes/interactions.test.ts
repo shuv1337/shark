@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { notificationEventTag } from "../lib/notification-withdrawal";
 
 process.env.NODE_ENV = "test";
 process.env.DATABASE_URL = ":memory:";
@@ -12,6 +13,7 @@ const webPushState = vi.hoisted(() => ({
   stale: false,
   calls: [] as Array<{ ids: string[]; payload: Record<string, unknown> }>,
 }));
+const macosSent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 const billingState = vi.hoisted(() => ({
   pro: true,
   servicePerMinute: 10_000,
@@ -90,6 +92,20 @@ vi.mock("../lib/apns", () => ({
   },
 }));
 
+vi.mock("../lib/macos-push", () => ({
+  sendMacosPushNotifications: async (
+    rows: Array<{ id: string }>,
+    payload: Record<string, unknown>,
+  ) => {
+    macosSent.push(...rows.map((row) => ({ id: row.id, payload, kind: "alert" })));
+    return { accepted: rows.length, errors: [], staleMacosDeviceIds: [] };
+  },
+  sendMacosSilentPush: async (rows: Array<{ id: string }>, payload: Record<string, unknown>) => {
+    macosSent.push(...rows.map((row) => ({ id: row.id, payload, kind: "silent" })));
+    return { accepted: rows.length, errors: [], staleMacosDeviceIds: [] };
+  },
+}));
+
 vi.mock("../lib/web-push", () => ({
   sendWebPushNotifications: async (
     rows: Array<{ id: string }>,
@@ -115,6 +131,7 @@ afterEach(() => {
   liveActivityPushes.length = 0;
   webPushState.stale = false;
   webPushState.calls.length = 0;
+  macosSent.length = 0;
 });
 
 let app: typeof import("../app")["app"];
@@ -289,6 +306,21 @@ async function insertWebSubscription(id: string) {
     endpointHash: `${id}-endpoint-hash`,
     subscriptionCiphertext: "encrypted-at-adapter-boundary",
     deviceName: "Linux browser",
+    active: true,
+    createdAt: now,
+    lastSeenAt: now,
+  });
+}
+
+async function insertMacosDevice(id: string) {
+  const now = new Date();
+  await db.insert(schema.macosDevice).values({
+    id,
+    userId: "user_1",
+    apnsTokenHash: id.padEnd(64, "a"),
+    apnsTokenCiphertext: "encrypted-at-adapter-boundary",
+    environment: "sandbox",
+    deviceName: "Test Mac",
     active: true,
     createdAt: now,
     lastSeenAt: now,
@@ -1365,7 +1397,8 @@ describe("agent notifications", () => {
             title: "Desktop bot",
             body: "Deploy finished",
             url: "/dashboard",
-            tag: "agent-tok_full",
+            eventId: deliveredBody.notification.id,
+            tag: notificationEventTag(deliveredBody.notification.id),
           },
         },
       ]);
@@ -1398,6 +1431,103 @@ describe("agent notifications", () => {
       await db
         .delete(schema.webPushSubscription)
         .where(eq(schema.webPushSubscription.id, "web_notification_target"));
+    }
+  });
+
+  it("withdraws with the identifiers web, macOS, and Expo delivered", async () => {
+    sent.length = 0;
+    webPushState.calls.length = 0;
+    macosSent.length = 0;
+    await insertWebSubscription("web_withdraw_match");
+    await insertMacosDevice("mac_withdraw_match");
+    try {
+      const created = await createNotification({
+        title: "Withdraw bot",
+        body: "Clear this alert",
+        url: "https://example.com/runs/withdraw",
+        deviceIds: ["dev_1", "web_withdraw_match", "mac_withdraw_match"],
+      });
+      expect(created.status).toBe(201);
+      const createdBody = (await created.json()) as {
+        notification: { id: string };
+        accepted: number;
+      };
+      const notificationId = createdBody.notification.id;
+      expect(createdBody.accepted).toBe(3);
+
+      const expoDelivery = sent.find((message) => message.to === "ExponentPushToken[a]");
+      const webDelivery = webPushState.calls[0]?.payload;
+      const macosDelivery = macosSent.find((message) => message.kind === "alert");
+      expect(expoDelivery).toMatchObject({ data: { eventId: notificationId } });
+      expect(webDelivery).toMatchObject({
+        eventId: notificationId,
+        tag: notificationEventTag(notificationId),
+      });
+      expect(macosDelivery).toMatchObject({
+        id: "mac_withdraw_match",
+        payload: { data: { eventId: notificationId } },
+      });
+      if (!expoDelivery || !webDelivery || !macosDelivery) {
+        throw new Error("missing delivery payload");
+      }
+      const deliveredEventId = (expoDelivery.data as { eventId: string }).eventId;
+      const deliveredWebEventId = webDelivery.eventId;
+      const deliveredWebTag = webDelivery.tag;
+      const deliveredMacEventId = (macosDelivery.payload as { data: { eventId: string } }).data
+        .eventId;
+
+      sent.length = 0;
+      webPushState.calls.length = 0;
+      macosSent.length = 0;
+      const withdrawn = await agent(`/notifications/${notificationId}/withdraw`, SECRET, {
+        method: "POST",
+      });
+      expect(withdrawn.status).toBe(200);
+      expect(await withdrawn.json()).toMatchObject({ ok: true, status: "withdrawn" });
+
+      expect(sent).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            to: "ExponentPushToken[a]",
+            data: { v: 1, command: "notification.withdraw", eventId: deliveredEventId },
+            _contentAvailable: true,
+          }),
+        ]),
+      );
+      expect(
+        sent.every(
+          (message) => (message.data as { eventId?: string }).eventId === deliveredEventId,
+        ),
+      ).toBe(true);
+      expect(webPushState.calls).toEqual([
+        {
+          ids: ["web_withdraw_match"],
+          payload: {
+            v: 1,
+            command: "notification.withdraw",
+            eventId: deliveredWebEventId,
+            tag: deliveredWebTag,
+          },
+        },
+      ]);
+      expect(macosSent.filter((message) => message.kind === "silent")).toEqual([
+        {
+          id: "mac_withdraw_match",
+          kind: "silent",
+          payload: {
+            data: {
+              v: 1,
+              command: "notification.withdraw",
+              eventId: deliveredMacEventId,
+            },
+          },
+        },
+      ]);
+    } finally {
+      await db
+        .delete(schema.webPushSubscription)
+        .where(eq(schema.webPushSubscription.id, "web_withdraw_match"));
+      await db.delete(schema.macosDevice).where(eq(schema.macosDevice.id, "mac_withdraw_match"));
     }
   });
 

@@ -36,6 +36,7 @@ import { checkNotificationAllowance, getBilling, trackNotification } from "../li
 import { newId } from "../lib/id";
 import { deliverInteractionCallbacks } from "../lib/interaction-callbacks";
 import { verifyLiveActivityInteractionCredential } from "../lib/live-activity-interaction";
+import { notificationEventTag } from "../lib/notification-withdrawal";
 import { resolveProjectForDelivery } from "../lib/projects";
 import { buildInteractionPushMessages, buildPushMessages, sendPushFanout } from "../lib/push";
 import { hashInteractionResponseToken } from "../lib/token";
@@ -509,15 +510,19 @@ export const agentRoute = new Hono<AgentEnv>()
         title: parsed.data.title,
         body: parsed.data.summary ?? parsed.data.body,
         url: parsed.data.url ?? "/dashboard",
+        eventId: notificationId,
         ...(parsed.data.imageUrl ? { imageUrl: parsed.data.imageUrl } : {}),
-        tag: `agent-${token.id}`,
+        tag: notificationEventTag(notificationId),
       },
       macosDevices: selectedMacosDevices,
       macosPayload: {
         title: parsed.data.title,
         body: parsed.data.summary ?? parsed.data.body,
         threadId: `agent-${token.id}`,
-        data: { notificationId, ...(parsed.data.url ? { url: parsed.data.url } : {}) },
+        data: {
+          eventId: notificationId,
+          ...(parsed.data.url ? { url: parsed.data.url } : {}),
+        },
       },
     });
     if (result.staleTokens.length > 0) {
