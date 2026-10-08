@@ -49,6 +49,37 @@ export function resolveLaunchUrl(app: Pick<AppDto, "url" | "origin">, requested?
   return app.url;
 }
 
+export interface WebViewSource {
+  uri: string;
+  method?: "POST";
+  body?: string;
+  headers?: Record<string, string>;
+}
+
+/**
+ * The web view's first request. A page on SHark's own origin (the board) is
+ * gated by a SHark browser session the web view lacks, so the pass is posted
+ * to `/apps/enter`, which sets that session and redirects to the page. The
+ * pass travels in the body, never the URL. Other origins load directly.
+ */
+export function webViewSource(
+  launchUrl: string,
+  appOrigin: string,
+  sharkOrigin: string | null,
+  pass: string | null,
+): WebViewSource {
+  if (!pass || sharkOrigin === null || appOrigin !== sharkOrigin) return { uri: launchUrl };
+  const target = new URL(launchUrl);
+  if (target.origin !== sharkOrigin) return { uri: launchUrl };
+  return {
+    uri: `${sharkOrigin}/apps/enter`,
+    method: "POST",
+    // A header no HTML form can send: the server refuses entry without it.
+    headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Shark-Entry": "1" },
+    body: `pass=${encodeURIComponent(pass)}&next=${encodeURIComponent(`${target.pathname}${target.search}`)}`,
+  };
+}
+
 /**
  * Defines `window.hark` at document start in the main frame, but only while
  * the page is on the app origin. The pass itself is never embedded in the

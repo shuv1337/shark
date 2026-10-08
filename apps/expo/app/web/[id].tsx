@@ -23,6 +23,7 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import type { ShouldStartLoadRequest } from "react-native-webview/lib/WebViewTypes";
 import { AppIcon } from "../../src/components/app-icon";
 import { ApiError, api } from "../../src/lib/api";
+import { API_URL } from "../../src/lib/auth";
 import { previewApps } from "../../src/lib/inbox-preview";
 import { colors, fonts, tightTracking } from "../../src/lib/theme";
 import {
@@ -36,6 +37,7 @@ import {
   parseBridgeMessage,
   pickStripColor,
   resolveLaunchUrl,
+  webViewSource,
 } from "../../src/lib/web-apps";
 
 type Phase = "loading" | "consent" | "ready" | "error";
@@ -49,6 +51,7 @@ const HINT_COUNT_KEY = "hark.webApps.hintCount";
 const HINT_SHOWS = 3;
 /** Reuse a prefetched pass only while it has comfortable validity left. */
 const PASS_REUSE_MARGIN_MS = 30_000;
+const SHARK_ORIGIN = originOf(API_URL);
 
 export default function WebAppScreen() {
   const params = useLocalSearchParams<{ id: string; url?: string }>();
@@ -66,6 +69,8 @@ export default function WebAppScreen() {
   const [canGoBack, setCanGoBack] = useState(false);
   const [stripColor, setStripColor] = useState("#FFFFFF");
   const [reloadKey, setReloadKey] = useState(0);
+  // Pass posted by the first load of an app on SHark's own origin.
+  const [entryPass, setEntryPass] = useState<string | null>(null);
 
   const close = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -88,6 +93,12 @@ export default function WebAppScreen() {
     [id, simulatorPreview],
   );
 
+  // A first-party page spends its pass on entry; any other app keeps it for getToken().
+  const prepareEntry = useCallback((origin: string, pass: Pass) => {
+    if (origin === SHARK_ORIGIN) setEntryPass(pass.token);
+    else prefetched.current = pass;
+  }, []);
+
   const start = useCallback(async () => {
     setPhase("loading");
     setErrorMessage(null);
@@ -102,7 +113,7 @@ export default function WebAppScreen() {
         setPhase("consent");
         return;
       }
-      prefetched.current = await issuePass();
+      prepareEntry(current.origin, await issuePass());
       setPhase("ready");
     } catch (error) {
       if (error instanceof ApiError && error.code === API_ERROR_CODE_CONSENT_REQUIRED) {
@@ -118,7 +129,7 @@ export default function WebAppScreen() {
       );
       setPhase("error");
     }
-  }, [id, issuePass, simulatorPreview]);
+  }, [id, issuePass, prepareEntry, simulatorPreview]);
 
   useEffect(() => {
     void start();
@@ -140,6 +151,13 @@ export default function WebAppScreen() {
         : null,
     [appUrl, appOriginValue, params.url],
   );
+  const source = useMemo(
+    () =>
+      launchUrl && appOriginValue
+        ? webViewSource(launchUrl, appOriginValue, SHARK_ORIGIN, entryPass)
+        : null,
+    [launchUrl, appOriginValue, entryPass],
+  );
   const bridgeScript = useMemo(
     () => (appOriginValue ? buildBridgeScript(appOriginValue) : ""),
     [appOriginValue],
@@ -154,7 +172,7 @@ export default function WebAppScreen() {
         cacheApps([approved]);
         setApp(approved);
       }
-      prefetched.current = await issuePass({ consent: true, ...sharing });
+      prepareEntry(app.origin, await issuePass({ consent: true, ...sharing }));
       setPhase("ready");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Couldn’t sign in.");
@@ -357,7 +375,19 @@ export default function WebAppScreen() {
         injectedJavaScriptBeforeContentLoaded={bridgeScript}
         injectedJavaScriptBeforeContentLoadedForMainFrameOnly
         key={reloadKey}
-        onContentProcessDidTerminate={() => setReloadKey((key) => key + 1)}
+        onContentProcessDidTerminate={() => {
+          // A spent entry pass cannot be posted again; fetch a fresh one first.
+          if (app.origin !== SHARK_ORIGIN) return setReloadKey((key) => key + 1);
+          void issuePass()
+            .then((pass) => {
+              setEntryPass(pass.token);
+              setReloadKey((key) => key + 1);
+            })
+            .catch(() => {
+              setErrorMessage("The page stopped and couldn’t sign in again.");
+              setPhase("error");
+            });
+        }}
         onError={(event) => {
           setErrorMessage(event.nativeEvent.description || "The page couldn’t be loaded.");
           setPhase("error");
@@ -378,7 +408,7 @@ export default function WebAppScreen() {
         onShouldStartLoadWithRequest={onShouldStartLoad}
         originWhitelist={["*"]}
         ref={webView}
-        source={{ uri: launchUrl }}
+        source={source ?? { uri: launchUrl }}
         // Matches the page so the home-indicator inset never shows a white band.
         style={[styles.webView, { backgroundColor: stripColor }]}
         webviewDebuggingEnabled={__DEV__}

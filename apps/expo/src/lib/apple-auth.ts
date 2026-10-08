@@ -63,6 +63,7 @@ export async function signInWithApple(): Promise<"signed-in" | "cancelled"> {
   try {
     const response = await fetch(`${API_URL}/api/apple-auth/native-token`, {
       method: "POST",
+      credentials: "omit",
       headers: {
         "content-type": "application/json",
         cookie: getCookie(),
