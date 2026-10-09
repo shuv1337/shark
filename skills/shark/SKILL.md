@@ -363,8 +363,12 @@ sharkctl auth login --client-name "Agents (<host>)" \
   --scope activities:read --scope activities:write --scope devices:read --scope devices:write \
   --scope services:read --scope services:write --scope apps:read --scope apps:write \
   --scope inbox:read --scope inbox:write --scope billing:read \
+  --scope teams:read --scope teams:write --scope oncall:read --scope oncall:write \
   --scope board:read --scope board:write
 ```
+
+This list must track `DEFAULT_SCOPES` in `packages/sharkctl/src/cli.mjs` plus the two board scopes;
+update it whenever the defaults change.
 
 ```bash
 AGENT="Codex (shuvdev)"
@@ -399,6 +403,8 @@ Identity:
 - Pass `--agent "<Harness> (<host>)"` on every `ask`, `work`, `done`, and `note`, for example
   `--agent "Codex (shuvdev)"`. The board's crew strip shows the token name; `--agent` says which
   harness posted the item.
+- Through the SHark MCP server each connection is its own token, but still prefix keys and pass
+  `agent` so items read the same on the board.
 
 Work lifecycle:
 

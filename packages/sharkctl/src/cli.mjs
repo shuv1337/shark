@@ -9,7 +9,7 @@ import { REQUIRED_PERMISSION_SCOPES, sharkEnvironment } from "./permissions/ask.
 import { main as permissionsMain } from "./permissions/cli.mjs";
 
 const DEFAULT_API_URL = "https://shark.shuv.dev";
-const DEFAULT_SCOPES = [
+export const DEFAULT_SCOPES = [
   "notifications:send",
   "interactions:create",
   "interactions:read",
