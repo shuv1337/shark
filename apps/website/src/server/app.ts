@@ -1,8 +1,9 @@
-import { type Context, Hono, type Next } from "hono";
+import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { auth } from "./auth";
 import { env } from "./env";
+import { accessLog } from "./lib/access-log";
 import { databaseIsReady } from "./lib/readiness";
 import { safeReturnPath } from "./lib/return-path";
 import { beginAppleWebSignIn } from "./lib/web-sign-in";
@@ -47,21 +48,6 @@ import { watchRoute } from "./routes/watch";
 import { webPushRoute } from "./routes/web-push";
 
 export const app = new Hono();
-
-/**
- * Logs requests without query strings and redacts webhook paths: `/hooks/:token`
- * embeds a plaintext credential that must never reach a log sink.
- */
-async function accessLog(c: Context, next: Next): Promise<void> {
-  const startedAt = Date.now();
-  await next();
-  const path = c.req.path.startsWith("/hooks/")
-    ? "/hooks/:token"
-    : c.req.path.startsWith("/conversation/v1/")
-      ? "/conversation/v1/:reference"
-      : c.req.path;
-  console.log(`${c.req.method} ${path} ${c.res.status} ${Date.now() - startedAt}ms`);
-}
 
 // Bounds memory use for unauthenticated POST bodies; accepted payloads are far smaller.
 app.use("*", bodyLimit({ maxSize: 64 * 1024 }));
