@@ -73,11 +73,18 @@ function object(properties: Record<string, JsonSchema>, optional: string[] = [])
 const ok = object({ ok: { const: true } });
 
 const schemas: Record<string, JsonSchema> = {
-  Error: object({ error: str, code: str, issues: {}, required: arrayOf(str) }, [
-    "code",
-    "issues",
-    "required",
-  ]),
+  Error: object(
+    {
+      error: str,
+      code: str,
+      issues: {},
+      required: arrayOf(str),
+      activityId: str,
+      ownedByRequester: bool,
+      recovery: { const: "wait_or_explicitly_replace" },
+    },
+    ["activityId", "ownedByRequester", "recovery", "code", "issues", "required"],
+  ),
   Ok: ok,
   TokenStatus: object({
     authenticated: { const: true },
@@ -722,6 +729,8 @@ const operations: Record<
     },
     post: {
       summary: "Start a Live Activity",
+      description:
+        "The ordinary activity slot is device-wide. List/get are token-scoped, so an empty list does not imply a free slot. A 409 ACTIVE_ACTIVITY_CONFLICT includes activityId and ownedByRequester. Wait or explicitly choose replace=true; never automatically replace.",
       scopes: ["activities:write"],
       params: [idempotencyHeader],
       request: liveActivityStartSchema,

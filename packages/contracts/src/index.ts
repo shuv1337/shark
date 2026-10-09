@@ -552,42 +552,40 @@ const deviceIdsSchema = z
   .transform((ids) => [...new Set(ids)].sort())
   .optional();
 
-export const liveActivityStartSchema = z
-  .object({
-    key: z.string().trim().min(1).max(100).optional(),
-    /** End any Live Activity currently occupying a target device before starting. */
-    replace: z.boolean().default(false),
-    title: z.string().trim().min(1, "Title is required").max(80),
-    status: z.string().trim().min(1, "Status is required").max(60),
-    detail: z.string().trim().min(1).max(240).optional(),
-    progress: z.number().min(0).max(1).optional(),
-    symbol: liveActivitySymbolSchema.default("terminal"),
-    privacyMode: liveActivityPrivacyModeSchema.default("standard"),
-    accentColor: liveActivityAccentColorSchema.default(LIVE_ACTIVITY_DEFAULT_ACCENT_COLOR),
-    style: liveActivityStyleSchema.default("standard"),
-    deviceIds: deviceIdsSchema,
-    expiresInSeconds: z
-      .number()
-      .int()
-      .min(60)
-      .max(28_800)
-      .default(LIVE_ACTIVITY_DEFAULT_EXPIRES_IN_SECONDS),
-    staleAfterSeconds: z
-      .number()
-      .int()
-      .min(0)
-      .max(28_800)
-      .default(LIVE_ACTIVITY_DEFAULT_STALE_AFTER_SECONDS),
-  })
-  .superRefine((value, context) => {
-    if (value.style === "approval") {
-      context.addIssue({
-        code: "custom",
-        path: ["style"],
-        message: "Use an interaction with live_activity presentation for approval Live Activities",
-      });
-    }
-  });
+export const ordinaryLiveActivityStyleSchema = z.enum([
+  "standard",
+  "ring",
+  "hero",
+  "terminal",
+  "steps",
+]);
+
+export const liveActivityStartSchema = z.object({
+  key: z.string().trim().min(1).max(100).optional(),
+  /** End any Live Activity currently occupying a target device before starting. */
+  replace: z.boolean().default(false),
+  title: z.string().trim().min(1, "Title is required").max(80),
+  status: z.string().trim().min(1, "Status is required").max(60),
+  detail: z.string().trim().min(1).max(240).optional(),
+  progress: z.number().min(0).max(1).optional(),
+  symbol: liveActivitySymbolSchema.default("terminal"),
+  privacyMode: liveActivityPrivacyModeSchema.default("standard"),
+  accentColor: liveActivityAccentColorSchema.default(LIVE_ACTIVITY_DEFAULT_ACCENT_COLOR),
+  style: ordinaryLiveActivityStyleSchema.default("standard"),
+  deviceIds: deviceIdsSchema,
+  expiresInSeconds: z
+    .number()
+    .int()
+    .min(60)
+    .max(28_800)
+    .default(LIVE_ACTIVITY_DEFAULT_EXPIRES_IN_SECONDS),
+  staleAfterSeconds: z
+    .number()
+    .int()
+    .min(0)
+    .max(28_800)
+    .default(LIVE_ACTIVITY_DEFAULT_STALE_AFTER_SECONDS),
+});
 export type LiveActivityStartInput = z.infer<typeof liveActivityStartSchema>;
 
 const liveActivityUpdateObject = z.object({
@@ -598,27 +596,17 @@ const liveActivityUpdateObject = z.object({
   symbol: liveActivitySymbolSchema.optional(),
   privacyMode: liveActivityPrivacyModeSchema.optional(),
   accentColor: liveActivityAccentColorSchema.optional(),
-  style: liveActivityStyleSchema.optional(),
+  style: ordinaryLiveActivityStyleSchema.optional(),
   staleAfterSeconds: z.number().int().min(0).max(28_800).optional(),
   ifSequence: z.number().int().nonnegative().optional(),
 });
 
 export const LIVE_ACTIVITY_UPDATE_FIELDS = Object.keys(liveActivityUpdateObject.shape);
 
-export const liveActivityUpdateSchema = liveActivityUpdateObject
-  .refine(
-    (input) => Object.keys(input).some((key) => key !== "ifSequence"),
-    "At least one of title, status, detail, progress, symbol, privacyMode, accentColor, style, or staleAfterSeconds is required",
-  )
-  .superRefine((value, context) => {
-    if (value.style === "approval") {
-      context.addIssue({
-        code: "custom",
-        path: ["style"],
-        message: "Approval style is managed by interactive Live Activity requests",
-      });
-    }
-  });
+export const liveActivityUpdateSchema = liveActivityUpdateObject.refine(
+  (input) => Object.keys(input).some((key) => key !== "ifSequence"),
+  "At least one of title, status, detail, progress, symbol, privacyMode, accentColor, style, or staleAfterSeconds is required",
+);
 export type LiveActivityUpdateInput = z.infer<typeof liveActivityUpdateSchema>;
 
 const liveActivityEndObject = z.object({

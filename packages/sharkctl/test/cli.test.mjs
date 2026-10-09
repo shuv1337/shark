@@ -1982,3 +1982,18 @@ test("default login scopes include the account scopes but not tokens:manage", as
     },
   );
 });
+
+test("activity conflict diagnostics retain safe occupancy metadata", () => {
+  const message = formatRequestError(
+    new RequestError("Conflict", 409, {
+      code: "ACTIVE_ACTIVITY_CONFLICT",
+      activityId: "act_synthetic",
+      ownedByRequester: false,
+      privateData: "do-not-echo",
+    }),
+  );
+  assert.match(message, /activityId=act_synthetic ownedByRequester=false/);
+  assert.match(message, /device-wide/);
+  assert.match(message, /explicitly choose --replace/);
+  assert.doesNotMatch(message, /do-not-echo/);
+});

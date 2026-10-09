@@ -467,7 +467,45 @@ describe("Live Activity agent routes", () => {
     expect(await second.json()).toMatchObject({
       code: "ACTIVE_ACTIVITY_CONFLICT",
       activityId: firstBody.activity.id,
+      ownedByRequester: true,
     });
+  });
+
+  it("reports cross-token occupancy without widening token-scoped access", async () => {
+    const first = await start({
+      title: "Private run",
+      status: "Running",
+      deviceIds: ["activity_dev_1"],
+    });
+    const { activity } = (await first.json()) as { activity: { id: string } };
+    apnsCalls.length = 0;
+    const listed = await agent("", OTHER_SECRET);
+    expect(await listed.json()).toMatchObject({ activities: [] });
+    const second = await agent("", OTHER_SECRET, {
+      method: "POST",
+      body: JSON.stringify({ title: "Other", status: "Running", deviceIds: ["activity_dev_1"] }),
+    });
+    expect(second.status).toBe(409);
+    expect(await second.json()).toEqual({
+      error: "A Live Activity is already active on a target device",
+      code: "ACTIVE_ACTIVITY_CONFLICT",
+      activityId: activity.id,
+      ownedByRequester: false,
+      recovery: "wait_or_explicitly_replace",
+    });
+    expect((await agent(`/${activity.id}`, OTHER_SECRET)).status).toBe(404);
+    expect(
+      (
+        await agent(`/${activity.id}`, OTHER_SECRET, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "Changed" }),
+        })
+      ).status,
+    ).toBe(404);
+    expect(
+      (await agent(`/${activity.id}/end`, OTHER_SECRET, { method: "POST", body: "{}" })).status,
+    ).toBe(404);
+    expect(apnsCalls).toHaveLength(0);
   });
 
   it("replaces the blocking activity when replace is true", async () => {
