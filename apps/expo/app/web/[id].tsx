@@ -1,7 +1,6 @@
 import { API_ERROR_CODE_CONSENT_REQUIRED, type AppDto } from "@hark/contracts";
 import * as Device from "expo-device";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
-import * as SecureStore from "expo-secure-store";
 import { StatusBar } from "expo-status-bar";
 import { SymbolView } from "expo-symbols";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -9,7 +8,6 @@ import {
   ActionSheetIOS,
   ActivityIndicator,
   Alert,
-  Animated,
   Linking,
   Pressable,
   ScrollView,
@@ -32,7 +30,6 @@ import {
   cacheApps,
   cachedApp,
   isAppOrigin,
-  isDarkColor,
   originOf,
   parseBridgeMessage,
   pickStripColor,
@@ -47,8 +44,6 @@ interface Pass {
   expiresAt: number;
 }
 
-const HINT_COUNT_KEY = "hark.webApps.hintCount";
-const HINT_SHOWS = 3;
 /** Reuse a prefetched pass only while it has comfortable validity left. */
 const PASS_REUSE_MARGIN_MS = 30_000;
 const SHARK_ORIGIN = originOf(API_URL);
@@ -347,26 +342,41 @@ export default function WebAppScreen() {
           {app ? `Getting your SHark pass for ${new URL(app.origin).host}` : "Opening app"}
         </Text>
         <ActivityIndicator color={colors.accent} style={styles.spinner} />
+        <Pressable accessibilityRole="button" onPress={close} style={styles.textButton}>
+          <Text style={styles.textButtonLabel}>Back to SHark</Text>
+        </Pressable>
       </View>
     );
   }
 
   return (
     <View style={[styles.container, { backgroundColor: stripColor }]}>
-      <StatusBar style={isDarkColor(stripColor) ? "light" : "dark"} />
-      {/*
-        iOS keeps status-bar touches for itself, so this strip mainly serves
-        VoiceOver; people open the menu with a two-finger hold on the page.
-      */}
-      <Pressable
-        accessibilityHint="Shows SHark options"
-        accessibilityLabel="SHark menu"
-        accessibilityRole="button"
-        delayLongPress={400}
-        onLongPress={showMenu}
-        onPress={showMenu}
-        style={{ height: insets.top, backgroundColor: stripColor }}
-      />
+      <StatusBar style="dark" />
+      <View style={[styles.toolbarSafeArea, { paddingTop: insets.top }]}>
+        <View style={styles.toolbar}>
+          <Pressable
+            accessibilityLabel="Back to SHark"
+            accessibilityHint="Closes this app and returns to SHark"
+            accessibilityRole="button"
+            onPress={close}
+            style={({ pressed }) => [styles.toolbarButton, pressed && styles.pressed]}
+          >
+            <SymbolView name="chevron.left" size={16} tintColor={colors.ink} weight="semibold" />
+            <Text style={styles.toolbarLabel}>SHark</Text>
+          </Pressable>
+          <Text numberOfLines={1} style={styles.toolbarTitle}>
+            {app.name}
+          </Text>
+          <Pressable
+            accessibilityLabel="App options"
+            accessibilityRole="button"
+            onPress={showMenu}
+            style={({ pressed }) => [styles.toolbarMenu, pressed && styles.pressed]}
+          >
+            <SymbolView name="ellipsis" size={20} tintColor={colors.ink} weight="semibold" />
+          </Pressable>
+        </View>
+      </View>
       <WebView
         allowsBackForwardNavigationGestures={canGoBack}
         allowsInlineMediaPlayback
@@ -413,45 +423,7 @@ export default function WebAppScreen() {
         style={[styles.webView, { backgroundColor: stripColor }]}
         webviewDebuggingEnabled={__DEV__}
       />
-      <HoldHint top={insets.top} />
     </View>
-  );
-}
-
-/** Briefly teaches the hidden gesture on the first few opens. */
-function HoldHint({ top }: { top: number }) {
-  const opacity = useRef(new Animated.Value(0)).current;
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    void SecureStore.getItemAsync(HINT_COUNT_KEY).then((value) => {
-      const count = Number(value ?? 0);
-      if (cancelled || count >= HINT_SHOWS) return;
-      void SecureStore.setItemAsync(HINT_COUNT_KEY, String(count + 1));
-      setVisible(true);
-      Animated.sequence([
-        Animated.delay(600),
-        Animated.timing(opacity, { toValue: 1, duration: 220, useNativeDriver: true }),
-        Animated.delay(2600),
-        Animated.timing(opacity, { toValue: 0, duration: 260, useNativeDriver: true }),
-      ]).start(() => {
-        if (!cancelled) setVisible(false);
-      });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [opacity]);
-
-  if (!visible) return null;
-  return (
-    <Animated.View pointerEvents="none" style={[styles.hint, { top: top + 8, opacity }]}>
-      <View style={styles.hintDot} />
-      <Text style={styles.hintText}>
-        Hold two fingers for SHark · swipe from the left edge to go back
-      </Text>
-    </Animated.View>
   );
 }
 
@@ -551,6 +523,32 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  toolbarSafeArea: { backgroundColor: colors.paper },
+  toolbar: {
+    minHeight: 52,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    gap: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.line,
+  },
+  toolbarButton: {
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 4,
+  },
+  toolbarLabel: { fontFamily: fonts.semibold, fontSize: 16, color: colors.ink },
+  toolbarTitle: {
+    flex: 1,
+    fontFamily: fonts.medium,
+    fontSize: 15,
+    color: colors.muted,
+    textAlign: "center",
+  },
+  toolbarMenu: { minHeight: 44, minWidth: 44, alignItems: "center", justifyContent: "center" },
   webView: {
     flex: 1,
   },
@@ -585,29 +583,6 @@ const styles = StyleSheet.create({
   },
   spinner: {
     marginTop: 8,
-  },
-  hint: {
-    position: "absolute",
-    alignSelf: "center",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 7,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 16,
-    backgroundColor: "rgba(23, 23, 19, 0.88)",
-  },
-  hintDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "#5ED8B7",
-  },
-  hintText: {
-    color: "#FFFFFF",
-    fontFamily: fonts.medium,
-    fontSize: 12,
-    letterSpacing: tightTracking(12),
   },
   consent: {
     flex: 1,
