@@ -1,9 +1,11 @@
 import {
   HARK_APPROVAL_CATEGORY_ID,
+  HARK_PAGE_CATEGORY_ID,
   HARK_REPLY_CATEGORY_ID,
   HARK_YES_NO_CATEGORY_ID,
   type InteractionKind,
   type InteractionPushData,
+  type OncallPagePushData,
   PUSH_SCHEMA_VERSION,
   type PushData,
   type WebhookRequest,
@@ -165,6 +167,55 @@ export function buildInteractionPushMessages(input: BuildInteractionPushInput): 
     ...(input.imageUrl ? { richContent: { image: input.imageUrl } } : {}),
     data,
   }));
+}
+
+export interface BuildPagePushInput {
+  to: string[];
+  pageId: string;
+  teamId: string;
+  groupName: string;
+  title: string;
+  body: string;
+  responseToken: string;
+  url?: string;
+  appId?: string;
+}
+
+/** An on-call page: time-sensitive, with Acknowledge / Escalate actions. */
+export function buildPagePushMessages(input: BuildPagePushInput): ExpoPushMessage[] {
+  const data: OncallPagePushData = {
+    v: PUSH_SCHEMA_VERSION,
+    pageId: input.pageId,
+    teamId: input.teamId,
+    groupName: input.groupName,
+    categoryId: HARK_PAGE_CATEGORY_ID,
+    responseToken: input.responseToken,
+    ...(input.url ? { url: input.url } : {}),
+    ...(input.appId ? { appId: input.appId } : {}),
+  };
+  return input.to.map((to) =>
+    fitPushMessage({
+      to,
+      title: input.title,
+      body: input.body,
+      categoryId: HARK_PAGE_CATEGORY_ID,
+      priority: "high",
+      sound: "default",
+      interruptionLevel: "time-sensitive",
+      mutableContent: true,
+      data,
+    }),
+  );
+}
+
+/** Silent command that clears a page from other devices once it is claimed. */
+export function buildPageClaimedPushMessages(
+  to: string[],
+  pageId: string,
+  claimedBy: string,
+): ExpoPushMessage[] {
+  const data: PushData = { v: PUSH_SCHEMA_VERSION, command: "page.claimed", pageId, claimedBy };
+  return to.map((token) => ({ to: token, data, _contentAvailable: true }));
 }
 
 let expoClient: Expo | undefined;

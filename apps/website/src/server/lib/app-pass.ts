@@ -4,6 +4,7 @@ import {
   APP_PASS_JWT_TYPE,
   APP_PASS_TTL_SECONDS,
   type AppPassClaims,
+  type TeamRole,
 } from "@hark/contracts";
 import { desc, isNull } from "drizzle-orm";
 import { exportJWK, generateKeyPair, importJWK, type JWK, SignJWT } from "jose";
@@ -120,6 +121,8 @@ export function pairwiseSubject(userId: string, origin: string): string {
 export interface IssueAppPassInput {
   user: { id: string; name: string; email: string };
   app: { id: string; origin: string; shareName: boolean; shareEmail: boolean };
+  /** For team apps: the team and the viewer's current role in it. */
+  team?: { id: string; role: TeamRole };
 }
 
 export async function issueAppPass(
@@ -137,6 +140,7 @@ export async function issueAppPass(
     app_id: input.app.id,
     ...(input.app.shareName && input.user.name ? { name: input.user.name } : {}),
     ...(input.app.shareEmail && input.user.email ? { email: input.user.email } : {}),
+    ...(input.team ? { team_id: input.team.id, team_role: input.team.role } : {}),
   };
   const token = await new SignJWT({ ...claims })
     .setProtectedHeader({ alg: APP_PASS_ALGORITHM, kid, typ: APP_PASS_JWT_TYPE })

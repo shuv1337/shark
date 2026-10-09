@@ -1138,6 +1138,12 @@ sharkctl apps remove app_...`,
                 detail:
                   "Present only when the owner shares them. Name is shared by default; email is not.",
               },
+              {
+                name: "team_id / team_role",
+                type: "string",
+                detail:
+                  "Present for [team apps](#teams-apps): the viewer's team and their current role (`owner`, `admin`, or `member`).",
+              },
             ],
           },
           {
@@ -1161,6 +1167,188 @@ sharkctl apps remove app_...`,
   "appId": "app_...",
   "url": "https://shark.shuv.dev/board"
 }`,
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: "teams",
+    lead: "A team shares web apps and on-call groups between SHark accounts. Everyone keeps their own phone, inbox, and sign-in decisions; the team only decides what is shared.",
+    subsections: [
+      {
+        id: "teams-roles",
+        blocks: [
+          {
+            kind: "p",
+            text: "Create a team in the dashboard or with `sharkctl teams create`. You become its owner. Each member has one role:",
+          },
+          {
+            kind: "table",
+            variant: "field",
+            caption: "Team roles",
+            rows: [
+              {
+                name: "owner",
+                type: "one per team",
+                detail:
+                  "Everything an admin can do, plus deleting the team and transferring ownership. The owner must transfer ownership before leaving.",
+              },
+              {
+                name: "admin",
+                type: "role",
+                detail:
+                  "Renames the team, invites and removes members, changes roles, removes any team app, and creates and edits on-call groups.",
+              },
+              {
+                name: "member",
+                type: "role",
+                detail:
+                  "Uses and adds team apps, raises and acknowledges pages, and schedules overrides for themselves.",
+              },
+            ],
+          },
+          {
+            kind: "p",
+            text: "Transferring ownership (setting someone's role to `owner`) makes the previous owner an admin. Removing a member takes effect immediately: they stop receiving SHark passes for the team's apps and leave every rotation.",
+          },
+        ],
+      },
+      {
+        id: "teams-invites",
+        blocks: [
+          {
+            kind: "p",
+            text: "Owners and admins create invite links. Each link joins one person, expires after seven days, and can be revoked. Add an email to also push the invite to an existing SHark user with that address.",
+          },
+          {
+            kind: "code",
+            language: "bash",
+            code: `sharkctl teams invite team_... --email teammate@example.com --role member
+# { "invite": { ... }, "code": "…", "url": "https://shark.shuv.dev/join/…" }`,
+          },
+          {
+            kind: "p",
+            text: "Opening the link shows the team, who invited you, and the role. Joining requires signing in: agents can create invites but never accept them.",
+          },
+        ],
+      },
+      {
+        id: "teams-apps",
+        blocks: [
+          {
+            kind: "p",
+            text: "Any member can add a [web app](#web-apps) to a team, or move one of their own apps into it with `sharkctl apps share app_... --team team_...` (`--personal` moves it back). The other members are notified and see the app next to their own.",
+          },
+          {
+            kind: "bullets",
+            items: [
+              "Every member approves sign-in and chooses whether their name and email are shared for themselves; nobody approves on someone else's behalf.",
+              "Passes for team apps carry the usual pairwise `sub` plus `team_id` and `team_role`, checked at issue time, so your site can authorize by team.",
+              "The person who added an app, and team admins, can rename or remove it. Deleting a team returns its apps to the people who added them.",
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: "oncall",
+    lead: "On-call groups page whoever is on call right now, then escalate until someone takes it. Pages arrive as time-sensitive notifications with Acknowledge and Escalate actions on the Lock Screen.",
+    subsections: [
+      {
+        id: "oncall-rotations",
+        blocks: [
+          {
+            kind: "p",
+            text: "Team owners and admins create on-call groups. A rotation is an ordered list of team members who hand off daily or weekly at a local time in an IANA time zone. Handoffs follow the local clock across daylight-saving changes, so a 09:00 handoff stays at 09:00.",
+          },
+          {
+            kind: "code",
+            language: "bash",
+            code: `sharkctl oncall create --team team_... --name Primary \\
+  --members user_a,user_b,user_c --period weekly \\
+  --handoff 09:00 --timezone America/New_York`,
+          },
+          {
+            kind: "p",
+            text: "Without `startsAt`, the first member is on call from the latest handoff. Overrides put someone on call for a window (covering a shift, a holiday) and replace the rotation while they last; any member can schedule one for themselves. Each group lists its current shift and the next few.",
+          },
+        ],
+      },
+      {
+        id: "oncall-paging",
+        blocks: [
+          {
+            kind: "p",
+            text: "A page goes first to the person on call. If nobody is on call, the whole group is paged. Escalation steps then run until someone acknowledges:",
+          },
+          {
+            kind: "table",
+            variant: "field",
+            caption: "Escalation steps",
+            rows: [
+              {
+                name: "afterMinutes",
+                type: "integer",
+                detail: "Minutes after the previous step (or the page) without an acknowledgement.",
+              },
+              {
+                name: "target",
+                type: "next | group",
+                detail:
+                  "`next` pages the next person in the rotation; `group` pages everyone in it who has not been paged yet.",
+              },
+            ],
+          },
+          {
+            kind: "p",
+            text: "The default is the next person after 5 minutes, then the whole group 10 minutes later. Pages with the same `dedupKey` merge into the open page (its `repeatCount` grows) instead of paging again.",
+          },
+          {
+            kind: "code",
+            language: "bash",
+            code: `sharkctl page ocg_... "API error rate above 20%" \\
+  --body "5xx since 14:02" --dedup-key api-5xx`,
+          },
+        ],
+      },
+      {
+        id: "oncall-webhook",
+        blocks: [
+          {
+            kind: "p",
+            text: "Add `oncall` to a webhook payload to page a group instead of notifying your own devices. The service owner must belong to the group's team, and `oncall` cannot be combined with `deviceIds` or `response`. The `Idempotency-Key` header becomes the page's dedup key, so retries merge into the open page.",
+          },
+          {
+            kind: "code",
+            language: "json",
+            code: `{
+  "title": "Checkout API",
+  "body": "Error rate above 20% for 5 minutes",
+  "oncall": "ocg_..."
+}`,
+          },
+          {
+            kind: "p",
+            text: "The response carries `pageId` and `delivered`. Page bodies are limited to 2,000 characters. Agents page with `sharkctl page` or `sharkctl notify --oncall`.",
+          },
+        ],
+      },
+      {
+        id: "oncall-acknowledge",
+        blocks: [
+          {
+            kind: "p",
+            text: "Anyone on the team can acknowledge a page from the Lock Screen, the app, or the website. The first acknowledgement wins: escalation stops, the page clears from everyone else's phone, and later acknowledgements are refused. Escalate pages the next step right away.",
+          },
+          {
+            kind: "note",
+            text: "Acknowledging and escalating are human-only. An acknowledgement tells the team a person is on it, so agents can raise, read, and resolve pages but have no route to acknowledge or escalate them.",
+          },
+          {
+            kind: "p",
+            text: 'Resolve a page when the incident is over, from the website or with `sharkctl pages resolve page_... --note "Rolled back"`. Resolving an unacknowledged page also stops its escalation.',
           },
         ],
       },

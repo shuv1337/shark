@@ -10,6 +10,8 @@ const state = vi.hoisted(() => ({
   cookie: "session" as string | undefined,
   store: new Map<string, string>(),
   submissions: [] as Array<{ id: string; input: Record<string, unknown> }>,
+  pageAcks: [] as Array<{ id: string; responseToken?: string }>,
+  pageAckError: undefined as unknown,
   submit: undefined as
     | ((id: string, input: Record<string, unknown>) => Promise<unknown>)
     | undefined,
@@ -39,6 +41,7 @@ vi.mock("expo-notifications", () => ({
   },
 }));
 
+vi.mock("expo-router", () => ({ router: { push: vi.fn() } }));
 vi.mock("react-native", () => ({ Linking: { openURL: vi.fn() } }));
 
 vi.mock("./auth", () => ({ getCookie: () => state.cookie }));
@@ -61,16 +64,38 @@ vi.mock("./api", () => ({
       state.submissions.push({ id, input });
       return state.submit?.(id, input);
     },
+    acknowledgePage: async (id: string) => {
+      state.pageAcks.push({ id });
+      if (state.pageAckError) throw state.pageAckError;
+      return { page: {} };
+    },
+    acknowledgePageWithToken: async (id: string, responseToken: string) => {
+      state.pageAcks.push({ id, responseToken });
+      if (state.pageAckError) throw state.pageAckError;
+      return { ok: true, status: "acknowledged" };
+    },
   },
 }));
 
+import { router } from "expo-router";
+import { ApiError } from "./api";
 import {
   clearInteractionResponses,
   DEVICE_ID_KEY,
   flushInteractionResponses,
+  flushPageAcknowledgements,
   handleNotificationResponse,
   registerInteractionCategories,
 } from "./interactions";
+
+function defaultResponse(url: string) {
+  return {
+    actionIdentifier: "expo.modules.notifications.actions.DEFAULT",
+    notification: {
+      request: { content: { data: { url } } },
+    },
+  } as never;
+}
 
 const QUEUE_KEY = "hark.interaction.responseQueue.v1";
 const DIGEST = "a".repeat(64);
@@ -98,11 +123,14 @@ function credentialResponse(interactionId: string) {
 }
 
 afterEach(async () => {
+  vi.clearAllMocks();
   state.cookie = "session";
   state.categories.length = 0;
   state.badgeCounts.length = 0;
   state.submit = undefined;
   state.submissions.length = 0;
+  state.pageAcks.length = 0;
+  state.pageAckError = undefined;
   await clearInteractionResponses();
   state.store.clear();
   vi.mocked(Linking.openURL).mockReset();
@@ -329,5 +357,69 @@ describe("interaction response queue", () => {
 
     await Promise.all([flushInteractionResponses(), flushInteractionResponses()]);
     expect(state.submissions.map(({ id }) => id)).toEqual(["int_once"]);
+  });
+});
+
+describe("on-call pages", () => {
+  const TOKEN = "p".repeat(43);
+  const page = {
+    v: 1,
+    pageId: "page_1",
+    teamId: "team_1",
+    groupName: "Platform",
+    categoryId: "HARK_PAGE_V1",
+    responseToken: TOKEN,
+    appId: "app_previewstatus",
+    url: "https://status.example.com/incidents/1",
+  };
+  const pageResponse = (actionIdentifier: string, data: Record<string, unknown> = page) =>
+    ({ actionIdentifier, notification: { request: { content: { data } } } }) as never;
+
+  it("opens the page screen on tap, even when the page names an app", async () => {
+    await handleNotificationResponse(pageResponse("expo.modules.notifications.actions.DEFAULT"));
+    expect(router.push).toHaveBeenCalledWith({
+      pathname: "/pages/[id]",
+      params: { id: "page_1" },
+    });
+    expect(Linking.openURL).not.toHaveBeenCalled();
+  });
+
+  it("asks before escalating from the notification action", async () => {
+    await handleNotificationResponse(pageResponse("HARK_ESCALATE"));
+    expect(router.push).toHaveBeenCalledWith({
+      pathname: "/pages/[id]",
+      params: { id: "page_1", intent: "escalate" },
+    });
+    expect(state.pageAcks).toEqual([]);
+  });
+
+  it("acknowledges with the response token without a session", async () => {
+    state.cookie = undefined;
+    await handleNotificationResponse(pageResponse("HARK_ACKNOWLEDGE"));
+    expect(state.pageAcks).toEqual([{ id: "page_1", responseToken: TOKEN }]);
+    expect(state.store.get("hark.page.ackQueue.v1")).toBeUndefined();
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it("keeps an acknowledgement queued while offline and drops it once claimed", async () => {
+    state.pageAckError = new Error("offline");
+    await handleNotificationResponse(pageResponse("HARK_ACKNOWLEDGE"));
+    expect(JSON.parse(state.store.get("hark.page.ackQueue.v1") ?? "[]")).toEqual([
+      { pageId: "page_1", responseToken: TOKEN },
+    ]);
+
+    state.pageAckError = new (ApiError as unknown as new (status: number) => Error)(409);
+    await flushPageAcknowledgements();
+    expect(state.pageAcks).toHaveLength(2);
+    expect(state.store.get("hark.page.ackQueue.v1")).toBeUndefined();
+  });
+
+  it("opens team invite links in the join screen", async () => {
+    await handleNotificationResponse(defaultResponse("shark://join/abc123"));
+    expect(router.push).toHaveBeenCalledWith({
+      pathname: "/join/[code]",
+      params: { code: "abc123" },
+    });
+    expect(Linking.openURL).not.toHaveBeenCalled();
   });
 });

@@ -488,7 +488,14 @@ function ConsentView({
         <Pressable accessibilityRole="button" onPress={onCancel} style={styles.textButton}>
           <Text style={styles.textButtonLabel}>Not now</Text>
         </Pressable>
-        {app.createdBy ? <Text style={styles.footnote}>Added by {app.createdBy}</Text> : null}
+        {app.team ? (
+          <Text style={styles.footnote}>
+            Shared with {app.team.name}
+            {app.addedBy ? ` · ${app.addedBy} added this` : ""}
+          </Text>
+        ) : app.createdBy ? (
+          <Text style={styles.footnote}>Added by {app.createdBy}</Text>
+        ) : null}
       </View>
     </View>
   );

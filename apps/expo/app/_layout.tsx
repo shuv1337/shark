@@ -6,6 +6,7 @@ import {
 } from "@expo-google-fonts/inter";
 import * as Notifications from "expo-notifications";
 import { Stack, useRouter } from "expo-router";
+import * as SecureStore from "expo-secure-store";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useRef } from "react";
 import { AppState } from "react-native";
@@ -13,6 +14,7 @@ import { useSession } from "../src/lib/auth";
 import { inboxIdFromNotificationData } from "../src/lib/inbox";
 import {
   flushInteractionResponses,
+  flushPageAcknowledgements,
   handleNotificationResponse,
   registerInteractionCategories,
 } from "../src/lib/interactions";
@@ -23,6 +25,7 @@ import {
   dismissNotificationsForEvent,
   withdrawalEventId,
 } from "../src/lib/notification-withdrawals";
+import { PENDING_JOIN_CODE_KEY } from "../src/lib/teams";
 import { colors } from "../src/lib/theme";
 import { webAppFromNotificationData } from "../src/lib/web-apps";
 
@@ -103,14 +106,21 @@ export default function RootLayout() {
       void Notifications.clearLastNotificationResponseAsync();
     }
     void flushInteractionResponses();
+    void flushPageAcknowledgements();
 
     const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
       handleResponse(response);
     });
     const appState = AppState.addEventListener("change", (state) => {
-      if (state === "active") void flushInteractionResponses();
+      if (state === "active") {
+        void flushInteractionResponses();
+        void flushPageAcknowledgements();
+      }
     });
-    const retryTimer = setInterval(() => void flushInteractionResponses(), 30_000);
+    const retryTimer = setInterval(() => {
+      void flushInteractionResponses();
+      void flushPageAcknowledgements();
+    }, 30_000);
     return () => {
       subscription.remove();
       appState.remove();
@@ -122,6 +132,23 @@ export default function RootLayout() {
     if (!session) return;
     return startLiveActivityTokenSync();
   }, [session]);
+
+  // An invite opened while signed out resumes once sign-in completes.
+  const signedIn = Boolean(session);
+  useEffect(() => {
+    if (!signedIn) return;
+    void SecureStore.getItemAsync(PENDING_JOIN_CODE_KEY).then(async (code) => {
+      if (!code) return;
+      await SecureStore.deleteItemAsync(PENDING_JOIN_CODE_KEY);
+      setTimeout(() => {
+        try {
+          routerRef.current.push({ pathname: "/join/[code]", params: { code } });
+        } catch {
+          // The invite link can be opened again.
+        }
+      }, 600);
+    });
+  }, [signedIn]);
 
   if (!fontsLoaded && !fontError) return null;
 

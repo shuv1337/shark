@@ -119,4 +119,45 @@ describe("upstream merge migration", () => {
     }
     expect(database.pragma("foreign_key_check")).toEqual([]);
   });
+
+  it("rebuilds agent_notification for teams without losing rowids, delivery state, or inbox sync", () => {
+    const database = previousDatabase();
+    migrate(database, journal.entries.slice(23, 24));
+    database.exec(`
+      UPDATE agent_notification SET status = 'failed', failed_count = 2, error = 'Unregistered'
+        WHERE id = 'anot';
+    `);
+    const before = database
+      .prepare(
+        "SELECT rowid, status, failed_count, error FROM agent_notification WHERE id = 'anot'",
+      )
+      .get();
+    migrate(database, journal.entries.slice(24));
+    expect(
+      database
+        .prepare(
+          "SELECT rowid, status, failed_count, error FROM agent_notification WHERE id = 'anot'",
+        )
+        .get(),
+    ).toEqual(before);
+
+    database.exec(`
+      INSERT INTO agent_notification (id, user_id, source_name, title, body, status, created_at)
+        VALUES ('notice', 'owner', 'SHark', 'Team invite', 'Join Pushed', 'accepted', 3);
+    `);
+    expect(
+      database
+        .prepare("SELECT source_name FROM inbox_item WHERE id = 'ibox:agent_notification:notice'")
+        .get(),
+    ).toEqual({ source_name: "SHark" });
+    database.exec("UPDATE inbox_item SET read_at = 42 WHERE id = 'ibox:agent_notification:notice'");
+    expect(readAt(database, "agent_notification", "notice")).toBe(42);
+    database.exec("UPDATE agent_notification SET status = 'withdrawn' WHERE id = 'anot'");
+    expect(
+      database
+        .prepare("SELECT status FROM inbox_item WHERE id = 'ibox:agent_notification:anot'")
+        .get(),
+    ).toEqual({ status: "withdrawn" });
+    expect(database.pragma("foreign_key_check")).toEqual([]);
+  });
 });
