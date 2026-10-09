@@ -34,7 +34,7 @@ export function SectionHeading({
       <div className="flex items-center justify-between gap-4">
         <h2
           id={id}
-          className="min-w-0 text-[22px] leading-[1.2] font-medium tracking-[-0.01em] text-white"
+          className="min-w-0 text-[22px] leading-[1.2] font-medium tracking-[-0.01em] text-ink"
         >
           {title}
         </h2>
@@ -47,7 +47,7 @@ export function SectionHeading({
 
 export function InlineCode({ children }: { children: React.ReactNode }) {
   return (
-    <code className="rounded-md bg-white/8 px-1 py-px font-mono text-[0.86em] text-white">
+    <code className="rounded-md bg-surface-hover px-1 py-px font-mono text-[0.86em] text-ink">
       {children}
     </code>
   );
@@ -56,7 +56,7 @@ export function InlineCode({ children }: { children: React.ReactNode }) {
 export function EmptyState({ title, children }: { title: string; children?: React.ReactNode }) {
   return (
     <div className="rounded-3xl border border-dashed border-line-strong px-6 py-10 text-center">
-      <p className="font-medium text-white">{title}</p>
+      <p className="font-medium text-ink">{title}</p>
       {children ? <p className="mx-auto mt-1.5 max-w-sm text-ink-muted">{children}</p> : null}
     </div>
   );
@@ -75,7 +75,7 @@ export function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
-/** Small pill label. `strong` is the white-on-green "current" style. */
+/** Small pill label. `strong` is the accent "current" style. */
 export function Badge({
   children,
   tone = "quiet",
@@ -84,9 +84,9 @@ export function Badge({
   tone?: "quiet" | "outline" | "strong" | "danger" | "warn" | "ok";
 }) {
   const tones = {
-    quiet: "bg-white/12 text-white",
+    quiet: "bg-surface-muted text-ink",
     outline: "border border-line text-ink-muted",
-    strong: "bg-white font-medium text-green",
+    strong: "bg-accent font-medium text-on-accent",
     danger: "bg-danger-soft text-danger ring-1 ring-danger-line ring-inset",
     warn: "bg-warn/14 text-warn ring-1 ring-warn/45 ring-inset",
     ok: "bg-mint/12 text-mint ring-1 ring-mint/40 ring-inset",
@@ -124,12 +124,12 @@ export function Switch({
       <span
         aria-hidden="true"
         className={`relative inline-flex h-[22px] w-9 shrink-0 rounded-full transition-colors duration-200 ${
-          checked ? "bg-white" : "bg-white/18 group-hover:bg-white/24"
+          checked ? "bg-accent" : "bg-line-strong group-hover:bg-ink-disabled"
         }`}
       >
         <span
           className={`absolute top-[3px] left-[3px] size-4 rounded-full shadow-sm transition-transform duration-200 ${
-            checked ? "translate-x-[14px] bg-green" : "bg-white"
+            checked ? "translate-x-[14px] bg-on-accent" : "bg-surface"
           }`}
         />
       </span>
@@ -143,13 +143,13 @@ export function AppIcon({ app }: { app: Pick<AppDto, "iconUrl" | "name"> }) {
     return (
       <img
         alt=""
-        className="size-10 shrink-0 rounded-[11px] object-cover ring-1 ring-white/15"
+        className="size-10 shrink-0 rounded-[11px] object-cover ring-1 ring-line"
         src={app.iconUrl}
       />
     );
   }
   return (
-    <span className="grid size-10 shrink-0 place-items-center rounded-[11px] bg-white font-medium text-green">
+    <span className="grid size-10 shrink-0 place-items-center rounded-[11px] bg-accent font-medium text-on-accent">
       {app.name.slice(0, 1).toUpperCase()}
     </span>
   );
@@ -168,7 +168,7 @@ export function PersonAvatar({
     return (
       <img
         alt=""
-        className={`${box} shrink-0 rounded-full object-cover ring-1 ring-white/15`}
+        className={`${box} shrink-0 rounded-full object-cover ring-1 ring-line`}
         referrerPolicy="no-referrer"
         src={person.image}
       />
@@ -177,7 +177,7 @@ export function PersonAvatar({
   return (
     <span
       aria-hidden="true"
-      className={`${box} grid shrink-0 place-items-center rounded-full bg-white/14 font-medium text-white ring-1 ring-white/15`}
+      className={`${box} grid shrink-0 place-items-center rounded-full bg-surface-muted font-medium text-ink ring-1 ring-line`}
     >
       {initials(person.name)}
     </span>
@@ -189,7 +189,7 @@ export function TeamMark({ name, size = "md" }: { name: string; size?: "md" | "l
   return (
     <span
       aria-hidden="true"
-      className={`grid shrink-0 place-items-center bg-white font-medium text-green ${
+      className={`grid shrink-0 place-items-center bg-accent font-medium text-on-accent ${
         size === "lg" ? "size-12 rounded-[14px] text-xl" : "size-9 rounded-[10px] text-[15px]"
       }`}
     >
@@ -281,8 +281,8 @@ export function Segmented<T extends string>({
       <legend className="sr-only">{label}</legend>
       {options.map((option) => (
         <label
-          className={`relative cursor-pointer rounded-full px-3 py-1 text-[13px] font-medium transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-white ${
-            value === option.value ? "bg-white text-green" : "text-ink-muted hover:text-white"
+          className={`relative cursor-pointer rounded-full px-3 py-1 text-[13px] font-medium transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-ink ${
+            value === option.value ? "bg-accent text-on-accent" : "text-ink-muted hover:text-ink"
           }`}
           key={option.value}
         >
@@ -360,7 +360,7 @@ export function Modal({
   const header = (
     <div className="mb-6 flex items-start justify-between gap-6">
       <div>
-        <h2 id={titleId} className="text-xl font-medium text-white">
+        <h2 id={titleId} className="text-xl font-medium text-ink">
           {title}
         </h2>
         {description ? <p className="mt-1 text-[15px] text-ink-muted">{description}</p> : null}
@@ -438,7 +438,7 @@ export function DashboardHeader({ children }: { children?: React.ReactNode }) {
           </span>
         ) : null}
         <Link
-          className="hidden text-ink-muted transition-colors hover:text-white sm:inline"
+          className="hidden text-ink-muted transition-colors hover:text-ink sm:inline"
           to="/docs"
         >
           Docs
@@ -446,7 +446,7 @@ export function DashboardHeader({ children }: { children?: React.ReactNode }) {
         <button
           type="button"
           onClick={() => void signOut().then(() => navigate("/"))}
-          className="text-ink-muted transition-colors hover:text-white"
+          className="text-ink-muted transition-colors hover:text-ink"
         >
           Sign out
         </button>
@@ -455,7 +455,7 @@ export function DashboardHeader({ children }: { children?: React.ReactNode }) {
           <img
             src={session.user.image}
             alt=""
-            className="size-8 shrink-0 rounded-full ring-1 ring-white/20"
+            className="size-8 shrink-0 rounded-full ring-1 ring-line"
             referrerPolicy="no-referrer"
             title={session.user.email}
           />

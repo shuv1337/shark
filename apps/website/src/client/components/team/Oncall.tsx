@@ -225,7 +225,7 @@ function GroupCard({
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
         <div className="min-w-0">
           <h3
-            className="flex items-center gap-2 text-[17px] font-medium text-white"
+            className="flex items-center gap-2 text-[17px] font-medium text-ink"
             id={`${detailId}-title`}
           >
             <span className="truncate">{group.name}</span>
@@ -261,7 +261,7 @@ function GroupCard({
             <div className="mt-2 flex items-center gap-2.5">
               <PersonAvatar person={current.person} />
               <div className="min-w-0">
-                <p className="flex items-center gap-2 truncate font-medium text-white">
+                <p className="flex items-center gap-2 truncate font-medium text-ink">
                   {current.person.name}
                   {current.override ? <Badge tone="outline">Override</Badge> : null}
                 </p>
@@ -278,7 +278,7 @@ function GroupCard({
             <div className="mt-2 flex items-center gap-2.5">
               <PersonAvatar person={next.person} />
               <div className="min-w-0">
-                <p className="truncate font-medium text-white">{next.person.name}</p>
+                <p className="truncate font-medium text-ink">{next.person.name}</p>
                 <p className="text-[13px] text-ink-faint">
                   {formatDateTime(next.startsAt)} · {relativeFuture(next.startsAt)}
                 </p>
@@ -295,7 +295,7 @@ function GroupCard({
       </p>
 
       {status ? (
-        <p className="mt-3 rounded-2xl bg-white/12 px-4 py-2.5 text-sm text-white" role="status">
+        <p className="mt-3 rounded-2xl bg-surface-muted px-4 py-2.5 text-sm text-ink" role="status">
           {status}
         </p>
       ) : null}
@@ -340,7 +340,7 @@ function GroupCard({
 function Schedule({ group }: { group: OncallGroupDto }) {
   return (
     <div>
-      <h4 className="text-[15px] font-medium text-white">Upcoming shifts</h4>
+      <h4 className="text-[15px] font-medium text-ink">Upcoming shifts</h4>
       {group.upcoming.length === 0 ? (
         <p className="mt-2 text-sm text-ink-muted">No shifts scheduled.</p>
       ) : (
@@ -351,7 +351,7 @@ function Schedule({ group }: { group: OncallGroupDto }) {
               key={`${shift.startsAt}-${shift.person.userId}`}
             >
               <PersonAvatar person={shift.person} size="sm" />
-              <span className="min-w-0 flex-1 truncate text-[15px] text-white">
+              <span className="min-w-0 flex-1 truncate text-[15px] text-ink">
                 {shift.person.name}
               </span>
               {shift.override ? <Badge tone="outline">Override</Badge> : null}
@@ -440,7 +440,7 @@ function Overrides({
 
   return (
     <div>
-      <h4 className="text-[15px] font-medium text-white">Overrides</h4>
+      <h4 className="text-[15px] font-medium text-ink">Overrides</h4>
       <p className="mt-0.5 text-[13px] text-ink-faint">
         Put someone on call for a stretch of time, like covering a shift.
       </p>
@@ -449,7 +449,7 @@ function Overrides({
           {overrides.map((override) => (
             <li className="flex flex-wrap items-center gap-x-2.5 gap-y-1 py-2" key={override.id}>
               <PersonAvatar person={override.person} size="sm" />
-              <span className="min-w-0 flex-1 truncate text-[15px] text-white">
+              <span className="min-w-0 flex-1 truncate text-[15px] text-ink">
                 {override.person.name}
               </span>
               <span className="order-last w-full pl-[34px] text-[13px] text-ink-faint tabular-nums sm:order-none sm:w-auto sm:pl-0">
@@ -647,7 +647,7 @@ function GroupModal({
                       {index + 1}
                     </span>
                     {member ? <PersonAvatar person={member} size="sm" /> : null}
-                    <span className="min-w-0 flex-1 truncate text-[15px] text-white">{label}</span>
+                    <span className="min-w-0 flex-1 truncate text-[15px] text-ink">{label}</span>
                     <div className="flex gap-1">
                       <IconButton
                         disabled={index === 0}
@@ -843,7 +843,7 @@ function IconButton({
   return (
     <button
       aria-label={label}
-      className="grid size-8 place-items-center rounded-full text-ink-muted transition-colors hover:bg-surface-hover hover:text-white disabled:opacity-35 disabled:hover:bg-transparent"
+      className="grid size-8 place-items-center rounded-full text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-35 disabled:hover:bg-transparent"
       disabled={disabled}
       onClick={onClick}
       title={label}

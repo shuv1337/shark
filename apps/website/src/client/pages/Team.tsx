@@ -81,7 +81,7 @@ export function TeamPage() {
       <DashboardHeader />
       <main className={`${PAGE_COLUMN} flex-1 pt-6 pb-16`}>
         <Link
-          className="group mb-5 inline-flex items-center gap-1.5 text-[15px] text-ink-muted transition-colors hover:text-white"
+          className="group mb-5 inline-flex items-center gap-1.5 text-[15px] text-ink-muted transition-colors hover:text-ink"
           to="/dashboard"
         >
           <span
@@ -101,7 +101,7 @@ export function TeamPage() {
 
         {state.kind === "missing" ? (
           <div>
-            <h1 className="text-[28px] leading-[1.15] font-medium tracking-[-0.015em] text-white">
+            <h1 className="text-[28px] leading-[1.15] font-medium tracking-[-0.015em] text-ink">
               Team not found
             </h1>
             <p className="mt-2 max-w-[30rem] text-ink-muted">
@@ -132,7 +132,7 @@ export function TeamPage() {
               <div className="flex min-w-0 items-center gap-3.5">
                 <TeamMark name={state.team.name} size="lg" />
                 <div className="min-w-0">
-                  <h1 className="truncate text-[28px] leading-[1.15] font-medium tracking-[-0.015em] text-white">
+                  <h1 className="truncate text-[28px] leading-[1.15] font-medium tracking-[-0.015em] text-ink">
                     {state.team.name}
                   </h1>
                   <p className="mt-1 text-[15px] text-ink-muted">{teamSummary(state.team)}</p>
@@ -244,7 +244,7 @@ function TeamApps({ teamId }: { teamId: string }) {
             <li className="flex items-center gap-3 py-3.5" key={app.id}>
               <AppIcon app={app} />
               <div className="min-w-0 flex-1">
-                <p className="truncate font-medium text-white">{app.name}</p>
+                <p className="truncate font-medium text-ink">{app.name}</p>
                 <p className="truncate text-[13px] text-ink-faint">
                   <span className="font-mono">{app.origin}</span>
                   {app.addedBy ? ` · added by ${app.addedBy}` : ""}
