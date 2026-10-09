@@ -143,7 +143,8 @@ sign in again (`sharkctl auth login`).
 `board` feeds the captain's board at `/board`: durable questions that outlive their push, work in
 flight, and heads-up notes. It needs the `board:read` and `board:write` scopes, which the default
 login does not request; sign in once per agent with
-`sharkctl auth login --client-name "<Agent> (<host>)" --scope board:read --scope board:write`, so
+`sharkctl auth login --client-name "<Agent> (<host>)"` with `--scope board:read --scope board:write`
+plus every default scope you still need (`--scope` replaces the defaults; it does not add to them), so
 each agent has its own token and the board can say who asked.
 
 `board ask --key <key> --title <title>` is an upsert: repeating it unchanged only records that the
