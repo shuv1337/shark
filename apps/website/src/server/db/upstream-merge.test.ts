@@ -120,6 +120,29 @@ describe("upstream merge migration", () => {
     expect(database.pragma("foreign_key_check")).toEqual([]);
   });
 
+  it("adds app.team_id with the schema's ON DELETE SET NULL action", () => {
+    const database = previousDatabase();
+    migrate(database, journal.entries.slice(23));
+    const teamKey = (
+      database.pragma("foreign_key_list(app)") as Array<{
+        table: string;
+        from: string;
+        on_update: string;
+        on_delete: string;
+      }>
+    ).find((key) => key.from === "team_id");
+    expect(teamKey).toMatchObject({ table: "team", on_update: "NO ACTION", on_delete: "SET NULL" });
+    database.exec(`
+      INSERT INTO team (id, name, created_at, updated_at) VALUES ('team', 'Team', 1, 1);
+      INSERT INTO app (id, user_id, name, url, origin, team_id, created_at, updated_at)
+        VALUES ('app', 'owner', 'App', 'https://example.test/', 'https://example.test', 'team', 1, 1);
+      DELETE FROM team WHERE id = 'team';
+    `);
+    expect(database.prepare("SELECT team_id FROM app WHERE id = 'app'").get()).toEqual({
+      team_id: null,
+    });
+  });
+
   it("rebuilds agent_notification for teams without losing rowids, delivery state, or inbox sync", () => {
     const database = previousDatabase();
     migrate(database, journal.entries.slice(23, 24));
