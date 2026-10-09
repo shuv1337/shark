@@ -509,6 +509,131 @@ describe("pages", () => {
     expect(merged.status).toBe(200);
   });
 
+  it("holds the group cap under concurrent pages and merges concurrent duplicates", async () => {
+    const { eq } = await import("drizzle-orm");
+    const group = await createGroup("Stampede");
+    const attempts = oncall.PAGES_PER_GROUP_PER_MINUTE * 2;
+    const responses = await Promise.all(
+      Array.from({ length: attempts }, (_, index) =>
+        page(group.id, { title: `Burst ${index}`, dedupKey: `burst-${index}` }),
+      ),
+    );
+    const statuses = responses.map((response) => response.status);
+    expect(statuses.filter((status) => status === 201)).toHaveLength(
+      oncall.PAGES_PER_GROUP_PER_MINUTE,
+    );
+    expect(statuses.filter((status) => status === 429)).toHaveLength(
+      attempts - oncall.PAGES_PER_GROUP_PER_MINUTE,
+    );
+    const stored = await db
+      .select()
+      .from(schema.oncallPage)
+      .where(eq(schema.oncallPage.groupId, group.id));
+    expect(stored).toHaveLength(oncall.PAGES_PER_GROUP_PER_MINUTE);
+
+    const echo = await createGroup("Echo");
+    const duplicates = await Promise.all(
+      Array.from({ length: 5 }, () => page(echo.id, { title: "Disk full", dedupKey: "disk" })),
+    );
+    expect(duplicates.map((response) => response.status).sort()).toEqual([200, 200, 200, 200, 201]);
+    const [open] = await db
+      .select()
+      .from(schema.oncallPage)
+      .where(eq(schema.oncallPage.groupId, echo.id));
+    expect(open?.repeatCount).toBe(4);
+  });
+
+  it("counts pages against the webhook's service window and the token's requester window", async () => {
+    const { eq } = await import("drizzle-orm");
+    const { env } = await import("../env");
+    const { hashApiToken, hashWebhookToken } = await import("../lib/token");
+    const pagerWebhook = "whk_pager_webhook_token_00000000000000";
+    const pagerToken = `hark_${"p".repeat(43)}`;
+    const now = new Date();
+    await db.insert(schema.service).values({
+      id: "svc_pager",
+      userId: "user_a",
+      title: "Pager",
+      tokenHash: hashWebhookToken(pagerWebhook),
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.apiToken).values({
+      id: "tok_pager",
+      userId: "user_a",
+      name: "Pager bot",
+      tokenHash: hashApiToken(pagerToken),
+      prefix: "hark_ppppppp",
+      scopes: ["oncall:write", "notifications:send"],
+      createdAt: now,
+    });
+    const group = await createGroup("Windowed");
+    const previous = env.SERVICE_RATE_LIMIT_PER_MINUTE;
+    env.SERVICE_RATE_LIMIT_PER_MINUTE = 1;
+    try {
+      const first = await call("POST", `/hooks/${pagerWebhook}`, { body: "a", oncall: group.id });
+      expect(first.status).toBe(201);
+      const { pageId } = (await first.json()) as { pageId: string };
+      const [row] = await db
+        .select()
+        .from(schema.oncallPage)
+        .where(eq(schema.oncallPage.id, pageId));
+      expect(row).toMatchObject({ requesterServiceId: "svc_pager", requesterTokenId: null });
+      const second = await call("POST", `/hooks/${pagerWebhook}`, { body: "b", oncall: group.id });
+      expect(second.status).toBe(429);
+      expect(await second.json()).toMatchObject({ error: "Service rate limit exceeded" });
+
+      const agent = await call(
+        "POST",
+        `/api/agent/oncall/${group.id}/pages`,
+        { title: "c" },
+        pagerToken,
+      );
+      expect(agent.status).toBe(201);
+      const { page: raised } = (await agent.json()) as OncallPageCreateResponse;
+      const [agentRow] = await db
+        .select()
+        .from(schema.oncallPage)
+        .where(eq(schema.oncallPage.id, raised.id));
+      expect(agentRow).toMatchObject({ requesterTokenId: "tok_pager", requesterServiceId: null });
+      sent.length = 0;
+      const again = await call(
+        "POST",
+        `/api/agent/oncall/${group.id}/pages`,
+        { title: "d" },
+        pagerToken,
+      );
+      expect(again.status).toBe(429);
+      expect(await again.json()).toMatchObject({ error: "Requester rate limit exceeded" });
+      expect(sent).toHaveLength(0);
+
+      env.SERVICE_RATE_LIMIT_PER_MINUTE = 2;
+      const notify = await call(
+        "POST",
+        "/api/agent/notifications",
+        { title: "e", body: "e", oncall: group.id },
+        pagerToken,
+      );
+      expect(notify.status).toBe(201);
+      const { page: notified } = (await notify.json()) as OncallPageCreateResponse;
+      const [notifyRow] = await db
+        .select()
+        .from(schema.oncallPage)
+        .where(eq(schema.oncallPage.id, notified.id));
+      expect(notifyRow?.requesterTokenId).toBe("tok_pager");
+      const blocked = await call(
+        "POST",
+        "/api/agent/notifications",
+        { title: "f", body: "f", oncall: group.id },
+        pagerToken,
+      );
+      expect(blocked.status).toBe(429);
+      expect(await blocked.json()).toMatchObject({ error: "Requester rate limit exceeded" });
+    } finally {
+      env.SERVICE_RATE_LIMIT_PER_MINUTE = previous;
+    }
+  });
+
   it("applies the account rate limit to webhook and agent pages", async () => {
     const { env } = await import("../env");
     const group = await createGroup("Throttled");

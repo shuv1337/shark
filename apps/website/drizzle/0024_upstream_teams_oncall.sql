@@ -55,6 +55,8 @@ CREATE TABLE `oncall_page` (
 	`next_escalation_at` integer,
 	`last_paged_user_id` text,
 	`source_name` text NOT NULL,
+	`requester_service_id` text,
+	`requester_token_id` text,
 	`created_by_user_id` text,
 	`acknowledged_by_user_id` text,
 	`acknowledged_at` integer,
@@ -66,6 +68,8 @@ CREATE TABLE `oncall_page` (
 	FOREIGN KEY (`group_id`) REFERENCES `oncall_group`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`team_id`) REFERENCES `team`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`app_id`) REFERENCES `app`(`id`) ON UPDATE no action ON DELETE set null,
+	FOREIGN KEY (`requester_service_id`) REFERENCES `service`(`id`) ON UPDATE no action ON DELETE set null,
+	FOREIGN KEY (`requester_token_id`) REFERENCES `api_token`(`id`) ON UPDATE no action ON DELETE set null,
 	FOREIGN KEY (`created_by_user_id`) REFERENCES `user`(`id`) ON UPDATE no action ON DELETE set null,
 	FOREIGN KEY (`acknowledged_by_user_id`) REFERENCES `user`(`id`) ON UPDATE no action ON DELETE set null,
 	FOREIGN KEY (`resolved_by_user_id`) REFERENCES `user`(`id`) ON UPDATE no action ON DELETE set null

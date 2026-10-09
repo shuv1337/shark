@@ -226,6 +226,7 @@ export async function enforceAgentRateLimit(
     [tokenActivity],
     [tokenInteractions],
     [tokenNotifications],
+    tokenPages,
     [accountActivity],
     [accountInteractions],
     [accountNotifications],
@@ -256,6 +257,7 @@ export async function enforceAgentRateLimit(
           gte(agentNotification.createdAt, since),
         ),
       ),
+    pagesCreatedSince({ tokenId: token.id }, since),
     db
       .select({ value: count() })
       .from(liveActivityOperation)
@@ -282,12 +284,13 @@ export async function enforceAgentRateLimit(
       .from(event)
       .innerJoin(service, eq(event.serviceId, service.id))
       .where(and(eq(service.userId, token.userId), gte(event.createdAt, since))),
-    pagesCreatedSince(token.userId, since),
+    pagesCreatedSince({ userId: token.userId }, since),
   ]);
   if (
     (tokenActivity?.value ?? 0) +
       (tokenInteractions?.value ?? 0) +
-      (tokenNotifications?.value ?? 0) >=
+      (tokenNotifications?.value ?? 0) +
+      tokenPages >=
     billing.limits.servicePerMinute
   ) {
     return { error: "Requester rate limit exceeded", retryAfterSeconds: 60 };

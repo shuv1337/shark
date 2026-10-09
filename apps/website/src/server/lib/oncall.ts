@@ -61,12 +61,21 @@ const UPCOMING_SHIFTS = 5;
 /** New pages a group accepts per minute; duplicates that merge do not count. */
 export const PAGES_PER_GROUP_PER_MINUTE = 10;
 
-/** Pages the user raised since `since`; they share the account's per-minute budget. */
-export async function pagesCreatedSince(userId: string, since: Date): Promise<number> {
+/** Pages raised since `since`; they share the account, service, and requester per-minute budgets. */
+export async function pagesCreatedSince(
+  by: { userId: string } | { serviceId: string } | { tokenId: string },
+  since: Date,
+): Promise<number> {
+  const owner =
+    "userId" in by
+      ? eq(oncallPage.createdByUserId, by.userId)
+      : "serviceId" in by
+        ? eq(oncallPage.requesterServiceId, by.serviceId)
+        : eq(oncallPage.requesterTokenId, by.tokenId);
   const [row] = await db
     .select({ value: count() })
     .from(oncallPage)
-    .where(and(eq(oncallPage.createdByUserId, userId), gte(oncallPage.createdAt, since)));
+    .where(and(owner, gte(oncallPage.createdAt, since)));
   return row?.value ?? 0;
 }
 
@@ -409,14 +418,22 @@ export interface RaisePageInput {
   /** Whose notification allowance the page counts against. */
   creatorUserId: string;
   sourceName: string;
+  /** Webhook or API token that raised the page, whose rate window it counts against. */
+  origin?: { serviceId?: string; requesterTokenId?: string };
 }
 
 export type RaisePageOutcome =
   | { ok: true; status: 200 | 201; body: OncallPageCreateResponse }
   | { ok: false; status: 400 | 429; error: string };
 
-async function mergeDuplicate(group: GroupRow, dedupKey: string): Promise<PageRow | undefined> {
-  const [merged] = await db
+type Executor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+function mergeDuplicate(
+  executor: Executor,
+  group: GroupRow,
+  dedupKey: string,
+): PageRow | undefined {
+  return executor
     .update(oncallPage)
     .set({
       repeatCount: sql`${oncallPage.repeatCount} + 1`,
@@ -429,8 +446,8 @@ async function mergeDuplicate(group: GroupRow, dedupKey: string): Promise<PageRo
         inArray(oncallPage.status, [...OPEN_STATUSES]),
       ),
     )
-    .returning();
-  return merged;
+    .returning()
+    .get();
 }
 
 /**
@@ -443,6 +460,7 @@ export async function raisePage({
   input,
   creatorUserId,
   sourceName,
+  origin,
 }: RaisePageInput): Promise<RaisePageOutcome> {
   let appId: string | null = null;
   if (input.appId) {
@@ -457,15 +475,16 @@ export async function raisePage({
     appId = row.id;
   }
 
+  const mergedOutcome = (row: PageRow): Promise<RaisePageOutcome> =>
+    toPageDto(row).then((page) => ({
+      ok: true,
+      status: 200,
+      body: { page, deduplicated: true, accepted: 0 },
+    }));
+
   if (input.dedupKey) {
-    const merged = await mergeDuplicate(group, input.dedupKey);
-    if (merged) {
-      return {
-        ok: true,
-        status: 200,
-        body: { page: await toPageDto(merged), deduplicated: true, accepted: 0 },
-      };
-    }
+    const existing = mergeDuplicate(db, group, input.dedupKey);
+    if (existing) return mergedOutcome(existing);
   }
 
   if (!(await checkNotificationAllowance(creatorUserId))) {
@@ -473,15 +492,6 @@ export async function raisePage({
   }
 
   const now = Date.now();
-  const [recent] = await db
-    .select({ value: count() })
-    .from(oncallPage)
-    .where(
-      and(eq(oncallPage.groupId, group.id), gte(oncallPage.createdAt, new Date(now - 60_000))),
-    );
-  if ((recent?.value ?? 0) >= PAGES_PER_GROUP_PER_MINUTE) {
-    return { ok: false, status: 429, error: "On-call page rate limit exceeded" };
-  }
   const team = await pageableMemberIds(group.teamId);
   const shift = await onCallNow(group, now);
   const initial = shift && team.has(shift.userId) ? [shift.userId] : await groupMembers(group);
@@ -500,29 +510,38 @@ export async function raisePage({
     nextEscalationAt: nextEscalationAt(group, 0, now),
     lastPagedUserId: initial.length === 1 ? (initial[0] ?? null) : null,
     sourceName,
+    requesterServiceId: origin?.serviceId ?? null,
+    requesterTokenId: origin?.requesterTokenId ?? null,
     createdByUserId: creatorUserId,
     createdAt: new Date(now),
     updatedAt: new Date(now),
   };
-  let page: PageRow;
-  try {
-    const [inserted] = await db.insert(oncallPage).values(values).returning();
-    if (!inserted) throw new Error("Failed to create page");
-    page = inserted;
-  } catch (error) {
-    // A concurrent page with the same key won the open-page unique index.
+  // Synchronous, so concurrent requests cannot both pass the group cap, and a
+  // page with the same key raised meanwhile is merged instead of conflicting.
+  const created = db.transaction((tx) => {
     if (input.dedupKey) {
-      const merged = await mergeDuplicate(group, input.dedupKey);
-      if (merged) {
-        return {
-          ok: true,
-          status: 200,
-          body: { page: await toPageDto(merged), deduplicated: true, accepted: 0 },
-        };
-      }
+      const existing = mergeDuplicate(tx, group, input.dedupKey);
+      if (existing) return { kind: "merged" as const, page: existing };
     }
-    throw error;
+    const recent = tx
+      .select({ value: count() })
+      .from(oncallPage)
+      .where(
+        and(eq(oncallPage.groupId, group.id), gte(oncallPage.createdAt, new Date(now - 60_000))),
+      )
+      .get();
+    if ((recent?.value ?? 0) >= PAGES_PER_GROUP_PER_MINUTE) return { kind: "limited" as const };
+    return {
+      kind: "created" as const,
+      page: tx.insert(oncallPage).values(values).returning().get(),
+    };
+  });
+  if (created.kind === "merged") return mergedOutcome(created.page);
+  if (created.kind === "limited") {
+    return { ok: false, status: 429, error: "On-call page rate limit exceeded" };
   }
+  const page = created.page;
+  if (!page) throw new Error("Failed to create page");
 
   const accepted = await notifyRecipients(page, group.name, initial, 0);
   if (accepted > 0) await trackNotification(creatorUserId, page.id);

@@ -384,6 +384,7 @@ export const agentRoute = new Hono<AgentEnv>()
           ...(idempotencyKey ? { dedupKey: idempotencyKey } : {}),
         },
         token.name,
+        { requesterTokenId: token.id },
       );
       if (!paged.ok) {
         if (paged.status === 429) c.header("Retry-After", "60");

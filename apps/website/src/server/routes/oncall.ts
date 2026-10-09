@@ -20,6 +20,7 @@ import {
   openPagesFor,
   pageRecipientByToken,
   people,
+  type RaisePageInput,
   raisePage,
   resolvePage,
   rotationOf,
@@ -148,6 +149,7 @@ async function createPage(
   groupId: string,
   input: unknown,
   sourceName: string,
+  origin?: RaisePageInput["origin"],
 ): Promise<Outcome> {
   const found = await memberGroup(groupId, actor.id);
   if (!found) return GROUP_NOT_FOUND;
@@ -158,6 +160,7 @@ async function createPage(
     input: parsed.data,
     creatorUserId: actor.id,
     sourceName,
+    origin,
   });
   return outcome.ok ? result(outcome.body, outcome.status) : failure(outcome.status, outcome.error);
 }
@@ -362,7 +365,10 @@ export const oncallAgentRoute = new Hono<AgentEnv>()
         c.header("Retry-After", "60");
         return { status: 429, body: limited };
       }
-      return createPage(actor, c.req.param("groupId"), await readJson(c), c.get("apiToken").name);
+      const token = c.get("apiToken");
+      return createPage(actor, c.req.param("groupId"), await readJson(c), token.name, {
+        requesterTokenId: token.id,
+      });
     }),
   );
 
@@ -381,6 +387,7 @@ export async function raisePageFor(
   groupId: string,
   input: unknown,
   sourceName: string,
+  origin: RaisePageInput["origin"],
 ) {
   const found = await memberGroup(groupId, userId);
   if (!found) return { ok: false as const, status: 404 as const, error: "On-call group not found" };
@@ -393,5 +400,11 @@ export async function raisePageFor(
       issues: parsed.error.issues,
     };
   }
-  return raisePage({ group: found.group, input: parsed.data, creatorUserId: userId, sourceName });
+  return raisePage({
+    group: found.group,
+    input: parsed.data,
+    creatorUserId: userId,
+    sourceName,
+    origin,
+  });
 }

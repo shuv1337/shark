@@ -486,6 +486,13 @@ export const oncallPage = sqliteTable(
     /** User most recently paged individually; `next` steps continue after them. */
     lastPagedUserId: text("last_paged_user_id"),
     sourceName: text("source_name").notNull(),
+    /** Webhook or API token that raised the page, for their per-minute windows. */
+    requesterServiceId: text("requester_service_id").references(() => service.id, {
+      onDelete: "set null",
+    }),
+    requesterTokenId: text("requester_token_id").references(() => apiToken.id, {
+      onDelete: "set null",
+    }),
     /** User whose notification allowance the page counts against. */
     createdByUserId: text("created_by_user_id").references(() => user.id, {
       onDelete: "set null",
