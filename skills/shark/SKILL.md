@@ -228,6 +228,13 @@ that should take the device slot on each run. Use the returned sequence with `--
 reject stale writes. Prefer meaningful updates over tight progress loops. iOS may suppress fresh
 activity starts less than about one minute apart; update the current activity instead.
 
+The ordinary activity slot is device-wide, while `activity list` and `activity get` are scoped to
+the caller token. An empty list does not prove the slot is free. `ACTIVE_ACTIVITY_CONFLICT` includes
+`activityId` and `ownedByRequester`; it does not grant access to another token's activity. Wait,
+or use `--replace` only when the user explicitly wants to replace the occupying activity. Never
+automatically add replacement when retrying a conflict. Symbols are `terminal`, `code`, `build`,
+`success`, and `warning`.
+
 `activity update` merges only the fields you pass. `--status` alone is a complete update, and so is
 `--status` with `--progress` (`0` through `1`). Send at least one field other than `--if-sequence`:
 `--title`, `--status`, `--detail`, `--progress`, `--symbol`, `--privacy`, `--accent-color`,
