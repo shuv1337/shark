@@ -1,13 +1,14 @@
-import type { AppDto } from "@hark/contracts";
+import type { AppDto, TeamDto } from "@hark/contracts";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
-import { Redirect, useFocusEffect, useRouter } from "expo-router";
+import { Redirect, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import { StatusBar } from "expo-status-bar";
 import { SymbolView } from "expo-symbols";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   AppState,
   Pressable,
   RefreshControl,
@@ -19,12 +20,21 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { AppIcon } from "../../src/components/app-icon";
 import { BottomNav } from "../../src/components/bottom-nav";
-import { api } from "../../src/lib/api";
+import { api, type OncallMeDto } from "../../src/lib/api";
 import { useSession } from "../../src/lib/auth";
-import { previewApps } from "../../src/lib/inbox-preview";
+import { previewApps, previewOncallMe, previewTeams } from "../../src/lib/inbox-preview";
 import { createRefreshSequence } from "../../src/lib/inbox-refresh";
 import { DEVICE_ID_KEY } from "../../src/lib/interactions";
 import { previewPending, previewProjects } from "../../src/lib/project-preview";
+import {
+  currentShift,
+  groupAppsByTeam,
+  memberCountLabel,
+  onCallSummary,
+  onPageClaimed,
+  pagesNeedingResponse,
+  pagesNeedYouLabel,
+} from "../../src/lib/teams";
 import { colors, fonts, tightTracking } from "../../src/lib/theme";
 import { cacheApps, cachedApp } from "../../src/lib/web-apps";
 
@@ -41,6 +51,14 @@ export default function AppsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  // `null` until loaded, and on servers without teams / on-call.
+  const [teams, setTeams] = useState<TeamDto[] | null>(null);
+  const [oncall, setOncall] = useState<OncallMeDto | null>(null);
+  const params = useLocalSearchParams<{ team?: string }>();
+  const highlightTeam = typeof params.team === "string" ? params.team : null;
+  const scrollView = useRef<ScrollView>(null);
+  const sectionOffsets = useRef(new Map<string, number>());
+  const highlight = useRef(new Animated.Value(0)).current;
   const refreshSequence = useRef(createRefreshSequence()).current;
 
   useEffect(() => {
@@ -58,17 +76,24 @@ export default function AppsScreen() {
       setApps(apps);
       setUnread(previewProjects.totalUnread);
       setWaiting(previewPending.length);
+      setTeams([...previewTeams]);
+      setOncall(previewOncallMe);
       setLoadError(false);
       return;
     }
-    const [appResult, pendingResult, projectResult] = await Promise.all([
+    const [appResult, pendingResult, projectResult, teamResult, oncallResult] = await Promise.all([
       api.listApps(),
       api.listPendingInteractions().catch(() => null),
       api.listInboxProjects().catch(() => null),
+      // Older servers 404 here; team sections and the on-call strip stay hidden.
+      api.listTeams().catch(() => null),
+      api.getMyOncall().catch(() => null),
     ]);
     if (!refreshSequence.isCurrent(token)) return;
     cacheApps(appResult.apps);
     setApps(appResult.apps);
+    setTeams(teamResult?.teams ?? null);
+    setOncall(oncallResult);
     setLoadError(false);
     const pendingCount = pendingResult?.interactions.length ?? 0;
     const unreadCount = projectResult?.totalUnread ?? 0;
@@ -91,12 +116,14 @@ export default function AppsScreen() {
     const notificationSubscription = Notifications.addNotificationReceivedListener(() => {
       void refresh().catch(() => {});
     });
+    const claimedSubscription = onPageClaimed(() => void refresh().catch(() => {}));
     const appStateSubscription = AppState.addEventListener("change", (state) => {
       if (state === "active") void refresh().catch(() => {});
     });
     return () => {
       notificationSubscription.remove();
       appStateSubscription.remove();
+      claimedSubscription();
     };
   }, [ready, refresh]);
 
@@ -123,14 +150,61 @@ export default function AppsScreen() {
     }
   };
 
+  // After joining a team, scroll to its section and flash it once.
+  const highlightReady = highlightTeam !== null && teams !== null && !loading;
+  useEffect(() => {
+    if (!highlightReady || !highlightTeam) return;
+    const timer = setTimeout(() => {
+      const y = sectionOffsets.current.get(highlightTeam);
+      if (y !== undefined) scrollView.current?.scrollTo({ y: Math.max(0, y - 12), animated: true });
+      highlight.setValue(1);
+      Animated.timing(highlight, {
+        toValue: 0,
+        duration: 1600,
+        delay: 500,
+        useNativeDriver: false,
+      }).start();
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [highlight, highlightReady, highlightTeam]);
+
   if (!sessionPending && !session && !simulatorPreview) return <Redirect href="/" />;
   if (deviceId === "") return <Redirect href="/home" />;
+
+  const sections = groupAppsByTeam(apps, teams ?? []);
+  const hasTeams = sections.teams.length > 0;
+  const shift = oncall ? currentShift(oncall.shifts) : null;
+  const needYou = oncall ? pagesNeedingResponse(oncall.pages) : [];
+  const firstPage = needYou[0];
+
+  const renderGrid = (items: AppDto[], inSection = false) => (
+    <View style={[styles.grid, inSection && styles.sectionGrid]}>
+      {items.map((app) => (
+        <Pressable
+          accessibilityHint="Opens the app. Long press for app info."
+          accessibilityLabel={app.name}
+          accessibilityRole="button"
+          delayLongPress={350}
+          key={app.id}
+          onLongPress={() => router.push({ pathname: "/apps/[id]", params: { id: app.id } })}
+          onPress={() => router.push({ pathname: "/web/[id]", params: { id: app.id } })}
+          style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
+        >
+          <AppIcon iconUrl={app.iconUrl} name={app.name} size={62} />
+          <Text numberOfLines={1} style={styles.tileLabel}>
+            {app.name}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <StatusBar style="auto" />
       <ScrollView
         contentContainerStyle={styles.scroll}
+        ref={scrollView}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -170,6 +244,52 @@ export default function AppsScreen() {
           </View>
         </View>
 
+        {firstPage ? (
+          <Pressable
+            accessibilityHint={needYou.length === 1 ? "Opens the page" : "Shows your open pages"}
+            accessibilityLabel={`${pagesNeedYouLabel(needYou.length)}. ${firstPage.title}`}
+            accessibilityRole="button"
+            onPress={() =>
+              needYou.length === 1
+                ? router.push({ pathname: "/pages/[id]", params: { id: firstPage.id } })
+                : router.push("/oncall")
+            }
+            style={({ pressed }) => [styles.pageRow, pressed && styles.rowPressed]}
+          >
+            <SymbolView name="bell.badge.fill" size={17} tintColor={colors.danger} />
+            <View style={styles.pageCopy}>
+              <Text style={styles.pageTitle}>{pagesNeedYouLabel(needYou.length)}</Text>
+              <Text numberOfLines={1} style={styles.pageDetail}>
+                {firstPage.groupName} · {firstPage.title}
+              </Text>
+            </View>
+            <SymbolView
+              name="chevron.right"
+              size={11}
+              tintColor={colors.danger}
+              weight="semibold"
+            />
+          </Pressable>
+        ) : null}
+
+        {shift ? (
+          <Pressable
+            accessibilityHint="Shows your shifts and pages"
+            accessibilityLabel={onCallSummary(shift)}
+            accessibilityRole="button"
+            onPress={() => router.push("/oncall")}
+            style={({ pressed }) => [styles.waitingRow, pressed && styles.rowPressed]}
+          >
+            <View style={styles.rowIconSlot}>
+              <SymbolView name="bell.fill" size={13} tintColor={colors.accent} />
+            </View>
+            <Text numberOfLines={1} style={styles.waitingText}>
+              {onCallSummary(shift)}
+            </Text>
+            <SymbolView name="chevron.right" size={11} tintColor={colors.soft} weight="semibold" />
+          </Pressable>
+        ) : null}
+
         {waiting > 0 ? (
           <Pressable
             accessibilityRole="button"
@@ -186,9 +306,9 @@ export default function AppsScreen() {
           </Pressable>
         ) : null}
 
-        {loading && apps.length === 0 ? (
+        {loading && apps.length === 0 && !hasTeams ? (
           <ActivityIndicator color={colors.accent} style={styles.loading} />
-        ) : apps.length === 0 ? (
+        ) : apps.length === 0 && !hasTeams ? (
           <View style={styles.empty}>
             <Text style={styles.emptyTitle}>
               {loadError ? "Couldn’t load your apps" : "Your apps live here"}
@@ -206,26 +326,59 @@ export default function AppsScreen() {
               </View>
             )}
           </View>
+        ) : !hasTeams ? (
+          renderGrid(apps)
         ) : (
-          <View style={styles.grid}>
-            {apps.map((app) => (
-              <Pressable
-                accessibilityHint="Opens the app. Long press for app info."
-                accessibilityLabel={app.name}
-                accessibilityRole="button"
-                delayLongPress={350}
-                key={app.id}
-                onLongPress={() => router.push({ pathname: "/apps/[id]", params: { id: app.id } })}
-                onPress={() => router.push({ pathname: "/web/[id]", params: { id: app.id } })}
-                style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
-              >
-                <AppIcon iconUrl={app.iconUrl} name={app.name} size={62} />
-                <Text numberOfLines={1} style={styles.tileLabel}>
-                  {app.name}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
+          <>
+            <View style={styles.sectionHeader}>
+              <Text accessibilityRole="header" style={styles.sectionTitle}>
+                Yours
+              </Text>
+            </View>
+            {sections.personal.length > 0 ? (
+              renderGrid(sections.personal, true)
+            ) : (
+              <Text style={styles.sectionEmpty}>Apps you add for yourself show up here.</Text>
+            )}
+            {sections.teams.map((section) => {
+              const highlighted = section.team.id === highlightTeam;
+              return (
+                <Animated.View
+                  key={section.team.id}
+                  onLayout={(event) =>
+                    sectionOffsets.current.set(section.team.id, event.nativeEvent.layout.y)
+                  }
+                  style={[
+                    styles.teamSection,
+                    highlighted && {
+                      backgroundColor: highlight.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: ["rgba(231, 240, 237, 0)", "rgba(231, 240, 237, 1)"],
+                      }),
+                    },
+                  ]}
+                >
+                  <View style={styles.sectionHeader}>
+                    <Text accessibilityRole="header" numberOfLines={1} style={styles.sectionTitle}>
+                      {section.team.name}
+                    </Text>
+                    {section.memberCount !== null ? (
+                      <Text style={styles.sectionMeta}>
+                        {memberCountLabel(section.memberCount)}
+                      </Text>
+                    ) : null}
+                  </View>
+                  {section.apps.length > 0 ? (
+                    renderGrid(section.apps, true)
+                  ) : (
+                    <Text style={styles.sectionEmpty}>
+                      No apps yet. Share one from its app info, or add one with sharkctl.
+                    </Text>
+                  )}
+                </Animated.View>
+              );
+            })}
+          </>
         )}
       </ScrollView>
       <BottomNav />
@@ -313,6 +466,11 @@ const styles = StyleSheet.create({
   rowPressed: {
     opacity: 0.7,
   },
+  /** Same footprint as the waiting dot so row text lines up. */
+  rowIconSlot: {
+    width: 8,
+    alignItems: "center",
+  },
   waitingDot: {
     width: 8,
     height: 8,
@@ -329,12 +487,79 @@ const styles = StyleSheet.create({
   loading: {
     paddingVertical: 48,
   },
+  pageRow: {
+    minHeight: 58,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#F1C9C2",
+    borderRadius: 14,
+    backgroundColor: "#FBEAE7",
+  },
+  pageCopy: {
+    minWidth: 0,
+    flex: 1,
+    gap: 1,
+  },
+  pageTitle: {
+    color: colors.danger,
+    fontFamily: fonts.semibold,
+    fontSize: 14,
+    letterSpacing: tightTracking(14),
+  },
+  pageDetail: {
+    color: colors.ink,
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    letterSpacing: tightTracking(13),
+  },
+  teamSection: {
+    marginHorizontal: -12,
+    paddingHorizontal: 12,
+    paddingBottom: 4,
+    borderRadius: 16,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 8,
+    paddingTop: 26,
+  },
+  sectionTitle: {
+    flexShrink: 1,
+    color: colors.muted,
+    fontFamily: fonts.semibold,
+    fontSize: 12,
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  sectionMeta: {
+    color: colors.soft,
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    letterSpacing: tightTracking(12),
+  },
+  sectionEmpty: {
+    paddingTop: 10,
+    color: colors.soft,
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    lineHeight: 18,
+    letterSpacing: tightTracking(13),
+  },
   grid: {
     flexDirection: "row",
     flexWrap: "wrap",
     rowGap: 22,
     paddingTop: 22,
     marginHorizontal: -6,
+  },
+  sectionGrid: {
+    paddingTop: 14,
   },
   tile: {
     width: "25%",

@@ -38,6 +38,7 @@ import { newId } from "../lib/id";
 import { deliverInteractionCallbacks } from "../lib/interaction-callbacks";
 import { verifyLiveActivityInteractionCredential } from "../lib/live-activity-interaction";
 import { notificationEventTag } from "../lib/notification-withdrawal";
+import { revokeOAuthGrant } from "../lib/oauth";
 import { resolveProjectForDelivery } from "../lib/projects";
 import { buildInteractionPushMessages, buildPushMessages, sendPushFanout } from "../lib/push";
 import { hashInteractionResponseToken } from "../lib/token";
@@ -54,6 +55,7 @@ import {
   startInteractionLiveActivity,
 } from "./activities";
 import { pushWithdrawalCommand } from "./hooks";
+import { raisePageFor } from "./oncall";
 
 type InteractionRow = typeof interaction.$inferSelect;
 
@@ -308,11 +310,17 @@ export const agentRoute = new Hono<AgentEnv>()
     });
   })
   .post("/auth/revoke", async (c) => {
+    const token = c.get("apiToken");
+    if (token.oauthClientId) {
+      // An MCP client signing itself out also loses its refresh tokens.
+      revokeOAuthGrant(token.userId, token.oauthClientId, "agent");
+      return c.json({ ok: true });
+    }
     await db
       .update(apiToken)
       .set({ revokedAt: new Date() })
-      .where(and(eq(apiToken.id, c.get("apiToken").id), isNull(apiToken.revokedAt)));
-    track({ name: "api_token_revoked", userId: c.get("apiToken").userId, outcome: "agent" });
+      .where(and(eq(apiToken.id, token.id), isNull(apiToken.revokedAt)));
+    track({ name: "api_token_revoked", userId: token.userId, outcome: "agent" });
     return c.json({ ok: true });
   })
   .get("/events", requireScopes("events:read"), async (c) => {
@@ -350,6 +358,49 @@ export const agentRoute = new Hono<AgentEnv>()
     const idempotencyKey = idempotencyKeyFrom(c.req.header("Idempotency-Key"));
     if (idempotencyKey === null) {
       return c.json({ error: "Idempotency-Key must contain between 1 and 200 characters" }, 400);
+    }
+    if (parsed.data.oncall) {
+      // Paging reaches other people, so it needs the on-call scope as well.
+      if (!token.scopes.includes("oncall:write")) {
+        return c.json({ error: "Insufficient scope", required: ["oncall:write"] }, 403);
+      }
+      if (parsed.data.deviceIds) {
+        return c.json({ error: "oncall cannot be combined with deviceIds" }, 400);
+      }
+      const [pageOwner] = await db
+        .select()
+        .from(userTable)
+        .where(eq(userTable.id, token.userId))
+        .limit(1);
+      if (!pageOwner) return c.json({ error: "Account not found" }, 404);
+      const pageLimited = await enforceAgentRateLimit(token, pageOwner);
+      if (pageLimited) {
+        c.header("Retry-After", "60");
+        return c.json(pageLimited, 429);
+      }
+      // Pages merge on their dedup key, so an Idempotency-Key retry folds
+      // into the open page instead of paging again.
+      const paged = await raisePageFor(
+        token.userId,
+        parsed.data.oncall,
+        {
+          title: parsed.data.title,
+          body: parsed.data.body,
+          ...(parsed.data.url ? { url: parsed.data.url } : {}),
+          ...(parsed.data.appId ? { appId: parsed.data.appId } : {}),
+          ...(idempotencyKey ? { dedupKey: idempotencyKey } : {}),
+        },
+        token.name,
+        { requesterTokenId: token.id },
+      );
+      if (!paged.ok) {
+        if (paged.status === 429) c.header("Retry-After", "60");
+        return c.json(
+          { error: paged.error, ...("issues" in paged ? { issues: paged.issues } : {}) },
+          paged.status,
+        );
+      }
+      return c.json(paged.body, paged.status);
     }
     const requestHash = digest(parsed.data);
     if (idempotencyKey) {

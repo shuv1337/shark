@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import {
+  type BillingDto,
   type WebhookResponse,
   type WithdrawEventResponse,
   webhookRequestSchema,
 } from "@hark/contracts";
 import { and, count, desc, eq, gt, gte, inArray, isNull, or } from "drizzle-orm";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { db } from "../db";
 import {
   device,
@@ -26,6 +27,7 @@ import { checkNotificationAllowance, getBilling, trackNotification } from "../li
 import { newId } from "../lib/id";
 import { syncInboxForUser } from "../lib/inbox";
 import { notificationEventTag } from "../lib/notification-withdrawal";
+import { pagesCreatedSince } from "../lib/oncall";
 import { resolveProjectForDelivery } from "../lib/projects";
 import {
   buildInteractionPushMessages,
@@ -40,6 +42,7 @@ import {
   hashInteractionResponseToken,
   hashWebhookToken,
 } from "../lib/token";
+import { raisePageFor } from "./oncall";
 
 type EventRow = typeof event.$inferSelect;
 
@@ -86,6 +89,77 @@ function replayResponse(row: EventRow): {
   };
 }
 
+/**
+ * Per-minute service and account windows for webhook deliveries. Pages count
+ * against both windows, so `oncall` webhooks share the same budget.
+ */
+async function rateLimitedResponse(
+  c: Context,
+  svc: typeof serviceTable.$inferSelect,
+  billing: BillingDto,
+): Promise<Response | null> {
+  const since = new Date(Date.now() - 60_000);
+  const [
+    [serviceUsage],
+    servicePageUsage,
+    [accountEventUsage],
+    [accountInteractionUsage],
+    [accountActivityUsage],
+    accountPageUsage,
+  ] = await Promise.all([
+    db
+      .select({ value: count() })
+      .from(event)
+      .where(and(eq(event.serviceId, svc.id), gte(event.createdAt, since))),
+    pagesCreatedSince({ serviceId: svc.id }, since),
+    db
+      .select({ value: count() })
+      .from(event)
+      .innerJoin(serviceTable, eq(event.serviceId, serviceTable.id))
+      .where(and(eq(serviceTable.userId, svc.userId), gte(event.createdAt, since))),
+    db
+      .select({ value: count() })
+      .from(interaction)
+      .where(and(eq(interaction.userId, svc.userId), gte(interaction.createdAt, since))),
+    db
+      .select({ value: count() })
+      .from(liveActivityOperation)
+      .innerJoin(liveActivity, eq(liveActivity.id, liveActivityOperation.activityId))
+      .where(and(eq(liveActivity.userId, svc.userId), gte(liveActivityOperation.createdAt, since))),
+    pagesCreatedSince({ userId: svc.userId }, since),
+  ]);
+
+  let outcome: "service" | "account" | null = null;
+  if ((serviceUsage?.value ?? 0) + servicePageUsage >= billing.limits.servicePerMinute) {
+    outcome = "service";
+  } else if (
+    (accountEventUsage?.value ?? 0) +
+      (accountInteractionUsage?.value ?? 0) +
+      (accountActivityUsage?.value ?? 0) +
+      accountPageUsage >=
+    billing.limits.accountPerMinute
+  ) {
+    outcome = "account";
+  }
+  if (!outcome) return null;
+  c.header("Retry-After", "60");
+  track({
+    name: "webhook_rate_limited",
+    userId: svc.userId,
+    serviceId: svc.id,
+    plan: billing.plan,
+    outcome,
+  });
+  return c.json<WebhookResponse>(
+    {
+      ok: false,
+      error: outcome === "service" ? "Service rate limit exceeded" : "Account rate limit exceeded",
+      retryAfterSeconds: 60,
+    },
+    429,
+  );
+}
+
 export const hooksRoute = new Hono()
   .post("/:token", async (c) => {
     const token = c.req.param("token");
@@ -116,6 +190,59 @@ export const hooksRoute = new Hono()
       return c.json<WebhookResponse>(
         { ok: false, error: "Idempotency-Key must contain between 1 and 200 characters" },
         400,
+      );
+    }
+
+    if (parsed.data.oncall) {
+      if (parsed.data.deviceIds || parsed.data.response) {
+        return c.json<WebhookResponse>(
+          { ok: false, error: "oncall cannot be combined with deviceIds or response" },
+          400,
+        );
+      }
+      const limited = await rateLimitedResponse(c, svc, await getBilling(owner, true));
+      if (limited) return limited;
+      // Pages merge on their dedup key, so an Idempotency-Key retry folds into
+      // the open page instead of paging again.
+      const paged = await raisePageFor(
+        svc.userId,
+        parsed.data.oncall,
+        {
+          title: parsed.data.title ?? svc.title,
+          body: parsed.data.body,
+          ...(parsed.data.url ? { url: parsed.data.url } : {}),
+          ...(parsed.data.appId ? { appId: parsed.data.appId } : {}),
+          ...(idempotencyKey ? { dedupKey: idempotencyKey } : {}),
+        },
+        svc.title,
+        { serviceId: svc.id },
+      );
+      if (!paged.ok) {
+        if (paged.status === 429) c.header("Retry-After", "60");
+        return c.json<WebhookResponse>(
+          {
+            ok: false,
+            error: paged.error,
+            ...("issues" in paged ? { issues: paged.issues } : {}),
+          },
+          paged.status,
+        );
+      }
+      track({
+        name: "webhook_received",
+        userId: svc.userId,
+        serviceId: svc.id,
+        outcome: "oncall",
+      });
+      return c.json<WebhookResponse>(
+        {
+          ok: true,
+          eventId: paged.body.page.id,
+          pageId: paged.body.page.id,
+          delivered: paged.body.accepted,
+          ...(paged.body.deduplicated ? { deduplicated: true } : {}),
+        },
+        paged.status,
       );
     }
 
@@ -210,64 +337,8 @@ export const hooksRoute = new Hono()
       targetedMacosDevices = selectedMacos.filter((registeredDevice) => registeredDevice.active);
     }
 
-    const since = new Date(Date.now() - 60_000);
-    const [[serviceUsage], [accountEventUsage], [accountInteractionUsage], [accountActivityUsage]] =
-      await Promise.all([
-        db
-          .select({ value: count() })
-          .from(event)
-          .where(and(eq(event.serviceId, svc.id), gte(event.createdAt, since))),
-        db
-          .select({ value: count() })
-          .from(event)
-          .innerJoin(serviceTable, eq(event.serviceId, serviceTable.id))
-          .where(and(eq(serviceTable.userId, svc.userId), gte(event.createdAt, since))),
-        db
-          .select({ value: count() })
-          .from(interaction)
-          .where(and(eq(interaction.userId, svc.userId), gte(interaction.createdAt, since))),
-        db
-          .select({ value: count() })
-          .from(liveActivityOperation)
-          .innerJoin(liveActivity, eq(liveActivity.id, liveActivityOperation.activityId))
-          .where(
-            and(eq(liveActivity.userId, svc.userId), gte(liveActivityOperation.createdAt, since)),
-          ),
-      ]);
-
-    if ((serviceUsage?.value ?? 0) >= billing.limits.servicePerMinute) {
-      c.header("Retry-After", "60");
-      track({
-        name: "webhook_rate_limited",
-        userId: svc.userId,
-        serviceId: svc.id,
-        plan: billing.plan,
-        outcome: "service",
-      });
-      return c.json<WebhookResponse>(
-        { ok: false, error: "Service rate limit exceeded", retryAfterSeconds: 60 },
-        429,
-      );
-    }
-    if (
-      (accountEventUsage?.value ?? 0) +
-        (accountInteractionUsage?.value ?? 0) +
-        (accountActivityUsage?.value ?? 0) >=
-      billing.limits.accountPerMinute
-    ) {
-      c.header("Retry-After", "60");
-      track({
-        name: "webhook_rate_limited",
-        userId: svc.userId,
-        serviceId: svc.id,
-        plan: billing.plan,
-        outcome: "account",
-      });
-      return c.json<WebhookResponse>(
-        { ok: false, error: "Account rate limit exceeded", retryAfterSeconds: 60 },
-        429,
-      );
-    }
+    const limited = await rateLimitedResponse(c, svc, billing);
+    if (limited) return limited;
 
     if (!(await checkNotificationAllowance(svc.userId))) {
       track({

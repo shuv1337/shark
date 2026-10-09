@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import {
   account,
@@ -10,6 +10,10 @@ import {
   interaction,
   liveActivity,
   liveActivityDelivery,
+  oauthAccessToken,
+  oauthConsent,
+  oauthRefreshToken,
+  oncallPageRecipient,
   service,
   session,
   user,
@@ -24,6 +28,9 @@ export interface OffboardingResult {
   services: number;
   interactions: number;
   liveActivities: number;
+  pageCredentials: number;
+  oauthTokens: number;
+  oauthConsents: number;
 }
 
 function revokedCredential(): string {
@@ -71,6 +78,18 @@ export function offboardPersistedAccess(userId: string): OffboardingResult {
       .where(eq(device.userId, userId))
       .returning({ id: device.id })
       .all();
+
+    const pageCredentials = tx
+      .select({ pageId: oncallPageRecipient.pageId })
+      .from(oncallPageRecipient)
+      .where(eq(oncallPageRecipient.userId, userId))
+      .all();
+    for (const { pageId } of pageCredentials) {
+      tx.update(oncallPageRecipient)
+        .set({ responseTokenHash: revokedCredential() })
+        .where(and(eq(oncallPageRecipient.pageId, pageId), eq(oncallPageRecipient.userId, userId)))
+        .run();
+    }
 
     for (const ownedService of services) {
       tx.update(service)
@@ -128,6 +147,21 @@ export function offboardPersistedAccess(userId: string): OffboardingResult {
       .run();
     tx.delete(appleNativeGrant).where(eq(appleNativeGrant.userId, userId)).run();
 
+    // MCP grants: without these, re-admission would revive old access and
+    // refresh tokens and skip consent, recreating a fresh grant token row.
+    const oauthAccess = tx
+      .delete(oauthAccessToken)
+      .where(eq(oauthAccessToken.userId, userId))
+      .run().changes;
+    const oauthRefresh = tx
+      .delete(oauthRefreshToken)
+      .where(eq(oauthRefreshToken.userId, userId))
+      .run().changes;
+    const oauthConsents = tx
+      .delete(oauthConsent)
+      .where(eq(oauthConsent.userId, userId))
+      .run().changes;
+
     return {
       sessions: deletedSessions.length,
       apiTokens: revokedTokens.length,
@@ -135,6 +169,9 @@ export function offboardPersistedAccess(userId: string): OffboardingResult {
       services: services.length,
       interactions: disabledInteractions.length,
       liveActivities: activityIds.length,
+      pageCredentials: pageCredentials.length,
+      oauthTokens: oauthAccess + oauthRefresh,
+      oauthConsents,
     };
   });
 }

@@ -40,6 +40,18 @@ function makeDatabase(options?: { migrationCount?: number; latest?: number }) {
       "board_work_item",
       "board_note",
       "project",
+      "team",
+      "team_member",
+      "team_invite",
+      "app_member_state",
+      "oncall_group",
+      "oncall_override",
+      "oncall_page",
+      "oncall_page_recipient",
+      "oauth_client",
+      "oauth_access_token",
+      "oauth_refresh_token",
+      "oauth_consent",
     ]
       .map((name) => `create table "${name}" (id text primary key);`)
       .join("\n")}

@@ -1,6 +1,6 @@
 {
   "name": "sharkctl",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "CLI for SHark notifications, approvals, replies, and Live Activities",
   "repository": {
     "type": "git",

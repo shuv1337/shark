@@ -1,13 +1,14 @@
 import type Database from "better-sqlite3";
 
-export const EXPECTED_MIGRATION_COUNT = 24;
-export const EXPECTED_MIGRATION_CREATED_AT = 1791450160427;
+export const EXPECTED_MIGRATION_COUNT = 26;
+export const EXPECTED_MIGRATION_CREATED_AT = 1791573278955;
 export const KNOWN_MIGRATION_CREATED_AT = [
   1_784_838_061_460, 1_784_844_109_833, 1_784_844_695_392, 1_784_857_552_207, 1_784_858_550_283,
   1_784_860_224_866, 1_784_860_882_450, 1_784_861_885_633, 1_784_916_448_420, 1_784_919_690_458,
   1_785_004_560_682, 1_785_016_656_904, 1_785_024_389_331, 1_785_027_353_868, 1_785_085_877_317,
   1_785_282_742_299, 1_785_399_448_816, 1_785_400_611_767, 1_786_473_121_959, 1_787_254_532_866,
-  1_791_282_334_819, 1_791_283_183_762, 1_791_418_205_037, 1791450160427,
+  1_791_282_334_819, 1_791_283_183_762, 1_791_418_205_037, 1791450160427, 1791571932408,
+  1791573278955,
 ] as const;
 
 export const REQUIRED_TABLES = [
@@ -33,6 +34,18 @@ export const REQUIRED_TABLES = [
   "board_work_item",
   "board_note",
   "project",
+  "team",
+  "team_member",
+  "team_invite",
+  "app_member_state",
+  "oncall_group",
+  "oncall_override",
+  "oncall_page",
+  "oncall_page_recipient",
+  "oauth_client",
+  "oauth_access_token",
+  "oauth_refresh_token",
+  "oauth_consent",
 ] as const;
 
 /**

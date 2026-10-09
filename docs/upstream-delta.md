@@ -107,6 +107,62 @@ brand checks passed. Existing migration files and website frontend were verified
 Native app rebuilding
 is required for the new alternate-icon plugin. Deploy and device acceptance remain separate work.
 
+## Teams and on-call integration, 2026-10-09
+
+Merges upstream through `86fecac` (teams, invites, team apps, on-call groups, rotations,
+overrides, escalating pages, page acknowledgement from the Lock Screen). `d9237a9` is recorded as
+an ancestor because the 2026-10-08 integration landed as a squash.
+
+Deliberate merge resolutions:
+
+- Upstream's `0021_teams_oncall` is not adopted: it collides with SHark's `0021` and rebuilds
+  `agent_notification` against upstream's schema. The same tables are authored as additive
+  `0024_upstream_teams_oncall` against SHark's schema. Its `agent_notification` rebuild copies
+  `rowid` (project-inbox read cursors depend on it), drops the durable inbox triggers first and
+  recreates them afterwards, and lets the insert trigger materialize token-less notices (team
+  invites, shared apps) with `source_name`.
+- No seat billing: `team-billing.ts` keeps upstream's exports but reports a free, unlimited plan,
+  and checkout or portal calls fail with "Billing is not configured". Seat and pricing UI, docs, and
+  the pricing page are removed. Team membership still requires an allowlisted Apple sign-in.
+- Join links use `shark://join/<code>`; the iPhone app also accepts legacy `hark://join` links.
+  The website `/dashboard/teams/:id` and `/join/:code` shells sit behind `requireAuth`.
+- Upstream analytics (`trackAppEvent`), Google sign-in, and App Store links are not imported.
+- The board and SHark scopes are kept alongside the new `teams:*` and `oncall:*` scopes, which are
+  added to the default `sharkctl` login. Existing tokens must log in again to use them.
+- Fork hardening on top of upstream: Lock Screen page credentials only work for recipients still on
+  `ALLOWED_EMAILS`, offboarding overwrites them, and paging skips non-admitted members. Pages run
+  the webhook and agent per-minute windows, count against the account window, and each group
+  accepts at most 10 new pages a minute. Sharing an app (or creating one with `teamId`) from an
+  agent token also needs `teams:write` and the agent budget, and each person can trigger at most
+  10 team notices a minute. Request logs redact `/join/:code` and `/api/team-invites/:code`.
+
+## MCP server integration, 2026-10-09
+
+Merges upstream through `97b3a97`, adopting the OAuth-protected MCP server at `/mcp` (`186e543`)
+and the skill's web app and MCP guidance (`44611b5`). The TestFlight/App Store link commits
+(`c732d1b`, `97b3a97`), comped team seats (`2317509`), and the iOS 1.3 version bump (`4a49c28`) are
+merged as history only; their changes are not applied.
+
+Deliberate merge resolutions:
+
+- Upstream's `0022_oauth_mcp` collides with SHark's `0022`; the identical additive SQL is
+  `0025_upstream_oauth_mcp`.
+- Consent is Apple-only and served behind `requireAuth`, so a signed-out visitor goes through
+  `/login`. Sessions are already restricted to allowlisted accounts, and `/mcp` re-checks the
+  owner's allowlist on every call, so removing an email stops its clients immediately.
+- The Apple Watch and Mac companion scopes (`watch:*`, `macos:*`) are never OAuth scopes: they can
+  answer prompts. Board scopes are grantable, and every board route has an MCP tool.
+- Intentional anonymous exceptions: `/.well-known/oauth-protected-resource[/mcp]`,
+  `/.well-known/oauth-authorization-server[/api/auth]`, and Better Auth's dynamic client
+  registration. Registration grants nothing without an allowlisted user's consent.
+- `/api/oauth/clients` mutations require a same-origin request, like the other session routes.
+- Better Auth rate limits read the client IP the app resolves from `TRUSTED_CLIENT_IP_HEADER` or
+  `TRUSTED_FORWARDED_FOR_HOPS` (production: one exe.dev hop) per `docs/operations.md`. An hourly
+  sweeper deletes expired OAuth tokens and day-old anonymous clients that were never connected,
+  and offboarding deletes the user's OAuth tokens and consents.
+- The MCP server name is `shark`; access and refresh token prefixes stay `hark_mat_` and
+  `hark_mrt_` as protocol identifiers.
+
 ## CLI and compatibility names
 
 `sharkctl` is the canonical fork CLI and package. Keep `HARK_*`, `@hark/*`, the `hark` config

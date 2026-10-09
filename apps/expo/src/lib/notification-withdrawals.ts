@@ -1,6 +1,7 @@
-import { notificationWithdrawalPushDataSchema } from "@hark/contracts";
+import { HARK_PAGE_CATEGORY_ID, notificationWithdrawalPushDataSchema } from "@hark/contracts";
 import * as Notifications from "expo-notifications";
 import * as TaskManager from "expo-task-manager";
+import { claimedPageId, emitPageClaimed } from "./teams";
 
 export const NOTIFICATION_WITHDRAWAL_TASK = "hark-notification-withdrawal-v1";
 
@@ -39,6 +40,42 @@ export function withdrawalEventId(payload: unknown): string | null {
   return null;
 }
 
+/** Page ID from a silent `page.claimed` command, in any envelope shape. */
+export function claimedPageIdFromPayload(payload: unknown): string | null {
+  for (const candidate of payloadCandidates(payload)) {
+    const pageId = claimedPageId(candidate);
+    if (pageId) return pageId;
+  }
+  return null;
+}
+
+function presentedPageId(payload: unknown): string | null {
+  for (const candidate of payloadCandidates(payload)) {
+    if (
+      candidate.categoryId === HARK_PAGE_CATEGORY_ID &&
+      typeof candidate.pageId === "string" &&
+      candidate.pageId.length > 0
+    ) {
+      return candidate.pageId;
+    }
+  }
+  return null;
+}
+
+/** Clears an on-call page from Notification Center once someone else claims it. */
+export async function dismissNotificationsForPage(pageId: string): Promise<number> {
+  const presented = await Notifications.getPresentedNotificationsAsync();
+  const matching = presented.filter(
+    (notification) => presentedPageId(notification.request.content.data) === pageId,
+  );
+  await Promise.all(
+    matching.map((notification) =>
+      Notifications.dismissNotificationAsync(notification.request.identifier),
+    ),
+  );
+  return matching.length;
+}
+
 function presentedEventId(payload: unknown): string | null {
   for (const candidate of payloadCandidates(payload)) {
     if (typeof candidate.eventId === "string" && candidate.eventId.length > 0) {
@@ -69,6 +106,18 @@ export async function handleNotificationWithdrawalTask({
   error: unknown;
 }): Promise<Notifications.BackgroundNotificationTaskResult> {
   if (error) return Notifications.BackgroundNotificationTaskResult.Failed;
+  const pageId = claimedPageIdFromPayload(data);
+  if (pageId) {
+    emitPageClaimed(pageId);
+    try {
+      const dismissed = await dismissNotificationsForPage(pageId);
+      return dismissed > 0
+        ? Notifications.BackgroundNotificationTaskResult.NewData
+        : Notifications.BackgroundNotificationTaskResult.NoData;
+    } catch {
+      return Notifications.BackgroundNotificationTaskResult.Failed;
+    }
+  }
   const eventId = withdrawalEventId(data);
   if (!eventId) return Notifications.BackgroundNotificationTaskResult.NoData;
   try {

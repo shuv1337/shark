@@ -5,6 +5,7 @@ import type {
   LiveActivityDto,
   ServiceCreatedResponse,
   ServiceDto,
+  TeamDto,
 } from "@hark/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
@@ -12,7 +13,9 @@ import { BrandWordmark } from "../components/BrandWordmark";
 import { useConfirm } from "../components/ConfirmDialog";
 import { CopyField } from "../components/CopyField";
 import { InboxPanel } from "../components/InboxPanel";
-import { api } from "../lib/api";
+import { McpClientsSection } from "../components/McpClientsSection";
+import { TeamsSection } from "../components/TeamsSection";
+import { api, isMissingRoute } from "../lib/api";
 import { signOut, useSession } from "../lib/auth";
 import {
   browserDeviceName,
@@ -119,6 +122,9 @@ export function Dashboard() {
   const [events, setEvents] = useState<EventDto[] | null>(null);
   const [liveActivities, setLiveActivities] = useState<LiveActivityDto[] | null>(null);
   const [devices, setDevices] = useState<DeviceDto[] | null>(null);
+  /** `"unsupported"` when the server predates teams; the section stays hidden. */
+  const [teams, setTeams] = useState<TeamDto[] | "unsupported" | null>(null);
+  const [teamsError, setTeamsError] = useState<string | null>(null);
   const [apiTokens, setApiTokens] = useState<ApiTokenDto[] | null>(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<ServiceDto | null>(null);
@@ -146,6 +152,16 @@ export function Dashboard() {
     }
   }, []);
 
+  const refreshTeams = useCallback(async () => {
+    try {
+      setTeams((await api.listTeams()).teams);
+      setTeamsError(null);
+    } catch (err) {
+      if (isMissingRoute(err)) setTeams("unsupported");
+      else setTeamsError("Could not load your teams.");
+    }
+  }, []);
+
   const refreshActivity = useCallback(async () => {
     try {
       const [activity, liveActivityState] = await Promise.all([
@@ -164,8 +180,11 @@ export function Dashboard() {
       navigate("/", { replace: true });
       return;
     }
-    if (session) void refresh();
-  }, [session, isPending, navigate, refresh]);
+    if (session) {
+      void refresh();
+      void refreshTeams();
+    }
+  }, [session, isPending, navigate, refresh, refreshTeams]);
 
   useEffect(() => {
     if (!session) return;
@@ -288,6 +307,17 @@ export function Dashboard() {
         <BrowserNotifications onChanged={() => void refresh()} />
 
         <Devices devices={devices} onRemoved={() => void refresh()} />
+        <McpClientsSection />
+
+        {teams !== "unsupported" ? (
+          <TeamsSection
+            error={teamsError}
+            onCreated={(team) =>
+              setTeams((current) => [...(Array.isArray(current) ? current : []), team])
+            }
+            teams={teams}
+          />
+        ) : null}
 
         <LiveActivities activities={liveActivities} />
 

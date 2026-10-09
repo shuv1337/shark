@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  type AnySQLiteColumn,
   check,
   index,
   integer,
@@ -242,10 +243,19 @@ export const apiToken = sqliteTable(
     lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+    /**
+     * Set for the grant behind a connected OAuth (MCP) client. Such rows have
+     * no usable secret: the client authenticates with OAuth access tokens and
+     * this row carries the stable identity agent routes scope ownership to.
+     */
+    oauthClientId: text("oauth_client_id"),
   },
   (table) => [
     index("api_token_user_created_at_idx").on(table.userId, table.createdAt),
     index("api_token_prefix_idx").on(table.prefix),
+    uniqueIndex("api_token_active_oauth_grant_unique")
+      .on(table.userId, table.oauthClientId)
+      .where(sql`"oauth_client_id" is not null and "revoked_at" is null`),
   ],
 );
 
@@ -257,9 +267,12 @@ export const agentNotification = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    requesterTokenId: text("requester_token_id")
-      .notNull()
-      .references(() => apiToken.id, { onDelete: "cascade" }),
+    /** Null for SHark's own notices (team invites, shared apps), which have no token. */
+    requesterTokenId: text("requester_token_id").references(() => apiToken.id, {
+      onDelete: "cascade",
+    }),
+    /** Sender label for token-less notices; token rows use the token name. */
+    sourceName: text("source_name"),
     title: text("title").notNull(),
     body: text("body").notNull(),
     imageUrl: text("image_url"),
@@ -319,12 +332,223 @@ export const app = sqliteTable(
       onDelete: "set null",
     }),
     projectId: text("project_id").references(() => project.id, { onDelete: "set null" }),
+    /**
+     * Team that owns the app; null for personal apps. For team apps `userId`
+     * is the member who added it, and per-member sharing and consent live in
+     * `app_member_state` instead of the columns above.
+     */
+    teamId: text("team_id").references((): AnySQLiteColumn => team.id, { onDelete: "set null" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => [
     uniqueIndex("app_user_url_unique").on(table.userId, table.url),
     index("app_user_id_idx").on(table.userId),
+    index("app_team_id_idx").on(table.teamId),
+  ],
+);
+
+/** Each member's own sharing choices and sign-in consent for a team app. */
+export const appMemberState = sqliteTable(
+  "app_member_state",
+  {
+    appId: text("app_id")
+      .notNull()
+      .references(() => app.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    shareName: integer("share_name", { mode: "boolean" }).notNull().default(true),
+    shareEmail: integer("share_email", { mode: "boolean" }).notNull().default(false),
+    consentedAt: integer("consented_at", { mode: "timestamp_ms" }),
+    lastOpenedAt: integer("last_opened_at", { mode: "timestamp_ms" }),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("app_member_state_app_user_unique").on(table.appId, table.userId),
+    index("app_member_state_user_idx").on(table.userId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Teams and on-call
+// ---------------------------------------------------------------------------
+
+export const team = sqliteTable("team", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const teamMember = sqliteTable(
+  "team_member",
+  {
+    teamId: text("team_id")
+      .notNull()
+      .references(() => team.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** `owner` (exactly one), `admin`, or `member`. */
+    role: text("role").notNull(),
+    joinedAt: integer("joined_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("team_member_team_user_unique").on(table.teamId, table.userId),
+    index("team_member_user_idx").on(table.userId),
+  ],
+);
+
+export const teamInvite = sqliteTable(
+  "team_invite",
+  {
+    id: text("id").primaryKey(),
+    teamId: text("team_id")
+      .notNull()
+      .references(() => team.id, { onDelete: "cascade" }),
+    /** Domain-separated SHA-256 digest; the plaintext join code is returned once. */
+    codeHash: text("code_hash").notNull(),
+    email: text("email"),
+    role: text("role").notNull(),
+    invitedByUserId: text("invited_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    invitedByName: text("invited_by_name").notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    acceptedAt: integer("accepted_at", { mode: "timestamp_ms" }),
+    acceptedByUserId: text("accepted_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("team_invite_code_hash_unique").on(table.codeHash),
+    index("team_invite_team_created_idx").on(table.teamId, table.createdAt),
+  ],
+);
+
+export const oncallGroup = sqliteTable(
+  "oncall_group",
+  {
+    id: text("id").primaryKey(),
+    teamId: text("team_id")
+      .notNull()
+      .references(() => team.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** Rotation order of user IDs. Members who leave the team are removed. */
+    memberIds: text("member_ids", { mode: "json" }).$type<string[]>().notNull(),
+    period: text("period").notNull(),
+    handoffAt: text("handoff_at").notNull(),
+    timezone: text("timezone").notNull(),
+    /** First handoff, normalized to `handoffAt` in `timezone`. */
+    startsAt: integer("starts_at", { mode: "timestamp_ms" }).notNull(),
+    escalation: text("escalation", { mode: "json" })
+      .$type<Array<{ afterMinutes: number; target: "next" | "group" }>>()
+      .notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("oncall_group_team_idx").on(table.teamId)],
+);
+
+export const oncallOverride = sqliteTable(
+  "oncall_override",
+  {
+    id: text("id").primaryKey(),
+    groupId: text("group_id")
+      .notNull()
+      .references(() => oncallGroup.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    startsAt: integer("starts_at", { mode: "timestamp_ms" }).notNull(),
+    endsAt: integer("ends_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("oncall_override_group_ends_idx").on(table.groupId, table.endsAt)],
+);
+
+export const oncallPage = sqliteTable(
+  "oncall_page",
+  {
+    id: text("id").primaryKey(),
+    groupId: text("group_id")
+      .notNull()
+      .references(() => oncallGroup.id, { onDelete: "cascade" }),
+    teamId: text("team_id")
+      .notNull()
+      .references(() => team.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    body: text("body"),
+    url: text("url"),
+    appId: text("app_id").references(() => app.id, { onDelete: "set null" }),
+    /** `triggered`, `acknowledged`, or `resolved`. */
+    status: text("status").notNull(),
+    dedupKey: text("dedup_key"),
+    repeatCount: integer("repeat_count").notNull().default(0),
+    /** Escalation steps already run. */
+    escalationStep: integer("escalation_step").notNull().default(0),
+    /** Read by the escalation worker, so pending escalations survive restarts. */
+    nextEscalationAt: integer("next_escalation_at", { mode: "timestamp_ms" }),
+    /** User most recently paged individually; `next` steps continue after them. */
+    lastPagedUserId: text("last_paged_user_id"),
+    sourceName: text("source_name").notNull(),
+    /** Webhook or API token that raised the page, for their per-minute windows. */
+    requesterServiceId: text("requester_service_id").references(() => service.id, {
+      onDelete: "set null",
+    }),
+    requesterTokenId: text("requester_token_id").references(() => apiToken.id, {
+      onDelete: "set null",
+    }),
+    /** User whose notification allowance the page counts against. */
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    acknowledgedByUserId: text("acknowledged_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    acknowledgedAt: integer("acknowledged_at", { mode: "timestamp_ms" }),
+    resolvedByUserId: text("resolved_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
+    resolveNote: text("resolve_note"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("oncall_page_team_created_idx").on(table.teamId, table.createdAt),
+    index("oncall_page_escalation_idx").on(table.status, table.nextEscalationAt),
+    uniqueIndex("oncall_page_open_dedup_unique")
+      .on(table.groupId, table.dedupKey)
+      .where(sql`${table.status} in ('triggered', 'acknowledged')`),
+  ],
+);
+
+/** Everyone a page notified, with their one-shot lock-screen credential. */
+export const oncallPageRecipient = sqliteTable(
+  "oncall_page_recipient",
+  {
+    pageId: text("page_id")
+      .notNull()
+      .references(() => oncallPage.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** 0 for the initial notification, then the escalation step number. */
+    step: integer("step").notNull(),
+    responseTokenHash: text("response_token_hash").notNull(),
+    /** Set on the credential's first successful use; it is single-use. */
+    responseTokenUsedAt: integer("response_token_used_at", { mode: "timestamp_ms" }),
+    acceptedCount: integer("accepted_count").notNull().default(0),
+    notifiedAt: integer("notified_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("oncall_page_recipient_page_user_unique").on(table.pageId, table.userId),
+    uniqueIndex("oncall_page_recipient_token_unique").on(table.responseTokenHash),
+    index("oncall_page_recipient_user_idx").on(table.userId, table.notifiedAt),
   ],
 );
 
@@ -923,5 +1147,120 @@ export const boardNote = sqliteTable(
   (table) => [
     uniqueIndex("board_note_user_key_unique").on(table.userId, table.noteKey),
     index("board_note_user_idx").on(table.userId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// OAuth provider (Better Auth `@better-auth/oauth-provider`) for the MCP server
+// ---------------------------------------------------------------------------
+
+/** Registered OAuth clients, mostly MCP clients from dynamic registration. */
+export const oauthClient = sqliteTable(
+  "oauth_client",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id").notNull().unique(),
+    clientSecret: text("client_secret"),
+    disabled: integer("disabled", { mode: "boolean" }).default(false),
+    skipConsent: integer("skip_consent", { mode: "boolean" }),
+    enableEndSession: integer("enable_end_session", { mode: "boolean" }),
+    subjectType: text("subject_type"),
+    /** JSON string array (the adapter serializes arrays on SQLite). */
+    scopes: text("scopes"),
+    userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
+    name: text("name"),
+    uri: text("uri"),
+    icon: text("icon"),
+    contacts: text("contacts"),
+    tos: text("tos"),
+    policy: text("policy"),
+    softwareId: text("software_id"),
+    softwareVersion: text("software_version"),
+    softwareStatement: text("software_statement"),
+    redirectUris: text("redirect_uris").notNull(),
+    postLogoutRedirectUris: text("post_logout_redirect_uris"),
+    tokenEndpointAuthMethod: text("token_endpoint_auth_method"),
+    grantTypes: text("grant_types"),
+    responseTypes: text("response_types"),
+    public: integer("public", { mode: "boolean" }),
+    type: text("type"),
+    requirePKCE: integer("require_pkce", { mode: "boolean" }),
+    referenceId: text("reference_id"),
+    metadata: text("metadata"),
+  },
+  (table) => [index("oauth_client_user_idx").on(table.userId)],
+);
+
+/** Hashed opaque refresh tokens (`offline_access`); rotated on every use. */
+export const oauthRefreshToken = sqliteTable(
+  "oauth_refresh_token",
+  {
+    id: text("id").primaryKey(),
+    token: text("token").notNull().unique(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => oauthClient.clientId, { onDelete: "cascade" }),
+    sessionId: text("session_id").references(() => session.id, { onDelete: "set null" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    referenceId: text("reference_id"),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }),
+    revoked: integer("revoked", { mode: "timestamp_ms" }),
+    authTime: integer("auth_time", { mode: "timestamp_ms" }),
+    scopes: text("scopes").notNull(),
+  },
+  (table) => [
+    index("oauth_refresh_token_client_idx").on(table.clientId),
+    index("oauth_refresh_token_session_idx").on(table.sessionId),
+    index("oauth_refresh_token_user_idx").on(table.userId),
+  ],
+);
+
+/** Hashed opaque access tokens. `/mcp` looks them up on every request. */
+export const oauthAccessToken = sqliteTable(
+  "oauth_access_token",
+  {
+    id: text("id").primaryKey(),
+    token: text("token").unique(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => oauthClient.clientId, { onDelete: "cascade" }),
+    sessionId: text("session_id").references(() => session.id, { onDelete: "set null" }),
+    userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+    referenceId: text("reference_id"),
+    refreshId: text("refresh_id").references(() => oauthRefreshToken.id, { onDelete: "cascade" }),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }),
+    scopes: text("scopes").notNull(),
+  },
+  (table) => [
+    index("oauth_access_token_client_idx").on(table.clientId),
+    index("oauth_access_token_session_idx").on(table.sessionId),
+    index("oauth_access_token_user_idx").on(table.userId),
+    index("oauth_access_token_refresh_idx").on(table.refreshId),
+  ],
+);
+
+/** Remembered consent per user and client; the scopes granted last time. */
+export const oauthConsent = sqliteTable(
+  "oauth_consent",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => oauthClient.clientId, { onDelete: "cascade" }),
+    userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+    referenceId: text("reference_id"),
+    scopes: text("scopes").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("oauth_consent_client_idx").on(table.clientId),
+    index("oauth_consent_user_idx").on(table.userId),
   ],
 );

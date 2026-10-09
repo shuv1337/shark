@@ -9,6 +9,8 @@ import { pruneAnalytics } from "./lib/analytics";
 import { startBoardSweeper } from "./lib/board";
 import { startBoardCallbackWorker } from "./lib/board-callbacks";
 import { startInteractionCallbackWorker } from "./lib/interaction-callbacks";
+import { startOAuthSweeper } from "./lib/oauth";
+import { startOncallEscalationWorker } from "./lib/oncall";
 import { mountPrivateStaticRoutes } from "./static";
 
 assertRuntimeEnv();
@@ -18,6 +20,8 @@ pruneAnalytics();
 startInteractionCallbackWorker();
 startBoardCallbackWorker();
 startBoardSweeper();
+startOncallEscalationWorker();
+startOAuthSweeper();
 
 // In production the same process serves authenticated noindex application
 // shells. Unknown paths remain real 404s.

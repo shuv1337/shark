@@ -69,6 +69,25 @@ export const DOC_NAV = [
     ],
   },
   {
+    id: "teams",
+    label: "Teams",
+    items: [
+      { id: "teams-roles", label: "Teams and roles" },
+      { id: "teams-invites", label: "Invite people" },
+      { id: "teams-apps", label: "Team apps" },
+    ],
+  },
+  {
+    id: "oncall",
+    label: "On-call",
+    items: [
+      { id: "oncall-rotations", label: "Groups and rotations" },
+      { id: "oncall-paging", label: "Paging and escalation" },
+      { id: "oncall-webhook", label: "Page from a webhook" },
+      { id: "oncall-acknowledge", label: "Acknowledge and resolve" },
+    ],
+  },
+  {
     id: "board",
     label: "Board",
     items: [
@@ -76,6 +95,15 @@ export const DOC_NAV = [
       { id: "board-answers", label: "Read the answer" },
       { id: "board-work", label: "Work items and notes" },
       { id: "board-security", label: "Who can answer" },
+    ],
+  },
+  {
+    id: "mcp",
+    label: "MCP server",
+    items: [
+      { id: "mcp-connect", label: "Connect a client" },
+      { id: "mcp-oauth", label: "Sign-in and permissions" },
+      { id: "mcp-tools", label: "Tools" },
     ],
   },
 ] as const;

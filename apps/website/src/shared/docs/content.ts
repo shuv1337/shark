@@ -81,6 +81,9 @@ export const DOCS_EYEBROW = "Documentation";
 export const DOCS_URL = "https://shark.shuv.dev/docs";
 export const DOCS_MARKDOWN_URL = "https://shark.shuv.dev/docs.md";
 
+/** The remote MCP server. */
+export const MCP_SERVER_URL = "https://shark.shuv.dev/mcp";
+
 export const DOC_CONTENT: DocSection[] = [
   {
     id: "quickstart",
@@ -1138,6 +1141,12 @@ sharkctl apps remove app_...`,
                 detail:
                   "Present only when the owner shares them. Name is shared by default; email is not.",
               },
+              {
+                name: "team_id / team_role",
+                type: "string",
+                detail:
+                  "Present for [team apps](#teams-apps): the viewer's team and their current role (`owner`, `admin`, or `member`).",
+              },
             ],
           },
           {
@@ -1161,6 +1170,188 @@ sharkctl apps remove app_...`,
   "appId": "app_...",
   "url": "https://shark.shuv.dev/board"
 }`,
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: "teams",
+    lead: "A team shares web apps and on-call groups between SHark accounts. Everyone keeps their own phone, inbox, and sign-in decisions; the team only decides what is shared.",
+    subsections: [
+      {
+        id: "teams-roles",
+        blocks: [
+          {
+            kind: "p",
+            text: "Create a team in the dashboard or with `sharkctl teams create`. You become its owner. Each member has one role:",
+          },
+          {
+            kind: "table",
+            variant: "field",
+            caption: "Team roles",
+            rows: [
+              {
+                name: "owner",
+                type: "one per team",
+                detail:
+                  "Everything an admin can do, plus deleting the team and transferring ownership. The owner must transfer ownership before leaving.",
+              },
+              {
+                name: "admin",
+                type: "role",
+                detail:
+                  "Renames the team, invites and removes members, changes roles, removes any team app, and creates and edits on-call groups.",
+              },
+              {
+                name: "member",
+                type: "role",
+                detail:
+                  "Uses and adds team apps, raises and acknowledges pages, and schedules overrides for themselves.",
+              },
+            ],
+          },
+          {
+            kind: "p",
+            text: "Transferring ownership (setting someone's role to `owner`) makes the previous owner an admin. Removing a member takes effect immediately: they stop receiving SHark passes for the team's apps and leave every rotation.",
+          },
+        ],
+      },
+      {
+        id: "teams-invites",
+        blocks: [
+          {
+            kind: "p",
+            text: "Owners and admins create invite links. Each link joins one person, expires after seven days, and can be revoked. Add an email to also push the invite to an existing SHark user with that address.",
+          },
+          {
+            kind: "code",
+            language: "bash",
+            code: `sharkctl teams invite team_... --email teammate@example.com --role member
+# { "invite": { ... }, "code": "…", "url": "https://shark.shuv.dev/join/…" }`,
+          },
+          {
+            kind: "p",
+            text: "Opening the link shows the team, who invited you, and the role. Joining requires signing in: agents can create invites but never accept them.",
+          },
+        ],
+      },
+      {
+        id: "teams-apps",
+        blocks: [
+          {
+            kind: "p",
+            text: "Any member can add a [web app](#web-apps) to a team, or move one of their own apps into it with `sharkctl apps share app_... --team team_...` (`--personal` moves it back). The other members are notified and see the app next to their own.",
+          },
+          {
+            kind: "bullets",
+            items: [
+              "Every member approves sign-in and chooses whether their name and email are shared for themselves; nobody approves on someone else's behalf.",
+              "Passes for team apps carry the usual pairwise `sub` plus `team_id` and `team_role`, checked at issue time, so your site can authorize by team.",
+              "The person who added an app, and team admins, can rename or remove it. Deleting a team returns its apps to the people who added them.",
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: "oncall",
+    lead: "On-call groups page whoever is on call right now, then escalate until someone takes it. Pages arrive as time-sensitive notifications with Acknowledge and Escalate actions on the Lock Screen.",
+    subsections: [
+      {
+        id: "oncall-rotations",
+        blocks: [
+          {
+            kind: "p",
+            text: "Team owners and admins create on-call groups. A rotation is an ordered list of team members who hand off daily or weekly at a local time in an IANA time zone. Handoffs follow the local clock across daylight-saving changes, so a 09:00 handoff stays at 09:00.",
+          },
+          {
+            kind: "code",
+            language: "bash",
+            code: `sharkctl oncall create --team team_... --name Primary \\
+  --members user_a,user_b,user_c --period weekly \\
+  --handoff 09:00 --timezone America/New_York`,
+          },
+          {
+            kind: "p",
+            text: "Without `startsAt`, the first member is on call from the latest handoff. Overrides put someone on call for a window (covering a shift, a holiday) and replace the rotation while they last; any member can schedule one for themselves. Each group lists its current shift and the next few.",
+          },
+        ],
+      },
+      {
+        id: "oncall-paging",
+        blocks: [
+          {
+            kind: "p",
+            text: "A page goes first to the person on call. If nobody is on call, the whole group is paged. Escalation steps then run until someone acknowledges:",
+          },
+          {
+            kind: "table",
+            variant: "field",
+            caption: "Escalation steps",
+            rows: [
+              {
+                name: "afterMinutes",
+                type: "integer",
+                detail: "Minutes after the previous step (or the page) without an acknowledgement.",
+              },
+              {
+                name: "target",
+                type: "next | group",
+                detail:
+                  "`next` pages the next person in the rotation; `group` pages everyone in it who has not been paged yet.",
+              },
+            ],
+          },
+          {
+            kind: "p",
+            text: "The default is the next person after 5 minutes, then the whole group 10 minutes later. Pages with the same `dedupKey` merge into the open page (its `repeatCount` grows) instead of paging again.",
+          },
+          {
+            kind: "code",
+            language: "bash",
+            code: `sharkctl page ocg_... "API error rate above 20%" \\
+  --body "5xx since 14:02" --dedup-key api-5xx`,
+          },
+        ],
+      },
+      {
+        id: "oncall-webhook",
+        blocks: [
+          {
+            kind: "p",
+            text: "Add `oncall` to a webhook payload to page a group instead of notifying your own devices. The service owner must belong to the group's team, and `oncall` cannot be combined with `deviceIds` or `response`. The `Idempotency-Key` header becomes the page's dedup key, so retries merge into the open page.",
+          },
+          {
+            kind: "code",
+            language: "json",
+            code: `{
+  "title": "Checkout API",
+  "body": "Error rate above 20% for 5 minutes",
+  "oncall": "ocg_..."
+}`,
+          },
+          {
+            kind: "p",
+            text: "The response carries `pageId` and `delivered`. Page bodies are limited to 2,000 characters. Agents page with `sharkctl page` or `sharkctl notify --oncall`.",
+          },
+        ],
+      },
+      {
+        id: "oncall-acknowledge",
+        blocks: [
+          {
+            kind: "p",
+            text: "Anyone on the team can acknowledge a page from the Lock Screen, the app, or the website. The first acknowledgement wins: escalation stops, the page clears from everyone else's phone, and later acknowledgements are refused. Escalate pages the next step right away.",
+          },
+          {
+            kind: "note",
+            text: "Acknowledging and escalating are human-only. An acknowledgement tells the team a person is on it, so agents can raise, read, and resolve pages but have no route to acknowledge or escalate them.",
+          },
+          {
+            kind: "p",
+            text: 'Resolve a page when the incident is over, from the website or with `sharkctl pages resolve page_... --note "Rolled back"`. Resolving an unacknowledged page also stops its escalation.',
           },
         ],
       },
@@ -1317,6 +1508,118 @@ sharkctl apps remove app_...`,
               "Inside the SHark iPhone app the board opens as a registered web app (`sharkctl apps create --name Sharkboard --url https://shark.shuv.dev/board`); sign in once inside it.",
               "Every transition is recorded with who did it: agent token, your session, or the system.",
             ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: "mcp",
+    lead: "SHark is also a remote MCP server, so Claude, OpenCode, Cursor, and other MCP clients can use every agent API operation as a tool. It signs in with OAuth: there is no token to paste.",
+    subsections: [
+      {
+        id: "mcp-connect",
+        blocks: [
+          {
+            kind: "p",
+            text: "Add the server URL to your MCP client. It uses the Streamable HTTP transport.",
+          },
+          { kind: "copy", label: "MCP server URL", value: MCP_SERVER_URL },
+          {
+            kind: "p",
+            text: "OpenCode reads remote servers from `opencode.json`:",
+          },
+          {
+            kind: "code",
+            language: "json",
+            code: `{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "shark": { "type": "remote", "url": "${MCP_SERVER_URL}" }
+  }
+}`,
+          },
+          {
+            kind: "p",
+            text: "Claude Code adds it from the terminal, and Cursor reads `~/.cursor/mcp.json`:",
+          },
+          {
+            kind: "code",
+            language: "bash",
+            code: `claude mcp add --transport http shark ${MCP_SERVER_URL}`,
+          },
+          {
+            kind: "code",
+            language: "json",
+            code: `{
+  "mcpServers": {
+    "shark": { "url": "${MCP_SERVER_URL}" }
+  }
+}`,
+          },
+        ],
+      },
+      {
+        id: "mcp-oauth",
+        blocks: [
+          {
+            kind: "steps",
+            items: [
+              "Your client calls the server, gets `401` with a `resource_metadata` pointer, and registers itself with SHark (dynamic client registration).",
+              "Your browser opens SHark's consent page. Sign in with Apple if needed; the email allowlist still applies.",
+              "Review what the client asks for, untick anything you do not want, and approve. SHark remembers your answer for that client and set of permissions.",
+              "The client receives a one-hour access token for `/mcp`, plus a refresh token if you left Stay connected ticked.",
+            ],
+          },
+          {
+            kind: "p",
+            text: "OAuth scopes are the agent API scopes one to one, except the Apple Watch and Mac companion scopes, plus `offline_access` for Stay connected. A client that asks for no scope requests everything except `tokens:manage`. PKCE (S256) is required, and tokens are only valid for the `/mcp` resource.",
+          },
+          {
+            kind: "p",
+            text: 'Connected clients are listed on the dashboard; Disconnect revokes their access and refresh tokens at once. With `tokens:manage`, agents see them as `kind: "oauth"` entries from `GET /api/agent/tokens` and can revoke them too.',
+          },
+          {
+            kind: "table",
+            variant: "route",
+            caption: "Discovery documents",
+            rows: [
+              {
+                method: "GET",
+                path: "/.well-known/oauth-protected-resource/mcp",
+                detail: "Protected resource metadata (RFC 9728) for the MCP server.",
+              },
+              {
+                method: "GET",
+                path: "/.well-known/oauth-authorization-server",
+                detail:
+                  "Authorization server metadata (RFC 8414): authorize, token, and registration endpoints.",
+              },
+            ],
+          },
+        ],
+      },
+      {
+        id: "mcp-tools",
+        blocks: [
+          {
+            kind: "p",
+            text: "There is one tool per agent API route, and each runs through that route's handler, so validation, scopes, and limits are identical. A tool the connection was not granted a scope for returns an error naming the missing scope.",
+          },
+          {
+            kind: "bullets",
+            items: [
+              "`notify` sends a push; `notification_withdraw` removes it.",
+              "`ask` sends an approval, yes/no, or reply prompt and waits up to ten minutes for your answer, sending progress updates while it waits. `interactions_create`, `interactions_wait`, `interactions_get`, `interactions_list`, and `interactions_cancel` split that up.",
+              "`activities_start`, `activities_update`, `activities_end`, `activities_get`, and `activities_list` drive Live Activities.",
+              "`services_*`, `devices_*`, `events_list`, `activity_feed`, `inbox_*`, `apps_*`, `billing_get`, and `tokens_*` manage the account. `board_*` raises asks, tracks work, and leaves notes on the board.",
+              "`teams_*`, `oncall_*`, and `pages_*` manage teams, rotations, and pages.",
+              "`auth_status` shows the connection's scopes; `auth_revoke` disconnects the client.",
+            ],
+          },
+          {
+            kind: "note",
+            text: "The human-only actions above are never tools: answering prompts or board asks, acknowledging or escalating pages, accepting invites, approving app sign-in, changing sharing or issuing passes, and creating tokens. Webhook URLs and join links in tool results are shown once and flagged as secrets.",
           },
         ],
       },
