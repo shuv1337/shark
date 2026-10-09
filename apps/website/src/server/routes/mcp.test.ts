@@ -200,6 +200,85 @@ describe("MCP discovery and authentication", () => {
     }
   });
 
+  it("offboarding deletes OAuth grants so re-admission cannot revive them", async () => {
+    const { env } = await import("../env");
+    const { hashOAuthToken, listOAuthGrants, OAUTH_ACCESS_TOKEN_PREFIX } = await import(
+      "../lib/oauth"
+    );
+    const { offboardPersistedAccess } = await import("../lib/offboarding");
+    const { eq } = await import("drizzle-orm");
+    const secret = "hark_mat_OffboardedTokenOffboardedTokenOffboa";
+    const now = new Date();
+    await db.insert(schema.user).values({
+      id: "user_leaver",
+      name: "Leaver",
+      email: "user_leaver@example.com",
+      emailVerified: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.oauthRefreshToken).values({
+      id: "rt_leaver",
+      token: hashOAuthToken("synthetic-refresh-secret"),
+      clientId: "claude",
+      userId: "user_leaver",
+      scopes: JSON.stringify([...OAUTH_DEFAULT_SCOPES, "offline_access"]),
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 86_400_000),
+    });
+    await db.insert(schema.oauthAccessToken).values({
+      id: "at_leaver",
+      token: hashOAuthToken(secret.slice(OAUTH_ACCESS_TOKEN_PREFIX.length)),
+      clientId: "claude",
+      userId: "user_leaver",
+      refreshId: "rt_leaver",
+      scopes: JSON.stringify(OAUTH_DEFAULT_SCOPES),
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 3_600_000),
+    });
+    await db.insert(schema.oauthConsent).values({
+      id: "consent_leaver",
+      clientId: "claude",
+      userId: "user_leaver",
+      scopes: JSON.stringify(OAUTH_DEFAULT_SCOPES),
+      createdAt: now,
+      updatedAt: now,
+    });
+    const mcpStatus = async () =>
+      (
+        await app.request("/mcp", {
+          method: "POST",
+          headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
+          body: "{}",
+        })
+      ).status;
+    const connected = await connect(secret);
+    await connected.close();
+
+    const previous = [...env.ALLOWED_EMAILS];
+    env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length, "user_a@example.com");
+    try {
+      expect(offboardPersistedAccess("user_leaver")).toMatchObject({
+        oauthTokens: 2,
+        oauthConsents: 1,
+      });
+    } finally {
+      // Re-admission: the operator puts the address back on the allowlist.
+      env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length, ...previous);
+    }
+
+    expect(await mcpStatus()).toBe(401);
+    for (const table of [schema.oauthAccessToken, schema.oauthRefreshToken, schema.oauthConsent]) {
+      expect(await db.select().from(table).where(eq(table.userId, "user_leaver"))).toEqual([]);
+    }
+    expect(
+      (
+        await db.select().from(schema.apiToken).where(eq(schema.apiToken.userId, "user_leaver"))
+      ).every((row) => row.revokedAt !== null),
+    ).toBe(true);
+    expect(await listOAuthGrants("user_leaver")).toEqual([]);
+  });
+
   it("publishes protected resource metadata at the root and path-specific URLs", async () => {
     for (const path of [
       "/.well-known/oauth-protected-resource",
