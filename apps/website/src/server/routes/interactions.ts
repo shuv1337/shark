@@ -20,6 +20,7 @@ import {
   apiToken,
   device,
   event,
+  inboxItem,
   interaction,
   liveActivity,
   liveActivityDelivery,
@@ -1229,6 +1230,52 @@ export const interactionResponseRoute = new Hono<AuthedEnv>()
       .limit(1);
     return c.json(
       { error: "Interaction is already terminal", interaction: toDto(latest ?? terminal) },
+      409,
+    );
+  })
+  // Owner-side twin of the agent cancel: clears an ask the requester abandoned.
+  .post("/:id/dismiss", async (c) => {
+    const user = c.get("user");
+    const now = new Date();
+    const [row] = await db
+      .update(interaction)
+      .set({ status: "canceled", canceledAt: now })
+      .where(
+        and(
+          eq(interaction.id, c.req.param("id")),
+          eq(interaction.userId, user.id),
+          eq(interaction.status, "pending"),
+          gt(interaction.expiresAt, now),
+        ),
+      )
+      .returning();
+    if (row) {
+      await db
+        .update(inboxItem)
+        .set({ readAt: now })
+        .where(
+          and(
+            eq(inboxItem.userId, user.id),
+            eq(inboxItem.entityType, "interaction"),
+            eq(inboxItem.entityId, row.id),
+            isNull(inboxItem.readAt),
+          ),
+        );
+      track({ name: "interaction_dismissed", userId: user.id, metadata: { kind: row.kind } });
+      void resolveInteractionLiveActivity(row);
+      return c.json({ interaction: toDto(row) });
+    }
+    const [current] = await db
+      .select()
+      .from(interaction)
+      .where(and(eq(interaction.id, c.req.param("id")), eq(interaction.userId, user.id)))
+      .limit(1);
+    if (!current) return c.json({ error: "Interaction not found" }, 404);
+    return c.json(
+      {
+        error: "Interaction is already terminal",
+        interaction: toDto(await expireIfNeeded(current)),
+      },
       409,
     );
   });
