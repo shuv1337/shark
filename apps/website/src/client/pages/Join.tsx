@@ -224,7 +224,7 @@ function Joined({ code, response }: { code: string; response: TeamJoinResponse }
           rel="noopener noreferrer"
           target="_blank"
         >
-          Get Hark on TestFlight
+          Get Hark from the App Store
         </a>
       </div>
       <Link className={`${textLink} mt-5`} to={`/dashboard/teams/${response.team.id}`}>

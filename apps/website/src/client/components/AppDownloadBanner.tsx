@@ -17,10 +17,10 @@ export function AppDownloadBanner() {
       />
       <span className="min-w-0 flex-1">
         <span className="block text-[15px] font-medium text-white">
-          Get the latest Hark for iPhone
+          Hark for iPhone is now available
         </span>
         <span className="mt-0.5 block truncate text-sm text-ink-muted">
-          Join the TestFlight beta to receive notifications.
+          Download it from the App Store to receive notifications.
         </span>
       </span>
       <span

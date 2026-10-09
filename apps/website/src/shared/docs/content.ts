@@ -115,7 +115,7 @@ export const DOC_CONTENT: DocSection[] = [
             kind: "steps",
             items: [
               "Sign in at [hark.ryan.ceo](https://hark.ryan.ceo).",
-              "Register your iPhone with [Hark for iPhone](https://testflight.apple.com/join/PjCnKETB) (TestFlight beta).",
+              "Register your iPhone with [Hark for iPhone](https://apps.apple.com/us/app/hark-developer-notifications/id6794121509).",
               "Create a service in the dashboard and give it a title, avatar, and tap URL.",
               "Copy the secret webhook URL it returns.",
             ],
