@@ -1232,6 +1232,16 @@ export function formatRequestError(error) {
   if (!(error instanceof RequestError) || !error.body || typeof error.body !== "object") {
     return message;
   }
+  if (error.body.code === "ACTIVE_ACTIVITY_CONFLICT") {
+    const id =
+      typeof error.body.activityId === "string" &&
+      /^act_[a-zA-Z0-9_-]{1,100}$/.test(error.body.activityId)
+        ? ` activityId=${error.body.activityId}`
+        : "";
+    const owned = error.body.ownedByRequester;
+    const owner = typeof owned === "boolean" ? ` ownedByRequester=${owned}` : "";
+    return `${message}\nACTIVE_ACTIVITY_CONFLICT${id}${owner}\nThe slot is device-wide; list/get are token-scoped. Wait, or explicitly choose --replace to end the occupying activity.`;
+  }
   const terminal =
     (typeof error.body.error === "string" &&
       error.body.error.startsWith(TERMINAL_LIVE_ACTIVITY_ERROR)) ||

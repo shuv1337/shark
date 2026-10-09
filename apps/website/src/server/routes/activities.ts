@@ -1194,6 +1194,8 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
           error: "A Live Activity is already active on a target device",
           code: "ACTIVE_ACTIVITY_CONFLICT",
           activityId: firstBlocker.activity.id,
+          ownedByRequester: firstBlocker.activity.requesterTokenId === token.id,
+          recovery: "wait_or_explicitly_replace",
         },
         409,
       );
@@ -1207,6 +1209,8 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
           error: "A Live Activity with this key is still active",
           code: "ACTIVE_ACTIVITY_CONFLICT",
           activityId: keyed.id,
+          ownedByRequester: keyed.requesterTokenId === token.id,
+          recovery: "wait_or_explicitly_replace",
         },
         409,
       );
@@ -1290,6 +1294,8 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
             error: "A Live Activity is already active on a target device",
             code: "ACTIVE_ACTIVITY_CONFLICT",
             activityId: racedBlocker.activity.id,
+            ownedByRequester: racedBlocker.activity.requesterTokenId === token.id,
+            recovery: "wait_or_explicitly_replace",
           },
           409,
         );
@@ -1303,6 +1309,8 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
             error: "A Live Activity with this key is still active",
             code: "ACTIVE_ACTIVITY_CONFLICT",
             activityId: racedKeyed.id,
+            ownedByRequester: racedKeyed.requesterTokenId === token.id,
+            recovery: "wait_or_explicitly_replace",
           },
           409,
         );
