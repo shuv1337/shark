@@ -16,6 +16,7 @@ import {
   desc,
   eq,
   gt,
+  gte,
   inArray,
   isNotNull,
   isNull,
@@ -36,6 +37,7 @@ import {
   teamMember,
   user as userTable,
 } from "../db/schema";
+import { isEmailAllowed } from "./admission";
 import { checkAppUrl, toAppSummaryDto } from "./apps";
 import { checkNotificationAllowance, trackNotification } from "./billing";
 import { newId } from "./id";
@@ -57,6 +59,17 @@ export type PageRow = typeof oncallPage.$inferSelect;
 
 const OPEN_STATUSES = ["triggered", "acknowledged"] as const;
 const UPCOMING_SHIFTS = 5;
+/** New pages a group accepts per minute; duplicates that merge do not count. */
+export const PAGES_PER_GROUP_PER_MINUTE = 10;
+
+/** Pages the user raised since `since`; they share the account's per-minute budget. */
+export async function pagesCreatedSince(userId: string, since: Date): Promise<number> {
+  const [row] = await db
+    .select({ value: count() })
+    .from(oncallPage)
+    .where(and(eq(oncallPage.createdByUserId, userId), gte(oncallPage.createdAt, since)));
+  return row?.value ?? 0;
+}
 
 // ---------------------------------------------------------------------------
 // Groups and schedules
@@ -369,9 +382,19 @@ async function notifyRecipients(
   return accepted;
 }
 
+/** Team members who may still sign in; removed operators are never paged. */
+async function pageableMemberIds(teamId: string): Promise<Set<string>> {
+  const rows = await db
+    .select({ userId: teamMember.userId, email: userTable.email })
+    .from(teamMember)
+    .innerJoin(userTable, eq(userTable.id, teamMember.userId))
+    .where(eq(teamMember.teamId, teamId));
+  return new Set(rows.filter((row) => isEmailAllowed(row.email)).map((row) => row.userId));
+}
+
 /** Rotation members still in the team, or the whole team when the rotation is empty. */
 async function groupMembers(group: GroupRow): Promise<string[]> {
-  const team = new Set(await memberIds(group.teamId));
+  const team = await pageableMemberIds(group.teamId);
   const rotation = group.memberIds.filter((id) => team.has(id));
   return rotation.length > 0 ? rotation : [...team];
 }
@@ -451,7 +474,16 @@ export async function raisePage({
   }
 
   const now = Date.now();
-  const team = new Set(await memberIds(group.teamId));
+  const [recent] = await db
+    .select({ value: count() })
+    .from(oncallPage)
+    .where(
+      and(eq(oncallPage.groupId, group.id), gte(oncallPage.createdAt, new Date(now - 60_000))),
+    );
+  if ((recent?.value ?? 0) >= PAGES_PER_GROUP_PER_MINUTE) {
+    return { ok: false, status: 429, error: "On-call page rate limit exceeded" };
+  }
+  const team = await pageableMemberIds(group.teamId);
   const shift = await onCallNow(group, now);
   const initial = shift && team.has(shift.userId) ? [shift.userId] : await groupMembers(group);
 
@@ -544,7 +576,7 @@ export async function escalatePage(pageId: string, manual: boolean): Promise<Esc
   }
 
   const notified = await notifiedUserIds(page.id);
-  const team = new Set(await memberIds(group.teamId));
+  const team = await pageableMemberIds(group.teamId);
   let targets: string[];
   let lastPagedUserId = page.lastPagedUserId;
   if (step.target === "next") {
@@ -676,13 +708,14 @@ export async function resolvePage(
   return { ok: true, page: updated };
 }
 
-/** Resolves a lock-screen credential to its page and recipient. */
+/** Resolves a lock-screen credential to its page and a still-admitted recipient. */
 export async function pageRecipientByToken(pageId: string, responseToken: string) {
   const [row] = await db
     .select({
       page: oncallPage,
       userId: oncallPageRecipient.userId,
       usedAt: oncallPageRecipient.responseTokenUsedAt,
+      email: userTable.email,
     })
     .from(oncallPageRecipient)
     .innerJoin(oncallPage, eq(oncallPage.id, oncallPageRecipient.pageId))
@@ -693,6 +726,7 @@ export async function pageRecipientByToken(pageId: string, responseToken: string
         eq(teamMember.userId, oncallPageRecipient.userId),
       ),
     )
+    .innerJoin(userTable, eq(userTable.id, oncallPageRecipient.userId))
     .where(
       and(
         eq(oncallPageRecipient.pageId, pageId),
@@ -700,7 +734,8 @@ export async function pageRecipientByToken(pageId: string, responseToken: string
       ),
     )
     .limit(1);
-  return row;
+  if (!row || !isEmailAllowed(row.email)) return undefined;
+  return { page: row.page, userId: row.userId, usedAt: row.usedAt };
 }
 
 export interface PageListQuery {

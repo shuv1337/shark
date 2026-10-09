@@ -72,6 +72,7 @@ let schema: typeof import("../db/schema");
 
 const TEAMS_TOKEN = `hark_${"t".repeat(43)}`;
 const NO_TEAMS_TOKEN = `hark_${"u".repeat(43)}`;
+const APPS_ONLY_TOKEN = `hark_${"v".repeat(43)}`;
 
 function as(userId: string | null) {
   authState.userId = userId;
@@ -146,6 +147,15 @@ beforeAll(async () => {
       tokenHash: hashApiToken(NO_TEAMS_TOKEN),
       prefix: "hark_uuuuuuu",
       scopes: ["apps:read"],
+      createdAt: now,
+    },
+    {
+      id: "tok_appsonly",
+      userId: "user_a",
+      name: "Apps bot",
+      tokenHash: hashApiToken(APPS_ONLY_TOKEN),
+      prefix: "hark_vvvvvvv",
+      scopes: ["apps:read", "apps:write"],
       createdAt: now,
     },
   ]);
@@ -425,5 +435,62 @@ describe("team apps", () => {
     expect(
       (await call("POST", `/api/agent/team-invites/${code}/accept`, undefined, TEAMS_TOKEN)).status,
     ).toBe(404);
+  });
+
+  it("requires teams:write before an agent can share an app or create one in a team", async () => {
+    const team = await createTeam("Scoped");
+    const { code } = await invite(team.id);
+    await join("user_b", code);
+    as("user_a");
+    sent.length = 0;
+
+    const createdInTeam = await call(
+      "POST",
+      "/api/agent/apps",
+      { name: "Docs", url: "https://docs.example.com/", teamId: team.id },
+      APPS_ONLY_TOKEN,
+    );
+    expect(createdInTeam.status).toBe(403);
+    expect(await createdInTeam.json()).toMatchObject({ required: ["teams:write"] });
+
+    const personal = await call(
+      "POST",
+      "/api/agent/apps",
+      { name: "Docs", url: "https://docs.example.com/" },
+      APPS_ONLY_TOKEN,
+    );
+    expect(personal.status).toBe(201);
+    const { app: personalApp } = (await personal.json()) as { app: AppDto };
+    const shared = await call(
+      "POST",
+      `/api/agent/apps/${personalApp.id}/share`,
+      { teamId: team.id },
+      APPS_ONLY_TOKEN,
+    );
+    expect(shared.status).toBe(403);
+    expect(await shared.json()).toMatchObject({ required: ["apps:write", "teams:write"] });
+    await settle();
+    expect(sent).toHaveLength(0);
+  });
+
+  it("caps how many notices one sender can push per minute", async () => {
+    const { NOTICES_PER_SENDER_PER_MINUTE, sendNotice } = await import("../lib/teams");
+    const notice = {
+      senderUserId: "user_flood_sender",
+      title: "Synthetic notice",
+      body: "Synthetic body",
+      sourceName: "Test",
+      conversationKey: "team-flood",
+    };
+    const results: number[] = [];
+    for (let index = 0; index < NOTICES_PER_SENDER_PER_MINUTE + 2; index += 1) {
+      results.push(await sendNotice(["user_c"], notice));
+    }
+    expect(results.filter((accepted) => accepted > 0)).toHaveLength(NOTICES_PER_SENDER_PER_MINUTE);
+    expect(results.slice(-2)).toEqual([0, 0]);
+    expect(sent.filter((message) => message.to === "ExponentPushToken[user_c]")).toHaveLength(
+      NOTICES_PER_SENDER_PER_MINUTE,
+    );
+    expect(await sendNotice(["user_c"], { ...notice, senderUserId: "user_other_sender" })).toBe(1);
   });
 });

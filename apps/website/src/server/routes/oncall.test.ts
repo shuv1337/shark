@@ -503,6 +503,105 @@ describe("pages", () => {
     expect(nextList.pages).toHaveLength(2);
   });
 
+  it("caps new pages per group per minute but still merges duplicates", async () => {
+    const group = await createGroup("Flood");
+    for (let index = 0; index < oncall.PAGES_PER_GROUP_PER_MINUTE; index += 1) {
+      expect(
+        (await page(group.id, { title: `Alert ${index}`, dedupKey: `k${index}` })).status,
+      ).toBe(201);
+    }
+    sent.length = 0;
+    const limited = await page(group.id, { title: "One too many" });
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: "On-call page rate limit exceeded" });
+    const viaHook = await call("POST", `/hooks/${WEBHOOK}`, { body: "x", oncall: group.id });
+    expect(viaHook.status).toBe(429);
+    expect(viaHook.headers.get("retry-after")).toBe("60");
+    expect(sent).toHaveLength(0);
+    const merged = await page(group.id, { title: "Alert 0", dedupKey: "k0" });
+    expect(merged.status).toBe(200);
+  });
+
+  it("applies the account rate limit to webhook and agent pages", async () => {
+    const { env } = await import("../env");
+    const group = await createGroup("Throttled");
+    expect((await page(group.id, { title: "Counted" })).status).toBe(201);
+    const previous = env.ACCOUNT_RATE_LIMIT_PER_MINUTE;
+    env.ACCOUNT_RATE_LIMIT_PER_MINUTE = 1;
+    sent.length = 0;
+    try {
+      const hook = await call("POST", `/hooks/${WEBHOOK}`, { body: "x", oncall: group.id });
+      expect(hook.status).toBe(429);
+      expect(await hook.json()).toMatchObject({ error: "Account rate limit exceeded" });
+      const notify = await call(
+        "POST",
+        "/api/agent/notifications",
+        { title: "x", body: "x", oncall: group.id },
+        WRITER,
+      );
+      expect(notify.status).toBe(429);
+      const agent = await call(
+        "POST",
+        `/api/agent/oncall/${group.id}/pages`,
+        { title: "x" },
+        WRITER,
+      );
+      expect(agent.status).toBe(429);
+      expect(agent.headers.get("retry-after")).toBe("60");
+      expect(sent).toHaveLength(0);
+    } finally {
+      env.ACCOUNT_RATE_LIMIT_PER_MINUTE = previous;
+    }
+  });
+
+  it("refuses page credentials and skips paging for members removed from the allowlist", async () => {
+    const { env } = await import("../env");
+    const { eq } = await import("drizzle-orm");
+    const group = await createGroup("Allowlist", [{ afterMinutes: 30, target: "group" }]);
+    const created = (await (
+      await page(group.id, { title: "Before removal" })
+    ).json()) as OncallPageCreateResponse;
+    expect((await call("POST", `/api/pages/${created.page.id}/escalate`)).status).toBe(200);
+    const bToken = responseTokenFor("user_b");
+
+    const previous = [...env.ALLOWED_EMAILS];
+    env.ALLOWED_EMAILS.splice(
+      0,
+      env.ALLOWED_EMAILS.length,
+      "user_a@example.com",
+      "user_c@example.com",
+    );
+    try {
+      const refused = await call("POST", `/api/page-responses/${created.page.id}/acknowledge`, {
+        responseToken: bToken,
+      });
+      expect(refused.status).toBe(404);
+      expect(
+        (
+          await call("POST", `/api/page-responses/${created.page.id}/escalate`, {
+            responseToken: bToken,
+          })
+        ).status,
+      ).toBe(404);
+
+      await db
+        .update(schema.oncallGroup)
+        .set({ startsAt: new Date(Date.now() + 7 * 86_400_000) })
+        .where(eq(schema.oncallGroup.id, group.id));
+      sent.length = 0;
+      const fallback = (await (
+        await page(group.id, { title: "After removal" })
+      ).json()) as OncallPageCreateResponse;
+      expect(fallback.page.notified.map((person) => person.userId).sort()).toEqual([
+        "user_a",
+        "user_c",
+      ]);
+      expect(pushesTo("user_b")).toHaveLength(0);
+    } finally {
+      env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length, ...previous);
+    }
+  });
+
   it("drops removed members from rotations", async () => {
     const group = await createGroup("Shrinking");
     expect((await call("DELETE", `/api/teams/${TEAM_ID}/members/user_c`)).status).toBe(200);

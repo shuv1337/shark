@@ -282,6 +282,7 @@ async function createInvite(actor: Actor, teamId: string, input: unknown): Promi
       .limit(1);
     if (invitee && !(await membership(teamId, invitee.id))) {
       void sendNotice([invitee.id], {
+        senderUserId: actor.id,
         title: `${actor.name} invited you to ${current.team.name}`,
         body: `Tap to join ${current.team.name} on SHark.`,
         sourceName: "SHark Teams",

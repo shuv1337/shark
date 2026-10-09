@@ -37,6 +37,7 @@ import {
   requireAuth,
   requireScopes,
 } from "../middleware";
+import { enforceAgentRateLimit } from "./activities";
 import { type Actor, agentActor, type Outcome, readJson, send } from "./teams";
 
 const NOT_FOUND = { error: "App not found" } as const;
@@ -136,6 +137,7 @@ async function upsertMemberState(
 async function notifyTeamOfApp(actor: Actor, row: AppRow, teamId: string, teamName: string) {
   const recipients = (await memberIds(teamId)).filter((id) => id !== actor.id);
   await sendNotice(recipients, {
+    senderUserId: actor.id,
     title: `${actor.name} added ${row.name} to ${teamName}`,
     body: `Tap to open ${row.name} in SHark.`,
     sourceName: teamName,
@@ -214,6 +216,18 @@ export const appsAgentRoute = new Hono<AgentEnv>()
       return c.json({ error: "Invalid app", issues: parsed.error.issues }, 400);
     }
     const input = parsed.data;
+    if (input.teamId) {
+      if (!token.scopes.includes("teams:write")) {
+        return c.json({ error: "Insufficient scope", required: ["teams:write"] }, 403);
+      }
+      const owner = await agentActor(c);
+      if (!owner) return c.json({ error: "Account not found" }, 404);
+      const limited = await enforceAgentRateLimit(token, owner);
+      if (limited) {
+        c.header("Retry-After", "60");
+        return c.json(limited, 429);
+      }
+    }
     const destination = input.teamId ? await membership(input.teamId, token.userId) : undefined;
     if (input.teamId && !destination) return c.json({ error: "Team not found" }, 404);
     const teamId = destination?.team.id ?? null;
@@ -380,9 +394,15 @@ export const appsAgentRoute = new Hono<AgentEnv>()
     if (!(await revokeAppConsent(userId, c.req.param("id")))) return c.json(NOT_FOUND, 404);
     return c.json({ app: await visibleAppDto(userId, c.req.param("id")) });
   })
-  .post("/:id/share", requireScopes("apps:write"), async (c) => {
+  // Sharing notifies every other member, so it needs team scope and the agent budget.
+  .post("/:id/share", requireScopes("apps:write", "teams:write"), async (c) => {
     const actor = await agentActor(c);
     if (!actor) return c.json({ error: "Account not found" }, 404);
+    const limited = await enforceAgentRateLimit(c.get("apiToken"), actor);
+    if (limited) {
+      c.header("Retry-After", "60");
+      return c.json(limited, 429);
+    }
     return send(c, await shareApp(actor, c.req.param("id"), await readJson(c)));
   })
   .delete("/:id", requireScopes("apps:write"), async (c) => {

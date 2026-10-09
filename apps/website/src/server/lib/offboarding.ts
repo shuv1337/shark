@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import {
   account,
@@ -10,6 +10,7 @@ import {
   interaction,
   liveActivity,
   liveActivityDelivery,
+  oncallPageRecipient,
   service,
   session,
   user,
@@ -24,6 +25,7 @@ export interface OffboardingResult {
   services: number;
   interactions: number;
   liveActivities: number;
+  pageCredentials: number;
 }
 
 function revokedCredential(): string {
@@ -71,6 +73,18 @@ export function offboardPersistedAccess(userId: string): OffboardingResult {
       .where(eq(device.userId, userId))
       .returning({ id: device.id })
       .all();
+
+    const pageCredentials = tx
+      .select({ pageId: oncallPageRecipient.pageId })
+      .from(oncallPageRecipient)
+      .where(eq(oncallPageRecipient.userId, userId))
+      .all();
+    for (const { pageId } of pageCredentials) {
+      tx.update(oncallPageRecipient)
+        .set({ responseTokenHash: revokedCredential() })
+        .where(and(eq(oncallPageRecipient.pageId, pageId), eq(oncallPageRecipient.userId, userId)))
+        .run();
+    }
 
     for (const ownedService of services) {
       tx.update(service)
@@ -135,6 +149,7 @@ export function offboardPersistedAccess(userId: string): OffboardingResult {
       services: services.length,
       interactions: disabledInteractions.length,
       liveActivities: activityIds.length,
+      pageCredentials: pageCredentials.length,
     };
   });
 }

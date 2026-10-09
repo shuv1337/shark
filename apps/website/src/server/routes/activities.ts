@@ -44,6 +44,7 @@ import { checkNotificationAllowance, getBilling, trackNotification } from "../li
 import { newId } from "../lib/id";
 import { createLiveActivityInteractionCredential } from "../lib/live-activity-interaction";
 import { createLiveActivityRegistrationToken } from "../lib/live-activity-registration";
+import { pagesCreatedSince } from "../lib/oncall";
 import { decryptLiveActivityToken } from "../lib/token";
 import {
   type AgentEnv,
@@ -229,6 +230,7 @@ export async function enforceAgentRateLimit(
     [accountInteractions],
     [accountNotifications],
     [webhooks],
+    accountPages,
   ] = await Promise.all([
     db
       .select({ value: count() })
@@ -280,6 +282,7 @@ export async function enforceAgentRateLimit(
       .from(event)
       .innerJoin(service, eq(event.serviceId, service.id))
       .where(and(eq(service.userId, token.userId), gte(event.createdAt, since))),
+    pagesCreatedSince(token.userId, since),
   ]);
   if (
     (tokenActivity?.value ?? 0) +
@@ -293,7 +296,8 @@ export async function enforceAgentRateLimit(
     (accountActivity?.value ?? 0) +
       (accountInteractions?.value ?? 0) +
       (accountNotifications?.value ?? 0) +
-      (webhooks?.value ?? 0) >=
+      (webhooks?.value ?? 0) +
+      accountPages >=
     billing.limits.accountPerMinute
   ) {
     return { error: "Account rate limit exceeded", retryAfterSeconds: 60 };

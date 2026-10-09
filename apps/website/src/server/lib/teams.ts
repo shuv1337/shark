@@ -221,7 +221,26 @@ export function deleteTeam(teamId: string): boolean {
   });
 }
 
+/** Notice batches one person can trigger per minute (invites, shared apps). */
+export const NOTICES_PER_SENDER_PER_MINUTE = 10;
+const NOTICE_WINDOW_MS = 60_000;
+const noticeRates = new Map<string, { startedAt: number; count: number }>();
+
+function noticeRateLimited(senderUserId: string): boolean {
+  const now = Date.now();
+  const current = noticeRates.get(senderUserId);
+  if (!current || now - current.startedAt >= NOTICE_WINDOW_MS) {
+    if (noticeRates.size > 10_000) noticeRates.clear();
+    noticeRates.set(senderUserId, { startedAt: now, count: 1 });
+    return false;
+  }
+  current.count += 1;
+  return current.count > NOTICES_PER_SENDER_PER_MINUTE;
+}
+
 export interface HarkNotice {
+  /** The member whose action caused the notice; their budget is charged. */
+  senderUserId: string;
   title: string;
   body: string;
   sourceName: string;
@@ -234,10 +253,16 @@ export interface HarkNotice {
 /**
  * Sends SHark's own notice (an invite, a shared app) to users: one inbox row
  * each, pushed to their active iPhones in the regular webhook shape so a tap
- * opens `url` or the app. Not counted against anyone's allowance.
+ * opens `url` or the app. Not counted against anyone's allowance, but each
+ * sender may trigger at most {@link NOTICES_PER_SENDER_PER_MINUTE} a minute;
+ * notices past that are dropped.
  */
 export async function sendNotice(userIds: string[], notice: HarkNotice): Promise<number> {
   if (userIds.length === 0) return 0;
+  if (noticeRateLimited(notice.senderUserId)) {
+    console.warn("[teams] Notice dropped: sender rate limit exceeded");
+    return 0;
+  }
   const now = new Date();
   let accepted = 0;
   for (const userId of userIds) {

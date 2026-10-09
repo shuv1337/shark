@@ -266,5 +266,5 @@ BEGIN
     SELECT 1 FROM agent_notification WHERE id = NEW.entity_id AND user_id = NEW.user_id
   );
 END;--> statement-breakpoint
-ALTER TABLE `app` ADD `team_id` text REFERENCES team(id);--> statement-breakpoint
+ALTER TABLE `app` ADD `team_id` text REFERENCES team(id) ON UPDATE no action ON DELETE set null;--> statement-breakpoint
 CREATE INDEX `app_team_id_idx` ON `app` (`team_id`);

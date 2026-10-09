@@ -37,6 +37,7 @@ import {
   requireAuth,
   requireScopes,
 } from "../middleware";
+import { enforceAgentRateLimit } from "./activities";
 import { type Actor, type Outcome, readJson, send, withAgent } from "./teams";
 
 const result = (body: unknown, status: 200 | 201 = 200): Outcome => ({ status, body });
@@ -391,9 +392,14 @@ export const oncallAgentRoute = new Hono<AgentEnv>()
     ),
   )
   .post("/:groupId/pages", requireScopes("oncall:write"), async (c) =>
-    withAgent(c, async (actor) =>
-      createPage(actor, c.req.param("groupId"), await readJson(c), c.get("apiToken").name),
-    ),
+    withAgent(c, async (actor) => {
+      const limited = await enforceAgentRateLimit(c.get("apiToken"), actor);
+      if (limited) {
+        c.header("Retry-After", "60");
+        return { status: 429, body: limited };
+      }
+      return createPage(actor, c.req.param("groupId"), await readJson(c), c.get("apiToken").name);
+    }),
   );
 
 export const pagesAgentRoute = new Hono<AgentEnv>()
