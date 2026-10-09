@@ -16,6 +16,7 @@ import {
   desc,
   eq,
   gt,
+  gte,
   inArray,
   isNotNull,
   lt,
@@ -57,6 +58,17 @@ export type PageRow = typeof oncallPage.$inferSelect;
 
 const OPEN_STATUSES = ["triggered", "acknowledged"] as const;
 const UPCOMING_SHIFTS = 5;
+/** New pages a group accepts per minute; duplicates that merge do not count. */
+export const PAGES_PER_GROUP_PER_MINUTE = 10;
+
+/** Pages the user raised since `since`; they share the account's per-minute budget. */
+export async function pagesCreatedSince(userId: string, since: Date): Promise<number> {
+  const [row] = await db
+    .select({ value: count() })
+    .from(oncallPage)
+    .where(and(eq(oncallPage.createdByUserId, userId), gte(oncallPage.createdAt, since)));
+  return row?.value ?? 0;
+}
 
 // ---------------------------------------------------------------------------
 // Groups and schedules
@@ -461,6 +473,15 @@ export async function raisePage({
   }
 
   const now = Date.now();
+  const [recent] = await db
+    .select({ value: count() })
+    .from(oncallPage)
+    .where(
+      and(eq(oncallPage.groupId, group.id), gte(oncallPage.createdAt, new Date(now - 60_000))),
+    );
+  if ((recent?.value ?? 0) >= PAGES_PER_GROUP_PER_MINUTE) {
+    return { ok: false, status: 429, error: "On-call page rate limit exceeded" };
+  }
   const team = await pageableMemberIds(group.teamId);
   const shift = await onCallNow(group, now);
   const initial = shift && team.has(shift.userId) ? [shift.userId] : await groupMembers(group);

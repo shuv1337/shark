@@ -360,6 +360,17 @@ export const agentRoute = new Hono<AgentEnv>()
       if (parsed.data.deviceIds) {
         return c.json({ error: "oncall cannot be combined with deviceIds" }, 400);
       }
+      const [pageOwner] = await db
+        .select()
+        .from(userTable)
+        .where(eq(userTable.id, token.userId))
+        .limit(1);
+      if (!pageOwner) return c.json({ error: "Account not found" }, 404);
+      const pageLimited = await enforceAgentRateLimit(token, pageOwner);
+      if (pageLimited) {
+        c.header("Retry-After", "60");
+        return c.json(pageLimited, 429);
+      }
       // Pages merge on their dedup key, so an Idempotency-Key retry folds
       // into the open page instead of paging again.
       const paged = await raisePageFor(
@@ -375,6 +386,7 @@ export const agentRoute = new Hono<AgentEnv>()
         token.name,
       );
       if (!paged.ok) {
+        if (paged.status === 429) c.header("Retry-After", "60");
         return c.json(
           { error: paged.error, ...("issues" in paged ? { issues: paged.issues } : {}) },
           paged.status,

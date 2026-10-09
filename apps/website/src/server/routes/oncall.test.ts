@@ -490,6 +490,57 @@ describe("pages", () => {
     expect(nextList.pages).toHaveLength(2);
   });
 
+  it("caps new pages per group per minute but still merges duplicates", async () => {
+    const group = await createGroup("Flood");
+    for (let index = 0; index < oncall.PAGES_PER_GROUP_PER_MINUTE; index += 1) {
+      expect(
+        (await page(group.id, { title: `Alert ${index}`, dedupKey: `k${index}` })).status,
+      ).toBe(201);
+    }
+    sent.length = 0;
+    const limited = await page(group.id, { title: "One too many" });
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: "On-call page rate limit exceeded" });
+    const viaHook = await call("POST", `/hooks/${WEBHOOK}`, { body: "x", oncall: group.id });
+    expect(viaHook.status).toBe(429);
+    expect(viaHook.headers.get("retry-after")).toBe("60");
+    expect(sent).toHaveLength(0);
+    const merged = await page(group.id, { title: "Alert 0", dedupKey: "k0" });
+    expect(merged.status).toBe(200);
+  });
+
+  it("applies the account rate limit to webhook and agent pages", async () => {
+    const { env } = await import("../env");
+    const group = await createGroup("Throttled");
+    expect((await page(group.id, { title: "Counted" })).status).toBe(201);
+    const previous = env.ACCOUNT_RATE_LIMIT_PER_MINUTE;
+    env.ACCOUNT_RATE_LIMIT_PER_MINUTE = 1;
+    sent.length = 0;
+    try {
+      const hook = await call("POST", `/hooks/${WEBHOOK}`, { body: "x", oncall: group.id });
+      expect(hook.status).toBe(429);
+      expect(await hook.json()).toMatchObject({ error: "Account rate limit exceeded" });
+      const notify = await call(
+        "POST",
+        "/api/agent/notifications",
+        { title: "x", body: "x", oncall: group.id },
+        WRITER,
+      );
+      expect(notify.status).toBe(429);
+      const agent = await call(
+        "POST",
+        `/api/agent/oncall/${group.id}/pages`,
+        { title: "x" },
+        WRITER,
+      );
+      expect(agent.status).toBe(429);
+      expect(agent.headers.get("retry-after")).toBe("60");
+      expect(sent).toHaveLength(0);
+    } finally {
+      env.ACCOUNT_RATE_LIMIT_PER_MINUTE = previous;
+    }
+  });
+
   it("refuses page credentials and skips paging for members removed from the allowlist", async () => {
     const { env } = await import("../env");
     const { eq } = await import("drizzle-orm");
