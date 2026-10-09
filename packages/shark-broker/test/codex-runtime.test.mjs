@@ -108,7 +108,17 @@ async function runtime(t) {
   });
   // Startup errors are bounded by until; no production environment is inherited.
   child.on("error", () => {});
-  const owner = { adapterData: { socketPath } };
+  // Current Codex publishes the requested listener as a symlink to its private
+  // daemon socket. Enrollment pins the actual target; the broker still rejects
+  // symlinks and independently checks the target directory/socket permissions.
+  const resolvedSocketPath = await until(async () => {
+    try {
+      return await realpath(socketPath);
+    } catch {
+      return null;
+    }
+  }, Boolean);
+  const owner = { adapterData: { socketPath: resolvedSocketPath } };
   const rpc = await until(async () => {
     try {
       return await connectCodex(owner, { timeout: 1000 });
@@ -123,7 +133,7 @@ async function runtime(t) {
     harness: "codex",
     sessionId: thread.id,
     cwd: root,
-    adapterData: { socketPath },
+    adapterData: { socketPath: resolvedSocketPath },
   };
   const adapter = new CodexAdapter();
   return {

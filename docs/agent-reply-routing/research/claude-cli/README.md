@@ -23,6 +23,18 @@ Without optional flags, the script only reports CLI version/hash and sanitized a
 
 ## Capability evidence
 
+### October 8, 2026 refresh
+
+The installed CLI is now **2.1.295**. The sanitized discovery and isolated structured handshake
+were rerun: discovery returned zero active sessions; two initialize calls again returned empty
+permission and dialog snapshots. No user message or model request was sent. The SDK inspection
+still targets the pinned **0.3.263** package and does not establish the current SDK's behavior.
+The background/print conflict was **not rerun** on the changed binary because that probe is
+restricted to the previously reviewed hash. Consequently the older incompatibility result
+above is historical evidence, not a fresh reproduction against 2.1.295. No supported shared
+native-terminal owner or durable admission route has been established by this refresh, so the
+full adapter remains unimplemented and its release gate remains open.
+
 | Requirement | Evidence | Status for the full adapter |
 | --- | --- | --- |
 | Discover desktop-started live conversations | Installed `agents --json` returned a live interactive row. | Verified inventory, not control ownership. |

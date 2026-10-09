@@ -13,6 +13,12 @@ The owner must already expose Codex's **WebSocket-over-Unix** listener, as produ
 `app-server-control` proxy socket. Its parent directory must be owned by the broker user and
 mode `0700`; the socket must have the same owner and must not be group/world writable.
 
+Codex 0.162.0 publishes the requested listener path as a symlink into its private daemon
+directory. Trusted enrollment must resolve that path after the owner starts, verify the actual
+owner and target, and put the **resolved socket path** in the session reference. The broker
+continues to reject symlinks and checks the target's owner and permissions. Do not change the
+socket permissions or bypass those checks. Re-enroll if the owner or resolved target changes.
+
 The broker only connects. It never launches Codex, modifies an existing desktop launch,
 resumes an unloaded task, selects the most recent task, or opens another process against shared
 Codex state. Existing native desktop/terminal sessions must already belong to that reachable
@@ -102,6 +108,15 @@ cases passed together, with no skips. The installed test binary reports `codex-c
 SHA-256 `c147aa90d34139599711fb568102ceefc6319ca1ac5cb6f4056ca46a1834edd9`.
 The test host used Node `v26.5.0` on macOS ARM64. Minimum-version Node execution and
 Linux native Codex execution were not part of this validation.
+
+Reverified on October 8, 2026 (America/Los_Angeles) with native `codex-cli 0.162.0` and
+Node `v26.5.0` on macOS ARM64: both isolated installed-runtime cases pass using the resolved
+listener target. The original alias fails closed with `codex_owner_unavailable`, as intended.
+This verifies idle execution, busy queue admission, and read-only recovery without resubmission;
+it does not enroll a production owner or exercise a real phone reply. The current generated
+protocol still provides no durable native approval-decision receipt or pending-request list
+that closes the separate approval/arbitration contract. `serverRequest/resolved` alone does
+not identify which decision won and may also indicate that a request was cleared.
 
 The [earlier admission spike](research/codex-app-server/README.md) remains valid: this adapter does
 not create an exactly-once native admission primitive or close the complete three-agent release
