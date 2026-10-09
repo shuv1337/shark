@@ -34,6 +34,7 @@ import { liveActivityRegistrationRoute } from "./routes/live-activity-registrati
 import { macosRoute } from "./routes/macos";
 import { inboxAgentRoute, inboxRoute as projectInboxRoute } from "./routes/project-inbox";
 import { servicesAgentRoute, servicesRoute } from "./routes/services";
+import { sshuvHandoffRoute } from "./routes/sshuv-handoff";
 import { watchRoute } from "./routes/watch";
 import { webPushRoute } from "./routes/web-push";
 
@@ -46,7 +47,11 @@ export const app = new Hono();
 async function accessLog(c: Context, next: Next): Promise<void> {
   const startedAt = Date.now();
   await next();
-  const path = c.req.path.startsWith("/hooks/") ? "/hooks/:token" : c.req.path;
+  const path = c.req.path.startsWith("/hooks/")
+    ? "/hooks/:token"
+    : c.req.path.startsWith("/conversation/v1/")
+      ? "/conversation/v1/:reference"
+      : c.req.path;
   console.log(`${c.req.method} ${path} ${c.res.status} ${Date.now() - startedAt}ms`);
 }
 
@@ -90,6 +95,7 @@ app.get("/oss", requireAuth, (c) => c.redirect("https://github.com/shuv1337/shar
 app.route("/", docsTextRoute);
 // Anonymous by design: web apps verify passes against these public keys.
 app.route("/", appPassJwksRoute);
+app.route("/", sshuvHandoffRoute);
 
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
