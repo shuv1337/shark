@@ -38,6 +38,7 @@ import { newId } from "../lib/id";
 import { deliverInteractionCallbacks } from "../lib/interaction-callbacks";
 import { verifyLiveActivityInteractionCredential } from "../lib/live-activity-interaction";
 import { notificationEventTag } from "../lib/notification-withdrawal";
+import { revokeOAuthGrant } from "../lib/oauth";
 import { resolveProjectForDelivery } from "../lib/projects";
 import { buildInteractionPushMessages, buildPushMessages, sendPushFanout } from "../lib/push";
 import { hashInteractionResponseToken } from "../lib/token";
@@ -309,11 +310,17 @@ export const agentRoute = new Hono<AgentEnv>()
     });
   })
   .post("/auth/revoke", async (c) => {
+    const token = c.get("apiToken");
+    if (token.oauthClientId) {
+      // An MCP client signing itself out also loses its refresh tokens.
+      revokeOAuthGrant(token.userId, token.oauthClientId, "agent");
+      return c.json({ ok: true });
+    }
     await db
       .update(apiToken)
       .set({ revokedAt: new Date() })
-      .where(and(eq(apiToken.id, c.get("apiToken").id), isNull(apiToken.revokedAt)));
-    track({ name: "api_token_revoked", userId: c.get("apiToken").userId, outcome: "agent" });
+      .where(and(eq(apiToken.id, token.id), isNull(apiToken.revokedAt)));
+    track({ name: "api_token_revoked", userId: token.userId, outcome: "agent" });
     return c.json({ ok: true });
   })
   .get("/events", requireScopes("events:read"), async (c) => {

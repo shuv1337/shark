@@ -113,16 +113,27 @@ const schemas: Record<string, JsonSchema> = {
     }),
   }),
   Scope: { type: "string", enum: [...API_TOKEN_SCOPES] },
-  ApiToken: object({
-    id: str,
-    name: str,
-    prefix: { ...str, description: "Identifying prefix only; secrets are never returned." },
-    scopes: arrayOf(ref("Scope")),
-    expiresAt: nullableDateTime,
-    lastUsedAt: nullableDateTime,
-    createdAt: dateTime,
-    revokedAt: nullableDateTime,
-  }),
+  ApiToken: object(
+    {
+      id: str,
+      name: str,
+      prefix: { ...str, description: "Identifying prefix only; secrets are never returned." },
+      scopes: arrayOf(ref("Scope")),
+      expiresAt: nullableDateTime,
+      lastUsedAt: nullableDateTime,
+      createdAt: dateTime,
+      revokedAt: nullableDateTime,
+      kind: {
+        enum: ["token", "oauth"],
+        description: "`oauth` is the grant behind a connected MCP/OAuth client.",
+      },
+      oauthClient: {
+        anyOf: [object({ clientId: str, name: str }), { type: "null" }],
+        description: "The connected client for `kind: oauth`.",
+      },
+    },
+    ["kind", "oauthClient"],
+  ),
   Device: object({
     id: str,
     platform: { enum: ["ios", "web", "macos"] },
@@ -564,7 +575,7 @@ const schemas: Record<string, JsonSchema> = {
   }),
 };
 
-interface Operation {
+export interface AgentOperation {
   summary: string;
   /** Scopes the token must hold; empty means any valid agent token. */
   scopes: ApiTokenScope[];
@@ -580,10 +591,10 @@ const idParam = (name = "id") => ({ name, in: "path" as const, schema: str });
 const idempotencyHeader = { name: "Idempotency-Key", in: "header" as const, schema: str };
 const wrap = (key: string, schema: JsonSchema) => object({ [key]: schema });
 
-const operations: Record<
-  string,
-  Partial<Record<"get" | "post" | "put" | "patch" | "delete", Operation>>
-> = {
+export type AgentMethod = "get" | "post" | "put" | "patch" | "delete";
+
+/** Every `/api/agent/**` operation, keyed by OpenAPI path then method. The MCP tools reuse it. */
+export const agentOperations: Record<string, Partial<Record<AgentMethod, AgentOperation>>> = {
   "/board/asks": {
     put: {
       summary: "Create or revise the calling token's ask",
@@ -688,7 +699,7 @@ const operations: Record<
       scopes: ["tokens:manage"],
       response: wrap("tokens", arrayOf(ref("ApiToken"))),
       description:
-        "There is no create route: an agent token cannot mint tokens, so it can never escalate its own scopes or outlive its revocation. Create tokens from a signed-in session or `sharkctl auth login`.",
+        'Connected MCP/OAuth clients appear as `kind: "oauth"`; revoking one signs that client out (access and refresh tokens). There is no create route: an agent token cannot mint tokens, so it can never escalate its own scopes or outlive its revocation. Create tokens from a signed-in session or `sharkctl auth login`.',
     },
   },
   "/tokens/{id}": {
@@ -1228,7 +1239,7 @@ const errorResponse = (description: string) => ({
 
 function toPathItem(path: string): Record<string, unknown> {
   const item: Record<string, unknown> = {};
-  for (const [method, operation] of Object.entries(operations[path] ?? {})) {
+  for (const [method, operation] of Object.entries(agentOperations[path] ?? {})) {
     if (!operation) continue;
     const status = String(operation.status ?? 200);
     item[method] = {
@@ -1289,7 +1300,7 @@ export const agentOpenApiDocument = {
     },
     schemas,
   },
-  paths: Object.fromEntries(Object.keys(operations).map((path) => [path, toPathItem(path)])),
+  paths: Object.fromEntries(Object.keys(agentOperations).map((path) => [path, toPathItem(path)])),
   "x-hark-scopes": [...API_TOKEN_SCOPES],
 };
 

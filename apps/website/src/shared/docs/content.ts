@@ -81,6 +81,9 @@ export const DOCS_EYEBROW = "Documentation";
 export const DOCS_URL = "https://shark.shuv.dev/docs";
 export const DOCS_MARKDOWN_URL = "https://shark.shuv.dev/docs.md";
 
+/** The remote MCP server. */
+export const MCP_SERVER_URL = "https://shark.shuv.dev/mcp";
+
 export const DOC_CONTENT: DocSection[] = [
   {
     id: "quickstart",
@@ -1505,6 +1508,118 @@ sharkctl apps remove app_...`,
               "Inside the SHark iPhone app the board opens as a registered web app (`sharkctl apps create --name Sharkboard --url https://shark.shuv.dev/board`); sign in once inside it.",
               "Every transition is recorded with who did it: agent token, your session, or the system.",
             ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: "mcp",
+    lead: "SHark is also a remote MCP server, so Claude, OpenCode, Cursor, and other MCP clients can use every agent API operation as a tool. It signs in with OAuth: there is no token to paste.",
+    subsections: [
+      {
+        id: "mcp-connect",
+        blocks: [
+          {
+            kind: "p",
+            text: "Add the server URL to your MCP client. It uses the Streamable HTTP transport.",
+          },
+          { kind: "copy", label: "MCP server URL", value: MCP_SERVER_URL },
+          {
+            kind: "p",
+            text: "OpenCode reads remote servers from `opencode.json`:",
+          },
+          {
+            kind: "code",
+            language: "json",
+            code: `{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "shark": { "type": "remote", "url": "${MCP_SERVER_URL}" }
+  }
+}`,
+          },
+          {
+            kind: "p",
+            text: "Claude Code adds it from the terminal, and Cursor reads `~/.cursor/mcp.json`:",
+          },
+          {
+            kind: "code",
+            language: "bash",
+            code: `claude mcp add --transport http shark ${MCP_SERVER_URL}`,
+          },
+          {
+            kind: "code",
+            language: "json",
+            code: `{
+  "mcpServers": {
+    "shark": { "url": "${MCP_SERVER_URL}" }
+  }
+}`,
+          },
+        ],
+      },
+      {
+        id: "mcp-oauth",
+        blocks: [
+          {
+            kind: "steps",
+            items: [
+              "Your client calls the server, gets `401` with a `resource_metadata` pointer, and registers itself with SHark (dynamic client registration).",
+              "Your browser opens SHark's consent page. Sign in with Apple if needed; the email allowlist still applies.",
+              "Review what the client asks for, untick anything you do not want, and approve. SHark remembers your answer for that client and set of permissions.",
+              "The client receives a one-hour access token for `/mcp`, plus a refresh token if you left Stay connected ticked.",
+            ],
+          },
+          {
+            kind: "p",
+            text: "OAuth scopes are the agent API scopes one to one, except the Apple Watch and Mac companion scopes, plus `offline_access` for Stay connected. A client that asks for no scope requests everything except `tokens:manage`. PKCE (S256) is required, and tokens are only valid for the `/mcp` resource.",
+          },
+          {
+            kind: "p",
+            text: 'Connected clients are listed on the dashboard; Disconnect revokes their access and refresh tokens at once. With `tokens:manage`, agents see them as `kind: "oauth"` entries from `GET /api/agent/tokens` and can revoke them too.',
+          },
+          {
+            kind: "table",
+            variant: "route",
+            caption: "Discovery documents",
+            rows: [
+              {
+                method: "GET",
+                path: "/.well-known/oauth-protected-resource/mcp",
+                detail: "Protected resource metadata (RFC 9728) for the MCP server.",
+              },
+              {
+                method: "GET",
+                path: "/.well-known/oauth-authorization-server",
+                detail:
+                  "Authorization server metadata (RFC 8414): authorize, token, and registration endpoints.",
+              },
+            ],
+          },
+        ],
+      },
+      {
+        id: "mcp-tools",
+        blocks: [
+          {
+            kind: "p",
+            text: "There is one tool per agent API route, and each runs through that route's handler, so validation, scopes, and limits are identical. A tool the connection was not granted a scope for returns an error naming the missing scope.",
+          },
+          {
+            kind: "bullets",
+            items: [
+              "`notify` sends a push; `notification_withdraw` removes it.",
+              "`ask` sends an approval, yes/no, or reply prompt and waits up to ten minutes for your answer, sending progress updates while it waits. `interactions_create`, `interactions_wait`, `interactions_get`, `interactions_list`, and `interactions_cancel` split that up.",
+              "`activities_start`, `activities_update`, `activities_end`, `activities_get`, and `activities_list` drive Live Activities.",
+              "`services_*`, `devices_*`, `events_list`, `activity_feed`, `inbox_*`, `apps_*`, `billing_get`, and `tokens_*` manage the account. `board_*` raises asks, tracks work, and leaves notes on the board.",
+              "`teams_*`, `oncall_*`, and `pages_*` manage teams, rotations, and pages.",
+              "`auth_status` shows the connection's scopes; `auth_revoke` disconnects the client.",
+            ],
+          },
+          {
+            kind: "note",
+            text: "The human-only actions above are never tools: answering prompts or board asks, acknowledging or escalating pages, accepting invites, approving app sign-in, changing sharing or issuing passes, and creating tokens. Webhook URLs and join links in tool results are shown once and flagged as secrets.",
           },
         ],
       },

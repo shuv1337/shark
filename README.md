@@ -165,6 +165,35 @@ this reviewed operator checkout. `sharkctl` is the fork's canonical executable. 
 environment variables, token prefixes, and local `hark` config paths remain protocol-compatibility
 identifiers so existing credentials and integrations continue to work.
 
+## MCP
+
+SHark runs a remote [MCP](https://modelcontextprotocol.io) server at `https://shark.shuv.dev/mcp`
+(Streamable HTTP). Add the URL to your client; it signs in with OAuth, so there is no token to
+paste.
+
+```sh
+claude mcp add --transport http shark https://shark.shuv.dev/mcp
+```
+
+OpenCode uses `{ "mcp": { "shark": { "type": "remote", "url": "https://shark.shuv.dev/mcp" } } }`
+and Cursor uses `{ "mcpServers": { "shark": { "url": "https://shark.shuv.dev/mcp" } } }`.
+
+The first tool call opens a browser: sign in with Apple (the email allowlist still applies),
+review the permissions the client asks for, untick any you do not want, and approve. This is OAuth
+2.1 per the MCP authorization spec: anonymous discovery documents at
+`/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-authorization-server`, dynamic
+registration for public clients, PKCE (S256), tokens bound to the `/mcp` resource, one-hour access
+tokens, and refresh tokens when you allow "Stay connected". Registering a client grants nothing
+without consent. Connected clients are listed on the dashboard, where **Disconnect** revokes them
+immediately; removing an account from the allowlist also stops its clients on the next call.
+
+OAuth scopes are the agent token scopes one to one, plus `offline_access`. A client that requests
+no scope gets everything except `tokens:manage`. There is one tool per agent API operation,
+including the board, and each runs through the same handler, validation, and scope check as its
+`/api/agent` route. Human-only actions are never tools: answering prompts or board asks,
+acknowledging or escalating pages, accepting team invites, approving app sign-in, and creating
+tokens.
+
 ## License
 
 SHark preserves Hark's source-available

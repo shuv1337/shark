@@ -13,6 +13,7 @@ import { BrandWordmark } from "../components/BrandWordmark";
 import { useConfirm } from "../components/ConfirmDialog";
 import { CopyField } from "../components/CopyField";
 import { InboxPanel } from "../components/InboxPanel";
+import { McpClientsSection } from "../components/McpClientsSection";
 import { TeamsSection } from "../components/TeamsSection";
 import { api, isMissingRoute } from "../lib/api";
 import { signOut, useSession } from "../lib/auth";
@@ -306,6 +307,7 @@ export function Dashboard() {
         <BrowserNotifications onChanged={() => void refresh()} />
 
         <Devices devices={devices} onRemoved={() => void refresh()} />
+        <McpClientsSection />
 
         {teams !== "unsupported" ? (
           <TeamsSection

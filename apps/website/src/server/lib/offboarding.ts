@@ -10,6 +10,9 @@ import {
   interaction,
   liveActivity,
   liveActivityDelivery,
+  oauthAccessToken,
+  oauthConsent,
+  oauthRefreshToken,
   oncallPageRecipient,
   service,
   session,
@@ -26,6 +29,8 @@ export interface OffboardingResult {
   interactions: number;
   liveActivities: number;
   pageCredentials: number;
+  oauthTokens: number;
+  oauthConsents: number;
 }
 
 function revokedCredential(): string {
@@ -142,6 +147,21 @@ export function offboardPersistedAccess(userId: string): OffboardingResult {
       .run();
     tx.delete(appleNativeGrant).where(eq(appleNativeGrant.userId, userId)).run();
 
+    // MCP grants: without these, re-admission would revive old access and
+    // refresh tokens and skip consent, recreating a fresh grant token row.
+    const oauthAccess = tx
+      .delete(oauthAccessToken)
+      .where(eq(oauthAccessToken.userId, userId))
+      .run().changes;
+    const oauthRefresh = tx
+      .delete(oauthRefreshToken)
+      .where(eq(oauthRefreshToken.userId, userId))
+      .run().changes;
+    const oauthConsents = tx
+      .delete(oauthConsent)
+      .where(eq(oauthConsent.userId, userId))
+      .run().changes;
+
     return {
       sessions: deletedSessions.length,
       apiTokens: revokedTokens.length,
@@ -150,6 +170,8 @@ export function offboardPersistedAccess(userId: string): OffboardingResult {
       interactions: disabledInteractions.length,
       liveActivities: activityIds.length,
       pageCredentials: pageCredentials.length,
+      oauthTokens: oauthAccess + oauthRefresh,
+      oauthConsents,
     };
   });
 }

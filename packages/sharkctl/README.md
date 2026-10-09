@@ -49,6 +49,10 @@ update token exits 0 with `updateTokenPending: true` and message `MissingUpdateT
 stored the transition. A stored end is replayed when that token arrives; a stored update is not
 pushed later by itself. See Activity below.
 
+Prefer MCP? The same operations, including the board, are available as tools from SHark's remote
+MCP server at `https://shark.shuv.dev/mcp`, which signs in with OAuth instead of a token
+([setup](https://shark.shuv.dev/docs#mcp)).
+
 The upstream `harkctl` package is not the SHark fork. Existing SHark credentials remain usable
 because `sharkctl` deliberately reads the same protected `hark` config file during the rename.
 

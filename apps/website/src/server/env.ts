@@ -59,10 +59,17 @@ export const envSchema = z.object({
   AUTUMN_API_KEY: optionalString,
   /**
    * Header carrying the real client IP, set (and overwritten) by a trusted edge.
-   * Leave unset for exe.dev v1 because its appended X-Forwarded-For chain is not
-   * safe to trust as the first value.
+   * Leave unset for exe.dev, which appends to X-Forwarded-For instead; use
+   * TRUSTED_FORWARDED_FOR_HOPS there.
    */
   TRUSTED_CLIENT_IP_HEADER: optionalString,
+  /**
+   * Trusted proxies in front of the app that each append the peer they saw to
+   * X-Forwarded-For; the client IP is that many entries from the right. exe.dev
+   * is one hop. 0 (the default) trusts no forwarded address. Ignored when
+   * TRUSTED_CLIENT_IP_HEADER is set.
+   */
+  TRUSTED_FORWARDED_FOR_HOPS: z.coerce.number().int().min(0).max(5).default(0),
   SERVICE_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(300),
   ACCOUNT_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(1500),
 });

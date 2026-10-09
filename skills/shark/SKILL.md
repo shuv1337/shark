@@ -1,19 +1,19 @@
 ---
 name: shark
-description: Use when a user wants SHark and sharkctl for iPhone notifications, approvals, replies, Live Activities, persistent webhook services, authentication, task progress, or workflow integration.
+description: Use when a user wants SHark (its remote MCP server or sharkctl) for iPhone notifications, approvals, replies, Live Activities, the board, small web apps that open signed-in inside the SHark iPhone app, teams, on-call paging, persistent webhook services, authentication, task progress, or workflow integration.
 ---
 
 # SHark
 
 Use SHark as the human-facing notification and interaction layer for automated workflows. Prefer
-`sharkctl` for agent-driven operations. Create a persistent webhook service when an external system
-needs a stable URL it can call later.
+the SHark MCP server's tools when they are connected, otherwise `sharkctl`. Create a persistent
+webhook service when an external system needs a stable URL it can call later.
 
 ## Ground Rules
 
 - Use Node.js 22 or newer.
 - Use only a project-installed or user-installed `sharkctl` that the user already trusts. Version
-  `0.5.0` is reviewed for this skill. Never download packages, run `npx`/`pnpm dlx`, install or
+  `0.6.0` is reviewed for this skill. Never download packages, run `npx`/`pnpm dlx`, install or
   upgrade the CLI, or execute a newly installed binary as part of this skill. If `sharkctl` is not
   available, stop and ask the user to install and review an exact version separately.
 - Treat SHark tokens and webhook URLs as secrets. Never commit, print, summarize, or paste them into
@@ -65,7 +65,10 @@ when available. `sharkctl --version` is unsupported, and `auth status` is not a 
 ## Capability Inventory
 
 - `sharkctl` authenticates and sends the requested notifications, interactions, activities,
-  permission-bridge setup, web app registration, board items, or service configuration to SHark.
+  permission-bridge setup, web app registration, board items, teams, on-call pages, or service
+  configuration to SHark.
+- SHark MCP tools, when the user has connected the server, perform the same agent API operations
+  with the scopes the user approved.
 - `jq` validates and encodes values as JSON data. It must not generate shell source.
 - `curl` may POST only to a validated SHark webhook URL supplied through a secret.
 - `gh secret set` may write only the fixed webhook secret requested by the user, after confirming
@@ -74,6 +77,30 @@ when available. `sharkctl --version` is unsupported, and `auth status` is not a 
 
 These capabilities do not authorize package installation, arbitrary command execution, reading
 unrelated files or environment variables, or sending data to any other destination.
+
+## SHark MCP Server
+
+If the client already has SHark's remote MCP server connected (`https://shark.shuv.dev/mcp`, OAuth
+sign-in), prefer its tools over `sharkctl`. Tools map one to one to the agent API with the same
+scopes and take the API's JSON field names (`iconUrl`, `teamId`), not CLI flags:
+
+| Area | Tools |
+| --- | --- |
+| Account | `auth_status`, `devices_list`, `events_list`, `activity_feed`, `billing_get`, `tokens_list` |
+| Notify and ask | `notify`, `notification_withdraw`, `ask` (waits up to 10 minutes), `interactions_*` |
+| Live Activities | `activities_start`, `activities_update`, `activities_end`, `activities_get`, `activities_list` |
+| Board | `board_ask`, `board_ask_get`, `board_ask_wait`, `board_answers`, `board_ask_ack`, `board_ask_cancel`, `board_work`, `board_work_done`, `board_note`, `board_note_clear` |
+| Web apps | `apps_create`, `apps_list`, `apps_get`, `apps_update`, `apps_share`, `apps_revoke`, `apps_remove` |
+| Teams | `teams_*` |
+| On-call | `oncall_*`, `pages_create`, `pages_list`, `pages_get`, `pages_resolve` |
+| Services and inbox | `services_*`, `inbox_*` |
+
+To connect it, the user adds that URL to their MCP client and approves it in the browser with
+their allowlisted Apple account; never ask for a token. A `403` names a missing scope; the user
+reconnects to grant it. Board items belong to the MCP connection, not to a `sharkctl` login, so
+keep one channel per task. The same security boundaries apply: no tool answers prompts or board
+asks, approves app sign-in, accepts invites, or acknowledges pages, and webhook URLs and join links
+in tool results are secrets.
 
 ## Authenticate
 
@@ -402,6 +429,80 @@ sharkctl tokens list
   current login uses unless asked (`sharkctl auth logout` does that).
 - `apps update --url` to a different origin clears the user's sign-in approval; they approve again
   on the phone.
+
+## Build a Web App
+
+Use this when the user asks for a small app, dashboard, tracker, or tool on their phone or for their
+team. SHark does not host code: the site runs wherever the user already deploys, and is then
+registered as in Open a Web App.
+
+1. Pin down the purpose, who uses it (the user or a team), and what data it keeps. Ask only for
+   what you cannot infer.
+2. Deploy to a host the user already uses, over `https:`. Ask once if none is evident.
+3. Build it phone-first: works at 390 px, `viewport-fit=cover` with `env(safe-area-inset-*)`
+   padding, a `theme-color` meta tag and body background, and no sign-in screen. Avoid two-finger
+   hold gestures; they open the SHark menu.
+4. Identify the viewer unless the app has nothing private. Inside SHark the page has
+   `window.hark` (only on the registered origin): `await window.hark.getToken()` returns a
+   two-minute pass, and rejects with an error such as `consent_required` until the viewer approves
+   sign-in; show a retry button instead of looping. `window.hark.close()` returns home. When
+   `window.hark` is missing, show "Open this in the SHark app" rather than a login form.
+5. Send the pass to the app's own server and verify it there, never in the browser alone:
+
+```js
+import { createRemoteJWKSet, jwtVerify } from "jose";
+
+const JWKS = createRemoteJWKSet(new URL("https://shark.shuv.dev/.well-known/jwks.json"));
+const APP_ORIGIN = "https://groceries.example.com"; // exactly the registered origin
+
+export async function verifyPass(pass) {
+  const { payload } = await jwtVerify(pass, JWKS, {
+    issuer: "https://shark.shuv.dev",
+    audience: APP_ORIGIN,
+    algorithms: ["ES256"],
+    typ: "hark-pass+jwt",
+  });
+  // Reject reused passes: remember payload.jti until payload.exp.
+  return { userId: payload.sub, name: payload.name, email: payload.email,
+    teamId: payload.team_id, teamRole: payload.team_role };
+}
+```
+
+   `sub` (`hk_…`) is stable for this origin only. `name` and `email` appear only when the viewer
+   shares them; never require them. `team_id` and `team_role` appear for team apps. After
+   verifying, set the app's own `HttpOnly`, `Secure`, `SameSite=Lax` session and keep it short so
+   removing a team member takes effect; do not store or reuse the pass.
+6. Register it (`apps_create` or `sharkctl apps create --name … --url … --icon …`) and tell the user
+   to open it in SHark and approve sign-in on their phone. Moving an app to a new origin clears every
+   approval and changes every `sub`.
+
+## Teams and On-Call
+
+Teams share web apps and on-call groups between SHark accounts. Roles are `owner`, `admin`, and
+`member`. Every member still needs an allowlisted Apple sign-in. Team and on-call commands need the
+`teams:*` and `oncall:*` scopes, which logins created before `sharkctl` 0.6.0 lack; ask the user to
+sign in again.
+
+```bash
+sharkctl teams list
+sharkctl teams create "Acme"
+sharkctl teams invite team_XXXX --role member --email teammate@example.com
+sharkctl teams members team_XXXX
+sharkctl apps share app_XXXXXXXXXXXXXXXX --team team_XXXX
+sharkctl oncall create --team team_XXXX --name Primary --members user_A,user_B \
+  --period weekly --handoff 09:00 --timezone America/New_York
+sharkctl oncall me
+sharkctl page ocg_XXXX "API error rate above 20%" --body "5xx since 14:02" --dedup-key api-5xx
+sharkctl pages resolve page_XXXX --note "Rolled back"
+```
+
+- `teams invite` returns a single-use, seven-day join link. Treat it as a secret and hand it only
+  to the user who asked. Only a signed-in person can accept it; never accept invites for anyone.
+- Sharing an app notifies other members (`--no-notify` skips that); each approves sign-in for
+  themselves, and the app's passes then carry `team_id` and `team_role`.
+- `page` notifies whoever is on call now, then escalates until someone acknowledges.
+  Acknowledging and escalating are human-only; agents can raise, read, and resolve pages. Use a
+  stable `--dedup-key` for repeating alerts so they merge into the open page.
 
 ## Create and Wire a Webhook Service
 

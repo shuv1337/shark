@@ -19,7 +19,21 @@ The production environment must set `NODE_ENV=production`, `DEPLOYMENT_MODE=self
 Apple allowlist, a unique Better Auth secret, complete Apple and APNs credential groups, an Expo
 server access token, a complete VAPID key/subject group, production APNs mode, and the frozen SHark
 bundle identifiers. Startup fails closed when the matrix is incomplete.
-`TRUSTED_CLIENT_IP_HEADER` remains unset for exe.dev v1.
+
+Client IPs key the per-client rate limits (Better Auth, including anonymous OAuth client
+registration at `/api/auth/oauth2/register`, device authorization, and invite previews). Cloudflare
+is DNS-only, so `CF-Connecting-IP` is client-controlled and must not be trusted. exe.dev appends the
+peer it saw to `X-Forwarded-For`, so production sets `TRUSTED_FORWARDED_FOR_HOPS=1` and leaves
+`TRUSTED_CLIENT_IP_HEADER` unset; the app then trusts only the rightmost entry. The reviewed
+`compose.yaml` defaults the value to `1` and `shark-materialize-secrets` writes it. Both are
+operator-installed copies: until `/etc/shark/compose.yaml` and
+`/usr/local/sbin/shark-materialize-secrets` are reinstalled from the reviewed revision, the running
+service keeps the previous behavior (Better Auth trusts only a single-entry `X-Forwarded-For`, so
+callers that forge one share a bucket, and the app's own per-client limits stay global). Never set
+the value above the real number of appending proxies, or a forged entry becomes trusted.
+
+The server also sweeps OAuth storage hourly: expired access and refresh tokens, and anonymous
+registered clients older than a day that never gained a consent, token, or grant.
 
 ## Admission and identity
 
@@ -40,7 +54,10 @@ docker compose --env-file /home/exedev/shark/.env --file /etc/shark/compose.yaml
   shark node dist/operator/offboard-user.js
 ```
 
-The command revokes Apple grants and persisted access but preserves account data. Use the separate
+The command revokes Apple grants and persisted access (sessions, API tokens, webhooks, devices,
+interaction and on-call page credentials, and MCP OAuth access tokens, refresh tokens, and
+consents) but preserves account data. Re-admitting the address later requires new sign-ins and new
+MCP consent. Use the separate
 authenticated account-deletion flow only for permanent deletion.
 
 ## Backup and restore

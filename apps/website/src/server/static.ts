@@ -35,10 +35,10 @@ export function mountPrivateStaticRoutes(
     app.get("/board/ask/:id", requireAuth, serveStatic({ path: `${staticRoot}/${boardFile}` }));
   }
 
-  // Client-routed team pages and invite links render the dashboard shell.
+  // Client-routed team pages, invite links, and OAuth consent render the dashboard shell.
   const dashboardFile = "dashboard/index.html";
   if (existsSync(resolve(clientDir, dashboardFile))) {
-    for (const path of ["/dashboard/teams/:teamId", "/join/:code"]) {
+    for (const path of ["/dashboard/teams/:teamId", "/join/:code", "/oauth/consent"]) {
       app.get(path, requireAuth, serveStatic({ path: `${staticRoot}/${dashboardFile}` }));
     }
   }

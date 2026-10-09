@@ -243,10 +243,19 @@ export const apiToken = sqliteTable(
     lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+    /**
+     * Set for the grant behind a connected OAuth (MCP) client. Such rows have
+     * no usable secret: the client authenticates with OAuth access tokens and
+     * this row carries the stable identity agent routes scope ownership to.
+     */
+    oauthClientId: text("oauth_client_id"),
   },
   (table) => [
     index("api_token_user_created_at_idx").on(table.userId, table.createdAt),
     index("api_token_prefix_idx").on(table.prefix),
+    uniqueIndex("api_token_active_oauth_grant_unique")
+      .on(table.userId, table.oauthClientId)
+      .where(sql`"oauth_client_id" is not null and "revoked_at" is null`),
   ],
 );
 
@@ -531,6 +540,8 @@ export const oncallPageRecipient = sqliteTable(
     /** 0 for the initial notification, then the escalation step number. */
     step: integer("step").notNull(),
     responseTokenHash: text("response_token_hash").notNull(),
+    /** Set on the credential's first successful use; it is single-use. */
+    responseTokenUsedAt: integer("response_token_used_at", { mode: "timestamp_ms" }),
     acceptedCount: integer("accepted_count").notNull().default(0),
     notifiedAt: integer("notified_at", { mode: "timestamp_ms" }).notNull(),
   },
@@ -1136,5 +1147,120 @@ export const boardNote = sqliteTable(
   (table) => [
     uniqueIndex("board_note_user_key_unique").on(table.userId, table.noteKey),
     index("board_note_user_idx").on(table.userId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// OAuth provider (Better Auth `@better-auth/oauth-provider`) for the MCP server
+// ---------------------------------------------------------------------------
+
+/** Registered OAuth clients, mostly MCP clients from dynamic registration. */
+export const oauthClient = sqliteTable(
+  "oauth_client",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id").notNull().unique(),
+    clientSecret: text("client_secret"),
+    disabled: integer("disabled", { mode: "boolean" }).default(false),
+    skipConsent: integer("skip_consent", { mode: "boolean" }),
+    enableEndSession: integer("enable_end_session", { mode: "boolean" }),
+    subjectType: text("subject_type"),
+    /** JSON string array (the adapter serializes arrays on SQLite). */
+    scopes: text("scopes"),
+    userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
+    name: text("name"),
+    uri: text("uri"),
+    icon: text("icon"),
+    contacts: text("contacts"),
+    tos: text("tos"),
+    policy: text("policy"),
+    softwareId: text("software_id"),
+    softwareVersion: text("software_version"),
+    softwareStatement: text("software_statement"),
+    redirectUris: text("redirect_uris").notNull(),
+    postLogoutRedirectUris: text("post_logout_redirect_uris"),
+    tokenEndpointAuthMethod: text("token_endpoint_auth_method"),
+    grantTypes: text("grant_types"),
+    responseTypes: text("response_types"),
+    public: integer("public", { mode: "boolean" }),
+    type: text("type"),
+    requirePKCE: integer("require_pkce", { mode: "boolean" }),
+    referenceId: text("reference_id"),
+    metadata: text("metadata"),
+  },
+  (table) => [index("oauth_client_user_idx").on(table.userId)],
+);
+
+/** Hashed opaque refresh tokens (`offline_access`); rotated on every use. */
+export const oauthRefreshToken = sqliteTable(
+  "oauth_refresh_token",
+  {
+    id: text("id").primaryKey(),
+    token: text("token").notNull().unique(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => oauthClient.clientId, { onDelete: "cascade" }),
+    sessionId: text("session_id").references(() => session.id, { onDelete: "set null" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    referenceId: text("reference_id"),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }),
+    revoked: integer("revoked", { mode: "timestamp_ms" }),
+    authTime: integer("auth_time", { mode: "timestamp_ms" }),
+    scopes: text("scopes").notNull(),
+  },
+  (table) => [
+    index("oauth_refresh_token_client_idx").on(table.clientId),
+    index("oauth_refresh_token_session_idx").on(table.sessionId),
+    index("oauth_refresh_token_user_idx").on(table.userId),
+  ],
+);
+
+/** Hashed opaque access tokens. `/mcp` looks them up on every request. */
+export const oauthAccessToken = sqliteTable(
+  "oauth_access_token",
+  {
+    id: text("id").primaryKey(),
+    token: text("token").unique(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => oauthClient.clientId, { onDelete: "cascade" }),
+    sessionId: text("session_id").references(() => session.id, { onDelete: "set null" }),
+    userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+    referenceId: text("reference_id"),
+    refreshId: text("refresh_id").references(() => oauthRefreshToken.id, { onDelete: "cascade" }),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }),
+    scopes: text("scopes").notNull(),
+  },
+  (table) => [
+    index("oauth_access_token_client_idx").on(table.clientId),
+    index("oauth_access_token_session_idx").on(table.sessionId),
+    index("oauth_access_token_user_idx").on(table.userId),
+    index("oauth_access_token_refresh_idx").on(table.refreshId),
+  ],
+);
+
+/** Remembered consent per user and client; the scopes granted last time. */
+export const oauthConsent = sqliteTable(
+  "oauth_consent",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => oauthClient.clientId, { onDelete: "cascade" }),
+    userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+    referenceId: text("reference_id"),
+    scopes: text("scopes").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("oauth_consent_client_idx").on(table.clientId),
+    index("oauth_consent_user_idx").on(table.userId),
   ],
 );

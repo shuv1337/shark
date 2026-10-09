@@ -1,14 +1,16 @@
+import { MCP_PATH } from "@hark/contracts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { auth } from "./auth";
 import { env } from "./env";
 import { accessLog } from "./lib/access-log";
+import { withTrustedClientIp } from "./lib/client-ip";
 import { databaseIsReady } from "./lib/readiness";
 import { safeReturnPath } from "./lib/return-path";
 import { beginAppleWebSignIn } from "./lib/web-sign-in";
 import { verifyFirstPartyPass, webViewEntryRefusal } from "./lib/web-view-session";
-import { requireAuth } from "./middleware";
+import { INTERNAL_AGENT_TOKEN, requireAuth } from "./middleware";
 import { activitiesAgentRoute, activitiesSessionRoute } from "./routes/activities";
 import { activityFeedAgentRoute, activityFeedRoute } from "./routes/activity-feed";
 import { activityHooksRoute } from "./routes/activity-hooks";
@@ -33,6 +35,8 @@ import {
 } from "./routes/interactions";
 import { liveActivityRegistrationRoute } from "./routes/live-activity-registration";
 import { macosRoute } from "./routes/macos";
+import { createMcpRoute, MCP_MAX_BODY_BYTES } from "./routes/mcp";
+import { oauthClientsRoute, oauthWellKnownRoute } from "./routes/oauth";
 import {
   oncallAgentRoute,
   oncallSessionRoute,
@@ -50,7 +54,10 @@ import { webPushRoute } from "./routes/web-push";
 export const app = new Hono();
 
 // Bounds memory use for unauthenticated POST bodies; accepted payloads are far smaller.
-app.use("*", bodyLimit({ maxSize: 64 * 1024 }));
+// MCP tool calls wrap agent payloads in JSON-RPC, so /mcp gets more headroom.
+const defaultBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
+const mcpBodyLimit = bodyLimit({ maxSize: MCP_MAX_BODY_BYTES });
+app.use("*", (c, next) => (c.req.path === MCP_PATH ? mcpBodyLimit : defaultBodyLimit)(c, next));
 
 if (process.env.NODE_ENV !== "test") {
   app.use("*", accessLog);
@@ -91,7 +98,15 @@ app.route("/", docsTextRoute);
 app.route("/", appPassJwksRoute);
 app.route("/", sshuvHandoffRoute);
 
-app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
+app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(withTrustedClientIp(c.req.raw)));
+// OAuth discovery for the MCP server, and the server itself. Tool calls are
+// dispatched through the agent routes below as the caller's grant token.
+app.route("/", oauthWellKnownRoute);
+app.route(
+  "/",
+  createMcpRoute(async (request, token) => app.fetch(request, { [INTERNAL_AGENT_TOKEN]: token })),
+);
+app.route("/api/oauth", oauthClientsRoute);
 
 app.route("/api/services", servicesRoute);
 app.route("/api/api-tokens", apiTokensRoute);
@@ -136,7 +151,11 @@ app.route("/hooks", activityHooksRoute);
 app.route("/hooks", hooksRoute);
 
 app.notFound((c) => {
-  if (c.req.path.startsWith("/api") || c.req.path.startsWith("/hooks")) {
+  if (
+    c.req.path.startsWith("/api") ||
+    c.req.path.startsWith("/hooks") ||
+    c.req.path.startsWith("/.well-known/oauth")
+  ) {
     return c.json({ error: "Not found" }, 404);
   }
   return c.text("Not found", 404);

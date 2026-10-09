@@ -49,6 +49,9 @@ export default defineConfig({
     proxy: {
       "/api": API_URL,
       "/hooks": API_URL,
+      // Remote MCP server and its OAuth discovery documents.
+      "/mcp": API_URL,
+      "^/\\.well-known/oauth-": API_URL,
     },
   },
 });
