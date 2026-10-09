@@ -161,6 +161,11 @@ export function buildBridgeScript(origin: string): string {
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", reportTheme);
   else reportTheme();
+  window.addEventListener("load", reportTheme);
+  // Pages restyle live on an appearance change without reloading, so the strip follows.
+  var scheme = window.matchMedia("(prefers-color-scheme: dark)");
+  if (scheme.addEventListener) scheme.addEventListener("change", reportTheme);
+  else if (scheme.addListener) scheme.addListener(reportTheme);
 })();
 true;`;
 }
