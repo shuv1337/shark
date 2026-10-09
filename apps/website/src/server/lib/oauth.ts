@@ -9,7 +9,7 @@ import {
   OAUTH_SCOPES,
   type OAuthClientGrantDto,
 } from "@hark/contracts";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lt, lte, notExists } from "drizzle-orm";
 import { db } from "../db";
 import {
   apiToken,
@@ -416,6 +416,83 @@ export async function listOAuthGrants(userId: string): Promise<OAuthClientGrantD
       };
     })
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+/** Anonymous registrations nobody connected are kept this long, then swept. */
+export const UNUSED_OAUTH_CLIENT_TTL_MS = 86_400_000;
+
+export interface OAuthSweepResult {
+  accessTokens: number;
+  refreshTokens: number;
+  clients: number;
+}
+
+/**
+ * Deletes expired access and refresh tokens, and anonymous (dynamically
+ * registered, unowned) clients older than a day that never gained a consent,
+ * token, or grant row. Revoked refresh tokens stay until they expire so reuse
+ * is still detected.
+ */
+export function sweepOAuthStorage(now = new Date()): OAuthSweepResult {
+  return db.transaction((tx) => {
+    const accessTokens = tx
+      .delete(oauthAccessToken)
+      .where(and(isNotNull(oauthAccessToken.expiresAt), lte(oauthAccessToken.expiresAt, now)))
+      .run().changes;
+    const refreshTokens = tx
+      .delete(oauthRefreshToken)
+      .where(and(isNotNull(oauthRefreshToken.expiresAt), lte(oauthRefreshToken.expiresAt, now)))
+      .run().changes;
+    const clients = tx
+      .delete(oauthClient)
+      .where(
+        and(
+          isNull(oauthClient.userId),
+          isNotNull(oauthClient.createdAt),
+          lt(oauthClient.createdAt, new Date(now.getTime() - UNUSED_OAUTH_CLIENT_TTL_MS)),
+          notExists(
+            tx
+              .select({ id: oauthConsent.id })
+              .from(oauthConsent)
+              .where(eq(oauthConsent.clientId, oauthClient.clientId)),
+          ),
+          notExists(
+            tx
+              .select({ id: oauthRefreshToken.id })
+              .from(oauthRefreshToken)
+              .where(eq(oauthRefreshToken.clientId, oauthClient.clientId)),
+          ),
+          notExists(
+            tx
+              .select({ id: oauthAccessToken.id })
+              .from(oauthAccessToken)
+              .where(eq(oauthAccessToken.clientId, oauthClient.clientId)),
+          ),
+          notExists(
+            tx
+              .select({ id: apiToken.id })
+              .from(apiToken)
+              .where(eq(apiToken.oauthClientId, oauthClient.clientId)),
+          ),
+        ),
+      )
+      .run().changes;
+    return { accessTokens, refreshTokens, clients };
+  });
+}
+
+export function startOAuthSweeper(): () => void {
+  const sweep = () => {
+    try {
+      sweepOAuthStorage();
+    } catch (error) {
+      console.error("[oauth] Sweep failed", error);
+    }
+  };
+  sweep();
+  const timer = setInterval(sweep, 3_600_000);
+  timer.unref();
+  return () => clearInterval(timer);
 }
 
 /** Client display names for `kind: "oauth"` token rows. */
