@@ -90,13 +90,50 @@ describe("operator offboarding", () => {
       createdAt: now,
       lastSeenAt: now,
     });
+    await db
+      .insert(schema.team)
+      .values({ id: "team_offboard", name: "Ops", createdAt: now, updatedAt: now });
+    await db.insert(schema.oncallGroup).values({
+      id: "ocg_offboard",
+      teamId: "team_offboard",
+      name: "Primary",
+      memberIds: ["usr_offboard"],
+      period: "daily",
+      handoffAt: "09:00",
+      timezone: "UTC",
+      startsAt: now,
+      escalation: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.oncallPage).values({
+      id: "page_offboard",
+      groupId: "ocg_offboard",
+      teamId: "team_offboard",
+      title: "Synthetic page",
+      status: "triggered",
+      sourceName: "Test",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.oncallPageRecipient).values({
+      pageId: "page_offboard",
+      userId: "usr_offboard",
+      step: 0,
+      responseTokenHash: "page-credential-hash",
+      notifiedAt: now,
+    });
 
     expect(offboardPersistedAccess("usr_offboard")).toMatchObject({
       sessions: 1,
       apiTokens: 1,
       devices: 1,
       services: 1,
+      pageCredentials: 1,
     });
+    const [recipient] = await db.select().from(schema.oncallPageRecipient);
+    expect(recipient?.responseTokenHash).not.toBe("page-credential-hash");
+    expect(recipient?.responseTokenHash).toMatch(/^offboarded_/);
 
     expect(await db.select().from(schema.user)).toHaveLength(1);
     expect(await db.select().from(schema.session)).toHaveLength(0);

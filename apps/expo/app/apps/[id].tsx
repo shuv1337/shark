@@ -1,10 +1,11 @@
-import type { AppDto } from "@hark/contracts";
+import type { AppDto, TeamDto } from "@hark/contracts";
 import * as Device from "expo-device";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { SymbolView } from "expo-symbols";
 import { useEffect, useState } from "react";
 import {
+  ActionSheetIOS,
   ActivityIndicator,
   Alert,
   Pressable,
@@ -17,7 +18,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { AppIcon } from "../../src/components/app-icon";
 import { api } from "../../src/lib/api";
-import { previewApps } from "../../src/lib/inbox-preview";
+import { useSession } from "../../src/lib/auth";
+import { previewApps, previewTeams, previewViewer } from "../../src/lib/inbox-preview";
 import { colors, fonts, tightTracking } from "../../src/lib/theme";
 import { cacheApps, cachedApp } from "../../src/lib/web-apps";
 
@@ -42,6 +44,22 @@ export default function AppDetailScreen() {
   const [app, setApp] = useState<AppDto | null>(() => cachedApp(String(id)) ?? null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [teams, setTeams] = useState<TeamDto[]>([]);
+  const [moving, setMoving] = useState(false);
+  const { data: session } = useSession();
+  const viewerName = simulatorPreview ? previewViewer.name : session?.user.name;
+
+  useEffect(() => {
+    if (simulatorPreview) {
+      setTeams(previewTeams);
+      return;
+    }
+    // Older servers 404: sharing with a team simply isn't offered.
+    void api
+      .listTeams()
+      .then((result) => setTeams(result.teams))
+      .catch(() => setTeams([]));
+  }, [simulatorPreview]);
 
   useEffect(() => {
     if (simulatorPreview) {
@@ -115,11 +133,77 @@ export default function AppDetailScreen() {
     );
   };
 
+  const moveTo = (team: TeamDto | null) => {
+    if (!app || moving) return;
+    const run = () => {
+      if (simulatorPreview) {
+        const moved: AppDto = {
+          ...app,
+          team: team ? { id: team.id, name: team.name } : null,
+          addedBy: viewerName ?? null,
+        };
+        cacheApps([moved]);
+        setApp(moved);
+        return;
+      }
+      setMoving(true);
+      void api
+        .shareApp(app.id, { teamId: team?.id ?? null, ...(team ? { notify: true } : {}) })
+        .then((result) => {
+          cacheApps([result.app]);
+          setApp(result.app);
+        })
+        .catch((cause: unknown) =>
+          Alert.alert(
+            team ? "Couldn’t share app" : "Couldn’t move app",
+            cause instanceof Error ? cause.message : "Please try again.",
+          ),
+        )
+        .finally(() => setMoving(false));
+    };
+    if (team) {
+      Alert.alert(
+        `Share ${app.name} with ${team.name}?`,
+        `Everyone on ${team.name} sees it on their home screen and gets a notification. Each person approves sign-in and chooses what to share for themselves.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Share", onPress: run },
+        ],
+      );
+    } else {
+      Alert.alert(
+        `Move ${app.name} to your apps?`,
+        `It disappears for everyone else on ${app.team?.name ?? "the team"}.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Move", style: "destructive", onPress: run },
+        ],
+      );
+    }
+  };
+
+  const chooseTeam = () => {
+    if (teams.length === 1 && teams[0]) return moveTo(teams[0]);
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        title: "Share with a team",
+        options: [...teams.map((team) => team.name), "Cancel"],
+        cancelButtonIndex: teams.length,
+      },
+      (index) => {
+        const team = teams[index];
+        if (team) moveTo(team);
+      },
+    );
+  };
+
   const remove = () => {
     if (!app) return;
     Alert.alert(
-      `Remove ${app.name}?`,
-      "It disappears from SHark on every device. Agents can add it again later.",
+      app.team ? `Remove ${app.name} from ${app.team.name}?` : `Remove ${app.name}?`,
+      app.team
+        ? `It disappears for everyone on ${app.team.name}. Agents can add it again later.`
+        : "It disappears from SHark on every device. Agents can add it again later.",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -131,7 +215,10 @@ export default function AppDetailScreen() {
               .removeApp(app.id)
               .then(() => router.replace("/apps"))
               .catch((cause: unknown) =>
-                Alert.alert("Couldn’t remove", cause instanceof Error ? cause.message : ""),
+                Alert.alert(
+                  "Couldn’t remove",
+                  cause instanceof Error ? cause.message : "Please try again.",
+                ),
               );
           },
         },
@@ -176,8 +263,12 @@ export default function AppDetailScreen() {
           </Pressable>
 
           <View style={styles.metaBlock}>
+            {app.team ? <MetaRow label="Team" value={`Shared with ${app.team.name}`} /> : null}
+            <MetaRow label="Added by" value={app.addedBy ?? app.createdBy ?? "Unknown"} />
+            {app.addedBy && app.createdBy && app.addedBy !== app.createdBy ? (
+              <MetaRow label="Via" value={app.createdBy} />
+            ) : null}
             {app.projectName ? <MetaRow label="Project" value={app.projectName} /> : null}
-            <MetaRow label="Added by" value={app.createdBy ?? "Unknown"} />
             <MetaRow label="Added" value={formatDate(app.createdAt)} />
             <MetaRow label="Last opened" value={formatDate(app.lastOpenedAt)} />
             <MetaRow
@@ -231,12 +322,44 @@ export default function AppDetailScreen() {
               </Text>
             </Pressable>
           ) : null}
+          {!app.team && teams.length > 0 ? (
+            <Pressable
+              accessibilityHint="Choose a team to add this app to"
+              accessibilityRole="button"
+              accessibilityState={{ busy: moving }}
+              disabled={moving}
+              onPress={chooseTeam}
+              style={({ pressed }) => [styles.action, pressed && styles.rowPressed]}
+            >
+              <Text style={styles.actionLabel}>{moving ? "Sharing…" : "Share with a team"}</Text>
+              <Text style={styles.actionDetail}>
+                Teammates see it on their home screen. Each person signs in as themselves.
+              </Text>
+            </Pressable>
+          ) : null}
+          {app.team && viewerName && app.addedBy === viewerName ? (
+            <Pressable
+              accessibilityHint={`Removes it from ${app.team.name} and keeps it for you`}
+              accessibilityRole="button"
+              accessibilityState={{ busy: moving }}
+              disabled={moving}
+              onPress={() => moveTo(null)}
+              style={({ pressed }) => [styles.action, pressed && styles.rowPressed]}
+            >
+              <Text style={styles.actionLabel}>{moving ? "Moving…" : "Move to my apps"}</Text>
+              <Text style={styles.actionDetail}>
+                Only you will see it. Teammates lose it from their home screen.
+              </Text>
+            </Pressable>
+          ) : null}
           <Pressable
             accessibilityRole="button"
             onPress={remove}
             style={({ pressed }) => [styles.action, pressed && styles.rowPressed]}
           >
-            <Text style={styles.removeLabel}>Remove app</Text>
+            <Text style={styles.removeLabel}>
+              {app.team ? `Remove from ${app.team.name}` : "Remove app"}
+            </Text>
           </Pressable>
         </ScrollView>
       )}

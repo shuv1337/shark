@@ -142,6 +142,16 @@ export const appIdSchema = z
   .trim()
   .regex(/^app_[A-Za-z0-9_-]{8,64}$/, "Must be a SHark app ID (app_…)");
 
+export const teamIdSchema = z
+  .string()
+  .trim()
+  .regex(/^team_[A-Za-z0-9_-]{8,64}$/, "Must be a SHark team ID (team_…)");
+
+export const oncallGroupIdSchema = z
+  .string()
+  .trim()
+  .regex(/^ocg_[A-Za-z0-9_-]{8,64}$/, "Must be a SHark on-call group ID (ocg_…)");
+
 // ---------------------------------------------------------------------------
 // Services
 // ---------------------------------------------------------------------------
@@ -229,6 +239,12 @@ export const webhookRequestSchema = z
     bodyFormat: notificationBodyFormatSchema.optional(),
     /** Opens this SHark web app on tap; `url`, when present, must share its origin. */
     appId: appIdSchema.optional(),
+    /**
+     * Pages this on-call group instead of notifying the owner's devices. The
+     * service owner must belong to the group's team. Mutually exclusive with
+     * `deviceIds` and `response`.
+     */
+    oncall: oncallGroupIdSchema.optional(),
   })
   .superRefine((value, context) => {
     // Interactive bodies become interaction prompts, whose limit is unchanged.
@@ -250,6 +266,10 @@ export type WebhookResponse =
       response?: { status: "pending"; expiresAt: string };
       idempotent?: boolean;
       message?: string;
+      /** Set when the request paged an on-call group (`eventId` then repeats it). */
+      pageId?: string;
+      /** `true` when the page merged into an open page with the same dedup key. */
+      deduplicated?: boolean;
     }
   | { ok: false; error: string; issues?: unknown; retryAfterSeconds?: number };
 
@@ -798,6 +818,10 @@ export const API_TOKEN_SCOPES = [
   "tokens:manage",
   "board:read",
   "board:write",
+  "teams:read",
+  "teams:write",
+  "oncall:read",
+  "oncall:write",
 ] as const;
 export const apiTokenScopeSchema = z.enum(API_TOKEN_SCOPES);
 export type ApiTokenScope = z.infer<typeof apiTokenScopeSchema>;
@@ -883,6 +907,10 @@ export type InteractionPresentation = z.infer<typeof interactionPresentationSche
 export const HARK_APPROVAL_CATEGORY_ID = "HARK_APPROVAL_V1" as const;
 export const HARK_REPLY_CATEGORY_ID = "HARK_REPLY_V1" as const;
 export const HARK_YES_NO_CATEGORY_ID = "HARK_YES_NO_V1" as const;
+/** On-call page with Acknowledge / Escalate actions. */
+export const HARK_PAGE_CATEGORY_ID = "HARK_PAGE_V1" as const;
+export const HARK_ACKNOWLEDGE_ACTION_ID = "HARK_ACKNOWLEDGE" as const;
+export const HARK_ESCALATE_ACTION_ID = "HARK_ESCALATE" as const;
 export const HARK_APPROVE_ACTION_ID = "HARK_APPROVE" as const;
 export const HARK_DENY_ACTION_ID = "HARK_DENY" as const;
 export const HARK_REPLY_ACTION_ID = "HARK_REPLY" as const;
@@ -1153,6 +1181,12 @@ export const agentNotificationCreateSchema = z.object({
   bodyFormat: notificationBodyFormatSchema.optional(),
   /** Opens this SHark web app on tap; `url`, when present, must share its origin. */
   appId: appIdSchema.optional(),
+  /**
+   * Pages this on-call group instead of notifying the token owner's devices.
+   * The owner must belong to the group's team. Cannot be combined with
+   * `deviceIds`; the response is then an `OncallPageCreateResponse`.
+   */
+  oncall: oncallGroupIdSchema.optional(),
 });
 export type AgentNotificationCreateInput = z.infer<typeof agentNotificationCreateSchema>;
 
@@ -1220,7 +1254,17 @@ export const appCreateSchema = z.object({
   url: appUrlSchema,
   iconUrl: publicHttpsUrlSchema.optional(),
   project: projectNameSchema.optional(),
+  /** Adds the app to this team (caller must be a member) instead of the caller's own apps. */
+  teamId: teamIdSchema.optional(),
 });
+
+/** Moves a personal app into a team, or (`null`) back to the caller's own apps. */
+export const appShareSchema = z.strictObject({
+  teamId: teamIdSchema.nullable(),
+  /** Notifies every other team member that the app was added. Defaults to true. */
+  notify: z.boolean().optional(),
+});
+export type AppShareInput = z.infer<typeof appShareSchema>;
 export type AppCreateInput = z.infer<typeof appCreateSchema>;
 
 /** Owner-controlled sharing preferences; the pairwise SHark ID is always shared. */
@@ -1269,6 +1313,14 @@ export interface AppDto extends AppSummaryDto {
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Team that owns the app; `null` for personal apps. For team apps the
+   * sharing, consent and last-opened fields describe the viewing member only:
+   * every member approves sign-in and chooses what to share for themselves.
+   */
+  team?: TeamSummaryDto | null;
+  /** Display name of the person who added the app; absent on older servers. */
+  addedBy?: string | null;
 }
 
 export interface AppCreateResponse {
@@ -1297,10 +1349,295 @@ export interface AppPassClaims {
   app_id: string;
   name?: string;
   email?: string;
+  /** Present for team apps: the team the viewer belongs to and their role in it. */
+  team_id?: string;
+  team_role?: TeamRole;
 }
 
 /** `code` returned when a pass needs owner consent first. */
 export const API_ERROR_CODE_CONSENT_REQUIRED = "consent_required" as const;
+
+// ---------------------------------------------------------------------------
+// Teams (shared apps, seats and on-call groups)
+// ---------------------------------------------------------------------------
+
+export const TEAM_ROLES = ["owner", "admin", "member"] as const;
+export const teamRoleSchema = z.enum(TEAM_ROLES);
+export type TeamRole = z.infer<typeof teamRoleSchema>;
+
+export const TEAM_NAME_MAX_CHARS = 60 as const;
+export const MAX_TEAMS_PER_ACCOUNT = 20 as const;
+export const MAX_MEMBERS_PER_TEAM = 500 as const;
+/** Seats included without a paid team plan (the creator's own seat). */
+export const TEAM_FREE_SEATS = 1 as const;
+/** Monthly price per seat beyond the free one, in USD. */
+export const TEAM_SEAT_PRICE_MONTHLY = 5 as const;
+export const TEAM_INVITE_TTL_SECONDS = 604_800 as const;
+
+const singleLine = (value: string) =>
+  Array.from(value).every((character) => {
+    const code = character.charCodeAt(0);
+    return code >= 32 && code !== 127;
+  });
+
+export const teamNameSchema = z
+  .string()
+  .trim()
+  .min(1, "Name is required")
+  .max(TEAM_NAME_MAX_CHARS)
+  .refine(singleLine, "Team names must be a single line");
+
+export const teamCreateSchema = z.strictObject({ name: teamNameSchema });
+export type TeamCreateInput = z.infer<typeof teamCreateSchema>;
+
+export const teamUpdateSchema = z.strictObject({ name: teamNameSchema });
+export type TeamUpdateInput = z.infer<typeof teamUpdateSchema>;
+
+export interface TeamSummaryDto {
+  id: string;
+  name: string;
+}
+
+export interface TeamDto extends TeamSummaryDto {
+  /** The viewer's role in this team. */
+  role: TeamRole;
+  memberCount: number;
+  appCount: number;
+  oncallGroupCount: number;
+  seats: {
+    used: number;
+    /** Seats covered without payment (TEAM_FREE_SEATS) plus paid seats. */
+    available: number | null;
+    /** Seats billed at TEAM_SEAT_PRICE_MONTHLY. */
+    billable: number;
+  };
+  plan: "free" | "team";
+  createdAt: string;
+}
+
+export interface TeamMemberDto {
+  userId: string;
+  name: string;
+  email: string;
+  image: string | null;
+  role: TeamRole;
+  joinedAt: string;
+}
+
+export const teamMemberUpdateSchema = z.strictObject({ role: teamRoleSchema });
+export type TeamMemberUpdateInput = z.infer<typeof teamMemberUpdateSchema>;
+
+export const teamInviteCreateSchema = z.strictObject({
+  /** Optional: an existing SHark user with this email also gets a push notification. */
+  email: z.email().max(254).optional(),
+  role: z.enum(["admin", "member"]).default("member"),
+});
+export type TeamInviteCreateInput = z.infer<typeof teamInviteCreateSchema>;
+
+export interface TeamInviteDto {
+  id: string;
+  teamId: string;
+  email: string | null;
+  role: TeamRole;
+  invitedBy: string;
+  expiresAt: string;
+  acceptedAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+}
+
+export interface TeamInviteCreateResponse {
+  invite: TeamInviteDto;
+  /** Plaintext join code, returned once. */
+  code: string;
+  /** `https://<origin>/join/<code>`; opens the iPhone app when installed. */
+  url: string;
+}
+
+/** Public preview shown before accepting an invite. */
+export interface TeamInvitePreviewDto {
+  teamName: string;
+  invitedBy: string;
+  role: TeamRole;
+  memberCount: number;
+  expiresAt: string;
+}
+
+export interface TeamJoinResponse {
+  team: TeamDto;
+  /** `false` when the viewer was already a member. */
+  joined: boolean;
+}
+
+/** `code` returned when a team has no free seat and no paid team plan. */
+export const API_ERROR_CODE_SEAT_LIMIT = "seat_limit" as const;
+
+// ---------------------------------------------------------------------------
+// On-call groups and pages
+// ---------------------------------------------------------------------------
+
+export const ONCALL_ROTATION_PERIODS = ["daily", "weekly"] as const;
+export const oncallRotationPeriodSchema = z.enum(ONCALL_ROTATION_PERIODS);
+export const ONCALL_ESCALATION_TARGETS = ["next", "group"] as const;
+export const MAX_ONCALL_GROUPS_PER_TEAM = 50 as const;
+export const MAX_ESCALATION_STEPS = 5 as const;
+
+export const oncallEscalationStepSchema = z.strictObject({
+  /** Minutes after the previous step (or the page) with no acknowledgement. */
+  afterMinutes: z.number().int().min(1).max(1440),
+  /** `next`: the next person in the rotation. `group`: every member of the group. */
+  target: z.enum(ONCALL_ESCALATION_TARGETS),
+});
+export type OncallEscalationStep = z.infer<typeof oncallEscalationStepSchema>;
+
+export const oncallRotationSchema = z.strictObject({
+  /** Rotation order; every ID must be a team member. */
+  memberIds: z.array(z.string().min(1).max(100)).min(1).max(100),
+  period: oncallRotationPeriodSchema,
+  /** Local handoff time `HH:MM` in `timezone`. */
+  handoffAt: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM"),
+  /** IANA time zone, e.g. `America/New_York`. */
+  timezone: z.string().min(1).max(64),
+  /**
+   * First handoff. Its local date in `timezone` is kept and the time is
+   * normalized to `handoffAt`. Defaults to the latest handoff at or before
+   * now, so the first member in `memberIds` is on call immediately.
+   */
+  startsAt: z.iso.datetime().optional(),
+});
+export type OncallRotationInput = z.infer<typeof oncallRotationSchema>;
+
+export const oncallGroupCreateSchema = z.strictObject({
+  name: teamNameSchema,
+  rotation: oncallRotationSchema,
+  escalation: z
+    .array(oncallEscalationStepSchema)
+    .max(MAX_ESCALATION_STEPS)
+    .default([
+      { afterMinutes: 5, target: "next" },
+      { afterMinutes: 10, target: "group" },
+    ]),
+});
+export type OncallGroupCreateInput = z.infer<typeof oncallGroupCreateSchema>;
+
+export const oncallGroupUpdateSchema = z
+  .strictObject({
+    name: teamNameSchema.optional(),
+    rotation: oncallRotationSchema.optional(),
+    escalation: z.array(oncallEscalationStepSchema).max(MAX_ESCALATION_STEPS).optional(),
+  })
+  .refine((input) => Object.keys(input).length > 0, "At least one field is required");
+export type OncallGroupUpdateInput = z.infer<typeof oncallGroupUpdateSchema>;
+
+/** Temporarily puts someone on call (e.g. covering a shift). */
+export const oncallOverrideCreateSchema = z.strictObject({
+  userId: z.string().min(1).max(100),
+  startsAt: z.iso.datetime(),
+  endsAt: z.iso.datetime(),
+});
+export type OncallOverrideCreateInput = z.infer<typeof oncallOverrideCreateSchema>;
+
+export interface OncallPersonDto {
+  userId: string;
+  name: string;
+  image: string | null;
+}
+
+export interface OncallShiftDto {
+  person: OncallPersonDto;
+  startsAt: string;
+  endsAt: string;
+  /** `true` when an override replaces the rotation for this shift. */
+  override: boolean;
+  /** The override behind this shift, for removal; absent on rotation shifts. */
+  overrideId?: string;
+}
+
+/** A scheduled override; ended overrides are not listed. */
+export interface OncallOverrideDto {
+  id: string;
+  person: OncallPersonDto;
+  startsAt: string;
+  endsAt: string;
+}
+
+export interface OncallGroupDto {
+  id: string;
+  teamId: string;
+  name: string;
+  rotation: {
+    members: OncallPersonDto[];
+    period: (typeof ONCALL_ROTATION_PERIODS)[number];
+    handoffAt: string;
+    timezone: string;
+    startsAt: string;
+  };
+  escalation: OncallEscalationStep[];
+  current: OncallShiftDto | null;
+  /** The next few shifts, current first. */
+  upcoming: OncallShiftDto[];
+  /** Current and future overrides, soonest first; absent on older servers. */
+  overrides?: OncallOverrideDto[];
+  openPageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const ONCALL_PAGE_STATUSES = ["triggered", "acknowledged", "resolved"] as const;
+export type OncallPageStatus = (typeof ONCALL_PAGE_STATUSES)[number];
+
+export const oncallPageCreateSchema = z.strictObject({
+  title: z.string().trim().min(1).max(120),
+  body: z.string().trim().max(INTERACTIVE_BODY_MAX_CHARS).optional(),
+  url: tapDestinationUrlSchema.optional(),
+  /** Team app opened when the page is tapped; must belong to the group's team. */
+  appId: appIdSchema.optional(),
+  /** Pages with an open page of the same key are merged instead of re-paging. */
+  dedupKey: z.string().trim().min(1).max(200).optional(),
+});
+export type OncallPageCreateInput = z.infer<typeof oncallPageCreateSchema>;
+
+export interface OncallPageDto {
+  id: string;
+  groupId: string;
+  groupName: string;
+  teamId: string;
+  title: string;
+  body: string | null;
+  url: string | null;
+  app: AppSummaryDto | null;
+  status: OncallPageStatus;
+  dedupKey: string | null;
+  /** How many times a duplicate page was merged into this one. */
+  repeatCount: number;
+  /** People notified so far, in order. */
+  notified: OncallPersonDto[];
+  escalationStep: number;
+  nextEscalationAt: string | null;
+  acknowledgedBy: OncallPersonDto | null;
+  acknowledgedAt: string | null;
+  resolvedBy: OncallPersonDto | null;
+  resolvedAt: string | null;
+  /** Service or token name that raised the page. */
+  source: string;
+  createdAt: string;
+}
+
+export interface OncallPageCreateResponse {
+  page: OncallPageDto;
+  /** `true` when merged into an open page with the same `dedupKey`. */
+  deduplicated: boolean;
+  /** Push requests accepted for the first notified person. */
+  accepted: number;
+}
+
+export const oncallPageResolveSchema = z.strictObject({
+  note: z.string().trim().max(500).optional(),
+});
+
+// ---------------------------------------------------------------------------
+// Project inbox (session-authenticated mobile API)
+// ---------------------------------------------------------------------------
 
 export interface ProjectDto {
   id: string;
@@ -1481,11 +1818,35 @@ export const notificationWithdrawalPushDataSchema = z.object({
   command: z.literal("notification.withdraw"),
   eventId: z.string().min(1),
 });
+export const oncallPagePushDataSchema = z.object({
+  v: z.literal(PUSH_SCHEMA_VERSION),
+  pageId: z.string(),
+  teamId: z.string(),
+  groupName: z.string(),
+  categoryId: z.literal(HARK_PAGE_CATEGORY_ID),
+  /** One-shot credential for acknowledging from the lock screen. */
+  responseToken: z
+    .string()
+    .regex(/^[a-zA-Z0-9_-]{43}$/)
+    .optional(),
+  url: tapDestinationUrlSchema.optional(),
+  appId: z.string().optional(),
+});
+/** Silent command clearing a page from devices once someone acknowledges it. */
+export const oncallPageClaimedPushDataSchema = z.object({
+  v: z.literal(PUSH_SCHEMA_VERSION),
+  command: z.literal("page.claimed"),
+  pageId: z.string().min(1),
+  claimedBy: z.string(),
+});
 export const pushDataSchema = z.union([
   webhookPushDataSchema,
   interactionPushDataSchema,
   notificationWithdrawalPushDataSchema,
+  oncallPagePushDataSchema,
+  oncallPageClaimedPushDataSchema,
 ]);
+export type OncallPagePushData = z.infer<typeof oncallPagePushDataSchema>;
 export type PushData = z.infer<typeof pushDataSchema>;
 export type InteractionPushData = z.infer<typeof interactionPushDataSchema>;
 export type NotificationWithdrawalPushData = z.infer<typeof notificationWithdrawalPushDataSchema>;
@@ -1496,6 +1857,13 @@ export type NotificationWithdrawalPushData = z.infer<typeof notificationWithdraw
 
 export interface ApiError {
   error: string;
+  /**
+   * Machine-readable discriminator carried alongside the human-readable
+   * message. Older servers omit it, which lets clients distinguish "this
+   * server answered and the resource is gone" from "this server does not
+   * implement the route at all" (a bare 404).
+   */
+  code?: string;
   issues?: unknown;
 }
 export * from "./board";

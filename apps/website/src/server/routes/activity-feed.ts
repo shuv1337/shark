@@ -87,7 +87,7 @@ function readActivityFeed(
       select
         'notification:' || n.id as id,
         'notification' as kind,
-        t.name as source_name,
+        coalesce(n.source_name, t.name, n.title) as source_name,
         n.image_url as source_image_url,
         n.title as title,
         coalesce(n.summary, substr(n.body, 1, 2000)) as detail,
@@ -95,7 +95,7 @@ function readActivityFeed(
         null as result,
         n.created_at as created_at
       from agent_notification n
-      inner join api_token t on t.id = n.requester_token_id
+      left join api_token t on t.id = n.requester_token_id
       where n.user_id = ${userId}
 
       union all

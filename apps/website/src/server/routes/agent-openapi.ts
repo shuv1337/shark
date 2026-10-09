@@ -3,6 +3,7 @@ import {
   type ApiTokenScope,
   agentNotificationCreateSchema,
   appCreateSchema,
+  appShareSchema,
   appUpdateSchema,
   BOARD_ANSWER_VIAS,
   BOARD_ASK_KINDS,
@@ -27,8 +28,21 @@ import {
   liveActivityEndSchema,
   liveActivityStartSchema,
   liveActivityUpdateSchema,
+  ONCALL_ESCALATION_TARGETS,
+  ONCALL_PAGE_STATUSES,
+  ONCALL_ROTATION_PERIODS,
+  oncallGroupCreateSchema,
+  oncallGroupUpdateSchema,
+  oncallOverrideCreateSchema,
+  oncallPageCreateSchema,
+  oncallPageResolveSchema,
   serviceCreateSchema,
   serviceUpdateSchema,
+  TEAM_ROLES,
+  teamCreateSchema,
+  teamInviteCreateSchema,
+  teamMemberUpdateSchema,
+  teamUpdateSchema,
 } from "@hark/contracts";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -264,6 +278,12 @@ const schemas: Record<string, JsonSchema> = {
         createdBy: nullableStr,
         createdAt: dateTime,
         updatedAt: dateTime,
+        team: {
+          anyOf: [ref("TeamSummary"), { type: "null" }],
+          description:
+            "Owning team; null for personal apps. Sharing and consent fields then describe the calling account only.",
+        },
+        addedBy: nullableStr,
       }),
     ],
   },
@@ -428,6 +448,107 @@ const schemas: Record<string, JsonSchema> = {
     waitingTaskId: nullableStr,
     agent: str,
   }),
+  TeamSummary: object({ id: str, name: str }),
+  Team: object({
+    id: str,
+    name: str,
+    role: ref("TeamRole"),
+    memberCount: int,
+    appCount: int,
+    oncallGroupCount: int,
+    seats: object({ used: int, available: { type: ["integer", "null"] }, billable: int }),
+    plan: { enum: ["free", "team"] },
+    createdAt: dateTime,
+  }),
+  TeamRole: { type: "string", enum: [...TEAM_ROLES] },
+  TeamMember: object({
+    userId: str,
+    name: str,
+    email: str,
+    image: nullableStr,
+    role: ref("TeamRole"),
+    joinedAt: dateTime,
+  }),
+  TeamInvite: object({
+    id: str,
+    teamId: str,
+    email: nullableStr,
+    role: ref("TeamRole"),
+    invitedBy: str,
+    expiresAt: dateTime,
+    acceptedAt: nullableDateTime,
+    revokedAt: nullableDateTime,
+    createdAt: dateTime,
+  }),
+  TeamInviteCreated: object({
+    invite: ref("TeamInvite"),
+    code: { ...str, description: "Plaintext join code, returned once." },
+    url: { ...str, description: "Join link a person opens to accept (accepting is human-only)." },
+  }),
+  OncallPerson: object({ userId: str, name: str, image: nullableStr }),
+  OncallShift: object(
+    {
+      person: ref("OncallPerson"),
+      startsAt: dateTime,
+      endsAt: dateTime,
+      override: bool,
+      overrideId: str,
+    },
+    ["overrideId"],
+  ),
+  OncallGroup: object(
+    {
+      id: str,
+      teamId: str,
+      name: str,
+      rotation: object({
+        members: arrayOf(ref("OncallPerson")),
+        period: { enum: [...ONCALL_ROTATION_PERIODS] },
+        handoffAt: str,
+        timezone: str,
+        startsAt: dateTime,
+      }),
+      escalation: arrayOf(
+        object({ afterMinutes: int, target: { enum: [...ONCALL_ESCALATION_TARGETS] } }),
+      ),
+      current: { anyOf: [ref("OncallShift"), { type: "null" }] },
+      upcoming: arrayOf(ref("OncallShift")),
+      overrides: arrayOf(
+        object({ id: str, person: ref("OncallPerson"), startsAt: dateTime, endsAt: dateTime }),
+      ),
+      openPageCount: int,
+      createdAt: dateTime,
+      updatedAt: dateTime,
+    },
+    ["overrides"],
+  ),
+  OncallPage: object({
+    id: str,
+    groupId: str,
+    groupName: str,
+    teamId: str,
+    title: str,
+    body: nullableStr,
+    url: nullableStr,
+    app: { anyOf: [ref("AppSummary"), { type: "null" }] },
+    status: { enum: [...ONCALL_PAGE_STATUSES] },
+    dedupKey: nullableStr,
+    repeatCount: int,
+    notified: arrayOf(ref("OncallPerson")),
+    escalationStep: int,
+    nextEscalationAt: nullableDateTime,
+    acknowledgedBy: { anyOf: [ref("OncallPerson"), { type: "null" }] },
+    acknowledgedAt: nullableDateTime,
+    resolvedBy: { anyOf: [ref("OncallPerson"), { type: "null" }] },
+    resolvedAt: nullableDateTime,
+    source: str,
+    createdAt: dateTime,
+  }),
+  OncallPageCreated: object({
+    page: ref("OncallPage"),
+    deduplicated: bool,
+    accepted: int,
+  }),
   Billing: object({
     configured: bool,
     plan: { enum: ["free", "pro"] },
@@ -583,12 +704,12 @@ const operations: Record<
       summary: "List registered devices",
       scopes: ["devices:read"],
       response: wrap("devices", arrayOf(ref("Device"))),
-      description: "Registration is phone-only: only the Hark app holds a push token.",
+      description: "Registration is phone-only: only the SHark app holds a push token.",
     },
   },
   "/devices/{id}": {
     delete: {
-      summary: "Remove a device; it registers again when Hark next opens on it",
+      summary: "Remove a device; it registers again when SHark next opens on it",
       scopes: ["devices:write"],
       params: [idParam()],
       response: ok,
@@ -663,7 +784,9 @@ const operations: Record<
       params: [idempotencyHeader],
       request: agentNotificationCreateSchema,
       status: 201,
-      response: ref("AgentNotificationCreated"),
+      response: { oneOf: [ref("AgentNotificationCreated"), ref("OncallPageCreated")] },
+      description:
+        "With `oncall` (which also needs `oncall:write`), the push pages that on-call group instead (the token owner must be on its team) and returns the page; the Idempotency-Key becomes the page's dedup key.",
     },
   },
   "/notifications/{id}/withdraw": {
@@ -774,6 +897,8 @@ const operations: Record<
       request: appCreateSchema,
       status: 201,
       response: object({ app: ref("App"), created: bool, message: str }, ["message"]),
+      description:
+        "Passing `teamId` adds the app to that team and notifies its members, which also requires `teams:write`.",
     },
   },
   "/apps/{id}": {
@@ -805,7 +930,224 @@ const operations: Record<
       scopes: ["apps:write"],
       params: [idParam()],
       response: wrap("app", ref("App")),
-      description: "Agents can reduce access but never grant it: Hark passes are phone-only.",
+      description: "Agents can reduce access but never grant it: SHark passes are phone-only.",
+    },
+  },
+  "/apps/{id}/share": {
+    post: {
+      summary: "Move an app into a team, or (teamId null) back to your own apps",
+      scopes: ["apps:write", "teams:write"],
+      params: [idParam()],
+      request: appShareSchema,
+      response: wrap("app", ref("App")),
+      description:
+        "Only the person who added the app can move it. Other members are notified unless `notify` is false, and each approves sign-in for themselves.",
+    },
+  },
+  "/teams": {
+    get: {
+      summary: "List the teams you belong to",
+      scopes: ["teams:read"],
+      response: wrap("teams", arrayOf(ref("Team"))),
+    },
+    post: {
+      summary: "Create a team; you become its owner",
+      scopes: ["teams:write"],
+      request: teamCreateSchema,
+      status: 201,
+      response: wrap("team", ref("Team")),
+    },
+  },
+  "/teams/{id}": {
+    get: {
+      summary: "A team and its members",
+      scopes: ["teams:read"],
+      params: [idParam()],
+      response: object({ team: ref("Team"), members: arrayOf(ref("TeamMember")) }),
+    },
+    patch: {
+      summary: "Rename a team (admin or owner)",
+      scopes: ["teams:write"],
+      params: [idParam()],
+      request: teamUpdateSchema,
+      response: wrap("team", ref("Team")),
+    },
+    delete: {
+      summary: "Delete a team (owner); its apps return to the members who added them",
+      scopes: ["teams:write"],
+      params: [idParam()],
+      response: ok,
+    },
+  },
+  "/teams/{id}/leave": {
+    post: {
+      summary: "Leave a team (the owner must transfer ownership first)",
+      scopes: ["teams:write"],
+      params: [idParam()],
+      response: ok,
+    },
+  },
+  "/teams/{id}/members/{userId}": {
+    patch: {
+      summary: "Change a member's role; `owner` transfers ownership (owner only)",
+      scopes: ["teams:write"],
+      params: [idParam(), idParam("userId")],
+      request: teamMemberUpdateSchema,
+      response: wrap("member", ref("TeamMember")),
+    },
+    delete: {
+      summary: "Remove a member (admin or owner); the owner cannot be removed",
+      scopes: ["teams:write"],
+      params: [idParam(), idParam("userId")],
+      response: ok,
+    },
+  },
+  "/teams/{id}/invites": {
+    get: {
+      summary: "List invites (admin or owner)",
+      scopes: ["teams:read"],
+      params: [idParam()],
+      response: wrap("invites", arrayOf(ref("TeamInvite"))),
+    },
+    post: {
+      summary: "Create a 7-day join link (admin or owner)",
+      scopes: ["teams:write"],
+      params: [idParam()],
+      request: teamInviteCreateSchema,
+      status: 201,
+      response: ref("TeamInviteCreated"),
+      description:
+        "Returns 402 with code `seat_limit` when the team needs the paid team plan for another seat. Accepting an invite is human-only: there is no agent route for it.",
+    },
+  },
+  "/teams/{id}/invites/{inviteId}": {
+    delete: {
+      summary: "Revoke an invite",
+      scopes: ["teams:write"],
+      params: [idParam(), idParam("inviteId")],
+      response: ok,
+    },
+  },
+  "/teams/{id}/apps": {
+    get: {
+      summary: "The team's shared apps",
+      scopes: ["teams:read", "apps:read"],
+      params: [idParam()],
+      response: wrap("apps", arrayOf(ref("App"))),
+    },
+  },
+  "/teams/{id}/oncall": {
+    get: {
+      summary: "The team's on-call groups with current and upcoming shifts",
+      scopes: ["oncall:read"],
+      params: [idParam()],
+      response: wrap("groups", arrayOf(ref("OncallGroup"))),
+    },
+    post: {
+      summary: "Create an on-call group (admin or owner)",
+      scopes: ["oncall:write"],
+      params: [idParam()],
+      request: oncallGroupCreateSchema,
+      status: 201,
+      response: wrap("group", ref("OncallGroup")),
+    },
+  },
+  "/teams/{id}/pages": {
+    get: {
+      summary: "The team's pages, newest first",
+      scopes: ["oncall:read"],
+      params: [
+        idParam(),
+        { name: "status", in: "query", schema: { enum: ["open", "all"] } },
+        { name: "cursor", in: "query", schema: str },
+        { name: "limit", in: "query", schema: { ...int, minimum: 1, maximum: 50 } },
+      ],
+      response: object({ pages: arrayOf(ref("OncallPage")), nextCursor: nullableStr }),
+    },
+  },
+  "/oncall/me": {
+    get: {
+      summary: "Your upcoming shifts and the open pages that notified you",
+      scopes: ["oncall:read"],
+      response: object({
+        shifts: arrayOf({
+          allOf: [
+            ref("OncallShift"),
+            object({ groupId: str, groupName: str, teamId: str, teamName: str }),
+          ],
+        }),
+        pages: arrayOf(ref("OncallPage")),
+      }),
+    },
+  },
+  "/oncall/{groupId}": {
+    get: {
+      summary: "An on-call group",
+      scopes: ["oncall:read"],
+      params: [idParam("groupId")],
+      response: wrap("group", ref("OncallGroup")),
+    },
+    patch: {
+      summary: "Edit a group's name, rotation, or escalation (admin or owner)",
+      scopes: ["oncall:write"],
+      params: [idParam("groupId")],
+      request: oncallGroupUpdateSchema,
+      response: wrap("group", ref("OncallGroup")),
+    },
+    delete: {
+      summary: "Delete an on-call group (admin or owner)",
+      scopes: ["oncall:write"],
+      params: [idParam("groupId")],
+      response: ok,
+    },
+  },
+  "/oncall/{groupId}/overrides": {
+    post: {
+      summary: "Put someone on call for a window (admins: anyone; members: themselves)",
+      scopes: ["oncall:write"],
+      params: [idParam("groupId")],
+      request: oncallOverrideCreateSchema,
+      status: 201,
+      response: wrap("group", ref("OncallGroup")),
+    },
+  },
+  "/oncall/{groupId}/overrides/{overrideId}": {
+    delete: {
+      summary: "Remove an override",
+      scopes: ["oncall:write"],
+      params: [idParam("groupId"), idParam("overrideId")],
+      response: wrap("group", ref("OncallGroup")),
+    },
+  },
+  "/oncall/{groupId}/pages": {
+    post: {
+      summary: "Page the group: whoever is on call first, then escalation",
+      scopes: ["oncall:write"],
+      params: [idParam("groupId")],
+      request: oncallPageCreateSchema,
+      status: 201,
+      response: ref("OncallPageCreated"),
+      description:
+        "Returns 200 with `deduplicated: true` when an open page with the same `dedupKey` absorbed it. Pages count against your notification allowance.",
+    },
+  },
+  "/pages/{id}": {
+    get: {
+      summary: "A page",
+      scopes: ["oncall:read"],
+      params: [idParam()],
+      response: wrap("page", ref("OncallPage")),
+      description:
+        "There is deliberately no agent route to acknowledge or escalate: an acknowledgement tells the team a person is on it, so only a human can give it (on the phone or in a signed-in session).",
+    },
+  },
+  "/pages/{id}/resolve": {
+    post: {
+      summary: "Resolve a page; anyone still being paged is cleared",
+      scopes: ["oncall:write"],
+      params: [idParam()],
+      request: oncallPageResolveSchema,
+      response: wrap("page", ref("OncallPage")),
     },
   },
   "/inbox/projects": {

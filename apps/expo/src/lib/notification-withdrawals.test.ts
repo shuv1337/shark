@@ -29,10 +29,13 @@ vi.mock("expo-task-manager", () => ({
 
 import * as Notifications from "expo-notifications";
 import {
+  claimedPageIdFromPayload,
   dismissNotificationsForEvent,
+  dismissNotificationsForPage,
   NOTIFICATION_WITHDRAWAL_TASK,
   withdrawalEventId,
 } from "./notification-withdrawals";
+import { onPageClaimed } from "./teams";
 
 beforeEach(() => {
   state.presented = [];
@@ -108,6 +111,49 @@ describe("notification withdrawals", () => {
 
     await expect(dismissNotificationsForEvent("evt_1")).resolves.toBe(2);
     expect(state.dismissed).toEqual(["notification-1", "notification-2"]);
+  });
+
+  it("clears a claimed on-call page and tells open screens", async () => {
+    const task = state.task;
+    if (!task) throw new Error("Withdrawal task was not defined");
+    const claimed: string[] = [];
+    const stop = onPageClaimed((pageId) => claimed.push(pageId));
+    state.presented = [
+      {
+        request: {
+          identifier: "page-1",
+          content: { data: { categoryId: "HARK_PAGE_V1", pageId: "page_1", v: 1 } },
+        },
+      },
+      {
+        request: {
+          identifier: "page-2",
+          content: { data: { categoryId: "HARK_PAGE_V1", pageId: "page_2", v: 1 } },
+        },
+      },
+      {
+        request: { identifier: "event-1", content: { data: { pageId: "page_1" } } },
+      },
+    ];
+    const command = {
+      data: {
+        dataString: JSON.stringify({
+          v: 1,
+          command: "page.claimed",
+          pageId: "page_1",
+          claimedBy: "Maya",
+        }),
+      },
+    };
+    expect(claimedPageIdFromPayload(command)).toBe("page_1");
+    await expect(task({ data: command, error: null })).resolves.toBe(
+      Notifications.BackgroundNotificationTaskResult.NewData,
+    );
+    expect(state.dismissed).toEqual(["page-1"]);
+    expect(claimed).toEqual(["page_1"]);
+    stop();
+
+    await expect(dismissNotificationsForPage("page_missing")).resolves.toBe(0);
   });
 
   it("registers a background task and reports its fetch result", async () => {

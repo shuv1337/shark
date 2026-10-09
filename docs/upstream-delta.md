@@ -107,6 +107,35 @@ brand checks passed. Existing migration files and website frontend were verified
 Native app rebuilding
 is required for the new alternate-icon plugin. Deploy and device acceptance remain separate work.
 
+## Teams and on-call integration, 2026-10-09
+
+Merges upstream through `86fecac` (teams, invites, team apps, on-call groups, rotations,
+overrides, escalating pages, page acknowledgement from the Lock Screen). `d9237a9` is recorded as
+an ancestor because the 2026-10-08 integration landed as a squash.
+
+Deliberate merge resolutions:
+
+- Upstream's `0021_teams_oncall` is not adopted: it collides with SHark's `0021` and rebuilds
+  `agent_notification` against upstream's schema. The same tables are authored as additive
+  `0024_upstream_teams_oncall` against SHark's schema. Its `agent_notification` rebuild copies
+  `rowid` (project-inbox read cursors depend on it), drops the durable inbox triggers first and
+  recreates them afterwards, and lets the insert trigger materialize token-less notices (team
+  invites, shared apps) with `source_name`.
+- No seat billing: `team-billing.ts` keeps upstream's exports but reports a free, unlimited plan,
+  and checkout or portal calls fail with "Billing is not configured". Seat and pricing UI, docs, and
+  the pricing page are removed. Team membership still requires an allowlisted Apple sign-in.
+- Join links use `shark://join/<code>`; the iPhone app also accepts legacy `hark://join` links.
+  The website `/dashboard/teams/:id` and `/join/:code` shells sit behind `requireAuth`.
+- Upstream analytics (`trackAppEvent`), Google sign-in, and App Store links are not imported.
+- The board and SHark scopes are kept alongside the new `teams:*` and `oncall:*` scopes, which are
+  added to the default `sharkctl` login. Existing tokens must log in again to use them.
+- Fork hardening on top of upstream: Lock Screen page credentials only work for recipients still on
+  `ALLOWED_EMAILS`, offboarding overwrites them, and paging skips non-admitted members. Pages run
+  the webhook and agent per-minute windows, count against the account window, and each group
+  accepts at most 10 new pages a minute. Sharing an app (or creating one with `teamId`) from an
+  agent token also needs `teams:write` and the agent budget, and each person can trigger at most
+  10 team notices a minute. Request logs redact `/join/:code` and `/api/team-invites/:code`.
+
 ## CLI and compatibility names
 
 `sharkctl` is the canonical fork CLI and package. Keep `HARK_*`, `@hark/*`, the `hark` config

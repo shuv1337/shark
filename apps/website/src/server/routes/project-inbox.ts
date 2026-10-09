@@ -18,7 +18,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
 import { agentNotification, app, event, project, service } from "../db/schema";
-import { toAppSummaryDto } from "../lib/apps";
+import { toAppSummaryDto, visibleAppsFilter } from "../lib/apps";
 import {
   type AgentEnv,
   type AuthedEnv,
@@ -185,6 +185,11 @@ function readThroughSnapshot(
   return { event: row?.eventMax ?? 0, notification: row?.agentMax ?? 0 };
 }
 
+/** Apps the user can open: personal ones, plus those of teams they belong to. */
+function visibleAppSql(userId: string) {
+  return sql`((a.user_id = ${userId} and a.team_id is null) or a.team_id in (select team_id from team_member where user_id = ${userId}))`;
+}
+
 // The bounded projection both list endpoints read. Raw SQL keeps the union
 // in one round trip and guarantees only a preview-sized slice of the body is
 // ever selected for lists.
@@ -209,7 +214,7 @@ function notificationUnionSql(userId: string) {
       a.icon_url as app_icon_url
     from event e
     inner join service s on s.id = e.service_id
-    left join app a on a.id = e.app_id and a.user_id = ${userId}
+    left join app a on a.id = e.app_id and ${visibleAppSql(userId)}
     where s.user_id = ${userId}
 
     union all
@@ -218,7 +223,7 @@ function notificationUnionSql(userId: string) {
       'notification:' || n.id as id,
       'notification' as origin,
       n.project_id as project_id,
-      t.name as source_name,
+      coalesce(n.source_name, t.name, n.title) as source_name,
       n.image_url as source_image_url,
       n.title as title,
       substr(coalesce(n.summary, n.body), 1, 320) as raw_preview,
@@ -232,8 +237,8 @@ function notificationUnionSql(userId: string) {
       a.origin as app_origin,
       a.icon_url as app_icon_url
     from agent_notification n
-    inner join api_token t on t.id = n.requester_token_id
-    left join app a on a.id = n.app_id and a.user_id = ${userId}
+    left join api_token t on t.id = n.requester_token_id
+    left join app a on a.id = n.app_id and ${visibleAppSql(userId)}
     where n.user_id = ${userId}
   `;
 }
@@ -268,7 +273,7 @@ async function appSummaryFor(userId: string, appId: string | null): Promise<AppS
   const [row] = await db
     .select()
     .from(app)
-    .where(and(eq(app.id, appId), eq(app.userId, userId)))
+    .where(and(eq(app.id, appId), visibleAppsFilter(userId)))
     .limit(1);
   return row ? toAppSummaryDto(row) : null;
 }
@@ -537,16 +542,18 @@ async function getInboxNotification(
     .where(and(eq(agentNotification.id, target.id), eq(agentNotification.userId, userId)))
     .limit(1);
   if (!row) return null;
-  const [tokenRow] = (await db.all(
-    sql`select name from api_token where id = ${row.requesterTokenId} limit 1`,
-  )) as Array<{ name: string }>;
+  const [tokenRow] = row.requesterTokenId
+    ? ((await db.all(
+        sql`select name from api_token where id = ${row.requesterTokenId} limit 1`,
+      )) as Array<{ name: string }>)
+    : [];
   const projectNames = await projectNamesById(userId);
   const detail: InboxNotificationDetailDto = {
     id: `notification:${row.id}`,
     origin: "notification",
     projectId: row.projectId,
     projectName: row.projectId ? (projectNames.get(row.projectId) ?? null) : null,
-    sourceName: tokenRow?.name ?? row.title,
+    sourceName: row.sourceName ?? tokenRow?.name ?? row.title,
     sourceImageUrl: row.imageUrl,
     title: row.title,
     preview: boundPreview(row.summary ?? row.body, Array.from(row.summary ?? row.body).length),

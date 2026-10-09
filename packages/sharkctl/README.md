@@ -13,14 +13,19 @@ sharkctl
 ├─ permissions  setup · doctor · uninstall
 ├─ devices      list
 ├─ services     create · list
-├─ apps         create · list · remove
+├─ apps         create · list · get · update · share · revoke · remove
+├─ teams        list · create · get · rename · delete · leave · members · role
+│               remove-member · invite · invites · revoke-invite
+├─ oncall       list · me · get · create · update · override · remove-override
+├─ page         <group_id> <title>                page whoever is on call
+├─ pages        list · get · resolve
 └─ board        ask · cancel · get · wait · answers · ack · work · done · note
 ```
 
 Start a browser authorization flow and approve the requested scopes with your signed-in SHark account:
 
 ```sh
-npm install --global sharkctl@0.5.0
+npm install --global sharkctl@0.6.0
 sharkctl auth login
 sharkctl auth status
 sharkctl notify "Deploy finished ✅" --title "Deploy bot" --image https://example.com/bot.png \
@@ -52,7 +57,7 @@ polls at the server-provided interval, and atomically writes credentials to a mo
 `sharkctl auth status` reports only whether the current credentials authenticate; it deliberately
 omits token identifiers, prefixes, scopes, and timestamps so captured command output is safe. The
 default scopes support notifications, asks, Live Activities, listing devices/services, creating
-webhook services, and managing web apps without requesting `events:read`. Every requested scope is shown on the browser
+webhook services, managing web apps, teams, and on-call without requesting `events:read`. Every requested scope is shown on the browser
 authorization page before approval. Connected tokens appear under **Dashboard > Agent
 connections**, where they can be revoked.
 
@@ -137,6 +142,48 @@ app with an existing URL updates it and returns `created: false`. `apps list` an
 notification is tapped; `--url` is optional and must stay on the app's origin. These commands
 require the `apps:read` and `apps:write` scopes; logins created before those scopes existed need to
 sign in again (`sharkctl auth login`).
+
+`apps create --team <team_id>` adds the app to a team instead, and `apps share <app_id>
+(--team <team_id> | --personal) [--no-notify]` moves an app you added into a team or back to your
+own apps. Other members are notified (unless `--no-notify`) and each approves sign-in on their own
+phone; their SHark pass then carries `team_id` and `team_role`. Both commands also require the
+`teams:write` scope.
+
+## teams
+
+Teams share web apps and on-call groups (scopes `teams:read` and `teams:write`). `teams create
+<name>` makes you the owner; `teams list`, `teams get <team_id>`, and `teams members <team_id>`
+read; `teams rename`, `teams delete` (owner), and `teams leave` manage it. `teams role <team_id>
+<user_id> <owner|admin|member>` changes a role (`owner` transfers ownership; the previous owner
+becomes an admin), and `teams remove-member <team_id> <user_id>` removes someone, which also stops
+their sign-in to the team's apps and drops them from rotations. `teams invite <team_id> [--email
+<email>] [--role member|admin]` returns a 7-day join link (`code` and `url`); a SHark user with that
+email also gets a push. Accepting is human-only, in the app or on the website, and the joining
+account must still pass the server's email allowlist. `teams invites` and
+`teams revoke-invite <team_id> <invite_id>` manage links. SHark has no seat billing, so team size
+is not limited.
+
+## oncall and page
+
+On-call groups belong to a team (scopes `oncall:read` and `oncall:write`; creating and editing
+needs a team admin). `oncall create --team <team_id> --name <name> --members <user_id,...>
+[--period daily|weekly] [--handoff HH:MM] [--timezone <zone>] [--starts-at <iso>]` sets up a
+rotation (defaults: daily, 09:00, your local zone; the first member is on call now) with the
+default escalation (next person after 5 minutes, the whole group 10 minutes later); pass
+`--stdin` JSON for a custom `escalation`. `oncall update <group_id>` changes any of those fields,
+keeping the rest. `oncall override <group_id> --user <user_id> --starts-at <iso> --ends-at <iso>`
+puts someone on call for a window and `oncall remove-override <group_id> <override_id>` removes it.
+`oncall list --team <team_id>`, `oncall get <group_id>`, and `oncall me` show current and upcoming
+shifts.
+
+`page <group_id> <title> [--body <text>] [--url <url>] [--app <app_id>] [--dedup-key <key>]`
+pages whoever is on call (or the whole group when nobody is) and escalates until someone
+acknowledges. A repeat with the same `--dedup-key` merges into the open page. `notify <body>
+--oncall <group_id>` does the same from `notify`, using `--idempotency-key` as the dedup key. Both
+exit `7` when the page reached no device. `pages list --team <team_id> [--all] [--limit <n>]
+[--cursor <c>]`, `pages get <page_id>`, and `pages resolve <page_id> [--note <text>]` follow up.
+Acknowledging and escalating are deliberately human-only: an acknowledgement tells the team a
+person is on it.
 
 ## board
 

@@ -26,6 +26,7 @@ import {
 import { isEmailAllowed } from "../lib/admission";
 import { checkNotificationAllowance, getBilling, trackNotification } from "../lib/billing";
 import { newId } from "../lib/id";
+import { pagesCreatedSince } from "../lib/oncall";
 import { hashWebhookToken } from "../lib/token";
 import {
   type ActivityRow,
@@ -120,9 +121,11 @@ async function enforceRateLimit(service: ServiceRow, owner: UserRow) {
   const [
     [serviceEvents],
     [serviceActivities],
+    servicePages,
     [accountEvents],
     [accountInteractions],
     [accountActivities],
+    accountPages,
   ] = await Promise.all([
     db
       .select({ value: count() })
@@ -137,6 +140,7 @@ async function enforceRateLimit(service: ServiceRow, owner: UserRow) {
           gte(liveActivityOperation.createdAt, since),
         ),
       ),
+    pagesCreatedSince({ serviceId: service.id }, since),
     db
       .select({ value: count() })
       .from(event)
@@ -153,9 +157,10 @@ async function enforceRateLimit(service: ServiceRow, owner: UserRow) {
       .where(
         and(eq(liveActivity.userId, service.userId), gte(liveActivityOperation.createdAt, since)),
       ),
+    pagesCreatedSince({ userId: service.userId }, since),
   ]);
   if (
-    (serviceEvents?.value ?? 0) + (serviceActivities?.value ?? 0) >=
+    (serviceEvents?.value ?? 0) + (serviceActivities?.value ?? 0) + servicePages >=
     billing.limits.servicePerMinute
   ) {
     return { error: "Service rate limit exceeded", retryAfterSeconds: 60 as const };
@@ -163,7 +168,8 @@ async function enforceRateLimit(service: ServiceRow, owner: UserRow) {
   if (
     (accountEvents?.value ?? 0) +
       (accountInteractions?.value ?? 0) +
-      (accountActivities?.value ?? 0) >=
+      (accountActivities?.value ?? 0) +
+      accountPages >=
     billing.limits.accountPerMinute
   ) {
     return { error: "Account rate limit exceeded", retryAfterSeconds: 60 as const };

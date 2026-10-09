@@ -127,6 +127,26 @@ To contribute a genuinely new Live Activity layout, including no-simulator testi
 API, widget, CLI, and docs touchpoint, see
 [Contributing a Live Activity template](./CONTRIBUTING_LIVE_ACTIVITY_TEMPLATES.md).
 
+## Teams and On-Call
+
+Create a team to share web apps and page whoever is on call. Roles are owner, admin, and member.
+
+```sh
+sharkctl teams create "Acme"
+sharkctl teams invite team_... --email teammate@example.com   # returns a 7-day join link
+sharkctl apps share app_... --team team_...
+sharkctl oncall create --team team_... --name Primary --members user_a,user_b --period weekly
+sharkctl page ocg_... "API error rate above 20%" --dedup-key api-5xx
+```
+
+Every member approves sign-in to a team app for themselves; the SHark pass then includes `team_id`
+and `team_role`, and removing someone from the team stops their passes immediately. A page goes to
+the person on call (rotations hand off at a local time and follow DST), then escalates to the next
+person and the whole group until someone acknowledges from the lock screen or the website. Webhooks
+page by adding `"oncall": "ocg_..."` to the payload. Acknowledging is human-only; agents can raise
+and resolve pages. Invitees still have to pass the server's sign-in allowlist. See the
+[Teams](https://shark.shuv.dev/docs#teams) and [On-call](https://shark.shuv.dev/docs#oncall) docs.
+
 ## Agent Workflows
 
 The [`sharkctl`](./packages/sharkctl) CLI can send one-shot notifications, ask for approvals or short

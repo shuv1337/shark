@@ -1,8 +1,9 @@
-import { type Context, Hono, type Next } from "hono";
+import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { auth } from "./auth";
 import { env } from "./env";
+import { accessLog } from "./lib/access-log";
 import { databaseIsReady } from "./lib/readiness";
 import { safeReturnPath } from "./lib/return-path";
 import { beginAppleWebSignIn } from "./lib/web-sign-in";
@@ -32,28 +33,21 @@ import {
 } from "./routes/interactions";
 import { liveActivityRegistrationRoute } from "./routes/live-activity-registration";
 import { macosRoute } from "./routes/macos";
+import {
+  oncallAgentRoute,
+  oncallSessionRoute,
+  pageResponsesRoute,
+  pagesAgentRoute,
+  pagesSessionRoute,
+} from "./routes/oncall";
 import { inboxAgentRoute, inboxRoute as projectInboxRoute } from "./routes/project-inbox";
 import { servicesAgentRoute, servicesRoute } from "./routes/services";
 import { sshuvHandoffRoute } from "./routes/sshuv-handoff";
+import { teamInvitesRoute, teamsAgentRoute, teamsSessionRoute } from "./routes/teams";
 import { watchRoute } from "./routes/watch";
 import { webPushRoute } from "./routes/web-push";
 
 export const app = new Hono();
-
-/**
- * Logs requests without query strings and redacts webhook paths: `/hooks/:token`
- * embeds a plaintext credential that must never reach a log sink.
- */
-async function accessLog(c: Context, next: Next): Promise<void> {
-  const startedAt = Date.now();
-  await next();
-  const path = c.req.path.startsWith("/hooks/")
-    ? "/hooks/:token"
-    : c.req.path.startsWith("/conversation/v1/")
-      ? "/conversation/v1/:reference"
-      : c.req.path;
-  console.log(`${c.req.method} ${path} ${c.res.status} ${Date.now() - startedAt}ms`);
-}
 
 // Bounds memory use for unauthenticated POST bodies; accepted payloads are far smaller.
 app.use("*", bodyLimit({ maxSize: 64 * 1024 }));
@@ -106,8 +100,11 @@ app.route("/api/device-authorization", deviceAuthorizationRoute);
 app.route("/api/agent/activities", activitiesAgentRoute);
 app.route("/api/agent/apps", appsAgentRoute);
 app.route("/api/agent/board", boardAgentRoute);
-app.route("/api/agent/services", servicesAgentRoute);
 app.route("/api/agent/devices", devicesAgentRoute);
+app.route("/api/agent/oncall", oncallAgentRoute);
+app.route("/api/agent/pages", pagesAgentRoute);
+app.route("/api/agent/services", servicesAgentRoute);
+app.route("/api/agent/teams", teamsAgentRoute);
 app.route("/api/agent/tokens", apiTokensAgentRoute);
 app.route("/api/agent/billing", billingAgentRoute);
 app.route("/api/agent/inbox", inboxAgentRoute);
@@ -124,6 +121,11 @@ app.route("/api/interaction-responses", interactionCredentialResponseRoute);
 app.route("/api/live-activity-interactions", liveActivityInteractionResponseRoute);
 app.route("/api/live-activity", liveActivityRegistrationRoute);
 app.route("/api/billing", billingRoute);
+app.route("/api/teams", teamsSessionRoute);
+app.route("/api/team-invites", teamInvitesRoute);
+app.route("/api/oncall", oncallSessionRoute);
+app.route("/api/pages", pagesSessionRoute);
+app.route("/api/page-responses", pageResponsesRoute);
 app.route("/api/devices", devicesRoute);
 app.route("/api/web-push", webPushRoute);
 app.route("/api/events", eventsRoute);

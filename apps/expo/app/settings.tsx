@@ -27,7 +27,9 @@ import { api } from "../src/lib/api";
 import { type AppIconOption, appIconLabel, appIconOptions } from "../src/lib/app-icons";
 import { authClient, useSession } from "../src/lib/auth";
 import { APNS_TOKEN_KEY, EXPO_TOKEN_KEY } from "../src/lib/device-storage";
+import { previewTeams } from "../src/lib/inbox-preview";
 import { clearInteractionResponses, DEVICE_ID_KEY } from "../src/lib/interactions";
+import { isUnsupportedRoute } from "../src/lib/teams";
 import { colors, fonts, tightTracking } from "../src/lib/theme";
 
 export default function SettingsScreen() {
@@ -40,6 +42,22 @@ export default function SettingsScreen() {
   const [currentAppIcon, setCurrentAppIcon] = useState<string | null>(() => getAppIconName());
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [changingAppIcon, setChangingAppIcon] = useState<string | null>(null);
+  const [teamNames, setTeamNames] = useState<string[] | null>(null);
+  const [teamsSupported, setTeamsSupported] = useState(true);
+
+  useEffect(() => {
+    if (simulatorPreview) {
+      setTeamNames(previewTeams.map((team) => team.name));
+      return;
+    }
+    void api
+      .listTeams()
+      .then((result) => setTeamNames(result.teams.map((team) => team.name)))
+      .catch((cause: unknown) => {
+        // Older servers don't have teams; hide the row there.
+        if (isUnsupportedRoute(cause)) setTeamsSupported(false);
+      });
+  }, [simulatorPreview]);
 
   useEffect(() => {
     void Promise.all([
@@ -228,6 +246,22 @@ export default function SettingsScreen() {
           </View>
         ) : null}
 
+        {teamsSupported ? (
+          <SettingsRow
+            icon="person.2.fill"
+            label="Teams"
+            value={
+              teamNames === null
+                ? ""
+                : teamNames.length === 0
+                  ? "Create or join"
+                  : teamNames.length === 1
+                    ? (teamNames[0] ?? "")
+                    : `${teamNames.length} teams`
+            }
+            onPress={() => router.push("/teams")}
+          />
+        ) : null}
         <SettingsRow icon="person.fill" label="Signed in as" value={session?.user.email ?? ""} />
         <Pressable accessibilityRole="button" onPress={signOut} style={styles.accountAction}>
           <Text style={styles.accountActionText}>Sign out</Text>
