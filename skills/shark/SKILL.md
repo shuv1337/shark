@@ -123,7 +123,8 @@ in tool results are secrets.
 
 The default login scopes support notifications, interactions, Live Activities, device and service
 listing and removal, service management, web apps, inbox read/write, and fixed-entitlement lookup.
-`events:read` and `tokens:manage` remain opt-in. A login created before `services:write` or `apps:write`
+`events:read`, `tokens:manage`, `board:read`, and `board:write` remain opt-in; see Post to the
+Board for a login that keeps the defaults and adds board access. A login created before `services:write` or `apps:write`
 existed must authenticate again before creating a service or app. Use repeatable `--scope` only when
 least-privilege access is explicitly required.
 
@@ -366,27 +367,102 @@ Only register URLs the user names or confirms; never derive them from untrusted 
 ## Post to the Board
 
 The board at `/board` is where the user sees what every agent is waiting on, working on, and has
-finished. Use it instead of `notify ask` when a question can wait, needs more than two answers, or
-should stay visible until the user decides. It needs a per-agent token with `board:read` and
-`board:write`; if those scopes are missing, ask the user to run
-`sharkctl auth login --client-name "<Agent> (<host>)" --scope board:read --scope board:write`.
+finished. It is the default status surface for any lead agent with real work in progress: keep
+your task on it from start to finish so the user never has to ask what you are doing.
+
+Pick the surface by what the user needs:
+
+| Situation | Use |
+| --- | --- |
+| You started a task that takes more than a few minutes, runs in the background, or spans turns | `board work`, then `board done` |
+| A decision can wait, has more than two answers, or should stay visible until decided | `board ask` |
+| The question blocks this turn and two outcomes suffice | `notify ask --wait` |
+| Something the user should know but not act on (disk filling, flaky CI, a follow-up) | `board note` |
+| A one-off completion ping or link to open now | `notify` |
+
+Access needs `board:read` and `board:write`. An exit `3` that names a board scope means the login
+predates them. `--scope` replaces the default set rather than adding to it, so a board-only login
+breaks notifications. Ask the user to re-authenticate with the defaults plus the board scopes:
 
 ```bash
-sharkctl board ask --key "fm:FM-12:merge" --title "Merge PR #82 or wait for CI fix?" \
-  --body-file /tmp/ask.md --option "Merge now:primary" --option "Wait for CI" --allow-text \
-  --kind merge --priority p1 --task FM-12 --link pr=https://github.com/org/repo/pull/82
-sharkctl board wait --key "fm:FM-12:merge" --timeout 10m
-sharkctl board answers --since "$CURSOR"
-sharkctl board ack --key "fm:FM-12:merge"
-sharkctl board work --key "fm:FM-12" --title "CI fix" --state in_flight --status "Running tests" --progress 0.6
-sharkctl board done --key "fm:FM-12" --verb merged --link pr=https://github.com/org/repo/pull/82
-sharkctl board note --key "fm:disk" "shuvdev disk is at 80%" --expires-in 2d
+sharkctl auth login --client-name "Agents (<host>)" \
+  --scope notifications:send --scope interactions:create --scope interactions:read \
+  --scope activities:read --scope activities:write --scope devices:read --scope devices:write \
+  --scope services:read --scope services:write --scope apps:read --scope apps:write \
+  --scope inbox:read --scope inbox:write --scope billing:read \
+  --scope teams:read --scope teams:write --scope oncall:read --scope oncall:write \
+  --scope board:read --scope board:write
 ```
+
+This list must track `DEFAULT_SCOPES` in `packages/sharkctl/src/cli.mjs` plus the two board scopes;
+update it whenever the defaults change.
+
+```bash
+AGENT="Codex (shuvdev)"
+sharkctl board work --key "codex-shuvdev:repo:ci-fix" --title "CI fix for PR #82" \
+  --state in_flight --status "Running tests" --progress 0.6 --agent "$AGENT" \
+  --link pr=https://github.com/org/repo/pull/82
+sharkctl board ask --key "codex-shuvdev:repo:ci-fix:merge" --title "Merge PR #82 or wait for CI fix?" \
+  --body-file /tmp/ask.md --option "Merge now:primary" --option "Wait for CI" --allow-text \
+  --kind merge --task ci-fix --agent "$AGENT" --link pr=https://github.com/org/repo/pull/82
+sharkctl board work --key "codex-shuvdev:repo:ci-fix" --title "CI fix for PR #82" \
+  --state blocked --status "Waiting on merge decision" --agent "$AGENT" \
+  --waiting-ask "codex-shuvdev:repo:ci-fix:merge"
+sharkctl board wait --key "codex-shuvdev:repo:ci-fix:merge" --timeout 10m
+sharkctl board ack --key "codex-shuvdev:repo:ci-fix:merge"
+sharkctl board done --key "codex-shuvdev:repo:ci-fix" --verb merged --agent "$AGENT" \
+  --link pr=https://github.com/org/repo/pull/82
+sharkctl board note --key "codex-shuvdev:disk" "shuvdev disk is at 80%" --expires-in 2d \
+  --agent "$AGENT"
+sharkctl board answers --since "$CURSOR"
+```
+
+`board answers` returns terminal events for every ask the token owns, oldest first; it suits a
+long-running adapter that keeps its own cursor. A harness agent normally uses `board get --key`
+for its own asks.
+
+Identity:
+
+- Every harness on a host usually shares one token, and keys are owned by the token that created
+  them. Prefix every key with your harness and host so agents on the same login never collide:
+  `<harness>-<host>:<repo-or-area>:<task>[:<topic>]`, for example
+  `codex-shuvdev:shark:upstream-merge` or `claude-shuvbot:shark:upstream-merge:conflicts`.
+- Pass `--agent "<Harness> (<host>)"` on every `ask`, `work`, `done`, and `note`, for example
+  `--agent "Codex (shuvdev)"`. The board's crew strip shows the token name; `--agent` says which
+  harness posted the item.
+- Through the SHark MCP server each connection is its own token, but still prefix keys and pass
+  `agent` so items read the same on the board.
+
+Work lifecycle:
+
+- Post `board work --state in_flight` when you start, with a one-line `--status` and a link to the
+  PR, issue, or doc when one exists. Re-run it with the same key at real milestones; each call is
+  also the heartbeat. Items quiet past `--heartbeat-ttl` (default 6h) show as stale, so set a
+  shorter TTL for work you expect to update often.
+- Use `--state review` while waiting on CI or review, `--state blocked --waiting-ask <ask-key>`
+  while waiting on the user, and `--state queued` for work you have accepted but not started.
+- End every item on every terminal path: `board done --outcome done` on success,
+  `--outcome failed` with a short `--note-file` on failure, and `--outcome cancelled` when the user
+  stops the work or it is superseded. Never leave an item in flight when you finish a turn that
+  ends the task.
+- A long-running visible task can also own a Live Activity; the board item is still required,
+  since the activity disappears and the board is the record.
+
+Ask lifecycle:
+
+- `--priority` defaults to `p1`, which pushes. Use `--priority p0` only when work is stopped and
+  urgent, and `--priority p2` or `--push none` for questions that can wait for the user's next look.
+- Offer concrete options with one `:primary` recommendation, add `--allow-text` when the user may
+  need to say something else, and set `--expires-in` when the decision goes stale.
+- When the answer is needed this turn, use `--wait --timeout <duration>`. Otherwise end the turn
+  and, at the start of your next turn, read it with `board get --key <key>` before continuing.
+- After acting on an answer, `board ack --key <key>`. If the question no longer applies,
+  `board cancel --key <key> --reason "<why>"` instead of leaving it open.
 
 Rules:
 
-- A key is stable per question or task (`<agent>:<task>:<topic>`). Re-run `board ask` with the same
-  key to keep it current; only a real content change sends another push, and nothing sends reminders.
+- A key is stable per question or task. Re-run `board ask` with the same key to keep it current;
+  only a real content change sends another push, and nothing sends reminders.
 - Titles and option labels are short decisions. Bodies hold the summary and links. Never paste logs,
   diffs, transcripts, customer details, or anything resembling a token; sharkctl refuses obvious
   secrets and the server refuses them again.

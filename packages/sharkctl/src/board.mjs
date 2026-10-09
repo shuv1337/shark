@@ -361,7 +361,10 @@ export const BOARD_HELP = `  sharkctl board ask --key <key> --title <title> [--b
   sharkctl board work --key <key> --title <title> --state <queued|in_flight|review|blocked>
                       [--status <label>] [--detail <text>] [--progress <0..1>] [--host <name>]
                       [--link <[kind=]url>]... [--waiting-ask <key>] [--heartbeat-ttl <duration>]
+                      [--agent <name>]
   sharkctl board done --key <key> [--title <title>] [--verb <merged|shipped|done|closed|reported>]
                       [--outcome <done|failed|cancelled>] [--link <[kind=]url>]... [--note-file <path>]
+                      [--agent <name>]
   sharkctl board note --key <key> <text> [--detail-file <path>] [--link <url>] [--expires-in <duration>]
+                      [--agent <name>]
   sharkctl board note --key <key> --clear`;
