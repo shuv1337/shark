@@ -145,12 +145,12 @@ export const appIdSchema = z
 export const teamIdSchema = z
   .string()
   .trim()
-  .regex(/^team_[A-Za-z0-9_-]{8,64}$/, "Must be a Hark team ID (team_…)");
+  .regex(/^team_[A-Za-z0-9_-]{8,64}$/, "Must be a SHark team ID (team_…)");
 
 export const oncallGroupIdSchema = z
   .string()
   .trim()
-  .regex(/^ocg_[A-Za-z0-9_-]{8,64}$/, "Must be a Hark on-call group ID (ocg_…)");
+  .regex(/^ocg_[A-Za-z0-9_-]{8,64}$/, "Must be a SHark on-call group ID (ocg_…)");
 
 // ---------------------------------------------------------------------------
 // Services
@@ -1428,7 +1428,7 @@ export const teamMemberUpdateSchema = z.strictObject({ role: teamRoleSchema });
 export type TeamMemberUpdateInput = z.infer<typeof teamMemberUpdateSchema>;
 
 export const teamInviteCreateSchema = z.strictObject({
-  /** Optional: an existing Hark user with this email also gets a push notification. */
+  /** Optional: an existing SHark user with this email also gets a push notification. */
   email: z.email().max(254).optional(),
   role: z.enum(["admin", "member"]).default("member"),
 });
