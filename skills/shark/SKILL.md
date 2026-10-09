@@ -22,6 +22,16 @@ needs a stable URL it can call later.
   `HARK_TOKEN` environment variable.
 - Successful commands emit one JSON object on stdout; diagnostics use stderr.
 - Use `--idempotency-key` whenever a notification or activity mutation may be retried.
+  Scope it to repository, logical task, run, and operation; include the agent when multiple agents
+  emit independently. For example, `org/repo:task-184:run-2:lead:notify-complete`. Keep the same key
+  and identical payload for retries. A different payload or execution needs a new operation/run
+  identity; a commit SHA alone cannot distinguish repeated runs. Do not generate a fresh key just
+  to retry an uncertain send. Activity `--key` identifies the lifecycle, not an individual mutation.
+
+For version inspection, read the installed package metadata (`npm ls -g sharkctl --depth=0` for
+an npm-global install). For a source-built or symlinked install, resolve the trusted
+binary to its package and read that package's `package.json` version; retain its source revision
+when available. `sharkctl --version` is unsupported, and `auth status` is not a version check.
 
 ## Security Boundaries
 
@@ -99,10 +109,11 @@ sharkctl notify "Production deployed" \
   --title "Deploy bot" \
   --image https://example.com/deploy-bot.png \
   --url https://example.com/deployments/184 \
-  --idempotency-key deploy-184-complete
+  --idempotency-key org/repo:deploy-184:run-2:lead:notify-complete
 ```
 
-The body is required. `--title` defaults to `SHark`; `--image` must be a public HTTPS URL; `--url`
+The body is required and positional: use `notify "text"`, not `notify --body "text"`.
+`--title` defaults to `SHark`; `--image` must be a public HTTPS URL; `--url`
 opens when the notification is tapped. Repeat `--device <id>` for targeted delivery. Use
 `devices list` to discover device IDs. Replace the example image and destination URLs with real
 values or omit those flags.
@@ -209,11 +220,14 @@ Interactive Live Activities accept `--style approval|shell|verdict|signal` with
 
 ## Run a Live Activity
 
+The primary agent owns the task's Live Activity, including updates and cleanup. Workers report
+progress to their lead; use a one-shot notification only when the workflow calls for it. Workers
+must not start or replace an activity independently, since that can displace the primary task.
 Use one activity for changing task state instead of sending many notifications:
 
 ```bash
 sharkctl activity start \
-  --key deploy-main --replace --style ring \
+  --key deploy-main --style ring \
   --title "Deploy #184" --status "Building" --progress 0.1
 
 sharkctl activity update deploy-main \
@@ -223,10 +237,10 @@ sharkctl activity end deploy-main \
   --status "Shipped" --progress 1 --dismiss-after 45s
 ```
 
-Styles are `standard`, `ring`, `hero`, `terminal`, and `steps`. Use `--replace` for a fixed-key task
-that should take the device slot on each run. Use the returned sequence with `--if-sequence` to
-reject stale writes. Prefer meaningful updates over tight progress loops. iOS may suppress fresh
-activity starts less than about one minute apart; update the current activity instead.
+Start requires `--title` and `--status`; progress must be a finite number from `0` through `1`.
+Styles are `standard`, `ring`, `hero`, `terminal`, and `steps`. Use the returned sequence with
+`--if-sequence` to reject stale writes. Prefer meaningful updates over tight progress loops. iOS may
+suppress fresh activity starts less than about one minute apart; update the current activity instead.
 
 The ordinary activity slot is device-wide, while `activity list` and `activity get` are scoped to
 the caller token. An empty list does not prove the slot is free. `ACTIVE_ACTIVITY_CONFLICT` includes
@@ -275,9 +289,10 @@ an activity on a short timer. `expired` means `expiresAt` has passed. `ended` me
 end, a `--replace` takeover, or a resolved interactive prompt. `failed` means no device accepted
 the start (that `activity start` exited `7`), or a later update found no retryable device delivery.
 When the task is still running, the status is `ended` or `failed`, and `expiresAt` is still in the
-future, restart with the same `--key` and `--replace`. If the restarted start itself exits `7`, do
-not restart again: no device accepted it. Check `sharkctl devices list` and the start `message`
-instead.
+future, the primary agent can restart with the same `--key`. Apply the conflict rule above if a
+different activity now occupies the device; do not automatically add `--replace`.
+If the restarted start itself exits `7`, do not restart again: no device accepted it. Check
+`sharkctl devices list` and the start `message` instead.
 
 ## Approve Coding-Agent Permissions
 
