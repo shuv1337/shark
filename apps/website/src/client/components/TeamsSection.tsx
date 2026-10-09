@@ -53,13 +53,13 @@ export function TeamsSection({
           {teams.map((team) => (
             <li key={team.id}>
               <Link
-                className="group -mx-4 flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-white/4 sm:-mx-5 sm:px-5"
+                className="group -mx-4 flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-surface-hover sm:-mx-5 sm:px-5"
                 to={`/dashboard/teams/${team.id}`}
               >
                 <TeamMark name={team.name} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-2">
-                    <span className="truncate font-medium text-white">{team.name}</span>
+                    <span className="truncate font-medium text-ink">{team.name}</span>
                     {team.plan === "team" ? <Badge>Team plan</Badge> : null}
                   </span>
                   <span className="line-clamp-2 block text-[13px] text-ink-faint sm:truncate">
