@@ -490,6 +490,54 @@ describe("pages", () => {
     expect(nextList.pages).toHaveLength(2);
   });
 
+  it("refuses page credentials and skips paging for members removed from the allowlist", async () => {
+    const { env } = await import("../env");
+    const { eq } = await import("drizzle-orm");
+    const group = await createGroup("Allowlist", [{ afterMinutes: 30, target: "group" }]);
+    const created = (await (
+      await page(group.id, { title: "Before removal" })
+    ).json()) as OncallPageCreateResponse;
+    expect((await call("POST", `/api/pages/${created.page.id}/escalate`)).status).toBe(200);
+    const bToken = responseTokenFor("user_b");
+
+    const previous = [...env.ALLOWED_EMAILS];
+    env.ALLOWED_EMAILS.splice(
+      0,
+      env.ALLOWED_EMAILS.length,
+      "user_a@example.com",
+      "user_c@example.com",
+    );
+    try {
+      const refused = await call("POST", `/api/page-responses/${created.page.id}/acknowledge`, {
+        responseToken: bToken,
+      });
+      expect(refused.status).toBe(404);
+      expect(
+        (
+          await call("POST", `/api/page-responses/${created.page.id}/escalate`, {
+            responseToken: bToken,
+          })
+        ).status,
+      ).toBe(404);
+
+      await db
+        .update(schema.oncallGroup)
+        .set({ startsAt: new Date(Date.now() + 7 * 86_400_000) })
+        .where(eq(schema.oncallGroup.id, group.id));
+      sent.length = 0;
+      const fallback = (await (
+        await page(group.id, { title: "After removal" })
+      ).json()) as OncallPageCreateResponse;
+      expect(fallback.page.notified.map((person) => person.userId).sort()).toEqual([
+        "user_a",
+        "user_c",
+      ]);
+      expect(pushesTo("user_b")).toHaveLength(0);
+    } finally {
+      env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length, ...previous);
+    }
+  });
+
   it("drops removed members from rotations", async () => {
     const group = await createGroup("Shrinking");
     expect((await call("DELETE", `/api/teams/${TEAM_ID}/members/user_c`)).status).toBe(200);
