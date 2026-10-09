@@ -69,6 +69,71 @@ describe("web app helpers", () => {
     expect(failed).toContain("null");
   });
 
+  it("reports the theme-color whose media matches, and again on an appearance change", () => {
+    const run = (metas: { content: string; media?: string }[], background = "rgb(1, 2, 3)") => {
+      let dark = false;
+      const sent: { type: string; color: string | null; background: string | null }[] = [];
+      const schemeListeners: (() => void)[] = [];
+      const windowListeners: Record<string, () => void> = {};
+      const window = {
+        location: { origin: app.origin },
+        ReactNativeWebView: { postMessage: (data: string) => sent.push(JSON.parse(data)) },
+        getComputedStyle: () => ({ backgroundColor: background }),
+        matchMedia: (query: string) => ({
+          matches:
+            query === "(prefers-color-scheme: dark)"
+              ? dark
+              : query === "(prefers-color-scheme: light)"
+                ? !dark
+                : false,
+          addEventListener: (_: string, listener: () => void) => schemeListeners.push(listener),
+        }),
+        addEventListener: (type: string, listener: () => void) => {
+          windowListeners[type] = listener;
+        },
+      };
+      const document = {
+        readyState: "complete",
+        body: {},
+        addEventListener: () => {},
+        querySelectorAll: () =>
+          metas.map((meta) => ({
+            getAttribute: (name: string) =>
+              name === "media" ? (meta.media ?? null) : name === "content" ? meta.content : null,
+          })),
+      };
+      new Function("window", "document", buildBridgeScript(app.origin))(window, document);
+      const colors = () => sent.filter((message) => message.type === "theme").map((m) => m.color);
+      return {
+        colors,
+        sent,
+        toggle: () => {
+          dark = !dark;
+          for (const listener of schemeListeners) listener();
+        },
+        load: () => windowListeners.load?.(),
+      };
+    };
+
+    const siteMetas = [
+      { content: "#FAFAF9", media: "(prefers-color-scheme: light)" },
+      { content: "#0F1115", media: "(prefers-color-scheme: dark)" },
+    ];
+    const site = run(siteMetas);
+    expect(site.colors()).toEqual(["#FAFAF9"]);
+    site.toggle();
+    expect(site.colors()).toEqual(["#FAFAF9", "#0F1115"]);
+
+    expect(run([{ content: "#111111" }, ...siteMetas]).colors()).toEqual(["#111111"]);
+
+    const unmatched = run([{ content: "#222222", media: "print" }]);
+    unmatched.load();
+    expect(unmatched.sent.filter((message) => message.type === "theme")).toEqual([
+      { hark: 1, type: "theme", color: null, background: "rgb(1, 2, 3)" },
+      { hark: 1, type: "theme", color: null, background: "rgb(1, 2, 3)" },
+    ]);
+  });
+
   it("accepts only simple colors for the status strip", () => {
     expect(pickStripColor("#0C1119", null)).toBe("#0C1119");
     expect(pickStripColor(null, "rgb(12, 17, 25)")).toBe("rgb(12, 17, 25)");

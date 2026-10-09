@@ -77,9 +77,6 @@
 /* Non-utility theme values used by the hand-written rules below. */
 :root {
   color-scheme: light;
-  --hark-edge-tint: rgb(182 78 54 / 0.14);
-  --hark-noise-opacity: 0.1;
-  --hark-noise-blend: multiply;
   --hark-backdrop: oklch(0.21 0.02 260 / 0.2);
   --hark-panel-border: var(--color-line);
   --hark-panel-shadow: 0 24px 70px oklch(0.21 0.02 260 / 0.15);
@@ -125,11 +122,6 @@
 
     --color-brand-blue: oklch(0.75 0.13 253);
 
-    --hark-edge-tint: rgb(211 92 70 / 0.1);
-    /* `multiply` has nothing to darken on a dark page, so the grain flips to
-     `screen` and drops in opacity to stay a texture rather than a haze. */
-    --hark-noise-opacity: 0.055;
-    --hark-noise-blend: screen;
     --hark-backdrop: oklch(0.12 0.006 260 / 0.6);
     /* Large soft shadows read as smudges on dark surfaces, so elevation comes
      from a light hairline ring plus a tight, deep shadow. */
@@ -162,55 +154,9 @@ html {
 }
 
 body {
-  position: relative;
   @apply bg-paper text-ink font-sans;
   font-style: normal;
   letter-spacing: -0.02em;
-}
-
-body::before,
-body::after {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  content: "";
-}
-
-body::before {
-  background:
-    linear-gradient(90deg, var(--hark-edge-tint), transparent) left / 10vw 100% no-repeat,
-    linear-gradient(270deg, var(--hark-edge-tint), transparent) right / 10vw 100% no-repeat;
-}
-
-body::after {
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.72' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='.9'/%3E%3C/svg%3E");
-  background-size: 180px 180px;
-  opacity: var(--hark-noise-opacity);
-  mix-blend-mode: var(--hark-noise-blend);
-  mask-image: linear-gradient(
-    90deg,
-    black 0%,
-    black 1%,
-    transparent 10%,
-    transparent 90%,
-    black 99%,
-    black 100%
-  );
-  -webkit-mask-image: linear-gradient(
-    90deg,
-    black 0%,
-    black 1%,
-    transparent 10%,
-    transparent 90%,
-    black 99%,
-    black 100%
-  );
-}
-
-#root {
-  position: relative;
-  z-index: 1;
 }
 
 button,

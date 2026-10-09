@@ -150,12 +150,22 @@ export function buildBridgeScript(origin: string): string {
   document.addEventListener("touchend", cancelHold, { capture: true, passive: true });
   document.addEventListener("touchcancel", cancelHold, { capture: true, passive: true });
   function reportTheme() {
-    var meta = document.querySelector('meta[name="theme-color"]');
+    var meta = null;
+    var metas = document.querySelectorAll('meta[name="theme-color"]');
+    for (var i = 0; i < metas.length && !meta; i++) {
+      var media = metas[i].getAttribute("media");
+      if (!media || window.matchMedia(media).matches) meta = metas[i];
+    }
     var background = document.body ? window.getComputedStyle(document.body).backgroundColor : null;
     send({ hark: 1, type: "theme", color: meta ? meta.getAttribute("content") : null, background: background });
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", reportTheme);
   else reportTheme();
+  window.addEventListener("load", reportTheme);
+  // Pages restyle live on an appearance change without reloading, so the strip follows.
+  var scheme = window.matchMedia("(prefers-color-scheme: dark)");
+  if (scheme.addEventListener) scheme.addEventListener("change", reportTheme);
+  else if (scheme.addListener) scheme.addListener(reportTheme);
 })();
 true;`;
 }
