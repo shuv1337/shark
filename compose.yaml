@@ -31,6 +31,8 @@ services:
       APNS_ENVIRONMENT: production
       SERVICE_RATE_LIMIT_PER_MINUTE: ${SERVICE_RATE_LIMIT_PER_MINUTE:-300}
       ACCOUNT_RATE_LIMIT_PER_MINUTE: ${ACCOUNT_RATE_LIMIT_PER_MINUTE:-1500}
+      # The exe.dev proxy appends the client IP to X-Forwarded-For (one trusted hop).
+      TRUSTED_FORWARDED_FOR_HOPS: ${TRUSTED_FORWARDED_FOR_HOPS:-1}
     volumes:
       - shark-data:/data
     restart: unless-stopped

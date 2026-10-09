@@ -5,6 +5,7 @@ import { HTTPException } from "hono/http-exception";
 import { auth } from "./auth";
 import { env } from "./env";
 import { accessLog } from "./lib/access-log";
+import { withTrustedClientIp } from "./lib/client-ip";
 import { databaseIsReady } from "./lib/readiness";
 import { safeReturnPath } from "./lib/return-path";
 import { beginAppleWebSignIn } from "./lib/web-sign-in";
@@ -97,7 +98,7 @@ app.route("/", docsTextRoute);
 app.route("/", appPassJwksRoute);
 app.route("/", sshuvHandoffRoute);
 
-app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
+app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(withTrustedClientIp(c.req.raw)));
 // OAuth discovery for the MCP server, and the server itself. Tool calls are
 // dispatched through the agent routes below as the caller's grant token.
 app.route("/", oauthWellKnownRoute);

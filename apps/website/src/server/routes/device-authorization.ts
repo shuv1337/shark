@@ -11,6 +11,7 @@ import { apiToken, deviceAuthorizationRequest, user } from "../db/schema";
 import { env } from "../env";
 import { isEmailAllowed } from "../lib/admission";
 import { track } from "../lib/analytics";
+import { trustedClientIp } from "../lib/client-ip";
 import { newId } from "../lib/id";
 import {
   apiTokenPrefix,
@@ -31,14 +32,13 @@ const buckets = new Map<string, { count: number; resetAt: number }>();
  * A client IP is only trustworthy when an edge we control sets it, and any header a
  * client can send is attacker-controlled: rotating it would hand out a fresh bucket
  * and defeat the per-client limit. Returns null unless TRUSTED_CLIENT_IP_HEADER names
- * a header the edge is known to overwrite, in which case per-client limits resume.
+ * a header the edge is known to overwrite or TRUSTED_FORWARDED_FOR_HOPS describes the
+ * appending edge, in which case per-client limits resume.
  */
 export function requestKey(c: {
   req: { header(name: string): string | undefined };
 }): string | null {
-  if (!env.TRUSTED_CLIENT_IP_HEADER) return null;
-  const value = c.req.header(env.TRUSTED_CLIENT_IP_HEADER)?.split(",", 1)[0]?.trim();
-  return value || null;
+  return trustedClientIp((name) => c.req.header(name));
 }
 
 function consumeLimit(key: string, limit: number, windowMs: number): boolean {

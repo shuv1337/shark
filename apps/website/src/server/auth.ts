@@ -9,6 +9,7 @@ import * as schema from "./db/schema";
 import { env } from "./env";
 import { ADMISSION_DENIED_MESSAGE, isEmailAllowed } from "./lib/admission";
 import { appleAuthConfig, generateAppleClientSecret, revokeAppleGrantsForUser } from "./lib/apple";
+import { CLIENT_IP_HEADER } from "./lib/client-ip";
 import {
   clientDefaultScopes,
   hashOAuthToken,
@@ -156,11 +157,11 @@ export const auth = betterAuth({
   ],
   trustedOrigins: [env.APP_URL, "https://appleid.apple.com", "shark://", "shark://*"],
   advanced: {
-    // Rate limits (e.g. OAuth client registration) key on the client IP. Only a
-    // header the trusted edge overwrites is used; forwarded headers sent by the
-    // client itself are spoofable.
-    ...(env.TRUSTED_CLIENT_IP_HEADER
-      ? { ipAddress: { ipAddressHeaders: [env.TRUSTED_CLIENT_IP_HEADER] } }
+    // Rate limits (e.g. OAuth client registration) key on the client IP. When the
+    // edge is configured, app.ts resolves it once and passes it in CLIENT_IP_HEADER;
+    // otherwise Better Auth only trusts a single-entry X-Forwarded-For.
+    ...(env.TRUSTED_CLIENT_IP_HEADER || env.TRUSTED_FORWARDED_FOR_HOPS > 0
+      ? { ipAddress: { ipAddressHeaders: [CLIENT_IP_HEADER] } }
       : {}),
     ...(env.APP_URL.startsWith("https://")
       ? {

@@ -156,8 +156,10 @@ Deliberate merge resolutions:
   `/.well-known/oauth-authorization-server[/api/auth]`, and Better Auth's dynamic client
   registration. Registration grants nothing without an allowlisted user's consent.
 - `/api/oauth/clients` mutations require a same-origin request, like the other session routes.
-- `TRUSTED_CLIENT_IP_HEADER` is honored by Better Auth rate limits when set, but remains unset
-  in production per `docs/operations.md`.
+- Better Auth rate limits read the client IP the app resolves from `TRUSTED_CLIENT_IP_HEADER` or
+  `TRUSTED_FORWARDED_FOR_HOPS` (production: one exe.dev hop) per `docs/operations.md`. An hourly
+  sweeper deletes expired OAuth tokens and day-old anonymous clients that were never connected,
+  and offboarding deletes the user's OAuth tokens and consents.
 - The MCP server name is `shark`; access and refresh token prefixes stay `hark_mat_` and
   `hark_mrt_` as protocol identifiers.
 
