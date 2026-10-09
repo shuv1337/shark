@@ -424,6 +424,16 @@ describe("MCP tools", () => {
     expect(paged.isError, text(paged)).toBeFalsy();
     const page = (json(paged) as { page: { id: string; status: string } }).page;
     expect(page.status).toBe("triggered");
+    const { and, eq, isNotNull } = await import("drizzle-orm");
+    const [stored] = await db
+      .select({ requesterTokenId: schema.oncallPage.requesterTokenId })
+      .from(schema.oncallPage)
+      .where(eq(schema.oncallPage.id, page.id));
+    const [grant] = await db
+      .select({ id: schema.apiToken.id })
+      .from(schema.apiToken)
+      .where(and(eq(schema.apiToken.userId, "user_a"), isNotNull(schema.apiToken.oauthClientId)));
+    expect(stored?.requesterTokenId).toBe(grant?.id);
 
     const resolved = await client.callTool({
       name: "pages_resolve",
