@@ -82,6 +82,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  dismissInteraction: (id: string) =>
+    request<{ interaction: InteractionDto }>(
+      `/api/interactions/${encodeURIComponent(id)}/dismiss`,
+      { method: "POST", body: JSON.stringify({}) },
+    ),
   respondToInteractionWithToken: (id: string, input: InteractionCredentialResponseInput) =>
     request<{ ok: true; status: string }>(`/api/interaction-responses/${id}/respond`, {
       method: "POST",

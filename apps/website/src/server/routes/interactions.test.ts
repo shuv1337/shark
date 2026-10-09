@@ -1168,6 +1168,35 @@ describe("interactions", () => {
     ).toBe(409);
   });
 
+  it("lets only the account owner dismiss a pending request", async () => {
+    const created = await createInteraction({
+      title: "Release",
+      prompt: "Abandoned?",
+      kind: "reply",
+    });
+    const body = (await created.json()) as { interaction: { id: string } };
+    const dismiss = () =>
+      app.request(`/api/interactions/${body.interaction.id}/dismiss`, { method: "POST" });
+
+    authState.userId = "user_2";
+    const foreign = await dismiss();
+    authState.userId = "user_1";
+    expect(foreign.status).toBe(404);
+
+    const dismissed = await dismiss();
+    expect(dismissed.status).toBe(200);
+    expect(await dismissed.json()).toMatchObject({ interaction: { status: "canceled" } });
+    const waited = await agent(`/interactions/${body.interaction.id}/wait?timeout=0`);
+    expect(await waited.json()).toMatchObject({
+      timedOut: false,
+      interaction: { status: "canceled" },
+    });
+
+    const again = await dismiss();
+    expect(again.status).toBe(409);
+    expect(await again.json()).toMatchObject({ interaction: { status: "canceled" } });
+  });
+
   it("stops a long poll when the request is aborted", async () => {
     const created = await createInteraction({
       title: "Release",

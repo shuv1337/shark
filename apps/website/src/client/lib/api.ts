@@ -15,6 +15,7 @@ import type {
   InboxDetailDto,
   InboxFilter,
   InboxPageDto,
+  InteractionDto,
   LiveActivityDto,
   ServiceCreatedResponse,
   ServiceCreateInput,
@@ -117,6 +118,11 @@ export const api = {
   markInboxItemRead: (id: string) =>
     request<{ ok: true }>(`/api/inbox/${encodeURIComponent(id)}/read`, { method: "POST" }),
   markAllInboxRead: () => request<{ ok: true }>("/api/inbox/read-all", { method: "POST" }),
+  dismissInteraction: (id: string) =>
+    request<{ interaction: InteractionDto }>(
+      `/api/interactions/${encodeURIComponent(id)}/dismiss`,
+      { method: "POST" },
+    ),
   getBoard: () => request<BoardPageDto>("/api/board"),
   getBoardAsk: (id: string) =>
     request<{ ask: BoardAskDto; events: BoardAskEventDto[] }>(

@@ -17,7 +17,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { api } from "../src/lib/api";
+import { ApiError, api } from "../src/lib/api";
 import { isSimulatorPreview, previewInboxDetailForId } from "../src/lib/inbox-preview";
 import { submitInboxInteraction } from "../src/lib/interactions";
 import { colors, fonts, tightTracking } from "../src/lib/theme";
@@ -95,6 +95,55 @@ export default function InboxDetailScreen() {
     }
   };
 
+  const dismiss = async () => {
+    const available = detail?.item.action;
+    if (!available || responding) return;
+    setResponding(true);
+    try {
+      if (isSimulatorPreview && id.startsWith("preview-")) {
+        setDetail((current) =>
+          current
+            ? {
+                ...current,
+                item: {
+                  ...current.item,
+                  status: "canceled",
+                  result: "Canceled",
+                  needsAction: false,
+                  action: null,
+                },
+              }
+            : current,
+        );
+        return;
+      }
+      try {
+        await api.dismissInteraction(available.interactionId);
+      } catch (reason) {
+        // Already resolved elsewhere; the reload shows the outcome.
+        if (!(reason instanceof ApiError && reason.status === 409)) throw reason;
+      }
+      setReply("");
+      await load();
+      const summary = await api.listInbox("needs_action", null, 1);
+      void Notifications.setBadgeCountAsync(summary.unresolvedCount).catch(() => {});
+    } catch (reason) {
+      Alert.alert(
+        "Could not dismiss request",
+        reason instanceof Error ? reason.message : "Please try again.",
+      );
+    } finally {
+      setResponding(false);
+    }
+  };
+
+  const confirmDismiss = () => {
+    Alert.alert("Dismiss this request?", "The agent will see it as canceled.", [
+      { text: "Keep", style: "cancel" },
+      { text: "Dismiss", style: "destructive", onPress: () => void dismiss() },
+    ]);
+  };
+
   return (
     <SafeAreaView edges={["top", "bottom"]} style={styles.screen}>
       <StatusBar style="auto" />
@@ -160,6 +209,7 @@ export default function InboxDetailScreen() {
               action={detail.item.action}
               reply={reply}
               responding={responding}
+              onDismiss={confirmDismiss}
               onReply={setReply}
               onRespond={(action) => void respond(action)}
             />
@@ -206,15 +256,27 @@ function ActionPanel({
   action,
   reply,
   responding,
+  onDismiss,
   onReply,
   onRespond,
 }: {
   action: NonNullable<InboxDetailDto["item"]["action"]>;
   reply: string;
   responding: boolean;
+  onDismiss: () => void;
   onReply: (value: string) => void;
   onRespond: (action: "approve" | "deny" | "yes" | "no" | "reply") => void;
 }) {
+  const dismissButton = (
+    <Pressable
+      accessibilityRole="button"
+      disabled={responding}
+      onPress={onDismiss}
+      style={({ pressed }) => [styles.dismissButton, (responding || pressed) && styles.disabled]}
+    >
+      <Text style={styles.dismissText}>Dismiss request</Text>
+    </Pressable>
+  );
   if (action.kind === "reply") {
     return (
       <View style={styles.actionPanel}>
@@ -237,6 +299,7 @@ function ActionPanel({
         >
           <Text style={styles.primaryText}>{responding ? "Sending…" : "Send reply"}</Text>
         </Pressable>
+        {dismissButton}
       </View>
     );
   }
@@ -271,6 +334,7 @@ function ActionPanel({
           </Text>
         </Pressable>
       </View>
+      {dismissButton}
     </View>
   );
 }
@@ -409,6 +473,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accentSoft,
   },
   secondaryActionText: { color: colors.accent, fontFamily: fonts.semibold, fontSize: 14 },
+  dismissButton: { minHeight: 36, alignItems: "center", justifyContent: "center" },
+  dismissText: { color: colors.muted, fontFamily: fonts.medium, fontSize: 13 },
   disabled: { opacity: 0.5 },
   input: {
     minHeight: 90,

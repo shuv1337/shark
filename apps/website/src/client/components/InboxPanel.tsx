@@ -8,7 +8,7 @@ import {
   isInboxItemDeliveryFailure,
 } from "@hark/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../lib/api";
+import { ApiRequestError, api } from "../lib/api";
 import { subscribeToInboxUpdates } from "../lib/inboxUpdates";
 
 const FILTER_LABELS: Record<InboxFilter, string> = {
@@ -33,6 +33,7 @@ export function InboxPanel() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [markingRead, setMarkingRead] = useState(false);
+  const [dismissing, setDismissing] = useState(false);
   const listRequest = useRef(0);
 
   const load = useCallback(
@@ -97,6 +98,29 @@ export function InboxPanel() {
     } finally {
       setDetailLoading(false);
     }
+  };
+
+  const dismissItem = async (interactionId: string) => {
+    if (!selectedId) return;
+    if (!window.confirm("Dismiss this request? The agent will see it as canceled.")) return;
+    setDismissing(true);
+    try {
+      await api.dismissInteraction(interactionId);
+    } catch (reason) {
+      // A 409 means it already resolved elsewhere; the refresh below shows the outcome.
+      if (!(reason instanceof ApiRequestError && reason.status === 409)) {
+        setDetailError(reason instanceof Error ? reason.message : "Could not dismiss this request");
+        setDismissing(false);
+        return;
+      }
+    }
+    try {
+      setDetail(await api.getInboxItem(selectedId));
+    } catch {
+      // The list refresh still reflects the dismissal.
+    }
+    setDismissing(false);
+    void load();
   };
 
   const markAllRead = async () => {
@@ -215,8 +239,10 @@ export function InboxPanel() {
       {selectedId ? (
         <InboxDetailModal
           detail={detail}
+          dismissing={dismissing}
           error={detailError}
           loading={detailLoading}
+          onDismiss={(interactionId) => void dismissItem(interactionId)}
           onClose={() => {
             setSelectedId(null);
             setDetail(null);
@@ -291,13 +317,17 @@ function InboxAvatar({ item }: { item: InboxItemDto }) {
 
 function InboxDetailModal({
   detail,
+  dismissing,
   error,
   loading,
+  onDismiss,
   onClose,
 }: {
   detail: InboxDetailDto | null;
+  dismissing: boolean;
   error: string | null;
   loading: boolean;
+  onDismiss: (interactionId: string) => void;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -340,13 +370,23 @@ function InboxDetailModal({
         </div>
         {loading ? <p className="py-12 text-center text-sm text-ink-faint">Loading…</p> : null}
         {error ? <p className="py-10 text-center text-sm text-danger">{error}</p> : null}
-        {detail ? <InboxDetailContent detail={detail} /> : null}
+        {detail ? (
+          <InboxDetailContent detail={detail} dismissing={dismissing} onDismiss={onDismiss} />
+        ) : null}
       </div>
     </div>
   );
 }
 
-export function InboxDetailContent({ detail }: { detail: InboxDetailDto }) {
+export function InboxDetailContent({
+  detail,
+  dismissing = false,
+  onDismiss,
+}: {
+  detail: InboxDetailDto;
+  dismissing?: boolean;
+  onDismiss?: (interactionId: string) => void;
+}) {
   const { item } = detail;
   return (
     <div className="pt-6">
@@ -391,9 +431,23 @@ export function InboxDetailContent({ detail }: { detail: InboxDetailDto }) {
             Respond from a registered iPhone or the macOS menu bar app so the reply comes from a
             signed device.
           </p>
-          <p className="mt-2 text-xs text-ink-faint">
-            Expires {formatInboxDateTime(item.action.expiresAt)}
-          </p>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-ink-faint">
+              Expires {formatInboxDateTime(item.action.expiresAt)}
+            </p>
+            {onDismiss ? (
+              <button
+                className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink-muted transition hover:bg-surface-hover disabled:opacity-50"
+                disabled={dismissing}
+                onClick={() => {
+                  if (item.action) onDismiss(item.action.interactionId);
+                }}
+                type="button"
+              >
+                {dismissing ? "Dismissing…" : "Dismiss"}
+              </button>
+            ) : null}
+          </div>
         </div>
       ) : (
         <div className="mt-6 rounded-xl border border-line bg-surface-muted px-4 py-4">
