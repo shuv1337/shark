@@ -91,7 +91,7 @@ function replayResponse(row: EventRow): {
 
 /**
  * Per-minute service and account windows for webhook deliveries. Pages count
- * against the account window, so `oncall` webhooks share the same budget.
+ * against both windows, so `oncall` webhooks share the same budget.
  */
 async function rateLimitedResponse(
   c: Context,
@@ -101,6 +101,7 @@ async function rateLimitedResponse(
   const since = new Date(Date.now() - 60_000);
   const [
     [serviceUsage],
+    servicePageUsage,
     [accountEventUsage],
     [accountInteractionUsage],
     [accountActivityUsage],
@@ -110,6 +111,7 @@ async function rateLimitedResponse(
       .select({ value: count() })
       .from(event)
       .where(and(eq(event.serviceId, svc.id), gte(event.createdAt, since))),
+    pagesCreatedSince({ serviceId: svc.id }, since),
     db
       .select({ value: count() })
       .from(event)
@@ -124,11 +126,11 @@ async function rateLimitedResponse(
       .from(liveActivityOperation)
       .innerJoin(liveActivity, eq(liveActivity.id, liveActivityOperation.activityId))
       .where(and(eq(liveActivity.userId, svc.userId), gte(liveActivityOperation.createdAt, since))),
-    pagesCreatedSince(svc.userId, since),
+    pagesCreatedSince({ userId: svc.userId }, since),
   ]);
 
   let outcome: "service" | "account" | null = null;
-  if ((serviceUsage?.value ?? 0) >= billing.limits.servicePerMinute) {
+  if ((serviceUsage?.value ?? 0) + servicePageUsage >= billing.limits.servicePerMinute) {
     outcome = "service";
   } else if (
     (accountEventUsage?.value ?? 0) +
@@ -213,6 +215,7 @@ export const hooksRoute = new Hono()
           ...(idempotencyKey ? { dedupKey: idempotencyKey } : {}),
         },
         svc.title,
+        { serviceId: svc.id },
       );
       if (!paged.ok) {
         if (paged.status === 429) c.header("Retry-After", "60");

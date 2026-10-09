@@ -121,6 +121,7 @@ async function enforceRateLimit(service: ServiceRow, owner: UserRow) {
   const [
     [serviceEvents],
     [serviceActivities],
+    servicePages,
     [accountEvents],
     [accountInteractions],
     [accountActivities],
@@ -139,6 +140,7 @@ async function enforceRateLimit(service: ServiceRow, owner: UserRow) {
           gte(liveActivityOperation.createdAt, since),
         ),
       ),
+    pagesCreatedSince({ serviceId: service.id }, since),
     db
       .select({ value: count() })
       .from(event)
@@ -155,10 +157,10 @@ async function enforceRateLimit(service: ServiceRow, owner: UserRow) {
       .where(
         and(eq(liveActivity.userId, service.userId), gte(liveActivityOperation.createdAt, since)),
       ),
-    pagesCreatedSince(service.userId, since),
+    pagesCreatedSince({ userId: service.userId }, since),
   ]);
   if (
-    (serviceEvents?.value ?? 0) + (serviceActivities?.value ?? 0) >=
+    (serviceEvents?.value ?? 0) + (serviceActivities?.value ?? 0) + servicePages >=
     billing.limits.servicePerMinute
   ) {
     return { error: "Service rate limit exceeded", retryAfterSeconds: 60 as const };
