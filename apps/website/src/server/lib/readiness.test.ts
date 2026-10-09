@@ -48,6 +48,10 @@ function makeDatabase(options?: { migrationCount?: number; latest?: number }) {
       "oncall_override",
       "oncall_page",
       "oncall_page_recipient",
+      "oauth_client",
+      "oauth_access_token",
+      "oauth_refresh_token",
+      "oauth_consent",
     ]
       .map((name) => `create table "${name}" (id text primary key);`)
       .join("\n")}

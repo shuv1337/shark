@@ -7,6 +7,7 @@ import { Docs } from "./pages/Docs";
 import { Join } from "./pages/Join";
 import { Landing } from "./pages/Landing";
 import { Privacy, Terms } from "./pages/Legal";
+import { OAuthConsent } from "./pages/OAuthConsent";
 import { TeamPage } from "./pages/Team";
 
 export function App() {
@@ -24,6 +25,7 @@ export function App() {
         <Route path="/docs" element={<Docs />} />
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/terms" element={<Terms />} />
+        <Route path="/oauth/consent" element={<OAuthConsent />} />
       </Routes>
     </>
   );

@@ -130,6 +130,31 @@ Deliberate merge resolutions:
 - The board and SHark scopes are kept alongside the new `teams:*` and `oncall:*` scopes, which are
   added to the default `sharkctl` login. Existing tokens must log in again to use them.
 
+## MCP server integration, 2026-10-09
+
+Merges upstream through `97b3a97`, adopting the OAuth-protected MCP server at `/mcp` (`186e543`)
+and the skill's web app and MCP guidance (`44611b5`). The TestFlight/App Store link commits
+(`c732d1b`, `97b3a97`), comped team seats (`2317509`), and the iOS 1.3 version bump (`4a49c28`) are
+merged as history only; their changes are not applied.
+
+Deliberate merge resolutions:
+
+- Upstream's `0022_oauth_mcp` collides with SHark's `0022`; the identical additive SQL is
+  `0025_upstream_oauth_mcp`.
+- Consent is Apple-only and served behind `requireAuth`, so a signed-out visitor goes through
+  `/login`. Sessions are already restricted to allowlisted accounts, and `/mcp` re-checks the
+  owner's allowlist on every call, so removing an email stops its clients immediately.
+- The Apple Watch and Mac companion scopes (`watch:*`, `macos:*`) are never OAuth scopes: they can
+  answer prompts. Board scopes are grantable, and every board route has an MCP tool.
+- Intentional anonymous exceptions: `/.well-known/oauth-protected-resource[/mcp]`,
+  `/.well-known/oauth-authorization-server[/api/auth]`, and Better Auth's dynamic client
+  registration. Registration grants nothing without an allowlisted user's consent.
+- `/api/oauth/clients` mutations require a same-origin request, like the other session routes.
+- `TRUSTED_CLIENT_IP_HEADER` is honored by Better Auth rate limits when set, but remains unset
+  in production per `docs/operations.md`.
+- The MCP server name is `shark`; access and refresh token prefixes stay `hark_mat_` and
+  `hark_mrt_` as protocol identifiers.
+
 ## CLI and compatibility names
 
 `sharkctl` is the canonical fork CLI and package. Keep `HARK_*`, `@hark/*`, the `hark` config

@@ -1,13 +1,47 @@
 import { expo } from "@better-auth/expo";
-import { betterAuth } from "better-auth";
+import { oauthProvider } from "@better-auth/oauth-provider";
+import { OAUTH_SCOPES } from "@hark/contracts";
+import { type BetterAuthPlugin, betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { APIError } from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { db } from "./db";
 import * as schema from "./db/schema";
 import { env } from "./env";
 import { ADMISSION_DENIED_MESSAGE, isEmailAllowed } from "./lib/admission";
 import { appleAuthConfig, generateAppleClientSecret, revokeAppleGrantsForUser } from "./lib/apple";
+import {
+  clientDefaultScopes,
+  hashOAuthToken,
+  mcpResourceUrl,
+  OAUTH_ACCESS_TOKEN_PREFIX,
+  OAUTH_ACCESS_TOKEN_TTL_SECONDS,
+  OAUTH_CONSENT_PAGE,
+  OAUTH_REFRESH_TOKEN_PREFIX,
+  OAUTH_REFRESH_TOKEN_TTL_SECONDS,
+} from "./lib/oauth";
 import { webViewSessionPlugin } from "./lib/web-view-session";
+
+/**
+ * A client that asks for no scope gets every scope except `tokens:manage`
+ * (narrowed to what it registered for) instead of everything it may request.
+ */
+const oauthDefaultScopes = {
+  id: "hark-oauth-default-scopes",
+  hooks: {
+    before: [
+      {
+        matcher: (ctx) =>
+          ctx.path === "/oauth2/authorize" &&
+          typeof ctx.query?.client_id === "string" &&
+          !(typeof ctx.query.scope === "string" && ctx.query.scope.trim()),
+        handler: createAuthMiddleware(async (ctx) => {
+          const scope = (await clientDefaultScopes(String(ctx.query?.client_id))).join(" ");
+          return scope ? { context: { query: { ...ctx.query, scope } } } : undefined;
+        }),
+      },
+    ],
+  },
+} satisfies BetterAuthPlugin;
 
 export const auth = betterAuth({
   appName: "SHark",
@@ -90,17 +124,54 @@ export const auth = betterAuth({
       };
     },
   },
-  plugins: [expo(), webViewSessionPlugin()],
+  plugins: [
+    expo(),
+    // OAuth 2.1 authorization server for the remote MCP server at /mcp.
+    oauthProvider({
+      loginPage: OAUTH_CONSENT_PAGE,
+      consentPage: OAUTH_CONSENT_PAGE,
+      scopes: [...OAUTH_SCOPES],
+      // Tokens are only ever issued for the MCP server.
+      validAudiences: [mcpResourceUrl()],
+      grantTypes: ["authorization_code", "refresh_token"],
+      // MCP clients (Claude, OpenCode, Cursor, …) register themselves as public
+      // PKCE clients; registration never grants anything without consent.
+      allowDynamicClientRegistration: true,
+      allowUnauthenticatedClientRegistration: true,
+      allowPublicClientPrelogin: true,
+      // Opaque, hashed, database-backed tokens so revocation is immediate.
+      disableJwtPlugin: true,
+      storeTokens: { hash: async (token) => hashOAuthToken(token) },
+      prefix: {
+        opaqueAccessToken: OAUTH_ACCESS_TOKEN_PREFIX,
+        refreshToken: OAUTH_REFRESH_TOKEN_PREFIX,
+      },
+      accessTokenExpiresIn: OAUTH_ACCESS_TOKEN_TTL_SECONDS,
+      refreshTokenExpiresIn: OAUTH_REFRESH_TOKEN_TTL_SECONDS,
+      // Served at the origin root by routes/oauth.ts.
+      silenceWarnings: { oauthAuthServerConfig: true },
+    }),
+    oauthDefaultScopes,
+    webViewSessionPlugin(),
+  ],
   trustedOrigins: [env.APP_URL, "https://appleid.apple.com", "shark://", "shark://*"],
-  advanced: env.APP_URL.startsWith("https://")
-    ? {
-        // Apple returns OAuth callbacks with a cross-site form POST. Better Auth
-        // 1.6.25 still requires its signed state cookie on that request.
-        cookies: {
-          state: { attributes: { sameSite: "none", secure: true } },
-        },
-      }
-    : undefined,
+  advanced: {
+    // Rate limits (e.g. OAuth client registration) key on the client IP. Only a
+    // header the trusted edge overwrites is used; forwarded headers sent by the
+    // client itself are spoofable.
+    ...(env.TRUSTED_CLIENT_IP_HEADER
+      ? { ipAddress: { ipAddressHeaders: [env.TRUSTED_CLIENT_IP_HEADER] } }
+      : {}),
+    ...(env.APP_URL.startsWith("https://")
+      ? {
+          // Apple returns OAuth callbacks with a cross-site form POST. Better Auth
+          // 1.6.25 still requires its signed state cookie on that request.
+          cookies: {
+            state: { attributes: { sameSite: "none" as const, secure: true } },
+          },
+        }
+      : {}),
+  },
 });
 
 export type Session = typeof auth.$Infer.Session;

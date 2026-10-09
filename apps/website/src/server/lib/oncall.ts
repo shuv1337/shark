@@ -18,6 +18,7 @@ import {
   gt,
   inArray,
   isNotNull,
+  isNull,
   lt,
   lte,
   or,
@@ -678,7 +679,11 @@ export async function resolvePage(
 /** Resolves a lock-screen credential to its page and recipient. */
 export async function pageRecipientByToken(pageId: string, responseToken: string) {
   const [row] = await db
-    .select({ page: oncallPage, userId: oncallPageRecipient.userId })
+    .select({
+      page: oncallPage,
+      userId: oncallPageRecipient.userId,
+      usedAt: oncallPageRecipient.responseTokenUsedAt,
+    })
     .from(oncallPageRecipient)
     .innerJoin(oncallPage, eq(oncallPage.id, oncallPageRecipient.pageId))
     .innerJoin(
@@ -821,4 +826,32 @@ export function startOncallEscalationWorker(): () => void {
   const timer = setInterval(() => void processDueEscalations(), 15_000);
   timer.unref();
   return () => clearInterval(timer);
+}
+
+/**
+ * Claims a lock-screen credential for one action. Credentials are single-use:
+ * the first successful acknowledge or escalate spends it. Returns false when
+ * it was already spent (including by a concurrent request).
+ */
+export async function claimPageResponseToken(pageId: string, userId: string): Promise<boolean> {
+  const claimed = await db
+    .update(oncallPageRecipient)
+    .set({ responseTokenUsedAt: new Date() })
+    .where(
+      and(
+        eq(oncallPageRecipient.pageId, pageId),
+        eq(oncallPageRecipient.userId, userId),
+        isNull(oncallPageRecipient.responseTokenUsedAt),
+      ),
+    )
+    .returning({ userId: oncallPageRecipient.userId });
+  return claimed.length > 0;
+}
+
+/** Returns a claimed credential when its action did not happen. */
+export async function releasePageResponseToken(pageId: string, userId: string): Promise<void> {
+  await db
+    .update(oncallPageRecipient)
+    .set({ responseTokenUsedAt: null })
+    .where(and(eq(oncallPageRecipient.pageId, pageId), eq(oncallPageRecipient.userId, userId)));
 }

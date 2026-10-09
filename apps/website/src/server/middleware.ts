@@ -52,8 +52,26 @@ export const requireAuth = createMiddleware<AuthedEnv>(async (c, next) => {
   await next();
 });
 
+/**
+ * Env binding the MCP server sets when it dispatches a tool call through the
+ * agent routes in-process. A symbol key cannot arrive from the network: the
+ * Node adapter builds `c.env` itself, so only `app.fetch(request, env)` calls
+ * from server code can set it.
+ */
+export const INTERNAL_AGENT_TOKEN: unique symbol = Symbol("hark.internalAgentToken");
+
+export type InternalAgentEnv = { [INTERNAL_AGENT_TOKEN]: typeof apiToken.$inferSelect };
+
 /** Authenticates a scoped agent token without retaining or logging its plaintext value. */
 export const requireApiToken = createMiddleware<AgentEnv>(async (c, next) => {
+  const internal = (c.env as Partial<InternalAgentEnv> | undefined)?.[INTERNAL_AGENT_TOKEN];
+  if (internal) {
+    // Already authenticated (an OAuth access token at /mcp) by the dispatcher.
+    c.set("apiToken", internal);
+    await next();
+    return;
+  }
+
   const authorization = c.req.header("authorization");
   const match = authorization?.match(/^Bearer (hark_[A-Za-z0-9_-]{40,})$/i);
   if (!match?.[1]) return c.json({ error: "Unauthorized" }, 401);

@@ -478,7 +478,7 @@ export const devicesRoute = new Hono<AuthedEnv>()
 
 /**
  * Agent-token device routes, mounted at `/api/agent/devices`. Registration
- * stays phone-only: only the Hark app holds a push token to register.
+ * stays phone-only: only the SHark app holds a push token to register.
  */
 export const devicesAgentRoute = new Hono<AgentEnv>()
   .use("*", requireApiToken)

@@ -176,6 +176,13 @@
       "when": 1791571932408,
       "tag": "0024_upstream_teams_oncall",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1791573278955,
+      "tag": "0025_upstream_oauth_mcp",
+      "breakpoints": true
     }
   ]
 }
