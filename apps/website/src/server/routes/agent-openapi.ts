@@ -897,6 +897,8 @@ const operations: Record<
       request: appCreateSchema,
       status: 201,
       response: object({ app: ref("App"), created: bool, message: str }, ["message"]),
+      description:
+        "Passing `teamId` adds the app to that team and notifies its members, which also requires `teams:write`.",
     },
   },
   "/apps/{id}": {
@@ -934,7 +936,7 @@ const operations: Record<
   "/apps/{id}/share": {
     post: {
       summary: "Move an app into a team, or (teamId null) back to your own apps",
-      scopes: ["apps:write"],
+      scopes: ["apps:write", "teams:write"],
       params: [idParam()],
       request: appShareSchema,
       response: wrap("app", ref("App")),

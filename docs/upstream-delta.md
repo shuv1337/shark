@@ -129,6 +129,12 @@ Deliberate merge resolutions:
 - Upstream analytics (`trackAppEvent`), Google sign-in, and App Store links are not imported.
 - The board and SHark scopes are kept alongside the new `teams:*` and `oncall:*` scopes, which are
   added to the default `sharkctl` login. Existing tokens must log in again to use them.
+- Fork hardening on top of upstream: Lock Screen page credentials only work for recipients still on
+  `ALLOWED_EMAILS`, offboarding overwrites them, and paging skips non-admitted members. Pages run
+  the webhook and agent per-minute windows, count against the account window, and each group
+  accepts at most 10 new pages a minute. Sharing an app (or creating one with `teamId`) from an
+  agent token also needs `teams:write` and the agent budget, and each person can trigger at most
+  10 team notices a minute. Request logs redact `/join/:code` and `/api/team-invites/:code`.
 
 ## CLI and compatibility names
 

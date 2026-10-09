@@ -146,7 +146,8 @@ sign in again (`sharkctl auth login`).
 `apps create --team <team_id>` adds the app to a team instead, and `apps share <app_id>
 (--team <team_id> | --personal) [--no-notify]` moves an app you added into a team or back to your
 own apps. Other members are notified (unless `--no-notify`) and each approves sign-in on their own
-phone; their SHark pass then carries `team_id` and `team_role`.
+phone; their SHark pass then carries `team_id` and `team_role`. Both commands also require the
+`teams:write` scope.
 
 ## teams
 
