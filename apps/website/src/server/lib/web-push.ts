@@ -100,7 +100,10 @@ export async function sendWebPushNotifications(
         return;
       }
       // web-push re-parses with legacy `url.parse`; the canonical form parses the same way there.
-      const endpoint = new URL(subscription.endpoint).href;
+      const parsedEndpoint = new URL(subscription.endpoint);
+      // Never send an absolute-form name as the TLS server name.
+      parsedEndpoint.hostname = parsedEndpoint.hostname.replace(/\.$/, "");
+      const endpoint = parsedEndpoint.href;
       // One deadline covers resolution and the request; web-push's own timeout only starts once
       // its socket exists, so it can't bound a stalled resolver.
       const deadline = Date.now() + WEB_PUSH_TIMEOUT_MS;

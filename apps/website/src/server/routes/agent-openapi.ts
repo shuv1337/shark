@@ -441,6 +441,7 @@ const schemas: Record<string, JsonSchema> = {
     id: str,
     key: str,
     agent: str,
+    agentDisplay: nullableStr,
     text: str,
     detail: nullableStr,
     link: nullableStr,

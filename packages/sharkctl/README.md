@@ -199,10 +199,15 @@ person is on it.
 
 `board` feeds the captain's board at `/board`: durable questions that outlive their push, work in
 flight, and heads-up notes. It needs the `board:read` and `board:write` scopes, which the default
-login does not request; sign in once per agent with
+login does not request. Sign in with
 `sharkctl auth login --client-name "<Agent> (<host>)"` with `--scope board:read --scope board:write`
-plus every default scope you still need (`--scope` replaces the defaults; it does not add to them), so
-each agent has its own token and the board can say who asked.
+plus every default scope you still need (`--scope` replaces the defaults; it does not add to them).
+Agents on one host can share a token if each prefixes its keys with its harness and host and passes
+`--agent`; they can then read, ack, and cancel each other's asks, and revoking the token signs out
+all of them. A token per agent isolates them and lets the crew strip name each one.
+
+`board work` is an upsert and a heartbeat: re-posting a key keeps any optional field the call
+omits. To clear one, pipe JSON on stdin, for example `{"progress":null}` or `{"links":[]}`.
 
 `board ask --key <key> --title <title>` is an upsert: repeating it unchanged only records that the
 agent still cares, changing the title, body, options, or links bumps the revision and sends one new

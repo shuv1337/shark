@@ -678,6 +678,85 @@ describe("work, notes, done", () => {
   });
 });
 
+describe("work re-posts", () => {
+  type Work = {
+    statusLabel: string | null;
+    detail: string | null;
+    progress: number | null;
+    links: Array<{ url: string }>;
+    host: string | null;
+    waitingAskId: string | null;
+    heartbeatTtlSeconds: number;
+  };
+  const put = async (body: Record<string, unknown>) => {
+    const response = await agent("/work", FM, { method: "PUT", body: JSON.stringify(body) });
+    expect(response.status).toBeLessThan(300);
+    return ((await response.json()) as { work: Work }).work;
+  };
+
+  it("keeps omitted fields on a heartbeat and clears only what is sent as null or []", async () => {
+    const { body: asked } = await createAsk({ key: "fm:keep:ask" });
+    const base = { key: "fm:keep", title: "Keep fields" };
+    const first = await put({
+      ...base,
+      state: "in_flight",
+      statusLabel: "Building",
+      detail: "Step 2 of 3",
+      progress: 0.6,
+      links: [{ kind: "pr", url: "https://github.com/x/y/pull/9" }],
+      host: "synthetic-host",
+      waitingAskKey: "fm:keep:ask",
+      heartbeatTtlSeconds: 600,
+    });
+    expect(first.waitingAskId).toBe(asked.ask.id);
+
+    const blocked = await put({ ...base, state: "blocked" });
+    expect(blocked).toMatchObject({
+      statusLabel: "Building",
+      detail: "Step 2 of 3",
+      progress: 0.6,
+      links: [{ url: "https://github.com/x/y/pull/9" }],
+      host: "synthetic-host",
+      waitingAskId: asked.ask.id,
+      heartbeatTtlSeconds: 600,
+    });
+
+    const cleared = await put({
+      ...base,
+      state: "in_flight",
+      statusLabel: null,
+      detail: null,
+      progress: null,
+      links: [],
+      host: null,
+      waitingAskKey: null,
+    });
+    expect(cleared).toMatchObject({
+      statusLabel: null,
+      detail: null,
+      progress: null,
+      links: [],
+      host: null,
+      waitingAskId: null,
+      heartbeatTtlSeconds: 600,
+    });
+
+    const created = await put({ key: "fm:fresh", title: "Fresh", state: "queued" });
+    expect(created).toMatchObject({ links: [], progress: null, heartbeatTtlSeconds: 21_600 });
+  });
+
+  it("shows the harness name a note was posted with", async () => {
+    const note = await agent("/notes", FM, {
+      method: "PUT",
+      body: JSON.stringify({ key: "fm:who", text: "Heads up", agentDisplay: "Synthetic Harness" }),
+    });
+    expect(note.status).toBe(201);
+    expect(((await note.json()) as { note: { agentDisplay: string } }).note.agentDisplay).toBe(
+      "Synthetic Harness",
+    );
+  });
+});
+
 describe("expiry and callbacks", () => {
   it("expires due asks and delivers every terminal status to the callback with retries", async () => {
     stubCallbackTransport();

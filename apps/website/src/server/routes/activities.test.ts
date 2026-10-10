@@ -669,6 +669,81 @@ describe("Live Activity agent routes", () => {
     expect(oldDelivery).toMatchObject({ status: "ended", lastEvent: "end" });
   });
 
+  it("ends a blocker from its current row when an update lands after the replace plan", async () => {
+    const { endReplaced, findBlockingDeliveries, planReplacement } = await import("./activities");
+    const first = await start({
+      title: "Old run",
+      status: "Running",
+      deviceIds: ["activity_dev_1"],
+    });
+    const { activity } = (await first.json()) as { activity: { id: string } };
+    const plan = await planReplacement(
+      await findBlockingDeliveries(["activity_dev_1"], new Date()),
+    );
+    expect(plan.map((item) => item.activity.id)).toEqual([activity.id]);
+
+    const updated = await agent(`/${activity.id}`, WRITE_SECRET, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "Still running" }),
+    });
+    expect(updated.status).toBe(200);
+    const fresh = db
+      .select()
+      .from(schema.liveActivity)
+      .where(eq(schema.liveActivity.id, activity.id))
+      .get();
+    expect(fresh?.sequence).toBeGreaterThan(plan[0]?.activity.sequence ?? 0);
+
+    const ended = db.transaction((tx) => endReplaced(tx, plan, new Date()));
+    expect(ended).toHaveLength(1);
+    expect(ended[0]?.ending.sequence).toBe((fresh?.sequence ?? 0) + 1);
+    expect(ended[0]?.ending.props.status).toBe("Still running");
+    expect(
+      db.select().from(schema.liveActivity).where(eq(schema.liveActivity.id, activity.id)).get(),
+    ).toMatchObject({ status: "ended", sequence: (fresh?.sequence ?? 0) + 1 });
+  });
+
+  it("rolls back a replace start and returns 409 when the blocker cannot be ended", async () => {
+    const { sql } = await import("drizzle-orm");
+    const first = await start({
+      title: "Old run",
+      status: "Running",
+      deviceIds: ["activity_dev_1"],
+    });
+    const { activity } = (await first.json()) as { activity: { id: string } };
+    // Simulates the compare-and-swap matching no row.
+    db.run(
+      sql.raw(`create temp trigger skip_activity_end before update on live_activity
+        when new.status = 'ended' begin select raise(ignore); end`),
+    );
+    try {
+      const second = await start({
+        title: "New run",
+        status: "Starting",
+        replace: true,
+        deviceIds: ["activity_dev_1"],
+      });
+      expect(second.status).toBe(409);
+      expect(await second.json()).toMatchObject({
+        code: "ACTIVE_ACTIVITY_CONFLICT",
+        activityId: activity.id,
+      });
+    } finally {
+      db.run(sql.raw("drop trigger skip_activity_end"));
+    }
+    expect(
+      db.select().from(schema.liveActivity).where(eq(schema.liveActivity.id, activity.id)).get(),
+    ).toMatchObject({ status: "active" });
+    expect(
+      db
+        .select()
+        .from(schema.liveActivityDelivery)
+        .where(eq(schema.liveActivityDelivery.activityId, activity.id))
+        .get()?.status,
+    ).not.toBe("ended");
+    expect(db.select().from(schema.liveActivity).all()).toHaveLength(1);
+  });
+
   it("reuses a key after the keyed activity ends", async () => {
     const first = await start({
       title: "Keyed",

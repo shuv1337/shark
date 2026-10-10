@@ -203,6 +203,25 @@ export function joinCodeFromUrl(value: unknown): string | null {
   return /^[A-Za-z0-9_-]{4,128}$/.test(code) ? code : null;
 }
 
+/**
+ * Recognizes `shark://oncall` (optionally `?team=<id>`) from on-call notices. Returns the team id,
+ * `""` for a link without one, or null when the URL is not an on-call link.
+ */
+export function oncallTeamFromUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "shark:" && url.protocol !== "hark:") return null;
+  const segments = [url.host, ...url.pathname.split("/")].filter(Boolean);
+  if (segments.length !== 1 || segments[0] !== "oncall") return null;
+  const team = url.searchParams.get("team") ?? "";
+  return team === "" || /^[A-Za-z0-9_-]{1,128}$/.test(team) ? team : null;
+}
+
 export interface PagePush {
   pageId: string;
   responseToken?: string;

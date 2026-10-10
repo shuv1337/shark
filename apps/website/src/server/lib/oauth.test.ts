@@ -217,3 +217,22 @@ describe("OAuth grant listing", () => {
     ]);
   });
 });
+
+describe("client links", () => {
+  it("shows only HTTPS logos and home pages from anonymous registration", () => {
+    expect(oauth.httpsUrlOrNull("https://client.example/logo.png")).toBe(
+      "https://client.example/logo.png",
+    );
+    for (const value of [
+      "javascript:alert(1)",
+      "data:image/svg+xml,<svg/>",
+      "http://client.example/",
+      "not a url",
+      "",
+      null,
+      undefined,
+    ]) {
+      expect(oauth.httpsUrlOrNull(value), String(value)).toBeNull();
+    }
+  });
+});

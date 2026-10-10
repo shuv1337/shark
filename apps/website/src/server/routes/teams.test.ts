@@ -185,7 +185,10 @@ describe("teams and invites", () => {
     expect(created.url).toBe(`http://localhost:5173/join/${created.code}`);
     expect(created.invite).toMatchObject({ role: "member", invitedBy: "Ryan", acceptedAt: null });
 
+    // The join pages only open signed in, so the preview needs a session too.
     as(null);
+    expect((await call("GET", `/api/team-invites/${created.code}`)).status).toBe(401);
+    as("user_c");
     const preview = await call("GET", `/api/team-invites/${created.code}`);
     expect(preview.status).toBe(200);
     expect((await preview.json()) as TeamInvitePreviewDto).toMatchObject({
@@ -195,6 +198,7 @@ describe("teams and invites", () => {
       memberCount: 1,
     });
     // Accepting is a human decision: no session, no join.
+    as(null);
     expect((await call("POST", `/api/team-invites/${created.code}/accept`)).status).toBe(401);
 
     const joined = await join("user_b", created.code);
@@ -202,11 +206,45 @@ describe("teams and invites", () => {
     expect(joined.team).toMatchObject({ id: team.id, role: "member", memberCount: 2 });
 
     // Single use: the code is spent.
-    as(null);
+    as("user_c");
     expect((await call("GET", `/api/team-invites/${created.code}`)).status).toBe(404);
     as("user_b");
     const listed = (await (await call("GET", "/api/teams")).json()) as { teams: TeamDto[] };
     expect(listed.teams.map((entry) => [entry.name, entry.role])).toEqual([["Acme", "member"]]);
+  });
+
+  it("refuses cookie mutations from another origin but allows the site and the native app", async () => {
+    const team = await createTeam("Origins");
+    const created = await invite(team.id);
+    const from = (method: string, path: string, origin?: string) =>
+      app.request(path, {
+        method,
+        headers: { "content-type": "application/json", ...(origin ? { origin } : {}) },
+        ...(method === "GET" ? {} : { body: "{}" }),
+      });
+    const foreign = "https://evil.example";
+    as("user_b");
+    for (const [method, path] of [
+      ["POST", "/api/teams"],
+      ["PATCH", `/api/teams/${team.id}`],
+      ["DELETE", `/api/teams/${team.id}`],
+      ["POST", `/api/teams/${team.id}/invites`],
+      ["POST", `/api/team-invites/${created.code}/accept`],
+      ["POST", "/api/oncall/ocg_synthetic/pages"],
+      ["POST", "/api/pages/page_synthetic/acknowledge"],
+    ] as const) {
+      expect((await from(method, path, foreign)).status, `${method} ${path}`).toBe(403);
+      expect((await from(method, path, "null")).status, `${method} ${path}`).toBe(403);
+    }
+    expect((await from("GET", `/api/team-invites/${created.code}`, foreign)).status).toBe(200);
+    expect((await from("GET", "/api/teams", foreign)).status).toBe(200);
+
+    // The dashboard sends its own origin; the iPhone app sends none.
+    const site = new URL(created.url).origin;
+    const accepted = await from("POST", `/api/team-invites/${created.code}/accept`, site);
+    expect(accepted.status).toBe(200);
+    as("user_c");
+    expect((await from("POST", `/api/teams/${team.id}/leave`)).status).toBe(404);
   });
 
   it("keeps every team on the free plan with unlimited seats and no billing", async () => {
@@ -263,7 +301,6 @@ describe("teams and invites", () => {
     expect(wrong.status).toBe(403);
     expect(await wrong.json()).toMatchObject({ error: "This invite is for a different account" });
     // The refusal does not spend the invite.
-    as(null);
     expect((await call("GET", `/api/team-invites/${created.code}`)).status).toBe(200);
 
     const joined = await join("user_c", created.code);
@@ -559,6 +596,46 @@ describe("team apps", () => {
     expect(await shared.json()).toMatchObject({ required: ["apps:write", "teams:write"] });
     await settle();
     expect(sent).toHaveLength(0);
+  });
+
+  it("lets only the adder or a team admin rename a team app by re-registering its URL", async () => {
+    const { hashApiToken } = await import("../lib/token");
+    const team = await createTeam("Re-register");
+    await join("user_b", (await invite(team.id)).code);
+    as("user_a");
+    const body = { name: "Status", url: "https://status.example.com/", teamId: team.id };
+    const created = await call("POST", "/api/agent/apps", body, TEAMS_TOKEN);
+    expect(created.status).toBe(201);
+    const { app: teamApp } = (await created.json()) as { app: AppDto };
+    const memberToken = `hark_${"x".repeat(43)}`;
+    await db.insert(schema.apiToken).values({
+      id: "tok_bea_teams",
+      userId: "user_b",
+      name: "Bea teams bot",
+      tokenHash: hashApiToken(memberToken),
+      prefix: "hark_xxxxxxx",
+      scopes: ["apps:read", "apps:write", "teams:read", "teams:write"],
+      createdAt: new Date(),
+    });
+
+    const renamed = await call(
+      "POST",
+      "/api/agent/apps",
+      { ...body, name: "Hijacked" },
+      memberToken,
+    );
+    expect(renamed.status).toBe(403);
+    const again = await call(
+      "POST",
+      "/api/agent/apps",
+      { ...body, name: "Status v2" },
+      TEAMS_TOKEN,
+    );
+    expect(again.status).toBe(200);
+    expect(((await again.json()) as { app: AppDto }).app).toMatchObject({
+      id: teamApp.id,
+      name: "Status v2",
+    });
   });
 
   it("lets an apps:write token move its owner's app back out of a team without teams:write", async () => {

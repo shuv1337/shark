@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   BOARD_AGED_ASK_DAYS,
+  BOARD_DEFAULT_HEARTBEAT_TTL_SECONDS,
   BOARD_DONE_MAX_ITEMS,
   BOARD_DONE_WINDOW_DAYS,
   BOARD_MAX_OPEN_ASKS_PER_TOKEN,
@@ -195,6 +196,7 @@ export function toNoteDto(row: NoteRow): BoardNoteDto {
     id: row.id,
     key: row.noteKey,
     agent: row.agentLabel,
+    agentDisplay: row.agentDisplay,
     text: row.text,
     detail: row.detail,
     link: row.link,
@@ -884,7 +886,7 @@ export async function upsertWork(
     input.statusLabel,
     input.host,
     input.agentDisplay,
-    ...input.links.flatMap((link) => [link.label, link.url]),
+    ...(input.links ?? []).flatMap((link) => [link.label, link.url]),
   ]);
   if (rejected) return rejected;
   const now = new Date();
@@ -899,19 +901,28 @@ export async function upsertWork(
   if (existing && existing.requesterTokenId !== token.id && existing.requesterTokenId !== null) {
     return { ok: false, status: 409, error: "Another agent owns this work key" };
   }
+  // Omitted fields keep the stored value; null (or [] for links) clears them.
+  const kept = <T>(value: T | null | undefined, stored: T | null | undefined): T | null =>
+    value === undefined ? (stored ?? null) : value;
   const fields = {
     requesterTokenId: token.id,
     agentLabel: token.name,
     agentDisplay: input.agentDisplay ?? existing?.agentDisplay ?? null,
     title: input.title,
     state: input.state,
-    statusLabel: input.statusLabel ?? null,
-    detail: input.detail ?? null,
-    progress: input.progress ?? null,
-    links: input.links,
-    host: input.host ?? null,
-    waitingAskId: waitingAsk?.id ?? null,
-    heartbeatTtlSeconds: input.heartbeatTtlSeconds,
+    statusLabel: kept(input.statusLabel, existing?.statusLabel),
+    detail: kept(input.detail, existing?.detail),
+    progress: kept(input.progress, existing?.progress),
+    links: input.links ?? existing?.links ?? [],
+    host: kept(input.host, existing?.host),
+    waitingAskId:
+      input.waitingAskKey === undefined
+        ? (existing?.waitingAskId ?? null)
+        : (waitingAsk?.id ?? null),
+    heartbeatTtlSeconds:
+      input.heartbeatTtlSeconds ??
+      existing?.heartbeatTtlSeconds ??
+      BOARD_DEFAULT_HEARTBEAT_TTL_SECONDS,
     lastHeartbeatAt: now,
     completedAt: null,
     completionVerb: null,

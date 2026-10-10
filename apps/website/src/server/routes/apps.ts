@@ -15,7 +15,7 @@ import {
 import { and, count, eq, ne } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
-import { app, appMemberState } from "../db/schema";
+import { app, appMemberState, teamMember } from "../db/schema";
 import { issueAppPass, publicJwks } from "../lib/app-pass";
 import {
   type AppRow,
@@ -118,20 +118,34 @@ async function revokeAppConsent(viewerId: string, appId: string): Promise<boolea
   return true;
 }
 
-/** Writes the viewer's sharing/consent/open state for a team app. */
-async function upsertMemberState(
+/**
+ * Writes the viewer's sharing/consent/open state for a team app. Returns false, writing nothing,
+ * when the viewer is no longer a member of the app's team, so a request that passed its access
+ * check before a removal cannot recreate the state the removal deleted.
+ */
+function upsertMemberState(
   appId: string,
   userId: string,
   values: Partial<Omit<typeof appMemberState.$inferInsert, "appId" | "userId">>,
-): Promise<void> {
+): boolean {
   const now = new Date();
-  await db
-    .insert(appMemberState)
-    .values({ appId, userId, ...values, updatedAt: now })
-    .onConflictDoUpdate({
-      target: [appMemberState.appId, appMemberState.userId],
-      set: { ...values, updatedAt: now },
-    });
+  return db.transaction((tx) => {
+    const member = tx
+      .select({ userId: teamMember.userId })
+      .from(app)
+      .innerJoin(teamMember, eq(teamMember.teamId, app.teamId))
+      .where(and(eq(app.id, appId), eq(teamMember.userId, userId)))
+      .get();
+    if (!member) return false;
+    tx.insert(appMemberState)
+      .values({ appId, userId, ...values, updatedAt: now })
+      .onConflictDoUpdate({
+        target: [appMemberState.appId, appMemberState.userId],
+        set: { ...values, updatedAt: now },
+      })
+      .run();
+    return true;
+  });
 }
 
 async function notifyTeamOfApp(actor: Actor, row: AppRow, teamId: string, teamName: string) {
@@ -240,7 +254,7 @@ export const appsAgentRoute = new Hono<AgentEnv>()
     // cannot interleave with another request on the single SQLite connection.
     const outcome = db.transaction((tx) => {
       const existing = tx
-        .select({ id: app.id, teamId: app.teamId })
+        .select({ id: app.id, teamId: app.teamId, userId: app.userId })
         .from(app)
         .where(
           teamId
@@ -249,6 +263,9 @@ export const appsAgentRoute = new Hono<AgentEnv>()
         )
         .get();
       if (existing && existing.teamId === teamId) {
+        if (destination && !canManageApp(token.userId, { app: existing, role: destination.role })) {
+          return { kind: "forbidden" as const };
+        }
         tx.update(app)
           .set({
             name: input.name,
@@ -293,6 +310,7 @@ export const appsAgentRoute = new Hono<AgentEnv>()
     });
 
     if (outcome.kind === "limit") return c.json({ error: APP_LIMIT_ERROR }, 409);
+    if (outcome.kind === "forbidden") return c.json(FORBIDDEN_MANAGE, 403);
     if (outcome.kind === "shared_elsewhere")
       return c.json({ error: "Another app already uses this URL" }, 409);
     if (outcome.kind === "conflict") {
@@ -441,7 +459,7 @@ export const appsSessionRoute = new Hono<AuthedEnv>()
     const access = await appAccess(userId, c.req.param("id"));
     if (!access) return c.json(NOT_FOUND, 404);
     if (access.app.teamId) {
-      await upsertMemberState(access.app.id, userId, parsed.data);
+      if (!upsertMemberState(access.app.id, userId, parsed.data)) return c.json(NOT_FOUND, 404);
     } else {
       await db
         .update(app)
@@ -474,12 +492,14 @@ export const appsSessionRoute = new Hono<AuthedEnv>()
     const { consent, ...sharing } = parsed.data;
     const now = new Date();
     if (sharing.shareName !== undefined || sharing.shareEmail !== undefined) {
-      if (teamApp) await upsertMemberState(appId, user.id, sharing);
-      else
+      if (teamApp) {
+        if (!upsertMemberState(appId, user.id, sharing)) return c.json(NOT_FOUND, 404);
+      } else {
         await db
           .update(app)
           .set({ ...sharing, updatedAt: now })
           .where(eq(app.id, appId));
+      }
     }
     const consentedAt = teamApp ? (state?.consentedAt ?? null) : current.consentedAt;
     if (!consentedAt && consent !== true) {
@@ -500,10 +520,11 @@ export const appsSessionRoute = new Hono<AuthedEnv>()
     let shareName: boolean;
     let shareEmail: boolean;
     if (teamApp) {
-      await upsertMemberState(appId, user.id, {
+      const recorded = upsertMemberState(appId, user.id, {
         ...(consent === true ? { consentedAt: now } : {}),
         lastOpenedAt: now,
       });
+      if (!recorded) return c.json(NOT_FOUND, 404);
       shareName = sharing.shareName ?? state?.shareName ?? true;
       shareEmail = sharing.shareEmail ?? state?.shareEmail ?? false;
     } else {

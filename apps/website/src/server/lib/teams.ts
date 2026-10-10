@@ -142,11 +142,16 @@ export function toInviteDto(row: InviteRow): TeamInviteDto {
   };
 }
 
-/** Moves a team app back to the member who added it, keeping their own sign-in state. */
+/**
+ * Moves a team app back to the member who added it, keeping their own sign-in state. Re-reads the
+ * app, so a caller holding a row from before a concurrent return cannot write stale state back.
+ */
 export function returnAppToAdder(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
-  row: typeof app.$inferSelect,
+  loaded: typeof app.$inferSelect,
 ) {
+  const row = tx.select().from(app).where(eq(app.id, loaded.id)).get();
+  if (!row || row.teamId === null) return;
   const state = tx
     .select()
     .from(appMemberState)
@@ -294,7 +299,13 @@ export async function sendNotice(userIds: string[], notice: HarkNotice): Promise
       .select({ token: device.expoPushToken })
       .from(device)
       .where(and(eq(device.userId, userId), eq(device.active, true), eq(device.platform, "ios")));
-    if (devices.length === 0) continue;
+    if (devices.length === 0) {
+      await db
+        .update(agentNotification)
+        .set({ status: "no_devices" })
+        .where(eq(agentNotification.id, id));
+      continue;
+    }
     const result = await sendPushMessages(
       buildPushMessages({
         to: devices.map((row) => row.token),
@@ -317,7 +328,18 @@ export async function sendNotice(userIds: string[], notice: HarkNotice): Promise
     }
     await db
       .update(agentNotification)
-      .set({ acceptedCount: result.accepted })
+      .set({
+        status:
+          result.accepted === devices.length
+            ? "accepted"
+            : result.accepted > 0
+              ? "partial"
+              : "failed",
+        acceptedCount: result.accepted,
+        failedCount: devices.length - result.accepted,
+        // Provider errors can embed push tokens, so the stored reason is deliberately coarse.
+        error: result.accepted < devices.length ? "Push delivery failed" : null,
+      })
       .where(eq(agentNotification.id, id));
     accepted += result.accepted;
   }

@@ -260,13 +260,15 @@ function ClientHeader({
   name: string;
   redirectHost: string | null;
 }) {
+  const logoUri = httpsOnly(client?.logo_uri);
+  const clientUri = httpsOnly(client?.client_uri);
   return (
     <div className="flex items-start gap-4">
-      {client?.logo_uri ? (
+      {logoUri ? (
         <img
           alt=""
           className="size-12 shrink-0 rounded-2xl bg-surface object-cover ring-1 ring-line"
-          src={client.logo_uri}
+          src={logoUri}
         />
       ) : (
         <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-accent text-lg font-medium text-on-accent">
@@ -283,21 +285,31 @@ function ClientHeader({
               Returns to <span className="font-mono text-ink-muted">{redirectHost}</span>
             </>
           ) : null}
-          {redirectHost && client?.client_uri ? " · " : null}
-          {client?.client_uri ? (
+          {redirectHost && clientUri ? " · " : null}
+          {clientUri ? (
             <a
               className="underline decoration-line-strong underline-offset-2 hover:text-ink"
-              href={client.client_uri}
+              href={clientUri}
               rel="noreferrer noopener"
               target="_blank"
             >
-              {safeHost(client.client_uri)}
+              {safeHost(clientUri)}
             </a>
           ) : null}
         </p>
       </div>
     </div>
   );
+}
+
+/** Anonymous registration accepts any string here; only HTTPS URLs are rendered. */
+function httpsOnly(uri: string | null | undefined): string | null {
+  if (!uri) return null;
+  try {
+    return new URL(uri).protocol === "https:" ? uri : null;
+  } catch {
+    return null;
+  }
 }
 
 function safeHost(uri: string): string {

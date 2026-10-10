@@ -518,11 +518,16 @@ export async function raisePage({
       const existing = mergeDuplicate(tx, group, input.dedupKey);
       if (existing) return { kind: "merged" as const, page: existing };
     }
+    // Stamped here, not before the awaits above, so the row lands inside the windows that admit it.
+    const admittedAt = Date.now();
     const recent = tx
       .select({ value: count() })
       .from(oncallPage)
       .where(
-        and(eq(oncallPage.groupId, group.id), gte(oncallPage.createdAt, new Date(now - 60_000))),
+        and(
+          eq(oncallPage.groupId, group.id),
+          gte(oncallPage.createdAt, new Date(admittedAt - 60_000)),
+        ),
       )
       .get();
     if ((recent?.value ?? 0) >= PAGES_PER_GROUP_PER_MINUTE) {
@@ -534,7 +539,16 @@ export async function raisePage({
     }
     return {
       kind: "created" as const,
-      page: tx.insert(oncallPage).values(values).returning().get(),
+      page: tx
+        .insert(oncallPage)
+        .values({
+          ...values,
+          nextEscalationAt: nextEscalationAt(group, 0, admittedAt),
+          createdAt: new Date(admittedAt),
+          updatedAt: new Date(admittedAt),
+        })
+        .returning()
+        .get(),
     };
   });
   if (created.kind === "merged") return mergedOutcome(created.page);

@@ -650,18 +650,27 @@ describe("isKnownWebPushEndpoint", () => {
     }
   });
 
-  it("matches hostnames exactly after WHATWG normalization, without trailing dots or lookalikes", () => {
+  it("matches hostnames exactly after WHATWG normalization, without lookalikes", () => {
     for (const endpoint of [
       // Fullwidth letters normalize to the real ASCII hostname.
       "https://\uff46\uff43\uff4d.googleapis.com/fcm/send/synthetic",
       "https://xn--synthetic-tld.push.apple.com/synthetic",
+      // One trailing dot is the absolute form of the same name.
+      "https://fcm.googleapis.com./fcm/send/synthetic",
+      "https://web.push.apple.com./synthetic",
+      "https://wns2-synthetic.notify.windows.com./w/synthetic",
     ]) {
       expect(isKnownWebPushEndpoint(endpoint), endpoint).toBe(true);
     }
     for (const endpoint of [
-      "https://fcm.googleapis.com./fcm/send/synthetic",
-      "https://web.push.apple.com./synthetic",
-      "https://wns2-synthetic.notify.windows.com./w/synthetic",
+      "https://fcm.googleapis.com../fcm/send/synthetic",
+      "https://web.push.apple.com../synthetic",
+      "https://.push.apple.com/synthetic",
+      "https://*.push.apple.com/synthetic",
+      "https://evil.com..push.apple.com/synthetic",
+      "https://127.0.0.1.push.apple.com/synthetic",
+      "https://-web.push.apple.com/synthetic",
+      "https://synthetic_host.notify.windows.com/w/synthetic",
       // Cyrillic homoglyphs become punycode, not the allowlisted name.
       "https://f\u0441m.googleapis.com/fcm/send/synthetic",
       "https://web.push.\u0430pple.com/synthetic",

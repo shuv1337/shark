@@ -221,6 +221,18 @@ describe("sendWebPushNotifications", () => {
     ]);
   });
 
+  it("sends to an absolute-form endpoint by its plain name without pruning it", async () => {
+    const resolve = vi.mocked(outbound.resolve);
+    const { sendWebPushNotifications } = await import("./web-push");
+    const result = await sendWebPushNotifications(
+      [await row("web_absolute", "https://web.push.apple.com./synthetic")],
+      { title: "SHark", body: "Synthetic" },
+    );
+    expect(mock.endpoints).toEqual(["https://web.push.apple.com/synthetic"]);
+    expect(resolve.mock.calls.map((call) => call[0])).toEqual(["web.push.apple.com"]);
+    expect(result).toMatchObject({ accepted: 1, staleSubscriptionIds: [] });
+  });
+
   it("skips an allowlisted host that resolves to a private address without pruning it", async () => {
     vi.spyOn(outbound, "resolve").mockResolvedValue([
       { address: "142.250.0.10", family: 4 },

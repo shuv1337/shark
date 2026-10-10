@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { request } from "./client.mjs";
+import { scopedRequest } from "./client.mjs";
 
 /**
  * `sharkctl board …`: durable asks, work items, and notes for the captain's
@@ -123,7 +123,7 @@ async function waitForAsk(config, key, timeoutSeconds, runtime) {
   let body;
   while (true) {
     const remaining = Math.max(0, (deadline - now()) / 1000);
-    body = await request(
+    body = await scopedRequest(
       config,
       `/api/agent/board/asks/${encodeURIComponent(key)}/wait?timeout=${Math.min(25, remaining)}`,
     );
@@ -199,7 +199,7 @@ export async function boardCommand(action, positionals, options, context) {
       payload.agentDisplay,
       ...(payload.options ?? []).map((option) => option.label),
     ]);
-    const body = await request(config, "/api/agent/board/asks", {
+    const body = await scopedRequest(config, "/api/agent/board/asks", {
       method: "PUT",
       body: JSON.stringify(payload),
     });
@@ -213,16 +213,20 @@ export async function boardCommand(action, positionals, options, context) {
 
   if (action === "cancel") {
     const key = requireValue(options, "key", "cancel");
-    const body = await request(config, `/api/agent/board/asks/${encodeURIComponent(key)}/cancel`, {
-      method: "POST",
-      body: JSON.stringify(options.reason ? { reason: options.reason } : {}),
-    });
+    const body = await scopedRequest(
+      config,
+      `/api/agent/board/asks/${encodeURIComponent(key)}/cancel`,
+      {
+        method: "POST",
+        body: JSON.stringify(options.reason ? { reason: options.reason } : {}),
+      },
+    );
     return { body, exitCode: 0 };
   }
 
   if (action === "get") {
     const key = requireValue(options, "key", "get");
-    const body = await request(config, `/api/agent/board/asks/${encodeURIComponent(key)}`);
+    const body = await scopedRequest(config, `/api/agent/board/asks/${encodeURIComponent(key)}`);
     return { body, exitCode: boardExitCode(body.ask) };
   }
 
@@ -237,15 +241,19 @@ export async function boardCommand(action, positionals, options, context) {
     if (options.since) params.set("since", options.since);
     if (options.limit) params.set("limit", options.limit);
     const query = params.toString();
-    const body = await request(config, `/api/agent/board/answers${query ? `?${query}` : ""}`);
+    const body = await scopedRequest(config, `/api/agent/board/answers${query ? `?${query}` : ""}`);
     return { body, exitCode: 0 };
   }
 
   if (action === "ack") {
     const key = requireValue(options, "key", "ack");
-    const body = await request(config, `/api/agent/board/asks/${encodeURIComponent(key)}/ack`, {
-      method: "POST",
-    });
+    const body = await scopedRequest(
+      config,
+      `/api/agent/board/asks/${encodeURIComponent(key)}/ack`,
+      {
+        method: "POST",
+      },
+    );
     return { body, exitCode: 0 };
   }
 
@@ -279,8 +287,14 @@ export async function boardCommand(action, positionals, options, context) {
         ? { heartbeatTtlSeconds: parseDuration(options["heartbeat-ttl"]) }
         : {}),
     };
-    screen([payload.title, payload.detail, payload.statusLabel, payload.host]);
-    const body = await request(config, "/api/agent/board/work", {
+    screen([
+      payload.title,
+      payload.detail,
+      payload.statusLabel,
+      payload.host,
+      payload.agentDisplay,
+    ]);
+    const body = await scopedRequest(config, "/api/agent/board/work", {
       method: "PUT",
       body: JSON.stringify(payload),
     });
@@ -306,20 +320,28 @@ export async function boardCommand(action, positionals, options, context) {
       ...(note ? { note } : {}),
       ...(options.agent ? { agentDisplay: options.agent } : {}),
     };
-    screen([payload.title, payload.note]);
-    const body = await request(config, `/api/agent/board/work/${encodeURIComponent(key)}/done`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
+    screen([payload.title, payload.note, payload.agentDisplay]);
+    const body = await scopedRequest(
+      config,
+      `/api/agent/board/work/${encodeURIComponent(key)}/done`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
     return { body, exitCode: 0 };
   }
 
   if (action === "note") {
     const key = requireValue(options, "key", "note");
     if (options.clear) {
-      const body = await request(config, `/api/agent/board/notes/${encodeURIComponent(key)}`, {
-        method: "DELETE",
-      });
+      const body = await scopedRequest(
+        config,
+        `/api/agent/board/notes/${encodeURIComponent(key)}`,
+        {
+          method: "DELETE",
+        },
+      );
       return { body, exitCode: 0 };
     }
     const text = positionals.join(" ") || stdin.text;
@@ -335,8 +357,8 @@ export async function boardCommand(action, positionals, options, context) {
       ...(options["expires-in"] ? { expiresInSeconds: parseDuration(options["expires-in"]) } : {}),
       ...(options.agent ? { agentDisplay: options.agent } : {}),
     };
-    screen([payload.text, payload.detail]);
-    const body = await request(config, "/api/agent/board/notes", {
+    screen([payload.text, payload.detail, payload.agentDisplay]);
+    const body = await scopedRequest(config, "/api/agent/board/notes", {
       method: "PUT",
       body: JSON.stringify(payload),
     });

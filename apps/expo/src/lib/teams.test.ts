@@ -10,6 +10,7 @@ import {
   isUnsupportedRoute,
   joinCodeFromUrl,
   onCallSummary,
+  oncallTeamFromUrl,
   pagePushData,
   pagesNeedingResponse,
   pagesNeedYouLabel,
@@ -175,6 +176,27 @@ describe("join links", () => {
     42,
   ])("rejects %s", (url) => {
     expect(joinCodeFromUrl(url)).toBeNull();
+  });
+});
+
+describe("on-call links", () => {
+  it.each([
+    ["shark://oncall?team=team_1", "team_1"],
+    ["hark://oncall?team=team_1", "team_1"],
+    ["shark://oncall", ""],
+  ])("extracts the team from %s", (url, team) => {
+    expect(oncallTeamFromUrl(url)).toBe(team);
+  });
+
+  it.each([
+    "https://shark.example/oncall?team=team_1",
+    "shark://oncall/extra",
+    "shark://join/abc123",
+    "shark://oncall?team=a%20b",
+    "not a url",
+    42,
+  ])("rejects %s", (url) => {
+    expect(oncallTeamFromUrl(url)).toBeNull();
   });
 });
 

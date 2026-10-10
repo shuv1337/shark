@@ -869,7 +869,12 @@ export async function planReplacement(
  */
 export function endReplaced(tx: Executor, plan: ReplacementPlan, now: Date): ReplacedDelivery[] {
   const ended: ReplacedDelivery[] = [];
-  for (const { activity, deliveries } of plan) {
+  for (const { activity: planned, deliveries } of plan) {
+    // The plan was read before the transaction; a concurrent update may have
+    // advanced the sequence or a concurrent end made the activity terminal.
+    const activity = tx.select().from(liveActivity).where(eq(liveActivity.id, planned.id)).get();
+    if (!activity) continue;
+    const live = ["starting", "active", "partial"].includes(activity.status);
     const ending: ActivityRow = {
       ...activity,
       sequence: activity.sequence + 1,
@@ -915,8 +920,9 @@ export function endReplaced(tx: Executor, plan: ReplacementPlan, now: Date): Rep
         ),
       )
       .get();
-    if ((remaining?.value ?? 0) === 0) {
-      tx.update(liveActivity)
+    if (live && (remaining?.value ?? 0) === 0) {
+      const swapped = tx
+        .update(liveActivity)
         .set({
           status: "ended",
           sequence: ending.sequence,
@@ -932,10 +938,24 @@ export function endReplaced(tx: Executor, plan: ReplacementPlan, now: Date): Rep
             inArray(liveActivity.status, ["starting", "active", "partial"]),
           ),
         )
-        .run();
+        .returning({ id: liveActivity.id })
+        .all();
+      if (swapped.length === 0) throw new ReplacementConflictError(activity);
     }
   }
   return ended;
+}
+
+/**
+ * Thrown inside a start's transaction when a blocker it released could not be
+ * ended, so the whole start rolls back instead of leaving that activity live
+ * with no deliveries. Callers answer 409 `ACTIVE_ACTIVITY_CONFLICT`.
+ */
+export class ReplacementConflictError extends Error {
+  constructor(readonly activity: ActivityRow) {
+    super("A replaced Live Activity changed during the start");
+    this.name = "ReplacementConflictError";
+  }
 }
 
 /**
@@ -1393,6 +1413,18 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
             409,
           );
         }
+      }
+      if (error instanceof ReplacementConflictError) {
+        return c.json(
+          {
+            error: "A replaced Live Activity changed during the start; retry",
+            code: "ACTIVE_ACTIVITY_CONFLICT",
+            activityId: error.activity.id,
+            ownedByRequester: error.activity.requesterTokenId === token.id,
+            recovery: "wait_or_explicitly_replace",
+          },
+          409,
+        );
       }
       const raced = await findBlockingDeliveries(
         targets.map((target) => target.id),

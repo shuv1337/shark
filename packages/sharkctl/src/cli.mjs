@@ -4,7 +4,7 @@ import { chmod, mkdir, open, readFile, rename, rm, stat } from "node:fs/promises
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { BOARD_HELP, BoardUsageError, boardCommand } from "./board.mjs";
-import { publicRequest, RequestError, request } from "./client.mjs";
+import { publicRequest, RequestError, request, scopedRequest } from "./client.mjs";
 import { REQUIRED_PERMISSION_SCOPES, sharkEnvironment } from "./permissions/ask.mjs";
 import { main as permissionsMain } from "./permissions/cli.mjs";
 
@@ -626,22 +626,6 @@ async function appsRequest(config, path, init) {
 }
 
 /** Adds a re-login hint naming the scopes a 403 reported as missing. */
-async function scopedRequest(config, path, init) {
-  try {
-    return await request(config, path, init);
-  } catch (error) {
-    const required = error instanceof RequestError ? error.body?.required : undefined;
-    if (error instanceof RequestError && error.status === 403 && Array.isArray(required)) {
-      throw new RequestError(
-        `${error.message}. Run sharkctl auth login --scope ... to grant ${required.join(", ")}.`,
-        error.status,
-        error.body,
-      );
-    }
-    throw error;
-  }
-}
-
 function requireId(id, usage) {
   if (!id) throw new UsageError(`${usage} requires an ID`);
   return encodeURIComponent(id);

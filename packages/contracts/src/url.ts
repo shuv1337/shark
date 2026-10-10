@@ -78,11 +78,21 @@ export function isKnownWebPushEndpoint(value: string): boolean {
   if (url.protocol !== "https:" || url.username || url.password) return false;
   // WHATWG URL already normalizes an explicit :443 on https to "".
   if (url.port !== "") return false;
-  const hostname = url.hostname.toLowerCase();
-  return WEB_PUSH_SERVICE_HOSTS.some((pattern) =>
-    pattern.startsWith("*.") ? hostname.endsWith(pattern.slice(1)) : hostname === pattern,
-  );
+  // One trailing dot is the absolute form of the same name; `..` is not a hostname.
+  const hostname = url.hostname.toLowerCase().replace(/(?<!\.)\.$/, "");
+  return WEB_PUSH_SERVICE_HOSTS.some((pattern) => {
+    if (!pattern.startsWith("*.")) return hostname === pattern;
+    const suffix = pattern.slice(1);
+    if (!hostname.endsWith(suffix)) return false;
+    const labels = hostname.slice(0, -suffix.length).split(".");
+    return (
+      labels.every((label) => DNS_LABEL.test(label)) &&
+      !(labels.length === 4 && labels.every((label) => /^\d+$/.test(label)))
+    );
+  });
 }
+
+const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export const publicHttpsUrlSchema = z
   .url()

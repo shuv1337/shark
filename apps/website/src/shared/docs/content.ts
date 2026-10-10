@@ -1492,7 +1492,7 @@ sharkctl apps remove app_...`,
         blocks: [
           {
             kind: "p",
-            text: "`PUT /api/agent/board/work` upserts a work item by key with `state` `queued`, `in_flight`, `review`, or `blocked`, plus an optional status label, detail, progress, host, links, and the key of an ask it is waiting on. Every upsert is a heartbeat; past `heartbeatTtlSeconds` (default six hours) the card says stale instead of lying. `POST …/work/:key/done` moves it to Recently done with a verb (`merged`, `shipped`, `done`, `closed`, `reported`) and an outcome (`done`, `failed`, `cancelled`), creating the item if it never existed.",
+            text: "`PUT /api/agent/board/work` upserts a work item by key with `state` `queued`, `in_flight`, `review`, or `blocked`, plus an optional status label, detail, progress, host, links, and the key of an ask it is waiting on. Re-posting a key keeps any optional field it omits; send `null` (or `links: []`) to clear one. Every upsert is a heartbeat; past `heartbeatTtlSeconds` (default six hours) the card says stale instead of lying. `POST …/work/:key/done` moves it to Recently done with a verb (`merged`, `shipped`, `done`, `closed`, `reported`) and an outcome (`done`, `failed`, `cancelled`), creating the item if it never existed.",
           },
           {
             kind: "p",
@@ -1506,7 +1506,7 @@ sharkctl apps remove app_...`,
           {
             kind: "bullets",
             items: [
-              "Agents need the `board:write` and `board:read` scopes, which the default login does not request. Mint one token per agent so the board can say who asked and you can revoke one without the others.",
+              "Agents need the `board:write` and `board:read` scopes, which the default login does not request. Agents on one host can share a token if they prefix their keys and pass an agent name, but they can then read, ack, and cancel each other's asks, and revoking it signs out all of them. A token per agent isolates them, names each one on the board, and lets you revoke one without the others.",
               "Every agent read and write is limited to that token's own rows. Only your session sees the whole board.",
               "No token scope can answer. Answers, Later, and Dismiss need your admitted Apple session, a same-origin request, and the digest of the exact card you saw; a stale click returns `409` with the current question.",
               "Inside the SHark iPhone app the board opens as a registered web app (`sharkctl apps create --name Sharkboard --url https://shark.shuv.dev/board`); sign in once inside it.",

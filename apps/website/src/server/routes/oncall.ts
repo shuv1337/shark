@@ -33,6 +33,7 @@ import {
 } from "../lib/oncall";
 import { onCallThroughout, upcomingShifts } from "../lib/oncall-schedule";
 import { agentAdmission } from "../lib/rate-windows";
+import { requireSameOriginOrNative } from "../lib/same-origin";
 import { hasRole, sendNotice } from "../lib/teams";
 import {
   type AgentEnv,
@@ -227,7 +228,7 @@ async function notifyOverrideRecipient(
     title: `${actor.name} put you on call for ${group.name}`,
     body: `You're on call from ${from} until ${until}.`,
     sourceName: group.name,
-    url: "shark://oncall",
+    url: `shark://oncall?team=${encodeURIComponent(group.teamId)}`,
     conversationKey: `oncall-${group.id}`,
   });
 }
@@ -346,6 +347,7 @@ function sessionActor(c: { get(key: "user"): { id: string; name: string; email: 
 
 export const oncallSessionRoute = new Hono<AuthedEnv>()
   .use("*", requireAuth)
+  .use("*", requireSameOriginOrNative)
   .get("/me", async (c) => send(c, await myOncall(sessionActor(c))))
   .get("/:groupId", async (c) => send(c, await getGroup(sessionActor(c), c.req.param("groupId"))))
   .patch("/:groupId", async (c) =>
@@ -370,6 +372,7 @@ export const oncallSessionRoute = new Hono<AuthedEnv>()
 
 export const pagesSessionRoute = new Hono<AuthedEnv>()
   .use("*", requireAuth)
+  .use("*", requireSameOriginOrNative)
   .get("/:id", async (c) => send(c, await getPage(sessionActor(c), c.req.param("id"))))
   .post("/:id/acknowledge", async (c) => {
     const actor = sessionActor(c);

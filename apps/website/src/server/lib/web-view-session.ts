@@ -94,14 +94,14 @@ export async function verifyFirstPartyPass(token: string): Promise<string | null
     .where(eq(app.id, appId))
     .limit(1);
   if (!row || row.origin !== origin) return null;
-  const viewerId = row.teamId
+  // Spent even when the viewer no longer qualifies, so a pass refused after a removal cannot
+  // open a session if the person rejoins before it expires.
+  if (!(await claimPass(jti, exp))) return null;
+  return row.teamId
     ? await consentedTeamViewer(appId, row.teamId, origin, sub)
     : row.consentedAt && sub === pairwiseSubject(row.userId, origin)
       ? row.userId
       : null;
-  if (!viewerId) return null;
-  if (!(await claimPass(jti, exp))) return null;
-  return viewerId;
 }
 
 /**
