@@ -24,7 +24,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import {
   PersonAvatar,
   ScreenHeader,
-  SeatLimitNotice,
   SecondaryButton,
   SectionLabel,
   ui,
@@ -41,10 +40,8 @@ import {
 import {
   canManageTeam,
   formatHandoff,
-  isSeatLimitError,
   memberCountLabel,
   roleLabel,
-  seatsFull,
   seatsLabel,
 } from "../../src/lib/teams";
 import { colors } from "../../src/lib/theme";
@@ -65,7 +62,6 @@ export default function TeamDetailScreen() {
   const [invites, setInvites] = useState<TeamInviteDto[]>([]);
   const [groups, setGroups] = useState<OncallGroupDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [seatLimitHit, setSeatLimitHit] = useState(false);
   const [inviting, setInviting] = useState(false);
 
   const load = useCallback(async () => {
@@ -135,15 +131,13 @@ export default function TeamDetailScreen() {
             }
           : await api.createTeamInvite(team.id, { role });
         setInvites((current) => [result.invite, ...current]);
-        setSeatLimitHit(false);
         setInviting(false);
         await Share.share({
           message: `Join ${team.name} on SHark: ${result.url}`,
           url: result.url,
         });
       } catch (cause) {
-        if (isSeatLimitError(cause)) setSeatLimitHit(true);
-        else Alert.alert("Couldn’t create invite", errorText(cause));
+        Alert.alert("Couldn’t create invite", errorText(cause));
       } finally {
         setInviting(false);
       }
@@ -375,14 +369,6 @@ export default function TeamDetailScreen() {
                 </Text>
               </Pressable>
             </View>
-          ) : null}
-
-          {seatLimitHit || seatsFull(team.seats) ? (
-            <SeatLimitNotice
-              admin={admin}
-              teamName={team.name}
-              title={seatLimitHit ? undefined : "Every seat is in use"}
-            />
           ) : null}
 
           {groups && groups.length > 0 ? (
