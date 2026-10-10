@@ -544,6 +544,81 @@ describe("override permissions", () => {
     ]);
   });
 
+  it("lets a creator who was demoted to member still remove their override", async () => {
+    const { eq, and } = await import("drizzle-orm");
+    const group = await createGroup("Demoted");
+    const [benStart] = benShift(group);
+    const role = and(eq(schema.teamMember.teamId, TEAM_ID), eq(schema.teamMember.userId, "user_b"));
+    await db.update(schema.teamMember).set({ role: "admin" }).where(role);
+    let overrideId: string | undefined;
+    try {
+      as("user_b");
+      const created = await override(group.id, "user_c", benStart + HOUR, benStart + 2 * HOUR);
+      expect(created.status).toBe(201);
+      overrideId = ((await created.json()) as { group: OncallGroupDto }).group.overrides?.[0]?.id;
+    } finally {
+      await db.update(schema.teamMember).set({ role: "member" }).where(role);
+    }
+    as("user_b");
+    expect((await call("DELETE", `/api/oncall/${group.id}/overrides/${overrideId}`)).status).toBe(
+      200,
+    );
+  });
+
+  it("hides overrides from a creator removed from the team but not from the holder or admins", async () => {
+    const { eq, and } = await import("drizzle-orm");
+    const group = await createGroup("Removed creator");
+    const [benStart] = benShift(group);
+    as("user_b");
+    const first = await override(group.id, "user_c", benStart, benStart + HOUR);
+    const second = await override(group.id, "user_c", benStart + HOUR, benStart + 2 * HOUR);
+    expect([first.status, second.status]).toEqual([201, 201]);
+    const ids = (((await second.json()) as { group: OncallGroupDto }).group.overrides ?? []).map(
+      (row) => row.id,
+    );
+    expect(ids).toHaveLength(2);
+    const membership = and(
+      eq(schema.teamMember.teamId, TEAM_ID),
+      eq(schema.teamMember.userId, "user_b"),
+    );
+    const [saved] = await db.select().from(schema.teamMember).where(membership);
+    await db.delete(schema.teamMember).where(membership);
+    try {
+      for (const id of ids) {
+        expect((await call("DELETE", `/api/oncall/${group.id}/overrides/${id}`)).status).toBe(404);
+      }
+      as("user_c");
+      expect((await call("DELETE", `/api/oncall/${group.id}/overrides/${ids[0]}`)).status).toBe(
+        200,
+      );
+      as("user_a");
+      expect((await call("DELETE", `/api/oncall/${group.id}/overrides/${ids[1]}`)).status).toBe(
+        200,
+      );
+    } finally {
+      if (saved) await db.insert(schema.teamMember).values(saved);
+    }
+  });
+
+  it("refuses an override id addressed through another group", async () => {
+    const { eq } = await import("drizzle-orm");
+    const home = await createGroup("Home group");
+    const other = await createGroup("Other group");
+    const [benStart] = benShift(home);
+    as("user_a");
+    const created = await override(home.id, "user_c", benStart, benStart + HOUR);
+    expect(created.status).toBe(201);
+    const overrideId = ((await created.json()) as { group: OncallGroupDto }).group.overrides?.[0]
+      ?.id;
+    const crossed = await call("DELETE", `/api/oncall/${other.id}/overrides/${overrideId}`);
+    expect(crossed.status).toBe(404);
+    const rows = await db
+      .select()
+      .from(schema.oncallOverride)
+      .where(eq(schema.oncallOverride.id, overrideId ?? ""));
+    expect(rows.map((row) => row.groupId)).toEqual([home.id]);
+  });
+
   it("shows no creator for legacy overrides and leaves their removal to the holder and admins", async () => {
     const group = await createGroup("Legacy");
     const [benStart] = benShift(group);
@@ -664,6 +739,24 @@ describe("override notices", () => {
     for (let index = 0; index <= NOTICES_PER_SENDER_PER_MINUTE; index += 1) {
       const from = start + index * HOUR;
       expect((await override(group.id, "user_c", from, from + HOUR)).status).toBe(201);
+    }
+    await settle();
+    expect(pushesTo("user_c")).toHaveLength(NOTICES_PER_SENDER_PER_MINUTE);
+  });
+
+  it("stops notifying after the cap when a member keeps creating and removing a handoff", async () => {
+    const { NOTICES_PER_SENDER_PER_MINUTE } = await import("../lib/teams");
+    const group = await createGroup("Notice churn");
+    const start = benStart(group);
+    as("user_b");
+    for (let index = 0; index < NOTICES_PER_SENDER_PER_MINUTE + 3; index += 1) {
+      const created = await override(group.id, "user_c", start, start + HOUR);
+      expect(created.status).toBe(201);
+      const overrideId = ((await created.json()) as { group: OncallGroupDto }).group.overrides?.[0]
+        ?.id;
+      expect((await call("DELETE", `/api/oncall/${group.id}/overrides/${overrideId}`)).status).toBe(
+        200,
+      );
     }
     await settle();
     expect(pushesTo("user_c")).toHaveLength(NOTICES_PER_SENDER_PER_MINUTE);

@@ -200,7 +200,9 @@ export function rotationMemberAt(rotation: RotationConfig, index: number): strin
  * Deliberately not newest-created-wins: that would let a long override
  * created after a short cover silently erase the cover, while this rule's
  * one sharp edge (a new override partly covered by a later-starting one) is
- * refused with 409 at creation, so an accepted override is always in force.
+ * refused with 409 at creation, so a new override never shadows an existing
+ * one it would surround. (A later-starting override can still take over the
+ * tail of an earlier cover.)
  */
 function outranks(a: OverrideWindow, b: OverrideWindow): boolean {
   if (a.startsAt !== b.startsAt) return a.startsAt > b.startsAt;
