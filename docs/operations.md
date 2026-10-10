@@ -79,8 +79,8 @@ docker compose --env-file /home/exedev/shark/.env --file /etc/shark/compose.yaml
 ```
 
 The command revokes Apple grants and persisted access (sessions, API tokens, webhooks, devices,
-interaction and on-call page credentials, and MCP OAuth access tokens, refresh tokens, and
-consents) but preserves account data. Re-admitting the address later requires new sign-ins and new
+interaction and on-call page credentials, and MCP OAuth access tokens, refresh tokens, consents,
+and unexchanged authorization codes) but preserves account data. Re-admitting the address later requires new sign-ins and new
 MCP consent. Use the separate
 authenticated account-deletion flow only for permanent deletion.
 
@@ -131,11 +131,20 @@ operator review:
     `/.well-known/oauth-authorization-server/api/auth` return 200 discovery metadata only.
   - `POST /api/auth/oauth2/register` accepts dynamic client registration. It is rate-limited per
     client IP and grants nothing without consent. An empty body returns 400.
-  - `POST /api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, `/api/auth/oauth2/introspect`, and
-    `/api/auth/oauth2/public-client-prelogin` authenticate with a client ID, code, or token
-    instead of a session. An empty form body returns 400, and JSON returns 415.
+  - `POST /api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, and `/api/auth/oauth2/introspect`
+    authenticate with a client ID, code, or token instead of a session. An empty form body returns
+    400, and JSON returns 415.
+  - `POST /api/auth/oauth2/public-client-prelogin` accepts JSON and verifies a signed
+    `oauth_query` instead of a session. An empty JSON body returns 400, and valid JSON with a
+    validly signed query returns 200 with the client's public registration fields.
   - `/mcp` without a valid bearer token returns 401 with a `WWW-Authenticate` challenge that points
     to the protected-resource metadata.
+- The team invite preview `GET /api/team-invites/:code` is intentionally anonymous so the join
+  page can describe an invite before sign-in. For a valid code it returns only the team name,
+  inviter name, role, member count, and expiry, with `Cache-Control: no-store`. An unknown code
+  returns 404, and more than 30 requests a minute from one client returns 429. The access log
+  records it as `/api/team-invites/:code`. See `docs/upstream-delta.md` for why each anonymous
+  exception is acceptable.
 - The running container image ID matches the release provenance.
 - The latest nightly/pre-deploy Restic snapshot is verified.
 - Disk pressure, container restarts, and the capped local log files are healthy.
