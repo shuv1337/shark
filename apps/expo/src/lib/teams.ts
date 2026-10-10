@@ -229,9 +229,6 @@ export function claimedPageId(candidate: unknown): string | null {
 /** SecureStore key holding an invite code opened while signed out. */
 export const PENDING_JOIN_CODE_KEY = "hark.team.pendingJoinCode";
 
-/** Pricing copy shown when a team runs out of seats. */
-export const TEAM_BILLING_URL = "https://shark.shuv.dev/dashboard";
-
 type PageClaimedListener = (pageId: string) => void;
 const pageClaimedListeners = new Set<PageClaimedListener>();
 

@@ -2,11 +2,11 @@ import { APP_PASS_ALGORITHM, APP_PASS_JWT_TYPE } from "@hark/contracts";
 import type { BetterAuthPlugin } from "better-auth";
 import { APIError, createAuthEndpoint } from "better-auth/api";
 import { setSessionCookie } from "better-auth/cookies";
-import { and, eq, isNull, lte } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, lte } from "drizzle-orm";
 import { importJWK, type JWK, jwtVerify } from "jose";
 import * as z from "zod";
 import { db } from "../db";
-import { app, appPassUse, appSigningKey } from "../db/schema";
+import { app, appMemberState, appPassUse, appSigningKey, teamMember } from "../db/schema";
 import { appPassIssuer, pairwiseSubject } from "./app-pass";
 
 /**
@@ -47,8 +47,9 @@ export function webViewEntryRefusal(request: Request): string | null {
 }
 
 /**
- * Returns the owner of a valid, unused pass minted for SHark's own origin by a
- * consented app, or null.
+ * Returns the viewer of a valid, unused pass minted for SHark's own origin by a
+ * consented app, or null. For a personal app that is its owner; for a team app
+ * it is the consented current member the pass was issued to.
  */
 export async function verifyFirstPartyPass(token: string): Promise<string | null> {
   const origin = appPassIssuer();
@@ -81,15 +82,51 @@ export async function verifyFirstPartyPass(token: string): Promise<string | null
 
   const { app_id: appId, sub, jti, exp } = payload;
   if (typeof appId !== "string" || typeof jti !== "string" || typeof exp !== "number") return null;
-  const [owner] = await db
-    .select({ userId: app.userId, origin: app.origin, consentedAt: app.consentedAt })
+  if (typeof sub !== "string") return null;
+  const [row] = await db
+    .select({
+      userId: app.userId,
+      origin: app.origin,
+      consentedAt: app.consentedAt,
+      teamId: app.teamId,
+    })
     .from(app)
     .where(eq(app.id, appId))
     .limit(1);
-  if (!owner || owner.origin !== origin || !owner.consentedAt) return null;
-  if (sub !== pairwiseSubject(owner.userId, origin)) return null;
+  if (!row || row.origin !== origin) return null;
+  const viewerId = row.teamId
+    ? await consentedTeamViewer(appId, row.teamId, origin, sub)
+    : row.consentedAt && sub === pairwiseSubject(row.userId, origin)
+      ? row.userId
+      : null;
+  if (!viewerId) return null;
   if (!(await claimPass(jti, exp))) return null;
-  return owner.userId;
+  return viewerId;
+}
+
+/**
+ * The current team member whose pairwise subject is `sub` and who approved
+ * sign-in to this team app, or null. Team passes carry the viewer's own
+ * subject, and each member's consent lives in `app_member_state`.
+ */
+async function consentedTeamViewer(
+  appId: string,
+  teamId: string,
+  origin: string,
+  sub: string,
+): Promise<string | null> {
+  const candidates = await db
+    .select({ userId: appMemberState.userId })
+    .from(appMemberState)
+    .innerJoin(
+      teamMember,
+      and(eq(teamMember.teamId, teamId), eq(teamMember.userId, appMemberState.userId)),
+    )
+    .where(and(eq(appMemberState.appId, appId), isNotNull(appMemberState.consentedAt)));
+  return (
+    candidates.find((candidate) => pairwiseSubject(candidate.userId, origin) === sub)?.userId ??
+    null
+  );
 }
 
 /**

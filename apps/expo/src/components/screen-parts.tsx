@@ -1,9 +1,8 @@
-import { TEAM_FREE_SEATS, TEAM_SEAT_PRICE_MONTHLY } from "@hark/contracts";
 import { useRouter } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import type { ReactNode } from "react";
-import { Image, Linking, Pressable, StyleSheet, Text, View } from "react-native";
-import { initialOf, TEAM_BILLING_URL } from "../lib/teams";
+import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { initialOf } from "../lib/teams";
 import { colors, fonts, tightTracking } from "../lib/theme";
 
 /** Back button, centered title and an optional trailing action, as in Settings. */
@@ -151,7 +150,10 @@ export function SecondaryButton({
   );
 }
 
-/** Explains the team plan when a team has no free seat; billing lives on the web. */
+/**
+ * Shown if a server refuses a seat. SHark itself never limits seats or sells
+ * them, so there is nothing to buy; the notice only says the join was refused.
+ */
 export function SeatLimitNotice({
   teamName,
   admin,
@@ -165,21 +167,10 @@ export function SeatLimitNotice({
     <View accessibilityRole="summary" style={ui.notice}>
       <Text style={ui.noticeTitle}>{title ?? `${teamName} is out of seats`}</Text>
       <Text style={ui.muted}>
-        Teams include {TEAM_FREE_SEATS === 1 ? "one seat" : `${TEAM_FREE_SEATS} seats`} free. Each
-        extra person is ${TEAM_SEAT_PRICE_MONTHLY} a month on the team plan.{" "}
         {admin
-          ? "Add seats from the SHark dashboard, then invite again."
-          : "Ask a team admin to add a seat from the SHark dashboard."}
+          ? "This server refused another member. Try inviting again later."
+          : "This server refused another member. Ask a team admin."}
       </Text>
-      <Pressable
-        accessibilityHint="Opens shark.shuv.dev in Safari"
-        accessibilityLabel="Open the SHark dashboard"
-        accessibilityRole="link"
-        hitSlop={8}
-        onPress={() => void Linking.openURL(TEAM_BILLING_URL).catch(() => {})}
-      >
-        <Text style={ui.link}>shark.shuv.dev/dashboard ↗</Text>
-      </Pressable>
     </View>
   );
 }
@@ -444,12 +435,6 @@ export const ui = StyleSheet.create({
     fontFamily: fonts.semibold,
     fontSize: 14,
     letterSpacing: tightTracking(14),
-  },
-  link: {
-    color: colors.accent,
-    fontFamily: fonts.medium,
-    fontSize: 13,
-    letterSpacing: tightTracking(13),
   },
   input: {
     minHeight: 44,
