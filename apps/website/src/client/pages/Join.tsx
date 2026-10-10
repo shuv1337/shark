@@ -7,7 +7,7 @@ import { Brand, PAGE_COLUMN } from "../components/SiteChrome";
 import { primaryButton, secondaryButton, textLink } from "../components/ui";
 import { ApiRequestError, api } from "../lib/api";
 import { signInWithApple, useSession } from "../lib/auth";
-import { API_ERROR_CODE_SEAT_LIMIT, withArticle } from "../lib/teams";
+import { withArticle } from "../lib/teams";
 
 type Preview =
   | { kind: "loading" }
@@ -18,7 +18,6 @@ type Preview =
 type Outcome =
   | { kind: "idle" }
   | { kind: "joined"; response: TeamJoinResponse }
-  | { kind: "seat_limit" }
   | { kind: "error"; message: string };
 
 /** `/join/:code`: preview a team invite, sign in if needed, then accept it. */
@@ -52,12 +51,7 @@ export function Join() {
     try {
       setOutcome({ kind: "joined", response: await api.acceptTeamInvite(code) });
     } catch (err) {
-      if (
-        err instanceof ApiRequestError &&
-        (err.status === 402 || err.code === API_ERROR_CODE_SEAT_LIMIT)
-      ) {
-        setOutcome({ kind: "seat_limit" });
-      } else if (err instanceof ApiRequestError && [404, 410].includes(err.status)) {
+      if (err instanceof ApiRequestError && [404, 410].includes(err.status)) {
         setPreview({ kind: "invalid" });
       } else {
         setOutcome({
@@ -71,7 +65,6 @@ export function Join() {
   };
 
   const callbackURL = `/join/${encodeURIComponent(code)}`;
-  const teamName = preview.kind === "ready" ? preview.invite.teamName : "this team";
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -143,15 +136,6 @@ export function Join() {
                 Invite expires {new Date(preview.invite.expiresAt).toLocaleDateString()}.
               </p>
 
-              {outcome.kind === "seat_limit" ? (
-                <div
-                  className="mt-5 rounded-2xl bg-warn/12 px-4 py-3 text-[15px] leading-relaxed text-ink ring-1 ring-warn/40 ring-inset"
-                  role="alert"
-                >
-                  This server refused another member for {teamName}. Ask a team admin, then open
-                  this link again.
-                </div>
-              ) : null}
               {outcome.kind === "error" ? (
                 <div
                   className="mt-5 rounded-2xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger"
@@ -178,11 +162,7 @@ export function Join() {
                     onClick={() => void accept()}
                     type="button"
                   >
-                    {busy
-                      ? "Joining…"
-                      : outcome.kind === "seat_limit"
-                        ? "Try again"
-                        : `Join ${preview.invite.teamName}`}
+                    {busy ? "Joining…" : `Join ${preview.invite.teamName}`}
                   </button>
                   <p className="mt-3 text-center text-[13px] text-ink-faint">
                     Joining as {session.user.email}
