@@ -104,5 +104,5 @@ The helper:
 8. proves the running image ID and records SHA, digest, image ID, backup ID, and timestamp.
 
 The first deployment has no database to back up. Every later deployment requires a verified
-pre-deploy snapshot. Retain every digest named by a rollback provenance record until a manual
-rollback drill has succeeded.
+pre-deploy snapshot. Retain every digest named by a rollback provenance record; the previous
+release's image must stay pullable or local for a rollback.

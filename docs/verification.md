@@ -68,6 +68,88 @@ logs. Unchecked release evidence keeps the goal active.
     `c96e5e045c4651ee2e59f5ebc00207777c336d99f8ab8cc9a059d9f90333cc00`). The installed copy
     therefore came from that unpublished working state, not from either bundle revision.
     `~/.claude/skills/shark` still links to `../../.agents/skills/shark`.
+- 2026-10-10: production was promoted from `de5f9fe` to
+  `6b594067d00aeab5f61e0097b4a9b98dd42be66b` (signal-safe `shark-deploy` rollback #134, Cursor
+  review code fixes #136, ledger corrections #135) at image digest
+  `sha256:c47c9119a3317eae20a9eb53ccb13b16e055c5825c51630861ea89e0ec38e817` from publisher run
+  `38093252648`. This was the first run of the #134 helper. Before the deploy:
+  - Read-only VM checks for the #134 follow-up: `systemd-analyze cat-config systemd/logind.conf`
+    shows only the commented default `#KillUserProcesses=no`, and the live logind property
+    (`busctl get-property org.freedesktop.login1 /org/freedesktop/login1
+    org.freedesktop.login1.Manager KillUserProcesses`) is `false` on Ubuntu 24.04.4 with systemd
+    255. With `KillUserProcesses=false`, logout sends no signal to a detached run, so the
+    `SIGTERM`-after-`up` rollback concern does not apply on this VM. `loginctl show-user` also
+    reports `Linger=yes`, which only keeps the user manager running and is not what protects a
+    `setsid` run.
+  - `deploy/test-helpers` passed locally at `6b59406`. The three helpers that #134 changed
+    (`shark-deploy`, `shark-materialize-secrets`, `shark-restic-backup`) were copied to the VM,
+    hash-checked against `main`, syntax-checked, and installed root-owned with mode `0755`.
+    `shark-backup` and `/etc/shark/compose.yaml` already hash-matched `main`. The replaced
+    `shark-deploy` was blob `1e6738ea15c4e8953172dd4df8186f9e4bc139f3`, the revision on `main`
+    from `f56d7cd` through `de5f9fe`.
+  - The `op daemon` left by the `de5f9fe` deploy (started 06:35:43 UTC) was stopped. No deploy,
+    backup, or Restic process was running. The 09:00 UTC `shark-backup.timer` run had completed.
+  `shark-deploy` ran detached with `setsid nohup` at 22:59:51 UTC and printed its PID as its
+  first line; the SSH session that started it ended at once, and the helper survived. It verified
+  the pre-deploy encrypted Restic snapshot
+  `e0180679d0e8c80d4616ee37ae6ba2d6b30ec2d980609bc09825e427bff17536` in `repos/shark-prod`. That
+  snapshot holds the schema-0027 database. `6b59406` adds no migration, so the live database
+  stays at schema 0027 and a `de5f9fe` rollback would not need it. Docker events show the old container killed at
+  23:00:01 and the new one started at 23:01:32 UTC; a one-second loopback health probe saw 91
+  non-200 responses and the first 200 at 23:01:33, so production was down for about 92 seconds,
+  spent in the checkpoint and Restic snapshot. The helper printed `Deployed SHark …` and exited;
+  no `rollback.log` exists. `current` records the SHA, digest, image ID, backup ID, and
+  `2026-10-10T23:01:35Z`, and the running image ID matches the digest. Migrations are unchanged
+  at 28 (last `1791610113104`). Integrity is `ok` with no foreign-key violations. The container
+  has `TRUSTED_FORWARDED_FOR_HOPS=1` and no `TRUSTED_CLIENT_IP_HEADER`. Post-deploy checks:
+  - Health returned 200 with only `{"ok":true}` on the VM and through `https://shark.shuv.dev`.
+    The container was healthy with 0 restarts and logged no errors or warnings.
+  - Anonymous `/`, `/docs`, `/privacy`, `/terms`, `/dashboard`, `/cli/authorize`,
+    `/dashboard/teams/x`, `/join/x`, and `/api/team-invites/<unknown>` returned 401.
+    `/robots.txt`, `/sitemap.xml`, and `/pricing` returned 404, and `/sw.js` returned 200
+    JavaScript. The access-log redaction of the invite probes was not re-checked.
+  - `/mcp` returned 401 with no token and with a forged one, with a challenge that points to the
+    protected-resource metadata.
+  - The four OAuth discovery documents returned 200 without `watch:*` or `macos:*` scopes.
+  - Empty requests to `/api/auth/oauth2/register` and `/api/auth/oauth2/public-client-prelogin`
+    returned 400. Each of `/api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, and
+    `/api/auth/oauth2/introspect` returned 400 for an empty form and 415 for JSON. Anonymous
+    `POST /api/web-push/subscriptions` returned 401, as did an anonymous `POST /api/teams` with a
+    foreign `Origin`; that is the `requireAuth` answer, not the #136 same-origin check, which
+    only a cookie-authenticated request reaches.
+  - One labeled test notification was sent at 23:02:53 UTC through the existing `sharkctl` login,
+    returned exit 0, and was accepted for 4 targets. On-device delivery was not separately
+    confirmed.
+  - Not re-checked for `6b59406`: signed-in dashboard access, the #136 same-origin refusal for
+    a signed-in cross-origin mutation, and the macOS companion.
+  - **`OP_CACHE=false` did not prevent the daemon.** A new `op daemon` (1Password CLI 2.35.0)
+    started at 22:59:57 UTC, 6 seconds into the run while `shark-materialize-secrets` ran, and
+    was still running after the helper exited. The `deploy/README.md` sentence and the wrapper
+    comments that claim the helpers leave no daemon behind are wrong for this CLI version. The
+    daemon held no deploy lock. It was stopped by hand after the checks.
+- 2026-10-10: first real rollback drill on `shark-prod`, approved by the owner through a board ask
+  and run right after the `6b59406` promotion, while `6b59406` and `de5f9fe` share schema 0027 so
+  no database restore was needed. Under the deploy lock, the recorded `de5f9fe` SHA and image
+  (`provenance/de5f9fe….json`) were started the way `shark-deploy`'s own rollback does:
+  `compose stop`, then `compose up --detach` with that SHA and image. The container stopped at
+  23:11:56 UTC and the loopback health probe returned 200 again at 23:12:07, so the rollback cost
+  about 11 seconds of downtime. The running image ID matched the `de5f9fe` record
+  (`sha256:dc5c4188…dbb02`), the container was healthy with 0 restarts and logged no errors, the
+  database still reported 28 migrations and integrity `ok`, anonymous `/`, `/dashboard`, and
+  `/mcp` returned 401, `/sw.js` 200, `/robots.txt` 404, `https://shark.shuv.dev/api/health`
+  returned `{"ok":true}`, and a labeled test notification at 23:12:19 UTC was accepted for 4
+  targets. `current` was left at `6b59406` throughout, which is the documented state for a manual
+  rollback. Signed-in dashboard access was not re-checked during the 35-second window. The roll
+  forward re-ran `shark-deploy` detached for `6b59406` at 23:12:30 UTC. It verified attestation
+  again, took and verified a new pre-deploy snapshot
+  `d13517c6914eaf1dd3dc38a1000350acfe73755fdecafaacf5bd16faceb21d91`, and recorded the release
+  at `2026-10-10T23:14:02Z` with about 82 seconds of downtime (23:12:38 to 23:14:00) and no
+  `rollback.log`. After it, the running image ID matched the `6b59406` digest, integrity was `ok`
+  with no foreign-key violations, the anonymous boundary checks held, and a test notification at
+  23:14:24 UTC was accepted for 4 targets. The helper left another `op daemon` behind, which was
+  stopped by hand. The drill proves the manual rollback path in `docs/operations.md` for a
+  schema-compatible previous release; a rollback across an incompatible migration, which needs the
+  pre-deploy database restore, has not been drilled.
 - 2026-10-10: production was promoted from `6dcb736` to
   `de5f9fe6da7a84d41da00d8dc30eb917bd822acd` (on-call override creator and recipient notice #126,
   atomic Live Activity and webhook-response admission #129, Web Push service allowlist with pinned
@@ -381,7 +463,9 @@ logs. Unchecked release evidence keeps the goal active.
   commit `74b4b21ae39dfa1a9d6ba1948465340458ff468c`.
 - Sqim development artifact, HTTPS install page, signed entitlements, and two-iPhone acceptance:
   pending operator-owned identities and assets.
-- `shark-prod` no-op deployment and rollback rehearsal: not yet proven. DNS/TLS, immutable running
-  image, verified off-host snapshot, and byte-for-byte restore are proven above.
+- `shark-prod` rollback across an incompatible migration, with the pre-deploy database restore:
+  not yet proven. A schema-compatible rollback to the previous recorded release and the roll
+  forward were drilled on 2026-10-10 (above). DNS/TLS, immutable running image, verified off-host
+  snapshot, and byte-for-byte restore are proven above.
 - EAS/App Store Connect build, internal TestFlight installation, release tag, and final provenance:
   not yet proven.
