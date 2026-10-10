@@ -44,8 +44,9 @@ for the operator; comparisons are trimmed and case-insensitive, but aliases and 
 never inferred. The Apple provider subject remains the stable account identity.
 
 Removing an email from `ALLOWED_EMAILS` blocks new and existing browser sessions, API tokens,
-webhooks, interaction credentials, device authorization, and Live Activity credentials on their
-next request. Then run the bundled offboarding command in the production image:
+webhooks, interaction credentials, device authorization, Live Activity credentials, and MCP OAuth
+access tokens on their next request; the OAuth token endpoint refuses refresh and code exchange with
+`invalid_grant`. Then run the bundled offboarding command in the production image:
 
 ```sh
 DEPLOY_GIT_SHA='<deployed-full-sha>' \
@@ -57,8 +58,8 @@ docker compose --env-file /home/exedev/shark/.env --file /etc/shark/compose.yaml
 ```
 
 The command revokes Apple grants and persisted access (sessions, API tokens, webhooks, devices,
-interaction and on-call page credentials, and MCP OAuth access tokens, refresh tokens, and
-consents) but preserves account data. Re-admitting the address later requires new sign-ins and new
+interaction and on-call page credentials, and MCP OAuth access tokens, refresh tokens, consents,
+and unexchanged authorization codes) but preserves account data. Re-admitting the address later requires new sign-ins and new
 MCP consent. Use the separate
 authenticated account-deletion flow only for permanent deletion.
 
