@@ -1,4 +1,6 @@
+import type { Agent } from "node:https";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { outbound } from "./outbound";
 import { pushJsonBytes, WEB_PUSH_PAYLOAD_BYTE_LIMIT } from "./push-preview";
 
 process.env.NODE_ENV = "test";
@@ -9,6 +11,8 @@ process.env.VAPID_SUBJECT = "mailto:operator@example.com";
 const mock = vi.hoisted(() => ({
   statusCode: 201,
   payloads: [] as string[],
+  endpoints: [] as string[],
+  agents: [] as Agent[],
   vapid: [] as string[],
 }));
 
@@ -17,7 +21,13 @@ vi.mock("web-push", () => ({
     setVapidDetails: (subject: string, publicKey: string, privateKey: string) => {
       mock.vapid.push(subject, publicKey, privateKey);
     },
-    sendNotification: async (_subscription: unknown, payload: string) => {
+    sendNotification: async (
+      subscription: { endpoint: string },
+      payload: string,
+      options: { agent: Agent },
+    ) => {
+      mock.endpoints.push(subscription.endpoint);
+      mock.agents.push(options.agent);
       mock.payloads.push(payload);
       if (mock.statusCode !== 201) {
         throw Object.assign(new Error("push rejected"), { statusCode: mock.statusCode });
@@ -31,6 +41,10 @@ describe("sendWebPushNotifications", () => {
   beforeEach(() => {
     mock.statusCode = 201;
     mock.payloads.length = 0;
+    mock.endpoints.length = 0;
+    mock.agents.length = 0;
+    vi.restoreAllMocks();
+    vi.spyOn(outbound, "resolve").mockResolvedValue([{ address: "142.250.0.10", family: 4 }]);
   });
 
   async function rows() {
@@ -42,7 +56,7 @@ describe("sendWebPushNotifications", () => {
       endpointHash: `${id}-hash`,
       subscriptionCiphertext: encryptWebPushSubscription(
         JSON.stringify({
-          endpoint: `https://push.example.com/send/${id}`,
+          endpoint: `https://fcm.googleapis.com/fcm/send/${id}`,
           keys: { p256dh: "synthetic", auth: "synthetic" },
         }),
       ),
@@ -64,7 +78,7 @@ describe("sendWebPushNotifications", () => {
       endpointHash: "hash",
       subscriptionCiphertext: encryptWebPushSubscription(
         JSON.stringify({
-          endpoint: "https://push.example.com/send/one",
+          endpoint: "https://updates.push.services.mozilla.com/wpush/v2/one",
           keys: { p256dh: "p256dh", auth: "auth" },
         }),
       ),
@@ -160,5 +174,91 @@ describe("sendWebPushNotifications", () => {
       staleSubscriptionIds: [],
     });
     expect(mock.payloads).toEqual([]);
+  });
+
+  async function row(id: string, endpoint: string) {
+    const { encryptWebPushSubscription } = await import("./token");
+    const now = new Date();
+    return {
+      id,
+      userId: "synthetic-user",
+      endpointHash: `${id}-hash`,
+      subscriptionCiphertext: encryptWebPushSubscription(
+        JSON.stringify({ endpoint, keys: { p256dh: "synthetic", auth: "synthetic" } }),
+      ),
+      deviceName: "Browser",
+      active: true,
+      expirationAt: null,
+      createdAt: now,
+      lastSeenAt: now,
+    };
+  }
+
+  it("never sends to stored endpoints outside the push-service allowlist and prunes them", async () => {
+    const { sendWebPushNotifications } = await import("./web-push");
+    const result = await sendWebPushNotifications(
+      [
+        await row("web_private", "https://127.0.0.1:8443/internal"),
+        await row("web_metadata", "https://169.254.169.254/latest/meta-data/"),
+        await row("web_other", "https://push.example.com/send/synthetic"),
+        await row("web_port", "https://fcm.googleapis.com:8443/fcm/send/synthetic"),
+        await row("web_fcm", "https://fcm.googleapis.com/fcm/send/synthetic"),
+      ],
+      { title: "SHark", body: "Synthetic" },
+    );
+    expect(mock.endpoints).toEqual(["https://fcm.googleapis.com/fcm/send/synthetic"]);
+    expect(result.accepted).toBe(1);
+    expect(result.staleSubscriptionIds).toEqual([
+      "web_private",
+      "web_metadata",
+      "web_other",
+      "web_port",
+    ]);
+  });
+
+  it("skips an allowlisted host that resolves to a private address without pruning it", async () => {
+    vi.spyOn(outbound, "resolve").mockResolvedValue([
+      { address: "142.250.0.10", family: 4 },
+      { address: "10.0.0.5", family: 4 },
+    ]);
+    const { sendWebPushNotifications } = await import("./web-push");
+    const result = await sendWebPushNotifications(
+      [await row("web_rebound", "https://web.push.apple.com/synthetic")],
+      { title: "SHark", body: "Synthetic" },
+    );
+    expect(mock.endpoints).toEqual([]);
+    expect(result).toEqual({
+      accepted: 0,
+      errors: ["Browser subscription web_rebound resolved to a blocked destination"],
+      staleSubscriptionIds: [],
+    });
+  });
+
+  it("connects only to the validated addresses", async () => {
+    const resolve = vi
+      .spyOn(outbound, "resolve")
+      .mockResolvedValue([{ address: "2a00:1450:4001::a", family: 6 }]);
+    const { sendWebPushNotifications } = await import("./web-push");
+    await sendWebPushNotifications(
+      [await row("web_wns", "https://wns2-synthetic.notify.windows.com/w/?token=synthetic")],
+      { title: "SHark", body: "Synthetic" },
+    );
+    expect(resolve).toHaveBeenCalledWith("wns2-synthetic.notify.windows.com");
+    expect(mock.agents).toHaveLength(1);
+    const lookup = (
+      mock.agents[0] as Agent & { options: { lookup?: (...args: unknown[]) => void } }
+    ).options.lookup;
+    const all = await new Promise((resolve) =>
+      lookup?.("rebound.example", { all: true }, (_error: unknown, addresses: unknown) =>
+        resolve(addresses),
+      ),
+    );
+    expect(all).toEqual([{ address: "2a00:1450:4001::a", family: 6 }]);
+    const single = await new Promise((resolve) =>
+      lookup?.("rebound.example", {}, (_error: unknown, address: unknown, family: unknown) =>
+        resolve([address, family]),
+      ),
+    );
+    expect(single).toEqual(["2a00:1450:4001::a", 6]);
   });
 });

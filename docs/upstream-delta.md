@@ -222,6 +222,17 @@ Deliberate merge resolutions:
   a coarse `callback.lastError` (`blocked_destination`, `timeout`, `network_error`,
   `internal_error` for a row that couldn't be prepared, or `HTTP <status>`), never the underlying
   error text. Network-level egress filtering on the VM would be further defense in depth.
+- Browser Web Push endpoints are another server-side POST to a URL the user supplies, so
+  `webPushSubscriptionSchema` only accepts HTTPS endpoints on the default port at the push
+  services production browsers use (`WEB_PUSH_SERVICE_HOSTS` in
+  `packages/contracts/src/url.ts`): `fcm.googleapis.com`, `updates.push.services.mozilla.com`,
+  `*.notify.windows.com`, and `*.push.apple.com`. Delivery repeats that check on every stored
+  row; a row that fails it is never sent and is deactivated like an expired subscription. An
+  allowlisted host is then resolved through `lib/outbound.ts` and refused, without deactivating
+  the row, if any record isn't public, and `web-push` gets an `https.Agent` whose `lookup`
+  returns only the validated records, so TLS and `Host` keep the hostname while the socket
+  can't be rebound. Removing or testing an existing subscription still accepts any HTTPS
+  endpoint, so a row stored before the allowlist can be deleted.
 - Dependency footprint: `@modelcontextprotocol/sdk` is a production dependency of
   `@hark/website`. Per `pnpm-lock.yaml` it brings about 90 transitive packages, 54 of which
   nothing else in the website's production tree uses. They include `express@5`, `body-parser`,

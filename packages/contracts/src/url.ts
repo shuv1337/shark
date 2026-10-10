@@ -55,6 +55,34 @@ export function isPublicHttpsUrl(value: string): boolean {
   }
 }
 
+/**
+ * Push services that production browsers hand out subscription endpoints on:
+ * FCM (Chrome, Opera, Samsung Internet), Mozilla autopush (Firefox), WNS
+ * (Edge), and Apple's web push service (Safari). A leading `*.` matches any
+ * subdomain but not the bare suffix.
+ */
+export const WEB_PUSH_SERVICE_HOSTS = [
+  "fcm.googleapis.com",
+  "updates.push.services.mozilla.com",
+  "*.notify.windows.com",
+  "*.push.apple.com",
+] as const;
+
+export function isKnownWebPushEndpoint(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:" || url.username || url.password) return false;
+  if (url.port !== "" && url.port !== "443") return false;
+  const hostname = url.hostname.toLowerCase();
+  return WEB_PUSH_SERVICE_HOSTS.some((pattern) =>
+    pattern.startsWith("*.") ? hostname.endsWith(pattern.slice(1)) : hostname === pattern,
+  );
+}
+
 export const publicHttpsUrlSchema = z
   .url()
   .max(2048)

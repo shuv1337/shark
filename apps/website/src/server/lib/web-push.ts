@@ -1,7 +1,10 @@
-import type { WebPushSubscriptionInput } from "@hark/contracts";
+import { Agent } from "node:https";
+import type { LookupFunction } from "node:net";
+import { isKnownWebPushEndpoint, type WebPushSubscriptionInput } from "@hark/contracts";
 import webpush from "web-push";
 import type { webPushSubscription } from "../db/schema";
 import { env } from "../env";
+import { outbound, pinAddresses, type ResolvedAddress } from "./outbound";
 import {
   fitPushPreview,
   PushPreviewTooLargeError,
@@ -83,10 +86,27 @@ export async function sendWebPushNotifications(
         result.errors.push(`Invalid encrypted browser subscription ${row.id}`);
         return;
       }
+      if (!isKnownWebPushEndpoint(subscription.endpoint)) {
+        // Registration rejects these now; rows stored before that are never sent and get pruned.
+        result.staleSubscriptionIds.push(row.id);
+        result.errors.push(`Browser subscription ${row.id} uses an unrecognized push service`);
+        return;
+      }
+      // web-push re-parses with legacy `url.parse`; the canonical form parses the same way there.
+      const endpoint = new URL(subscription.endpoint).href;
+      let agent: Agent;
       try {
-        await webpush.sendNotification(subscription, serialized, {
+        agent = await pinnedAgent(endpoint);
+      } catch {
+        result.errors.push(`Browser subscription ${row.id} resolved to a blocked destination`);
+        return;
+      }
+      try {
+        await webpush.sendNotification({ ...subscription, endpoint }, serialized, {
           TTL: 300,
           urgency: "high",
+          agent,
+          timeout: 10_000,
         });
         result.accepted += 1;
       } catch (error) {
@@ -102,4 +122,23 @@ export async function sendWebPushNotifications(
     }),
   );
   return result;
+}
+
+/**
+ * An agent that only connects to the addresses validated here, so a push
+ * service name that resolves somewhere private (or rebinds between check and
+ * connect) is never reached. TLS SNI and certificate checks keep the hostname.
+ */
+async function pinnedAgent(endpoint: string): Promise<Agent> {
+  const hostname = new URL(endpoint).hostname;
+  const records = await pinAddresses(hostname, outbound.resolve, outbound.isAllowedAddress);
+  const lookup: LookupFunction = (_hostname, options, callback) => {
+    if (options.all) {
+      callback(null, records);
+      return;
+    }
+    const record = records[0] as ResolvedAddress;
+    callback(null, record.address, record.family);
+  };
+  return new Agent({ keepAlive: false, lookup });
 }

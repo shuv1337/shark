@@ -87,9 +87,14 @@ const projectNameSchema = z
     "Project names must be a single line",
   );
 
-import { isPublicHttpsUrl, publicHttpsUrlSchema } from "./url";
+import {
+  isKnownWebPushEndpoint,
+  isPublicHttpsUrl,
+  publicHttpsUrlSchema,
+  WEB_PUSH_SERVICE_HOSTS,
+} from "./url";
 
-export { isPublicHttpsUrl };
+export { isKnownWebPushEndpoint, isPublicHttpsUrl, WEB_PUSH_SERVICE_HOSTS };
 
 /**
  * Tap destinations are handed to the iOS app and opened with `Linking.openURL`,
@@ -435,7 +440,8 @@ export const webPushSubscriptionSchema = z.object({
   endpoint: z
     .url()
     .max(2048)
-    .refine((value) => new URL(value).protocol === "https:", "Push endpoint must use HTTPS"),
+    .refine((value) => new URL(value).protocol === "https:", "Push endpoint must use HTTPS")
+    .refine(isKnownWebPushEndpoint, "Push endpoint must use a known browser push service"),
   expirationTime: z.number().int().nonnegative().nullable().optional(),
   keys: z.object({
     p256dh: z.string().min(1).max(512),

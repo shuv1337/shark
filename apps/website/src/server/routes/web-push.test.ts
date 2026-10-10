@@ -56,7 +56,7 @@ let schema: typeof import("../db/schema");
 let decryptWebPushSubscription: typeof import("../lib/token")["decryptWebPushSubscription"];
 
 const subscription = {
-  endpoint: "https://push.example.com/send/secret-endpoint",
+  endpoint: "https://fcm.googleapis.com/fcm/send/secret-endpoint",
   expirationTime: null,
   keys: { p256dh: "public-browser-key", auth: "browser-auth-secret" },
 };
@@ -116,6 +116,25 @@ describe("browser push subscriptions", () => {
       );
       expect(response.status).toBe(403);
     }
+  });
+
+  it("rejects endpoints outside the known browser push services", async () => {
+    for (const endpoint of [
+      "https://127.0.0.1:8443/internal",
+      "https://169.254.169.254/latest/meta-data/",
+      "https://push.example.com/send/synthetic",
+      "https://fcm.googleapis.com.example.com/fcm/send/synthetic",
+      "https://fcm.googleapis.com:8443/fcm/send/synthetic",
+    ]) {
+      const response = await request(
+        "/api/web-push/subscriptions",
+        "POST",
+        { subscription: { ...subscription, endpoint } },
+        "https://shark.example.com",
+      );
+      expect(response.status).toBe(400);
+    }
+    expect(await db.select().from(schema.webPushSubscription)).toEqual([]);
   });
 
   it("registers encrypted subscription material and exposes a unified web device", async () => {
