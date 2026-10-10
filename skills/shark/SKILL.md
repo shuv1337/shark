@@ -2,7 +2,7 @@
 name: shark
 description: Use when a user wants SHark (its remote MCP server or sharkctl) for iPhone notifications, approvals, replies, Live Activities, the board, small web apps that open signed-in inside the SHark iPhone app, teams, on-call paging, persistent webhook services, authentication, task progress, or workflow integration.
 metadata:
-  version: "0.6.0"
+  version: "1.0.0"
 ---
 
 # SHark
@@ -15,7 +15,7 @@ webhook service when an external system needs a stable URL it can call later.
 
 - Use Node.js 22 or newer.
 - Use only a project-installed or user-installed `sharkctl` that the user already trusts. This is
-  skill version `0.6.0`, reviewed with `sharkctl` `0.6.0`; both ship from the same SHark release.
+  skill version `1.0.0`, reviewed with `sharkctl` `1.0.0`; both ship from the same SHark release.
   Never download packages, run `npx`/`pnpm dlx`, install or
   upgrade the CLI, or execute a newly installed binary as part of this skill. If `sharkctl` is not
   available, stop and ask the user to install and review an exact version separately.
@@ -559,7 +559,7 @@ export async function verifyPass(pass) {
 
 Teams share web apps and on-call groups between SHark accounts. Roles are `owner`, `admin`, and
 `member`. Every member still needs an allowlisted Apple sign-in. Team and on-call commands need the
-`teams:*` and `oncall:*` scopes, which logins created before `sharkctl` 0.6.0 lack; ask the user to
+`teams:*` and `oncall:*` scopes, which logins created before `sharkctl` 1.0.0 lack; ask the user to
 sign in again.
 
 ```bash

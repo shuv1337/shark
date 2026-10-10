@@ -5,13 +5,6 @@ import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
-// App Store Connect rejects a CFBundleShortVersionString lower than one already uploaded for the
-// bundle. The iOS app has a store-distribution EAS build at 1.0.0, so its marketing version may stay
-// there until the product version catches up; remove the entry once they match.
-export const HELD_VERSIONS = {
-  "apps/expo/app.config.ts": "1.0.0",
-};
-
 const PACKAGE_DIRECTORIES = ["apps", "packages", "integrations"];
 
 function matchAll(text, pattern) {
@@ -58,6 +51,12 @@ function sources(root) {
         matchAll(text, /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]*)<\/string>/g),
     },
     {
+      file: "apps/macos/Resources/Info.plist",
+      label: "macOS CFBundleVersion",
+      expect: "$(CURRENT_PROJECT_VERSION)",
+      read: (text) => matchAll(text, /<key>CFBundleVersion<\/key>\s*<string>([^<]*)<\/string>/g),
+    },
+    {
       file: "packages/shark-broker/src/adapters/codex-rpc.mjs",
       label: "sharkd clientInfo version",
       read: (text) => matchAll(text, /name: "shark_reply_broker", version: "([^"]+)"/g),
@@ -67,10 +66,13 @@ function sources(root) {
       label: "skill frontmatter metadata.version",
       read: (text) => {
         const frontmatter = text.match(/^---\n([\s\S]*?)\n---\n/)?.[1] ?? "";
-        return matchAll(
-          frontmatter,
-          /^metadata:\n(?:[ \t]+.*\n)*?[ \t]+version:\s*"?([^"\s]+)"?/gm,
-        );
+        const block = frontmatter.match(/^metadata:\n((?:[ \t]+.*(?:\n|$))*)/m)?.[1] ?? "";
+        const indent = block.match(/^[ \t]+/)?.[0] ?? "";
+        return block
+          .split("\n")
+          .filter((line) => line.startsWith(indent) && !/^[ \t]/.test(line.slice(indent.length)))
+          .map((line) => line.slice(indent.length).match(/^version:\s*"?([^"\s]+)"?/)?.[1])
+          .filter(Boolean);
       },
     },
     {
@@ -89,7 +91,6 @@ function sources(root) {
 export function checkVersions(root = REPO_ROOT) {
   const product = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
   const problems = [];
-  const notes = [];
 
   for (const source of sources(root)) {
     const path = join(root, source.file);
@@ -103,23 +104,17 @@ export function checkVersions(root = REPO_ROOT) {
       continue;
     }
     const expected = source.expect ?? product;
-    const held = HELD_VERSIONS[source.file];
     for (const version of found) {
       if (version === expected) continue;
-      if (held && version === held) {
-        notes.push(`${source.file}: ${source.label} held at ${held} (product ${product})`);
-        continue;
-      }
       problems.push(`${source.file}: ${source.label} is ${version}, expected ${expected}`);
     }
   }
 
-  return { product, problems, notes };
+  return { product, problems };
 }
 
 if (process.argv[1] && relative(process.argv[1], fileURLToPath(import.meta.url)) === "") {
-  const { product, problems, notes } = checkVersions();
-  for (const note of notes) console.log(`note: ${note}`);
+  const { product, problems } = checkVersions();
   if (problems.length > 0) {
     console.error(`Version drift from product version ${product}:`);
     for (const problem of problems) console.error(`  ${problem}`);

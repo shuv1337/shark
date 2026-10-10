@@ -1,7 +1,7 @@
 {
   "name": "hark",
   "private": true,
-  "version": "0.6.0",
+  "version": "1.0.0",
   "license": "PolyForm-Noncommercial-1.0.0",
   "packageManager": "pnpm@11.10.0",
   "engines": {

@@ -17,7 +17,7 @@ function fixture(version, overrides = {}) {
     "apps/macos/project.yml": `targets:\n  SHarkMac:\n    settings:\n      base:\n        MARKETING_VERSION: ${version}\n        CURRENT_PROJECT_VERSION: 7\n`,
     "apps/macos/SHarkMac.xcodeproj/project.pbxproj": `MARKETING_VERSION = ${version};\nMARKETING_VERSION = ${version};\n`,
     "apps/macos/Resources/Info.plist":
-      "<key>CFBundleShortVersionString</key>\n\t<string>$(MARKETING_VERSION)</string>\n",
+      "<key>CFBundleShortVersionString</key>\n\t<string>$(MARKETING_VERSION)</string>\n<key>CFBundleVersion</key>\n\t<string>$(CURRENT_PROJECT_VERSION)</string>\n",
     "packages/shark-broker/src/adapters/codex-rpc.mjs": `clientInfo: { name: "shark_reply_broker", version: "${version}" },\n`,
     "skills/shark/SKILL.md": `---\nname: shark\ndescription: Synthetic.\nmetadata:\n  version: "${version}"\n---\n\nThis is\n  skill version \`${version}\`, reviewed with \`sharkctl\` \`${version}\`.\n`,
     ...overrides,
@@ -72,6 +72,21 @@ test("a drifted skill frontmatter version fails", () => {
   );
 });
 
+test("only a version key directly under skill metadata counts", () => {
+  withFixture(
+    "2.3.4",
+    {
+      "skills/shark/SKILL.md":
+        '---\nname: shark\nmetadata:\n  internal:\n    version: "2.3.4"\n  version: "9.9.9"\n---\n\nThis is skill version `2.3.4`, reviewed with `sharkctl` `2.3.4`.\n',
+    },
+    ({ problems }) => {
+      assert.deepEqual(problems, [
+        "skills/shark/SKILL.md: skill frontmatter metadata.version is 9.9.9, expected 2.3.4",
+      ]);
+    },
+  );
+});
+
 test("a drifted macOS marketing version and a hard-coded plist fail", () => {
   withFixture(
     "2.3.4",
@@ -79,12 +94,13 @@ test("a drifted macOS marketing version and a hard-coded plist fail", () => {
       "apps/macos/SHarkMac.xcodeproj/project.pbxproj":
         "MARKETING_VERSION = 2.3.4;\nMARKETING_VERSION = 1.0.0;\n",
       "apps/macos/Resources/Info.plist":
-        "<key>CFBundleShortVersionString</key>\n\t<string>1.0</string>\n",
+        "<key>CFBundleShortVersionString</key>\n\t<string>1.0</string>\n<key>CFBundleVersion</key>\n\t<string>1</string>\n",
     },
     ({ problems }) => {
       assert.deepEqual(problems, [
         "apps/macos/SHarkMac.xcodeproj/project.pbxproj: macOS MARKETING_VERSION is 1.0.0, expected 2.3.4",
         "apps/macos/Resources/Info.plist: macOS CFBundleShortVersionString is 1.0, expected $(MARKETING_VERSION)",
+        "apps/macos/Resources/Info.plist: macOS CFBundleVersion is 1, expected $(CURRENT_PROJECT_VERSION)",
       ]);
     },
   );
@@ -101,15 +117,11 @@ test("a missing version declaration fails", () => {
   );
 });
 
-test("the held iOS marketing version is accepted only at its held value", () => {
+test("a drifted iOS app version fails", () => {
   const config = (version) => `export default () => ({\n    version: "${version}",\n});\n`;
-  withFixture("2.3.4", { "apps/expo/app.config.ts": config("1.0.0") }, ({ problems, notes }) => {
-    assert.deepEqual(problems, []);
-    assert.equal(notes.length, 1);
-  });
-  withFixture("2.3.4", { "apps/expo/app.config.ts": config("1.1.0") }, ({ problems }) => {
+  withFixture("2.3.4", { "apps/expo/app.config.ts": config("1.0.0") }, ({ problems }) => {
     assert.deepEqual(problems, [
-      "apps/expo/app.config.ts: Expo app version is 1.1.0, expected 2.3.4",
+      "apps/expo/app.config.ts: Expo app version is 1.0.0, expected 2.3.4",
     ]);
   });
 });
