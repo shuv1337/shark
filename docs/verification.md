@@ -5,6 +5,49 @@ logs. Unchecked release evidence keeps the goal active.
 
 ## Source baseline
 
+- 2026-10-09: production was promoted from `e405b22` to
+  `20e14e1a49c8cb8187e92c56c26dc7f8c6473208` (upstream teams/on-call #96, MCP server with OAuth
+  #97, board skill guidance #95) at image digest
+  `sha256:7797ebeeefed8d6b5fa059d52a9413b2d41295a80532080136e46b97f59ea27b`. `shark-deploy`
+  verified the pre-deploy encrypted Restic snapshot
+  `392a9e96313b45f8ad14c681dba4d44a1c952d69e4c596e89b2a51a0cac1a296` in `repos/shark-prod`, which
+  holds the schema-0023 database an `e405b22` rollback needs. The running image ID and the provenance
+  record match the digest. Startup applied migrations 0024 (`1791571932408`) and 0025
+  (`1791573278955`), for 26 recorded migrations. The 11 new team, on-call, and OAuth tables exist.
+  The rebuilt `agent_notification` table kept its row count and inbox triggers, with integrity `ok`
+  and no foreign-key violations. After `deploy/test-helpers` passed, `/etc/shark/compose.yaml` and
+  `/usr/local/sbin/shark-materialize-secrets` were reinstalled. Their only changes were the fixed
+  `APNS_MACOS_BUNDLE_ID` and `TRUSTED_FORWARDED_FOR_HOPS=1`. Both kept their owners and modes and
+  hash-match `main`. The container has `TRUSTED_FORWARDED_FOR_HOPS=1` and no
+  `TRUSTED_CLIENT_IP_HEADER`. Post-deploy checks:
+  - Health returned 200 with only `{"ok":true}`. The container was healthy with 0 restarts.
+  - Anonymous `/`, `/docs`, `/privacy`, `/terms`, `/dashboard`, `/cli/authorize`,
+    `/dashboard/teams/x`, and `/join/x` returned 401. `/robots.txt`, `/sitemap.xml`, and `/pricing`
+    returned 404, and `/sw.js` returned 200 JavaScript.
+  - The access log recorded the invite probe as `/join/:code`.
+  - `/mcp` returned 401 with no token and with a forged one, with a challenge that points to the
+    protected-resource metadata.
+  - The four OAuth discovery documents returned 200 without `watch:*` or `macos:*` scopes.
+  - The hourly OAuth sweeper logged no failure.
+  - A capture on the VM showed two `X-Forwarded-For` entries, both the real client IP, after any
+    forged value, so the rightmost-entry rate-limit key is the real client.
+- 2026-10-09: post-deploy operator checks for `20e14e1`:
+  - The local checkout fast-forwarded cleanly to `20e14e1`.
+  - Empty requests to the anonymous OAuth endpoints returned validation errors, not content. Each of
+    `/api/auth/oauth2/register` and `/api/auth/oauth2/public-client-prelogin` returned 400. Each
+    of `/api/auth/oauth2/token`, `/revoke`, and `/introspect` returned 400 for an empty form and
+    415 for JSON.
+  - One labeled test notification sent through the existing `sharkctl` login returned exit 0. It was
+    accepted for 5 targets: 2 iOS, 1 macOS, and 2 web. Afterward, the container logged no push
+    errors or rejected receipts and still had 0 restarts.
+  - The installed macOS companion (`dev.shuv.shark.macos`) has a stored credential and an active
+    registered device. Its inbox was not inspected visually.
+  - `sharkctl` re-authentication with the `teams:*`, `oncall:*`, and `board:*` scopes was not
+    completed. Apple web sign-in waited for the operator's passkey, and the device code expired.
+    The signed-in dashboard check and the end-to-end MCP OAuth client check depend on the same
+    browser sign-in and remain pending. Because those checks are pending, the `.pre-20e14e1` config
+    backups on the VM were kept. The live copies hash-match `main`.
+
 - 2026-08-20: native macOS menu-bar companion, scoped device-code authorization, encrypted APNs
   device registration, privacy-redacted delivery, inbox/actions, and mixed-platform fanout were
   added. Contracts (28), sharkctl (31), Expo (31), website (224), and macOS (3) tests passed;
