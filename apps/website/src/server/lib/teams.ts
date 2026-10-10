@@ -58,7 +58,7 @@ export async function memberIds(teamId: string): Promise<string[]> {
   return rows.map((row) => row.userId);
 }
 
-/** Billing contact for the team's Autumn customer. */
+/** The team as `lib/team-billing` sees it, with the owner's email as its contact. */
 export async function billingCustomer(teamRow: TeamRow) {
   const [owner] = await db
     .select({ email: userTable.email })

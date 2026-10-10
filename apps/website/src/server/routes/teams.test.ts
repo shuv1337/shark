@@ -16,7 +16,6 @@ process.env.NODE_ENV = "test";
 process.env.DATABASE_URL = ":memory:";
 
 const authState = vi.hoisted(() => ({ userId: "user_a" as string | null }));
-const seatState = vi.hoisted(() => ({ paid: true }));
 const sent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 
 const NAMES: Record<string, string> = { user_a: "Ryan", user_b: "Bea", user_c: "Cam" };
@@ -38,20 +37,6 @@ vi.mock("../auth", () => ({
           : null,
     },
   },
-}));
-
-// Seats are unlimited without Autumn; this mock stands in for a configured
-// Autumn account so the free-seat limit can be exercised.
-vi.mock("../lib/team-billing", () => ({
-  teamBillingConfigured: () => true,
-  teamSeats: async (_team: unknown, used: number) =>
-    seatState.paid
-      ? { plan: "team", seats: { used, available: null, billable: Math.max(0, used - 1) } }
-      : { plan: "free", seats: { used, available: 1, billable: 0 } },
-  teamCanSeat: async (_team: unknown, next: number) => seatState.paid || next <= 1,
-  syncTeamSeats: async () => undefined,
-  createTeamCheckout: async (team: { id: string }) => `https://billing.example.com/${team.id}`,
-  createTeamBillingPortal: async () => "https://billing.example.com/portal",
 }));
 
 vi.mock("expo-server-sdk", () => {
@@ -101,7 +86,6 @@ function claimsOf(token: string): AppPassClaims {
 
 afterEach(() => {
   sent.length = 0;
-  seatState.paid = true;
   as("user_a");
 });
 
@@ -194,7 +178,7 @@ async function join(userId: string, code: string): Promise<TeamJoinResponse> {
 describe("teams and invites", () => {
   it("creates a team owned by its creator and lets an invitee join through the link", async () => {
     const team = await createTeam("Acme");
-    expect(team).toMatchObject({ name: "Acme", role: "owner", memberCount: 1, plan: "team" });
+    expect(team).toMatchObject({ name: "Acme", role: "owner", memberCount: 1, plan: "free" });
     expect(team.id).toMatch(/^team_/);
 
     const created = await invite(team.id);
@@ -225,26 +209,27 @@ describe("teams and invites", () => {
     expect(listed.teams.map((entry) => [entry.name, entry.role])).toEqual([["Acme", "member"]]);
   });
 
-  it("requires the paid team plan for a second seat", async () => {
-    seatState.paid = false;
-    const team = await createTeam("Solo");
-    expect(team).toMatchObject({ plan: "free", seats: { used: 1, available: 1, billable: 0 } });
-    const response = await call("POST", `/api/teams/${team.id}/invites`, {});
-    expect(response.status).toBe(402);
-    expect(await response.json()).toMatchObject({ code: "seat_limit" });
-
-    // An invite created while paid still cannot be redeemed after downgrading.
-    seatState.paid = true;
-    const created = await invite(team.id);
-    seatState.paid = false;
-    as("user_b");
-    const accept = await call("POST", `/api/team-invites/${created.code}/accept`);
-    expect(accept.status).toBe(402);
-    expect(await accept.json()).toMatchObject({ code: "seat_limit" });
+  it("keeps every team on the free plan with unlimited seats and no billing", async () => {
+    const team = await createTeam("Unbilled");
+    expect(team).toMatchObject({ plan: "free", seats: { used: 1, available: null, billable: 0 } });
+    await join("user_b", (await invite(team.id)).code);
+    as("user_a");
+    await join("user_c", (await invite(team.id)).code);
 
     as("user_a");
-    const checkout = await call("POST", `/api/teams/${team.id}/billing/checkout`);
-    expect(await checkout.json()).toEqual({ url: `https://billing.example.com/${team.id}` });
+    const detail = (await (await call("GET", `/api/teams/${team.id}`)).json()) as {
+      team: TeamDto;
+    };
+    expect(detail.team).toMatchObject({
+      plan: "free",
+      memberCount: 3,
+      seats: { used: 3, available: null, billable: 0 },
+    });
+    for (const kind of ["checkout", "portal"]) {
+      const response = await call("POST", `/api/teams/${team.id}/billing/${kind}`);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: "Billing is not configured" });
+    }
   });
 
   it("pushes an invite to an existing user with that email and files it in their inbox", async () => {

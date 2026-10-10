@@ -1028,7 +1028,7 @@ export const agentOperations: Record<string, Partial<Record<AgentMethod, AgentOp
       status: 201,
       response: ref("TeamInviteCreated"),
       description:
-        "Returns 402 with code `seat_limit` when the team needs the paid team plan for another seat. With `email`, only the account with that address (case-insensitive) can accept. Accepting an invite is human-only: there is no agent route for it.",
+        "SHark never limits seats, so the 402 `seat_limit` response is not returned. With `email`, only the account with that address (case-insensitive) can accept. Accepting an invite is human-only: there is no agent route for it.",
     },
   },
   "/teams/{id}/invites/{inviteId}": {
