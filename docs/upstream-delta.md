@@ -17,10 +17,16 @@ changes.
   metering, checkout, and portal surfaces are absent.
 - One fixed self-hosted entitlement enables multiple devices, routing, interactions, and Live
   Activities. Abuse limits are 300 requests per service per minute and 1,500 per account per minute.
-- Only `/api/health` is anonymously readable. Human-facing pages, docs exports, assets, and source
-  links require an admitted session. The exceptions are machine-facing and return no account
-  content: public signing keys (`/.well-known/jwks.json`), the MCP OAuth endpoints, and the team
-  invite preview. They are listed with what each one exposes in the teams and MCP sections below.
+- Human-facing pages, docs exports, source links, private assets (`/assets/*`, `/ogimage.png`),
+  and the team invite preview require an admitted session. Besides `/api/health`, anonymous
+  responses are machine-facing and return no account content:
+  - public signing keys (`/.well-known/jwks.json`) and the MCP OAuth endpoints, listed with what
+    each one exposes in the MCP section below;
+  - the Apple app-site association (`/.well-known/apple-app-site-association`) and the static
+    SSHuv handoff page (`/conversation/v1/:reference`), which never looks up, echoes, or logs the
+    reference (`routes/sshuv-handoff.ts`);
+  - the push service worker and the icons its notifications use (`PUBLIC_PUSH_ASSETS` in
+    `static.ts`: `/sw.js`, `/favicon.png`, `/app-store-icon.png`).
 - Production uses the `shark-prod` deployment, attested immutable GHCR digests,
   1Password-fed secrets, exact-schema SQLite checkpoint validation, encrypted Restic snapshots,
   and operator promotion with no GitHub VM credential.

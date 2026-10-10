@@ -9,15 +9,30 @@ logs. Unchecked release evidence keeps the goal active.
   `dfe3a27f5ff04df9183db2768b2ebe3e959dcd7a` (#132, unified product version) on the operator Mac
   (launchd `dev.shuv.shark.broker`) and the Linux host (user systemd `sharkd.service`). The
   production service was not touched.
-  - Tarballs were packed on the operator Mac from a clean detached checkout of the merge commit
-    with pnpm 11.10.0: `pnpm install --frozen-lockfile` at the root, then `pnpm pack` in
-    `packages/sharkctl` and `packages/shark-broker`. They were copied to the Linux host and checked
-    by hash: `sharkctl-1.0.0.tgz` (SHA-256
+  - Tarballs were packed on the operator Mac (Darwin 27.2.0 arm64, Homebrew Node 26.5.0, pnpm
+    11.10.0) from a clean detached checkout of the merge commit: `pnpm install --frozen-lockfile`
+    at the root, then `pnpm pack` in `packages/sharkctl` and `packages/shark-broker`. They were
+    copied to the Linux host and checked by hash: `sharkctl-1.0.0.tgz` (SHA-256
     `e41320ce1d8806773a61f11d3cd01b27d2a738a1e5c6642141e4c285918367a4`) and
     `hark-shark-broker-1.0.0.tgz` (SHA-256
-    `abb99d08aeff75999c30538f569a5e957190dd01debfed1a91efaac01e251298`). The retained copies of
-    both tarballs on the operator Mac still hash to these values, and repeating the same commands
-    in a new clean checkout of the merge commit reproduced both tarballs byte for byte.
+    `abb99d08aeff75999c30538f569a5e957190dd01debfed1a91efaac01e251298`). These are the digests of
+    the tarballs that were installed on both hosts. The retained copies on the operator Mac still
+    hash to these values, and re-packing the merge commit on the same Mac reproduced both tarballs
+    byte for byte.
+  - Re-packing in another environment can produce different tarball bytes. The same commit packed
+    with pnpm 11.10.0 in Linux arm64 `node:22` (Node 22.23.3) and `node:26` (Node 26.11.1)
+    containers gave `sharkctl-1.0.0.tgz` SHA-256
+    `1e989006e3d5c3160c60187a4145b6f835df936a3a436e7ed8b6a14c3ca4cf19` and
+    `hark-shark-broker-1.0.0.tgz` SHA-256
+    `f6045cac999b38cdbe67ca61ae1e5a6ae77287b7ef687175eaeb3f1062e875b4`, which match an
+    independent re-pack on another machine. Only the gzip layer differs. The decompressed tar
+    streams are byte-identical across all of these packs (SHA-256
+    `c52863a1bf12687eb60b09c1bff9db623954603e4a591c6cf424f2c954288cd1` for `sharkctl` and
+    `dbe37abf1bd28191864424a399d0f3f3d350966b7bdf1b8e4bf158ef8da5571d` for the broker), with the
+    same files, modes, sizes, and fixed 1985 timestamps. The gzip header records the packing OS
+    (`0x13` for macOS, `0x03` for Unix), and the compressed streams differ in length because the
+    Mac's Homebrew Node uses zlib 1.2.12 while the Linux Node builds use their bundled zlib 1.3. To
+    compare a re-pack from another environment, hash the `gzip -dc` output, not the `.tgz`.
   - Before the change, both hosts ran `sharkctl` 0.5.0 and `sharkd` 0.1.0, with healthy services,
     empty `sharkd queue list`, and no status counts. The operator Mac ran the
     `~/.local/lib/shark-broker/e405b22180a47ab55bb4070d585017f979bc9553/` bundle, and the Linux
@@ -39,13 +54,18 @@ logs. Unchecked release evidence keeps the goal active.
     `ce2671a15993c2604e6910240564318612acca63af9a4a746b0a8a64edd4e9da` on both, which matches
     `skills/shark/SKILL.md` at the merge commit. The previous copy (`SKILL.md` SHA-256
     `a5026a8588f6ecabbbb3b2c7b253eef1a5869ee75b77ebd73d6bf1c1f8e07012`) was moved to
-    `~/.agents/skills/shark.bak-20261010`. That digest matches no committed
-    `skills/shark/SKILL.md`, so the installed copy did not come unmodified from either host's
+    `~/.agents/skills/shark.bak-20261010`. That digest is `skills/shark/SKILL.md` at `e43f432`
+    ("docs(shark): make the board the default agent status surface", parent `e405b22`), the local
+    working commit for #95 before it was squash-merged. It was never pushed. In the operator Mac's
+    repository it survives only under `refs/jj/keep/e43f4329c5e11b93e855493401efb38b86a4a8ee` and
+    one T3 checkpoint ref, and no other commit in any ref has that file. The merged #95
+    (`20e14e1a49c8cb8187e92c56c26dc7f8c6473208`) ships a different `SKILL.md` (SHA-256
+    `257ec4b3736da465e7ae11b373d7bc0d2d198f871f72897203ec01bf2ab0ee14`), and so does each host's
     previous bundle revision (`e405b22` ships SHA-256
     `683ef5edb09b5e7b0a4af2795e3ab4989a55b895f5b45c2687a0419fa4363034`, and `25e1649` ships
-    `c96e5e045c4651ee2e59f5ebc00207777c336d99f8ab8cc9a059d9f90333cc00`). The backup is no longer
-    on the operator Mac, so its source cannot be traced further. `~/.claude/skills/shark` still
-    links to `../../.agents/skills/shark`.
+    `c96e5e045c4651ee2e59f5ebc00207777c336d99f8ab8cc9a059d9f90333cc00`). The installed copy
+    therefore came from that unpublished working state, not from either bundle revision.
+    `~/.claude/skills/shark` still links to `../../.agents/skills/shark`.
 - 2026-10-10: production was promoted from `6dcb736` to
   `de5f9fe6da7a84d41da00d8dc30eb917bd822acd` (on-call override creator and recipient notice #126,
   atomic Live Activity and webhook-response admission #129, Web Push service allowlist with pinned
