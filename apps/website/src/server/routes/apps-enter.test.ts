@@ -34,6 +34,8 @@ const MEMBER = { id: "user_member", name: "Mo", email: "member@example.com" };
 const UNCONSENTED = { id: "user_unconsented", name: "Una", email: "unconsented@example.com" };
 const OUTSIDER = { id: "user_outsider", name: "Ozzy", email: "outsider@example.com" };
 const REMOVED = { id: "user_removed", name: "Rem", email: "removed@example.com" };
+const ADDER = { id: "user_adder", name: "Ada", email: "adder@example.com" };
+const PEER = { id: "user_peer", name: "Pip", email: "peer@example.com" };
 type Person = typeof USER;
 
 let removeMember: typeof import("../lib/teams")["removeMember"];
@@ -48,7 +50,7 @@ beforeAll(async () => {
   runMigrations();
   const now = new Date();
   await db.insert(schema.user).values(
-    [USER, MEMBER, UNCONSENTED, OUTSIDER, REMOVED].map((person) => ({
+    [USER, MEMBER, UNCONSENTED, OUTSIDER, REMOVED, ADDER, PEER].map((person) => ({
       ...person,
       emailVerified: true,
       createdAt: now,
@@ -117,6 +119,55 @@ beforeAll(async () => {
     { appId: "app_teamboard", userId: REMOVED.id, consentedAt: now, updatedAt: now },
     // Consent left over from before a membership ended must not count.
     { appId: "app_teamboard", userId: OUTSIDER.id, consentedAt: now, updatedAt: now },
+  ]);
+
+  // A second team whose app was added by a member who is not the owner.
+  await db
+    .insert(schema.team)
+    .values({ id: "team_2", name: "Deck", createdAt: now, updatedAt: now });
+  await db.insert(schema.teamMember).values(
+    [USER, ADDER, PEER].map((person) => ({
+      teamId: "team_2",
+      userId: person.id,
+      role: person === USER ? "owner" : "member",
+      joinedAt: now,
+    })),
+  );
+  await db.insert(schema.app).values({
+    ...base,
+    userId: ADDER.id,
+    id: "app_addedapp",
+    name: "Added",
+    url: "https://shark.example/board?team=2",
+    origin: "https://shark.example",
+    teamId: "team_2",
+    consentedAt: null,
+  });
+  await db.insert(schema.appMemberState).values([
+    { appId: "app_addedapp", userId: ADDER.id, consentedAt: now, updatedAt: now },
+    { appId: "app_addedapp", userId: PEER.id, consentedAt: now, updatedAt: now },
+  ]);
+
+  // A team that team_1's members do not belong to, with stray consent rows.
+  await db
+    .insert(schema.team)
+    .values({ id: "team_3", name: "Rivals", createdAt: now, updatedAt: now });
+  await db
+    .insert(schema.teamMember)
+    .values({ teamId: "team_3", userId: OUTSIDER.id, role: "owner", joinedAt: now });
+  await db.insert(schema.app).values({
+    ...base,
+    userId: OUTSIDER.id,
+    id: "app_rivalapp",
+    name: "Rival",
+    url: "https://shark.example/board?team=3",
+    origin: "https://shark.example",
+    teamId: "team_3",
+    consentedAt: null,
+  });
+  await db.insert(schema.appMemberState).values([
+    { appId: "app_rivalapp", userId: OUTSIDER.id, consentedAt: now, updatedAt: now },
+    { appId: "app_rivalapp", userId: MEMBER.id, consentedAt: now, updatedAt: now },
   ]);
 });
 
@@ -254,6 +305,44 @@ describe("POST /apps/enter for a team app", () => {
     expect((await enter({ pass: issuedWhileMember })).status).toBe(401);
     expect((await enter({ pass: await teamPass(REMOVED) })).status).toBe(401);
     expect(sessions).toEqual([]);
+  });
+
+  it("refuses a pass for another team's app, even with consent left over", async () => {
+    for (const person of [MEMBER, USER]) {
+      const token = await pass("app_rivalapp", "https://shark.example", person);
+      expect((await enter({ pass: token })).status).toBe(401);
+    }
+    expect(sessions).toEqual([]);
+  });
+
+  it("refuses a member's pass for another app on the same origin", async () => {
+    for (const appId of ["app_board0000", "app_pending00", "app_addedapp"]) {
+      const token = await pass(appId, "https://shark.example", MEMBER);
+      expect((await enter({ pass: token })).status).toBe(401);
+    }
+    expect(sessions).toEqual([]);
+  });
+
+  it("returns an app to its adder when they leave, refusing everyone else", async () => {
+    const { db } = await import("../db");
+    const schema = await import("../db/schema");
+    const { eq } = await import("drizzle-orm");
+    const added = (user: Person) => pass("app_addedapp", "https://shark.example", user);
+    const adderBefore = await added(ADDER);
+    const peerBefore = await added(PEER);
+
+    expect(removeMember("team_2", ADDER.id)).toBe(true);
+    const [row] = await db
+      .select({ teamId: schema.app.teamId })
+      .from(schema.app)
+      .where(eq(schema.app.id, "app_addedapp"));
+    expect(row?.teamId).toBeNull();
+
+    expect((await enter({ pass: peerBefore })).status).toBe(401);
+    expect((await enter({ pass: await added(PEER) })).status).toBe(401);
+    expect((await enter({ pass: adderBefore, next: "/board" })).status).toBe(303);
+    expect((await enter({ pass: await added(ADDER), next: "/board" })).status).toBe(303);
+    expect(sessions).toEqual([ADDER.id, ADDER.id]);
   });
 });
 
