@@ -328,6 +328,8 @@ async function pushAsk(row: AskRow, token: TokenRow): Promise<boolean> {
       });
       return false;
     }
+    // Another attempt for this revision is still sending and records its own outcome.
+    if (result.inFlight) return false;
     if (result.accepted > 0) {
       await db
         .update(boardAsk)

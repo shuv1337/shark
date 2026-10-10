@@ -214,7 +214,7 @@ async function ownedActivity(
  * operations, interactions, one-shot agent notifications, and pages count
  * against the same per-token and per-account windows (see `rate-windows.ts`).
  * On its own this is check-then-act; paths that record the counted row repeat
- * the check with `agentAdmission` in the transaction that inserts it.
+ * the check with `agentWindowLimit` in the transaction that inserts it.
  */
 export function agentRateLimit(
   token: { id: string; userId: string },
@@ -224,6 +224,11 @@ export function agentRateLimit(
   return refused ? { error: RATE_LIMIT_ERRORS[refused], retryAfterSeconds: 60 } : null;
 }
 
+/**
+ * The advisory early check: answers 429 before any side effect. It does not
+ * reserve capacity, so a path that records counted work must repeat the check
+ * in the transaction that inserts the row.
+ */
 export async function enforceAgentRateLimit(
   token: AgentEnv["Variables"]["apiToken"],
   owner: AuthedEnv["Variables"]["user"],

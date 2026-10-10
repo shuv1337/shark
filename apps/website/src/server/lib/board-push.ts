@@ -2,6 +2,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import {
   agentNotification,
+  agentNotificationRetry,
   type apiToken,
   app,
   type boardAsk,
@@ -16,7 +17,7 @@ import { track } from "./analytics";
 import { checkNotificationAllowance, getBilling } from "./billing";
 import { newId } from "./id";
 import { buildPushMessages, sendPushFanout } from "./push";
-import { agentAdmission, RATE_LIMIT_ERRORS } from "./rate-windows";
+import { agentWindowLimit, RATE_LIMIT_ERRORS } from "./rate-windows";
 
 type TokenRow = typeof apiToken.$inferSelect;
 
@@ -57,12 +58,19 @@ export class BoardPushLimited extends Error {
 }
 
 const DELIVERED = new Set(["accepted", "partial"]);
-/** A `processing` attempt older than this is treated as abandoned and may be retried. */
+/**
+ * A `processing` attempt claimed longer ago than this, and not running in
+ * this process (for example after a restart), is abandoned and may be retried.
+ */
 const ABANDONED_MS = 2 * 60_000;
+/** Notifications with an attempt running in this process; SHark runs one process. */
+const activeAttempts = new Set<string>();
 
 export interface BoardPushResult {
   notificationId: string;
   accepted: number;
+  /** Another attempt for this revision is still running; nothing was sent. */
+  inFlight?: true;
 }
 
 /**
@@ -127,33 +135,52 @@ export async function sendBoardAskPush(
   const title = ask.agentDisplay ? `${ask.agentLabel} · ${ask.agentDisplay}` : ask.agentLabel;
   const body = ask.title;
   // Synchronous: the revision's row is read, admitted against the agent
-  // windows, and claimed in one transaction. A retry of a failed (or
-  // abandoned) attempt moves `createdAt` to now so it counts as new work in
-  // the windows, and only one caller can claim a given attempt.
+  // windows, and claimed in one transaction, so only one caller can claim a
+  // given attempt. A retry of a failed (or abandoned) attempt records its own
+  // counted retry row; the notification's `createdAt` keeps counting the
+  // first attempt. Each attempt carries a fresh claim id that fences its
+  // outcome write, so a superseded attempt cannot overwrite a newer one.
   const now = new Date();
+  const claimId = newId("bpc");
   const claim = db.transaction((tx) => {
     const row = tx
       .select({
         id: agentNotification.id,
         status: agentNotification.status,
+        claimedAt: agentNotification.claimedAt,
         createdAt: agentNotification.createdAt,
       })
       .from(agentNotification)
       .where(sameRevision)
       .get();
     if (row && DELIVERED.has(row.status)) return { kind: "delivered" as const, id: row.id };
-    const retryable =
-      !row ||
-      row.status === "failed" ||
-      (row.status === "processing" && row.createdAt.getTime() <= now.getTime() - ABANDONED_MS);
-    if (!retryable) return { kind: "in_flight" as const };
-    const refused = agentAdmission(token, limits)(tx);
+    if (
+      row?.status === "processing" &&
+      (activeAttempts.has(row.id) ||
+        (row.claimedAt ?? row.createdAt).getTime() > now.getTime() - ABANDONED_MS)
+    ) {
+      return { kind: "in_flight" as const, id: row.id };
+    }
+    const refused = agentWindowLimit(tx, token, limits, now.getTime());
     if (refused) return { kind: "limited" as const, error: RATE_LIMIT_ERRORS[refused] };
     if (row) {
+      tx.insert(agentNotificationRetry)
+        .values({ id: claimId, notificationId: row.id, userId, requesterTokenId, createdAt: now })
+        .run();
       tx.update(agentNotification)
-        .set({ title, body, url, appId, status: "processing", error: null, createdAt: now })
+        .set({
+          title,
+          body,
+          url,
+          appId,
+          status: "processing",
+          error: null,
+          claimId,
+          claimedAt: now,
+        })
         .where(eq(agentNotification.id, row.id))
         .run();
+      activeAttempts.add(row.id);
       return { kind: "claimed" as const, id: row.id };
     }
     const id = newId("anot");
@@ -173,15 +200,22 @@ export async function sendBoardAskPush(
         idempotencyKey,
         requestHash: null,
         appId,
+        claimId,
+        claimedAt: now,
         createdAt: now,
       })
       .run();
+    activeAttempts.add(id);
     return { kind: "claimed" as const, id };
   });
   if (claim.kind === "delivered") return { notificationId: claim.id, accepted: 1 };
-  if (claim.kind === "in_flight") throw new BoardPushLimited("Board push already in progress");
+  if (claim.kind === "in_flight") return { notificationId: claim.id, accepted: 0, inFlight: true };
   if (claim.kind === "limited") throw new BoardPushLimited(claim.error);
   const notificationId = claim.id;
+  const ownAttempt = and(
+    eq(agentNotification.id, notificationId),
+    eq(agentNotification.claimId, claimId),
+  );
 
   try {
     return await fanOut();
@@ -192,8 +226,10 @@ export async function sendBoardAskPush(
         status: "failed",
         error: (error instanceof Error ? error.message : "Push failed").slice(0, 1000),
       })
-      .where(eq(agentNotification.id, notificationId));
+      .where(ownAttempt);
     throw error;
+  } finally {
+    activeAttempts.delete(notificationId);
   }
 
   async function fanOut(): Promise<BoardPushResult> {
@@ -244,7 +280,7 @@ export async function sendBoardAskPush(
         failedCount: targetCount - result.accepted,
         error: result.errors.length > 0 ? result.errors.join("; ").slice(0, 1000) : null,
       })
-      .where(eq(agentNotification.id, notificationId));
+      .where(ownAttempt);
     track({
       name: "agent_notification_created",
       userId,

@@ -289,6 +289,9 @@ export const agentNotification = sqliteTable(
     readAt: integer("read_at", { mode: "timestamp_ms" }),
     bodyFormat: text("body_format"),
     summary: text("summary"),
+    /** Board push attempt that owns a `processing` row; only it may record the outcome. */
+    claimId: text("claim_id"),
+    claimedAt: integer("claimed_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => [
@@ -302,6 +305,35 @@ export const agentNotification = sqliteTable(
     index("agent_notification_unread_idx")
       .on(table.userId, table.createdAt)
       .where(sql`"read_at" is null`),
+  ],
+);
+
+/**
+ * One row per retry of a failed or abandoned board push. The notification row
+ * counts its first attempt; each retry counts here in the per-minute windows.
+ */
+export const agentNotificationRetry = sqliteTable(
+  "agent_notification_retry",
+  {
+    id: text("id").primaryKey(),
+    notificationId: text("notification_id")
+      .notNull()
+      .references(() => agentNotification.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    requesterTokenId: text("requester_token_id").references(() => apiToken.id, {
+      onDelete: "cascade",
+    }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("agent_notification_retry_notification_idx").on(table.notificationId),
+    index("agent_notification_retry_user_created_at_idx").on(table.userId, table.createdAt),
+    index("agent_notification_retry_token_created_at_idx").on(
+      table.requesterTokenId,
+      table.createdAt,
+    ),
   ],
 );
 

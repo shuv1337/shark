@@ -3,6 +3,7 @@ import { and, count, eq, gte, isNull, type SQL } from "drizzle-orm";
 import type { Executor } from "../db";
 import {
   agentNotification,
+  agentNotificationRetry,
   event,
   interaction,
   liveActivity,
@@ -21,19 +22,26 @@ import {
  * advisory and the in-transaction check is the one that holds. Do not remove
  * the in-transaction check as a duplicate.
  *
+ * Events, interactions, agent notifications (including board pushes and
+ * their retries), and pages are admitted in the transaction that records
+ * them. Live Activity operations and webhook Live Activity responses are not
+ * yet; see "Rate limits" in docs/operations.md for those residuals.
+ *
  * One definition per window, used by every surface:
  *
  * - Service window (a webhook token): its events, its Live Activity
  *   operations, and its pages.
  * - Requester window (an agent token): its Live Activity operations, its
- *   interactions, its one-shot notifications (including board pushes), and
- *   its pages.
+ *   interactions, its one-shot notifications (including board pushes and
+ *   each board push retry), and its pages.
  * - Account window (the owner): every event from the owner's services, every
- *   interaction, agent notification, and page, and every Live Activity
- *   operation not tied to an interaction (the interaction already counts).
+ *   interaction, agent notification, board push retry, and page, and every
+ *   Live Activity operation not tied to an interaction (the interaction
+ *   already counts).
  *
- * Every counted row is timestamped by `createdAt`; a board push retry moves
- * its notification's `createdAt` forward so the retry counts as new work.
+ * Every counted row is timestamped by `createdAt` and never moved: a board
+ * push's first attempt counts as its notification row, and each retry adds an
+ * `agent_notification_retry` row, so earlier attempts keep their usage.
  */
 
 type Limits = Pick<BillingDto["limits"], "servicePerMinute" | "accountPerMinute">;
@@ -109,6 +117,18 @@ export function accountWindowUsage(executor: Executor, userId: string, since: Da
         .where(and(eq(agentNotification.userId, userId), gte(agentNotification.createdAt, since)))
         .get(),
     ) +
+    value(
+      executor
+        .select({ value: count() })
+        .from(agentNotificationRetry)
+        .where(
+          and(
+            eq(agentNotificationRetry.userId, userId),
+            gte(agentNotificationRetry.createdAt, since),
+          ),
+        )
+        .get(),
+    ) +
     liveActivityOperations(
       executor,
       and(
@@ -173,6 +193,18 @@ export function requesterWindowUsage(executor: Executor, tokenId: string, since:
           and(
             eq(agentNotification.requesterTokenId, tokenId),
             gte(agentNotification.createdAt, since),
+          ),
+        )
+        .get(),
+    ) +
+    value(
+      executor
+        .select({ value: count() })
+        .from(agentNotificationRetry)
+        .where(
+          and(
+            eq(agentNotificationRetry.requesterTokenId, tokenId),
+            gte(agentNotificationRetry.createdAt, since),
           ),
         )
         .get(),
