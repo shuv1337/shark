@@ -161,7 +161,9 @@ sharkctl activity start --title "Release" --status "Building" --progress 0.1
 
 The installable [`shark` agent skill](./skills/shark/SKILL.md) follows the open Agent Skills format
 and supports OpenCode, Claude Code, Codex, Cursor, and other compatible agents. Install it only from
-this reviewed operator checkout. `sharkctl` is the fork's canonical executable. The `HARK_*`
+this reviewed operator checkout. The skill's frontmatter `metadata.version` names the SHark release
+it came from and matches the `sharkctl` version it was reviewed with, so an installed copy can be
+compared with the checkout. `sharkctl` is the fork's canonical executable. The `HARK_*`
 environment variables, token prefixes, and local `hark` config paths remain protocol-compatibility
 identifiers so existing credentials and integrations continue to work.
 

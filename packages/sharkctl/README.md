@@ -25,7 +25,7 @@ sharkctl
 Start a browser authorization flow and approve the requested scopes with your signed-in SHark account:
 
 ```sh
-npm install --global sharkctl@0.6.0
+npm install --global sharkctl@1.0.0
 sharkctl auth login
 sharkctl auth status
 sharkctl notify "Deploy finished ✅" --title "Deploy bot" --image https://example.com/bot.png \
