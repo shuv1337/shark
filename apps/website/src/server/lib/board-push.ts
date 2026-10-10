@@ -11,12 +11,12 @@ import {
   webPushSubscription,
 } from "../db/schema";
 import { env } from "../env";
-import { enforceAgentRateLimit } from "../routes/activities";
+import { agentRateLimit } from "../routes/activities";
 import { track } from "./analytics";
 import { checkNotificationAllowance, getBilling } from "./billing";
 import { newId } from "./id";
 import { buildPushMessages, sendPushFanout } from "./push";
-import { agentWindowLimit } from "./rate-windows";
+import { agentAdmission, RATE_LIMIT_ERRORS } from "./rate-windows";
 
 type TokenRow = typeof apiToken.$inferSelect;
 
@@ -56,6 +56,10 @@ export class BoardPushLimited extends Error {
   }
 }
 
+const DELIVERED = new Set(["accepted", "partial"]);
+/** A `processing` attempt older than this is treated as abandoned and may be retried. */
+const ABANDONED_MS = 2 * 60_000;
+
 export interface BoardPushResult {
   notificationId: string;
   accepted: number;
@@ -74,17 +78,16 @@ export async function sendBoardAskPush(
   const userId = ask.userId;
   const requesterTokenId = token.id;
   const idempotencyKey = `bask:${ask.id}:r${ask.revision}`;
+  const sameRevision = and(
+    eq(agentNotification.requesterTokenId, requesterTokenId),
+    eq(agentNotification.idempotencyKey, idempotencyKey),
+  );
   const [previous] = await db
     .select({ id: agentNotification.id, status: agentNotification.status })
     .from(agentNotification)
-    .where(
-      and(
-        eq(agentNotification.requesterTokenId, requesterTokenId),
-        eq(agentNotification.idempotencyKey, idempotencyKey),
-      ),
-    )
+    .where(sameRevision)
     .limit(1);
-  if (previous && (previous.status === "accepted" || previous.status === "partial")) {
+  if (previous && DELIVERED.has(previous.status)) {
     return { notificationId: previous.id, accepted: 1 };
   }
 
@@ -92,7 +95,8 @@ export async function sendBoardAskPush(
   // other agent notification; a revision loop is not a free push channel.
   const [owner] = await db.select().from(user).where(eq(user.id, userId)).limit(1);
   if (!owner) return null;
-  const limited = await enforceAgentRateLimit(token, owner);
+  const { limits } = await getBilling(owner, true);
+  const limited = agentRateLimit(token, limits);
   if (limited) throw new BoardPushLimited(limited.error);
   if (!(await checkNotificationAllowance(userId))) {
     throw new BoardPushLimited("Monthly notification limit reached");
@@ -122,41 +126,62 @@ export async function sendBoardAskPush(
   const url = boardAskUrl(ask.id);
   const title = ask.agentDisplay ? `${ask.agentLabel} · ${ask.agentDisplay}` : ask.agentLabel;
   const body = ask.title;
-  const notificationId = previous?.id ?? newId("anot");
-  if (previous) {
-    await db
-      .update(agentNotification)
-      .set({ title, body, url, appId, status: "processing", error: null })
-      .where(eq(agentNotification.id, previous.id));
-  } else {
-    const { limits } = await getBilling(owner, true);
-    // Synchronous, so concurrent revisions cannot all pass the agent windows.
-    const refused = db.transaction((tx) => {
-      const error = agentWindowLimit(tx, token, limits);
-      if (error) return error;
-      tx.insert(agentNotification)
-        .values({
-          id: notificationId,
-          userId,
-          requesterTokenId,
-          title,
-          body,
-          imageUrl: null,
-          url,
-          status: "processing",
-          acceptedCount: 0,
-          failedCount: 0,
-          error: null,
-          idempotencyKey,
-          requestHash: null,
-          appId,
-          createdAt: new Date(),
-        })
+  // Synchronous: the revision's row is read, admitted against the agent
+  // windows, and claimed in one transaction. A retry of a failed (or
+  // abandoned) attempt moves `createdAt` to now so it counts as new work in
+  // the windows, and only one caller can claim a given attempt.
+  const now = new Date();
+  const claim = db.transaction((tx) => {
+    const row = tx
+      .select({
+        id: agentNotification.id,
+        status: agentNotification.status,
+        createdAt: agentNotification.createdAt,
+      })
+      .from(agentNotification)
+      .where(sameRevision)
+      .get();
+    if (row && DELIVERED.has(row.status)) return { kind: "delivered" as const, id: row.id };
+    const retryable =
+      !row ||
+      row.status === "failed" ||
+      (row.status === "processing" && row.createdAt.getTime() <= now.getTime() - ABANDONED_MS);
+    if (!retryable) return { kind: "in_flight" as const };
+    const refused = agentAdmission(token, limits)(tx);
+    if (refused) return { kind: "limited" as const, error: RATE_LIMIT_ERRORS[refused] };
+    if (row) {
+      tx.update(agentNotification)
+        .set({ title, body, url, appId, status: "processing", error: null, createdAt: now })
+        .where(eq(agentNotification.id, row.id))
         .run();
-      return null;
-    });
-    if (refused) throw new BoardPushLimited(refused);
-  }
+      return { kind: "claimed" as const, id: row.id };
+    }
+    const id = newId("anot");
+    tx.insert(agentNotification)
+      .values({
+        id,
+        userId,
+        requesterTokenId,
+        title,
+        body,
+        imageUrl: null,
+        url,
+        status: "processing",
+        acceptedCount: 0,
+        failedCount: 0,
+        error: null,
+        idempotencyKey,
+        requestHash: null,
+        appId,
+        createdAt: now,
+      })
+      .run();
+    return { kind: "claimed" as const, id };
+  });
+  if (claim.kind === "delivered") return { notificationId: claim.id, accepted: 1 };
+  if (claim.kind === "in_flight") throw new BoardPushLimited("Board push already in progress");
+  if (claim.kind === "limited") throw new BoardPushLimited(claim.error);
+  const notificationId = claim.id;
 
   try {
     return await fanOut();

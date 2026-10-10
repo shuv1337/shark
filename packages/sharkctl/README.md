@@ -176,7 +176,8 @@ rotation (defaults: daily, 09:00, your local zone; the first member is on call n
 default escalation (next person after 5 minutes, the whole group 10 minutes later); pass
 `--stdin` JSON for a custom `escalation`. `oncall update <group_id>` changes any of those fields,
 keeping the rest. `oncall override <group_id> --user <user_id> --starts-at <iso> --ends-at <iso>`
-puts someone on call for a window (members can only hand off time they are on call for) and
+puts someone on call for a window (members can only hand off time they are on call for, from now
+on; a window partly covered by a later-starting override is refused, so split it around that) and
 `oncall remove-override <group_id> <override_id>` removes it.
 `oncall list --team <team_id>`, `oncall get <group_id>`, and `oncall me` show current and upcoming
 shifts.

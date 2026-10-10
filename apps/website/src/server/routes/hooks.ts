@@ -25,7 +25,7 @@ import { checkNotificationAllowance, getBilling, trackNotification } from "../li
 import { newId } from "../lib/id";
 import { syncInboxForUser } from "../lib/inbox";
 import { notificationEventTag } from "../lib/notification-withdrawal";
-import { resolveProjectForDelivery } from "../lib/projects";
+import { type ProjectResolution, resolveProject } from "../lib/projects";
 import {
   buildInteractionPushMessages,
   buildPushMessages,
@@ -33,7 +33,12 @@ import {
   sendPushFanout,
   sendWithdrawalFanout,
 } from "../lib/push";
-import { RATE_LIMIT_ERRORS, webhookWindowLimit } from "../lib/rate-windows";
+import {
+  RATE_LIMIT_ERRORS,
+  type RateWindow,
+  webhookAdmission,
+  webhookWindowLimit,
+} from "../lib/rate-windows";
 import {
   encryptCallbackToken,
   generateInteractionResponseToken,
@@ -91,7 +96,7 @@ function limitedResponse(
   c: Context,
   svc: typeof serviceTable.$inferSelect,
   billing: BillingDto,
-  outcome: "service" | "account",
+  outcome: RateWindow,
 ): Response {
   c.header("Retry-After", "60");
   track({
@@ -165,7 +170,6 @@ export const hooksRoute = new Hono()
       const billing = await getBilling(owner, true);
       const limited = rateLimitedResponse(c, svc, billing);
       if (limited) return limited;
-      const admission: { refused: "service" | "account" | null } = { refused: null };
       // Pages merge on their dedup key, so an Idempotency-Key retry folds into
       // the open page instead of paging again.
       const paged = await raisePageFor(
@@ -180,12 +184,11 @@ export const hooksRoute = new Hono()
         },
         svc.title,
         { serviceId: svc.id },
-        (tx) => {
-          admission.refused = webhookWindowLimit(tx, svc, billing.limits);
-          return admission.refused ? RATE_LIMIT_ERRORS[admission.refused] : null;
-        },
+        webhookAdmission(svc, billing.limits),
       );
-      if (admission.refused) return limitedResponse(c, svc, billing, admission.refused);
+      if (!paged.ok && "refused" in paged && paged.refused) {
+        return limitedResponse(c, svc, billing, paged.refused);
+      }
       if (!paged.ok) {
         if (paged.status === 429) c.header("Retry-After", "60");
         return c.json<WebhookResponse>(
@@ -329,9 +332,6 @@ export const hooksRoute = new Hono()
       if (parsed.data.url) resolved.url = parsed.data.url;
       else delete resolved.url;
     }
-    const projectResolution = parsed.data.project
-      ? await resolveProjectForDelivery(svc.userId, parsed.data.project)
-      : { projectId: null };
     const eventId = newId("evt");
     const eventValues: typeof event.$inferInsert = {
       id: eventId,
@@ -346,19 +346,28 @@ export const hooksRoute = new Hono()
       idempotencyKey: idempotencyKey ?? null,
       requestHash: idempotencyKey ? requestHash : null,
       appId: parsed.data.appId ?? null,
-      projectId: projectResolution.projectId,
+      projectId: null,
       summary: parsed.data.summary ?? null,
       bodyFormat: parsed.data.bodyFormat ?? null,
       createdAt: new Date(),
     };
 
-    let refused: "service" | "account" | null;
+    let admitted:
+      | { refused: "service" | "account" }
+      | { refused: null; projectResolution: ProjectResolution };
     try {
-      // Synchronous, so concurrent deliveries cannot all pass the windows.
-      refused = db.transaction((tx) => {
-        const outcome = webhookWindowLimit(tx, svc, billing.limits);
-        if (!outcome) tx.insert(event).values(eventValues).run();
-        return outcome;
+      // Synchronous, so concurrent deliveries cannot all pass the windows, and
+      // a refused or rolled-back delivery creates no project.
+      admitted = db.transaction((tx) => {
+        const refused = webhookWindowLimit(tx, svc, billing.limits);
+        if (refused) return { refused };
+        const projectResolution = parsed.data.project
+          ? resolveProject(tx, svc.userId, parsed.data.project)
+          : { projectId: null };
+        tx.insert(event)
+          .values({ ...eventValues, projectId: projectResolution.projectId })
+          .run();
+        return { refused: null, projectResolution };
       });
     } catch (error) {
       if (idempotencyKey) {
@@ -374,7 +383,8 @@ export const hooksRoute = new Hono()
       }
       throw error;
     }
-    if (refused) return limitedResponse(c, svc, billing, refused);
+    if (admitted.refused) return limitedResponse(c, svc, billing, admitted.refused);
+    const { projectResolution } = admitted;
 
     let devices: (typeof device.$inferSelect)[];
     let webSubscriptions: (typeof webPushSubscription.$inferSelect)[];

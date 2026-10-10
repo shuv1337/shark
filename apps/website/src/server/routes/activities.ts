@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  type BillingDto,
   type InteractiveLiveActivityStyle,
   LIVE_ACTIVITY_DEFAULT_STALE_AFTER_SECONDS,
   LIVE_ACTIVITY_END_FIELDS,
@@ -42,8 +43,7 @@ import { checkNotificationAllowance, getBilling, trackNotification } from "../li
 import { newId } from "../lib/id";
 import { createLiveActivityInteractionCredential } from "../lib/live-activity-interaction";
 import { createLiveActivityRegistrationToken } from "../lib/live-activity-registration";
-import type { Executor } from "../lib/oncall";
-import { agentWindowLimit } from "../lib/rate-windows";
+import { agentWindowLimit, RATE_LIMIT_ERRORS } from "../lib/rate-windows";
 import { decryptLiveActivityToken } from "../lib/token";
 import {
   type AgentEnv,
@@ -211,28 +211,25 @@ async function ownedActivity(
 
 /**
  * Shared per-minute budget for the whole agent surface: Live Activity
- * operations, interactions, and one-shot agent notifications count against
- * the same per-token and per-account windows, mirroring how webhook events
- * share the service and account counters. On its own this is check-then-act;
- * paths that record the counted row repeat the check with `agentWindowLimit`
- * in the transaction that inserts it.
+ * operations, interactions, one-shot agent notifications, and pages count
+ * against the same per-token and per-account windows (see `rate-windows.ts`).
+ * On its own this is check-then-act; paths that record the counted row repeat
+ * the check with `agentAdmission` in the transaction that inserts it.
  */
+export function agentRateLimit(
+  token: { id: string; userId: string },
+  limits: BillingDto["limits"],
+): { error: string; retryAfterSeconds: 60 } | null {
+  const refused = agentWindowLimit(db, token, limits);
+  return refused ? { error: RATE_LIMIT_ERRORS[refused], retryAfterSeconds: 60 } : null;
+}
+
 export async function enforceAgentRateLimit(
   token: AgentEnv["Variables"]["apiToken"],
   owner: AuthedEnv["Variables"]["user"],
 ): Promise<{ error: string; retryAfterSeconds: 60 } | null> {
   const billing = await getBilling(owner, true);
-  const error = agentWindowLimit(db, token, billing.limits);
-  return error ? { error, retryAfterSeconds: 60 } : null;
-}
-
-/** `raisePage` admission holding the agent windows in the page's insert transaction. */
-export async function agentPageAdmission(
-  token: AgentEnv["Variables"]["apiToken"],
-  owner: AuthedEnv["Variables"]["user"],
-): Promise<(tx: Executor) => string | null> {
-  const { limits } = await getBilling(owner, true);
-  return (tx) => agentWindowLimit(tx, token, limits);
+  return agentRateLimit(token, billing.limits);
 }
 
 async function recordDelivery(

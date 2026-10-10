@@ -13,7 +13,7 @@ import {
   interactionResponseSchema,
   liveActivityInteractionResponseSchema,
 } from "@hark/contracts";
-import { and, count, desc, eq, gt, gte, inArray, isNull, lte } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, isNull, lte } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
 import {
@@ -25,7 +25,6 @@ import {
   interaction,
   liveActivity,
   liveActivityDelivery,
-  liveActivityOperation,
   macosDevice,
   service,
   user as userTable,
@@ -40,9 +39,9 @@ import { deliverInteractionCallbacks } from "../lib/interaction-callbacks";
 import { verifyLiveActivityInteractionCredential } from "../lib/live-activity-interaction";
 import { notificationEventTag } from "../lib/notification-withdrawal";
 import { revokeOAuthGrant } from "../lib/oauth";
-import { resolveProjectForDelivery } from "../lib/projects";
+import { type ProjectResolution, resolveProject } from "../lib/projects";
 import { buildInteractionPushMessages, buildPushMessages, sendPushFanout } from "../lib/push";
-import { agentWindowLimit } from "../lib/rate-windows";
+import { agentAdmission, RATE_LIMIT_ERRORS } from "../lib/rate-windows";
 import { hashInteractionResponseToken } from "../lib/token";
 import {
   type AgentEnv,
@@ -52,8 +51,7 @@ import {
   requireScopes,
 } from "../middleware";
 import {
-  agentPageAdmission,
-  enforceAgentRateLimit,
+  agentRateLimit,
   resolveInteractionLiveActivity,
   startInteractionLiveActivity,
 } from "./activities";
@@ -225,7 +223,7 @@ function toNotificationDto(row: NotificationRow): AgentNotificationDto {
 }
 
 type NotificationInsertOutcome =
-  | { kind: "inserted"; row: NotificationRow }
+  | { kind: "inserted"; row: NotificationRow; projectResolution: ProjectResolution }
   | { kind: "replayed"; row: NotificationRow }
   | { kind: "conflict" }
   | { kind: "limited"; error: string };
@@ -233,21 +231,31 @@ type NotificationInsertOutcome =
 /**
  * Inserts after re-checking the agent windows in the same synchronous
  * transaction, so concurrent requests cannot overshoot them, and absorbs
- * idempotency-key races the same way the interaction insert does.
+ * idempotency-key races the same way the interaction insert does. The
+ * project is resolved in that transaction too, so a refused or rolled-back
+ * notification creates no project.
  */
 async function insertAgentNotification(
   token: { id: string; userId: string },
   limits: BillingDto["limits"],
   requestHash: string,
   values: typeof agentNotification.$inferInsert,
+  projectName: string | undefined,
 ): Promise<NotificationInsertOutcome> {
   try {
     return db.transaction((tx): NotificationInsertOutcome => {
-      const limited = agentWindowLimit(tx, token, limits);
-      if (limited) return { kind: "limited", error: limited };
-      const inserted = tx.insert(agentNotification).values(values).returning().get();
+      const refused = agentAdmission(token, limits)(tx);
+      if (refused) return { kind: "limited", error: RATE_LIMIT_ERRORS[refused] };
+      const projectResolution = projectName
+        ? resolveProject(tx, token.userId, projectName)
+        : { projectId: null };
+      const inserted = tx
+        .insert(agentNotification)
+        .values({ ...values, projectId: projectResolution.projectId })
+        .returning()
+        .get();
       if (!inserted) throw new Error("Failed to create agent notification");
-      return { kind: "inserted", row: inserted };
+      return { kind: "inserted", row: inserted, projectResolution };
     });
   } catch (error) {
     if (values.idempotencyKey) {
@@ -386,7 +394,8 @@ export const agentRoute = new Hono<AgentEnv>()
         .where(eq(userTable.id, token.userId))
         .limit(1);
       if (!pageOwner) return c.json({ error: "Account not found" }, 404);
-      const pageLimited = await enforceAgentRateLimit(token, pageOwner);
+      const { limits: pageLimits } = await getBilling(pageOwner, true);
+      const pageLimited = agentRateLimit(token, pageLimits);
       if (pageLimited) {
         c.header("Retry-After", "60");
         return c.json(pageLimited, 429);
@@ -405,7 +414,7 @@ export const agentRoute = new Hono<AgentEnv>()
         },
         token.name,
         { requesterTokenId: token.id },
-        await agentPageAdmission(token, pageOwner),
+        agentAdmission(token, pageLimits),
       );
       if (!paged.ok) {
         if (paged.status === 429) {
@@ -476,7 +485,7 @@ export const agentRoute = new Hono<AgentEnv>()
     const selectedWebSubscriptions = targets.webSubscriptions;
     const selectedMacosDevices = targets.macosDevices;
 
-    const limited = await enforceAgentRateLimit(token, owner);
+    const limited = agentRateLimit(token, billing.limits);
     if (limited) {
       c.header("Retry-After", "60");
       return c.json(limited, 429);
@@ -484,13 +493,6 @@ export const agentRoute = new Hono<AgentEnv>()
     if (!(await checkNotificationAllowance(token.userId))) {
       return c.json({ error: "Monthly notification limit reached" }, 429);
     }
-
-    // Resolved after the idempotency replay checks above and before the
-    // insert below, so replays keep their originally stored project and a
-    // full account never fails the delivery.
-    const projectResolution = parsed.data.project
-      ? await resolveProjectForDelivery(token.userId, parsed.data.project)
-      : { projectId: null };
 
     const notificationId = newId("anot");
     const values: typeof agentNotification.$inferInsert = {
@@ -508,7 +510,7 @@ export const agentRoute = new Hono<AgentEnv>()
       idempotencyKey: idempotencyKey ?? null,
       requestHash: idempotencyKey ? requestHash : null,
       appId: parsed.data.appId ?? null,
-      projectId: projectResolution.projectId,
+      projectId: null,
       summary: parsed.data.summary ?? null,
       bodyFormat: parsed.data.bodyFormat ?? null,
       createdAt: new Date(),
@@ -516,7 +518,16 @@ export const agentRoute = new Hono<AgentEnv>()
 
     // Insert before sending so a raced duplicate replays the stored row
     // instead of double-pushing; accepted_count is settled after the send.
-    const outcome = await insertAgentNotification(token, billing.limits, requestHash, values);
+    // The project resolves only once the notification is admitted, so
+    // replays keep their originally stored project and a full account never
+    // fails the delivery.
+    const outcome = await insertAgentNotification(
+      token,
+      billing.limits,
+      requestHash,
+      values,
+      parsed.data.project,
+    );
     if (outcome.kind === "limited") {
       c.header("Retry-After", "60");
       return c.json({ error: outcome.error, retryAfterSeconds: 60 }, 429);
@@ -531,6 +542,7 @@ export const agentRoute = new Hono<AgentEnv>()
     if (outcome.kind === "conflict") {
       return c.json({ error: "Idempotency-Key was already used with a different payload" }, 409);
     }
+    const { projectResolution } = outcome;
 
     if (
       selectedDevices.length + selectedWebSubscriptions.length + selectedMacosDevices.length ===
@@ -806,65 +818,7 @@ export const agentRoute = new Hono<AgentEnv>()
     const selectedWebSubscriptions = targets.webSubscriptions;
     const selectedMacosDevices = targets.macosDevices;
 
-    const since = new Date(Date.now() - 60_000);
-    const [
-      [requesterUsage],
-      [requesterActivityUsage],
-      [webhookUsage],
-      [interactionUsage],
-      [activityUsage],
-    ] = await Promise.all([
-      db
-        .select({ value: count() })
-        .from(liveActivityOperation)
-        .innerJoin(liveActivity, eq(liveActivity.id, liveActivityOperation.activityId))
-        .where(
-          and(
-            eq(liveActivityOperation.requesterTokenId, token.id),
-            gte(liveActivityOperation.createdAt, since),
-            isNull(liveActivity.interactionId),
-          ),
-        ),
-      db
-        .select({ value: count() })
-        .from(interaction)
-        .where(and(eq(interaction.requesterTokenId, token.id), gte(interaction.createdAt, since))),
-      db
-        .select({ value: count() })
-        .from(event)
-        .innerJoin(service, eq(event.serviceId, service.id))
-        .where(and(eq(service.userId, token.userId), gte(event.createdAt, since))),
-      db
-        .select({ value: count() })
-        .from(interaction)
-        .where(and(eq(interaction.userId, token.userId), gte(interaction.createdAt, since))),
-      db
-        .select({ value: count() })
-        .from(liveActivityOperation)
-        .innerJoin(liveActivity, eq(liveActivity.id, liveActivityOperation.activityId))
-        .where(
-          and(
-            eq(liveActivity.userId, token.userId),
-            gte(liveActivityOperation.createdAt, since),
-            isNull(liveActivity.interactionId),
-          ),
-        ),
-    ]);
-    if (
-      (requesterUsage?.value ?? 0) + (requesterActivityUsage?.value ?? 0) >=
-      billing.limits.servicePerMinute
-    ) {
-      c.header("Retry-After", "60");
-      return c.json({ error: "Requester rate limit exceeded", retryAfterSeconds: 60 }, 429);
-    }
-    if (
-      (webhookUsage?.value ?? 0) + (interactionUsage?.value ?? 0) + (activityUsage?.value ?? 0) >=
-      billing.limits.accountPerMinute
-    ) {
-      c.header("Retry-After", "60");
-      return c.json({ error: "Account rate limit exceeded", retryAfterSeconds: 60 }, 429);
-    }
-    const limited = await enforceAgentRateLimit(token, owner);
+    const limited = agentRateLimit(token, billing.limits);
     if (limited) {
       c.header("Retry-After", "60");
       return c.json(limited, 429);
@@ -930,8 +884,8 @@ export const agentRoute = new Hono<AgentEnv>()
     try {
       // Synchronous, so concurrent requests cannot all pass the agent windows.
       const inserted = db.transaction((tx) => {
-        const limited = agentWindowLimit(tx, token, billing.limits);
-        if (limited) return { limited };
+        const refused = agentAdmission(token, billing.limits)(tx);
+        if (refused) return { limited: RATE_LIMIT_ERRORS[refused] };
         return { row: tx.insert(interaction).values(values).returning().get() };
       });
       if ("limited" in inserted) {

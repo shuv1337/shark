@@ -10,6 +10,7 @@ import { type Context, Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db";
 import { oncallGroup, oncallOverride, oncallPage, team, teamMember } from "../db/schema";
+import { getBilling } from "../lib/billing";
 import { newId } from "../lib/id";
 import {
   acknowledgePage,
@@ -31,6 +32,7 @@ import {
   toPageDto,
 } from "../lib/oncall";
 import { onCallThroughout, upcomingShifts } from "../lib/oncall-schedule";
+import { agentAdmission } from "../lib/rate-windows";
 import { hasRole } from "../lib/teams";
 import {
   type AgentEnv,
@@ -39,7 +41,7 @@ import {
   requireAuth,
   requireScopes,
 } from "../middleware";
-import { agentPageAdmission, enforceAgentRateLimit } from "./activities";
+import { agentRateLimit } from "./activities";
 import { type Actor, type Outcome, readJson, send, withAgent } from "./teams";
 
 const result = (body: unknown, status: 200 | 201 = 200): Outcome => ({ status, body });
@@ -54,6 +56,10 @@ const FORBIDDEN_ADMIN = failure(403, "Only team owners and admins can change on-
 const FORBIDDEN_HANDOFF = failure(
   403,
   "Members can only hand off time they are on call for; ask a team owner or admin to schedule other time",
+);
+const PARTLY_SHADOWED = failure(
+  409,
+  "That window is partly covered by a later-starting override; split the override around it",
 );
 const MAX_OVERRIDE_MS = 90 * 86_400_000;
 
@@ -105,60 +111,87 @@ async function deleteGroup(actor: Actor, groupId: string): Promise<Outcome> {
 /**
  * Team owners and admins schedule anyone for any window. A member can only
  * hand off time they are already on call for (by the rotation or an earlier
- * override) to any team member, so a member never displaces someone else.
+ * override) to any team member, so a member never displaces someone else; a
+ * member's handoff starts no earlier than now, since past time is not theirs
+ * to give away. Either way, 201 means the override is in force for all of its
+ * remaining window: one that a later-starting override would partly shadow
+ * is refused rather than stored half-effective.
  */
 async function createOverride(actor: Actor, groupId: string, input: unknown): Promise<Outcome> {
-  const found = await memberGroup(groupId, actor.id);
-  if (!found) return GROUP_NOT_FOUND;
   const parsed = oncallOverrideCreateSchema.safeParse(input);
-  if (!parsed.success) return failure(400, "Invalid override", { issues: parsed.error.issues });
-  const [target] = await db
-    .select({ userId: teamMember.userId })
-    .from(teamMember)
-    .where(
-      and(eq(teamMember.teamId, found.group.teamId), eq(teamMember.userId, parsed.data.userId)),
-    )
-    .limit(1);
-  if (!target) return failure(400, "The override must name a team member");
-  const startsAt = Date.parse(parsed.data.startsAt);
+  if (!parsed.success) {
+    return (await memberGroup(groupId, actor.id))
+      ? failure(400, "Invalid override", { issues: parsed.error.issues })
+      : GROUP_NOT_FOUND;
+  }
+  const requestedStart = Date.parse(parsed.data.startsAt);
   const endsAt = Date.parse(parsed.data.endsAt);
-  if (endsAt <= startsAt) return failure(400, "endsAt must be after startsAt");
-  if (endsAt <= Date.now()) return failure(400, "endsAt must be in the future");
-  if (endsAt - startsAt > MAX_OVERRIDE_MS) return failure(400, "Overrides last at most 90 days");
-  const admin = hasRole(found.role as "member", "admin");
   const now = Date.now();
-  // Synchronous, so two concurrent handoffs cannot both give away the same time.
-  const inserted = db.transaction((tx) => {
-    if (!admin) {
-      const rows = tx
+  // Synchronous, so the membership, role, rotation, and overrides it decides
+  // on are the ones current when the row is written, and two concurrent
+  // handoffs cannot both give away the same time.
+  const outcome = db.transaction((tx) => {
+    const found = tx
+      .select({ group: oncallGroup, role: teamMember.role })
+      .from(oncallGroup)
+      .innerJoin(
+        teamMember,
+        and(eq(teamMember.teamId, oncallGroup.teamId), eq(teamMember.userId, actor.id)),
+      )
+      .where(eq(oncallGroup.id, groupId))
+      .get();
+    if (!found) return { ok: false as const, error: GROUP_NOT_FOUND };
+    const target = tx
+      .select({ userId: teamMember.userId })
+      .from(teamMember)
+      .where(
+        and(eq(teamMember.teamId, found.group.teamId), eq(teamMember.userId, parsed.data.userId)),
+      )
+      .get();
+    if (!target)
+      return { ok: false as const, error: failure(400, "The override must name a team member") };
+    if (endsAt <= requestedStart)
+      return { ok: false as const, error: failure(400, "endsAt must be after startsAt") };
+    if (endsAt <= now)
+      return { ok: false as const, error: failure(400, "endsAt must be in the future") };
+    if (endsAt - requestedStart > MAX_OVERRIDE_MS) {
+      return { ok: false as const, error: failure(400, "Overrides last at most 90 days") };
+    }
+    const admin = hasRole(found.role as "member", "admin");
+    const startsAt = admin ? requestedStart : Math.max(requestedStart, now);
+    // Only the part still to come decides who is paged.
+    const from = Math.max(startsAt, now);
+    const rotation = rotationOf(found.group);
+    const existing = overrideWindows(
+      tx
         .select()
         .from(oncallOverride)
         .where(and(eq(oncallOverride.groupId, groupId), gt(oncallOverride.endsAt, new Date(now))))
-        .all();
-      // Only the part still to come decides who is paged.
-      const scheduled = onCallThroughout(
-        rotationOf(found.group),
-        overrideWindows(rows),
-        actor.id,
-        Math.max(startsAt, now),
-        endsAt,
-      );
-      if (!scheduled) return false;
+        .all(),
+    );
+    if (!admin && !onCallThroughout(rotation, existing, actor.id, from, endsAt)) {
+      return { ok: false as const, error: FORBIDDEN_HANDOFF };
     }
-    tx.insert(oncallOverride)
-      .values({
-        id: newId("ovr"),
-        groupId,
-        userId: parsed.data.userId,
-        startsAt: new Date(startsAt),
-        endsAt: new Date(endsAt),
-        createdAt: new Date(now),
-      })
-      .run();
-    return true;
+    const row = {
+      id: newId("ovr"),
+      groupId,
+      userId: parsed.data.userId,
+      startsAt: new Date(startsAt),
+      endsAt: new Date(endsAt),
+      createdAt: new Date(now),
+    };
+    const [candidate] = overrideWindows([row]);
+    if (
+      !candidate ||
+      !onCallThroughout(rotation, [...existing, candidate], row.userId, from, endsAt)
+    ) {
+      return { ok: false as const, error: PARTLY_SHADOWED };
+    }
+    tx.insert(oncallOverride).values(row).run();
+    return { ok: true as const, group: found.group };
   });
-  if (!inserted) return FORBIDDEN_HANDOFF;
-  return result({ group: await toGroupDto(found.group) }, 201);
+  if (!outcome.ok) return outcome.error;
+  return result({ group: await toGroupDto(outcome.group) }, 201);
 }
 
 async function deleteOverride(actor: Actor, groupId: string, overrideId: string): Promise<Outcome> {
@@ -423,7 +456,8 @@ export const oncallAgentRoute = new Hono<AgentEnv>()
   .post("/:groupId/pages", requireScopes("oncall:write"), async (c) =>
     withAgent(c, async (actor) => {
       const token = c.get("apiToken");
-      const limited = await enforceAgentRateLimit(token, actor);
+      const { limits } = await getBilling(actor, true);
+      const limited = agentRateLimit(token, limits);
       if (limited) {
         c.header("Retry-After", "60");
         return { status: 429, body: limited };
@@ -434,7 +468,7 @@ export const oncallAgentRoute = new Hono<AgentEnv>()
         await readJson(c),
         token.name,
         { requesterTokenId: token.id },
-        await agentPageAdmission(token, actor),
+        agentAdmission(token, limits),
       );
       if (outcome.status !== 429) return outcome;
       c.header("Retry-After", "60");

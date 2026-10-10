@@ -26,7 +26,7 @@ import {
   type SQL,
   sql,
 } from "drizzle-orm";
-import { db } from "../db";
+import { db, type Executor } from "../db";
 import {
   app,
   device,
@@ -52,6 +52,7 @@ import {
   upcomingShifts,
 } from "./oncall-schedule";
 import { buildPageClaimedPushMessages, buildPagePushMessages, sendPushMessages } from "./push";
+import { RATE_LIMIT_ERRORS, type RateAdmission, type RateWindow } from "./rate-windows";
 import { memberIds } from "./teams";
 import { generatePageResponseToken, hashPageResponseToken } from "./token";
 
@@ -62,38 +63,6 @@ const OPEN_STATUSES = ["triggered", "acknowledged"] as const;
 const UPCOMING_SHIFTS = 5;
 /** New pages a group accepts per minute; duplicates that merge do not count. */
 export const PAGES_PER_GROUP_PER_MINUTE = 10;
-
-export type Executor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
-
-/**
- * Pages raised since `since`; they share the account, service, and requester
- * per-minute budgets. Synchronous, so it can run inside a write transaction.
- */
-export function countPagesSince(
-  executor: Executor,
-  by: { userId: string } | { serviceId: string } | { tokenId: string },
-  since: Date,
-): number {
-  const owner =
-    "userId" in by
-      ? eq(oncallPage.createdByUserId, by.userId)
-      : "serviceId" in by
-        ? eq(oncallPage.requesterServiceId, by.serviceId)
-        : eq(oncallPage.requesterTokenId, by.tokenId);
-  const row = executor
-    .select({ value: count() })
-    .from(oncallPage)
-    .where(and(owner, gte(oncallPage.createdAt, since)))
-    .get();
-  return row?.value ?? 0;
-}
-
-export async function pagesCreatedSince(
-  by: { userId: string } | { serviceId: string } | { tokenId: string },
-  since: Date,
-): Promise<number> {
-  return countPagesSince(db, by, since);
-}
 
 // ---------------------------------------------------------------------------
 // Groups and schedules
@@ -439,15 +408,15 @@ export interface RaisePageInput {
   origin?: { serviceId?: string; requesterTokenId?: string };
   /**
    * Runs synchronously in the transaction that inserts a new page (never for
-   * a merge). Returning an error rejects the page with 429, so a per-minute
+   * a merge). Returning a window rejects the page with 429, so a per-minute
    * window checked here cannot be overshot by concurrent requests.
    */
-  admit?: (tx: Executor) => string | null;
+  admit?: RateAdmission;
 }
 
 export type RaisePageOutcome =
   | { ok: true; status: 200 | 201; body: OncallPageCreateResponse }
-  | { ok: false; status: 400 | 429; error: string };
+  | { ok: false; status: 400 | 429; error: string; refused?: RateWindow };
 
 function mergeDuplicate(
   executor: Executor,
@@ -557,14 +526,23 @@ export async function raisePage({
       return { kind: "limited" as const, error: "On-call page rate limit exceeded" };
     }
     const refused = admit?.(tx);
-    if (refused) return { kind: "limited" as const, error: refused };
+    if (refused) {
+      return { kind: "limited" as const, error: RATE_LIMIT_ERRORS[refused], refused };
+    }
     return {
       kind: "created" as const,
       page: tx.insert(oncallPage).values(values).returning().get(),
     };
   });
   if (created.kind === "merged") return mergedOutcome(created.page);
-  if (created.kind === "limited") return { ok: false, status: 429, error: created.error };
+  if (created.kind === "limited") {
+    return {
+      ok: false,
+      status: 429,
+      error: created.error,
+      ...("refused" in created ? { refused: created.refused } : {}),
+    };
+  }
   const page = created.page;
   if (!page) throw new Error("Failed to create page");
 

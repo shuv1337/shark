@@ -227,6 +227,44 @@ describe("onCallThroughout", () => {
     const early = rotation({ startsAt: bobEnd });
     expect(onCallThroughout(early, [], "alice", bobStart, bobEnd + 60_000)).toBe(false);
   });
+
+  it("is false for an empty rotation without overrides", () => {
+    const empty = rotation({ memberIds: [] });
+    expect(onCallThroughout(empty, [], "bob", bobStart, bobStart + 60_000)).toBe(false);
+  });
+
+  it("sees a later-starting override shadow the tail of a handoff", () => {
+    const hour = 3_600_000;
+    const admin = { id: "ovr_admin", userId: "bob", startsAt: bobStart + 2 * hour, endsAt: bobEnd };
+    const handoff = {
+      id: "ovr_handoff",
+      userId: "carol",
+      startsAt: bobStart + hour,
+      endsAt: bobStart + 3 * hour,
+      createdAt: 1,
+    };
+    expect(onCallThroughout(value, [admin], "bob", handoff.startsAt, handoff.endsAt)).toBe(true);
+    expect(
+      onCallThroughout(value, [admin, handoff], "carol", handoff.startsAt, handoff.endsAt),
+    ).toBe(false);
+    const split = { ...handoff, endsAt: admin.startsAt };
+    expect(onCallThroughout(value, [admin, split], "carol", split.startsAt, split.endsAt)).toBe(
+      true,
+    );
+  });
+
+  it("gives equal-start, equal-creation handoffs to the greater id", () => {
+    const first = {
+      id: "ovr_a",
+      userId: "carol",
+      startsAt: bobStart,
+      endsAt: bobEnd,
+      createdAt: 5,
+    };
+    const second = { ...first, id: "ovr_b", userId: "dave" };
+    expect(onCallThroughout(value, [first, second], "dave", bobStart, bobEnd)).toBe(true);
+    expect(onCallThroughout(value, [second, first], "carol", bobStart, bobEnd)).toBe(false);
+  });
 });
 
 describe("rotation start and escalation order", () => {

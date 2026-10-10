@@ -406,6 +406,84 @@ describe("override permissions", () => {
     ]);
     expect(layered.upcoming[4]?.endsAt).toBe(new Date(longEnd).toISOString());
   });
+
+  it("refuses a handoff that a later-starting override would partly shadow", async () => {
+    const SHADOWED =
+      "That window is partly covered by a later-starting override; split the override around it";
+    const group = await createGroup("Shadowed");
+    const [benStart, benEnd] = benShift(group);
+    as("user_a");
+    expect(
+      (await override(group.id, "user_b", benStart + 2 * HOUR, benEnd + 2 * HOUR)).status,
+    ).toBe(201);
+    as("user_b");
+    const handoff = await override(group.id, "user_c", benStart + HOUR, benStart + 3 * HOUR);
+    expect(handoff.status).toBe(409);
+    expect(await handoff.json()).toEqual({ error: SHADOWED });
+    as("user_a");
+    const admin = await override(group.id, "user_c", benStart + HOUR, benStart + 3 * HOUR);
+    expect(admin.status).toBe(409);
+    const stored = (await (await call("GET", `/api/oncall/${group.id}`)).json()) as {
+      group: OncallGroupDto;
+    };
+    expect(stored.group.overrides?.map((row) => row.person.userId)).toEqual(["user_b"]);
+
+    as("user_b");
+    const split = await override(group.id, "user_c", benStart + HOUR, benStart + 2 * HOUR);
+    expect(split.status).toBe(201);
+    expect(people(((await split.json()) as { group: OncallGroupDto }).group).slice(1, 4)).toEqual([
+      ["user_b", false],
+      ["user_c", true],
+      ["user_b", true],
+    ]);
+  });
+
+  it("starts a member's handoff now when it asks for time already past", async () => {
+    const { eq } = await import("drizzle-orm");
+    const group = await createGroup("Backdated");
+    as("user_a");
+    expect(
+      (await override(group.id, "user_b", Date.now() - HOUR, Date.now() + 2 * HOUR)).status,
+    ).toBe(201);
+    as("user_b");
+    const before = Date.now();
+    // The first two hours were Ana's, but they are over; only Ben's future time moves.
+    const handoff = await override(group.id, "user_c", before - 3 * HOUR, before + HOUR);
+    expect(handoff.status).toBe(201);
+    const after = ((await handoff.json()) as { group: OncallGroupDto }).group;
+    expect(after.current).toMatchObject({ person: { userId: "user_c" }, override: true });
+    const rows = await db
+      .select()
+      .from(schema.oncallOverride)
+      .where(eq(schema.oncallOverride.groupId, group.id));
+    const stored = rows.find((entry) => entry.userId === "user_c");
+    expect(stored?.startsAt.getTime()).toBeGreaterThanOrEqual(before);
+  });
+
+  it("lets the recipient drop a handoff and the original holder hand it on again", async () => {
+    const group = await createGroup("Redelegate");
+    const [benStart] = benShift(group);
+    as("user_b");
+    const handoff = await override(group.id, "user_c", benStart + HOUR, benStart + 2 * HOUR);
+    expect(handoff.status).toBe(201);
+    const overrideId = ((await handoff.json()) as { group: OncallGroupDto }).group.overrides?.[0]
+      ?.id;
+    // The time is Cal's now, so Ben cannot remove her override or give it away.
+    expect((await call("DELETE", `/api/oncall/${group.id}/overrides/${overrideId}`)).status).toBe(
+      403,
+    );
+    expect((await override(group.id, "user_a", benStart + HOUR, benStart + 2 * HOUR)).status).toBe(
+      403,
+    );
+    as("user_c");
+    expect((await call("DELETE", `/api/oncall/${group.id}/overrides/${overrideId}`)).status).toBe(
+      200,
+    );
+    as("user_b");
+    expect((await override(group.id, "user_a", benStart + HOUR, benStart + 2 * HOUR)).status).toBe(
+      201,
+    );
+  });
 });
 
 describe("per-minute windows under concurrent requests", () => {
@@ -440,6 +518,42 @@ describe("per-minute windows under concurrent requests", () => {
     return { webhook, token, serviceId: `svc_burst_${serial}`, tokenId: `tok_burst_${serial}` };
   }
 
+  /** A fresh account with one device, for tests that read its whole account window. */
+  async function freshUser(id: string) {
+    const now = new Date();
+    await db.insert(schema.user).values({
+      id,
+      name: id,
+      email: `${id}@example.com`,
+      emailVerified: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.device).values({
+      id: `dev_${id}`,
+      userId: id,
+      expoPushToken: `ExponentPushToken[${id}]`,
+      createdAt: now,
+      lastSeenAt: now,
+    });
+  }
+
+  function askRow(id: string, userId = "user_a") {
+    return {
+      id,
+      revision: 1,
+      userId,
+      title: `Ask ${id}`,
+      agentLabel: "Board bot",
+      agentDisplay: null,
+    } as typeof schema.boardAsk.$inferSelect;
+  }
+
+  /**
+   * Temporarily lowers the per-minute limits. `selfHostedBilling` reads the
+   * shared `env` object on every call, so this mutates process-wide state:
+   * keep the run inside the callback and do not run these tests concurrently.
+   */
   async function withLimits<T>(
     limits: { service?: number; account?: number },
     run: () => Promise<T>,
@@ -484,22 +598,7 @@ describe("per-minute windows under concurrent requests", () => {
   });
 
   it("holds the account window for webhook notifications", async () => {
-    const now = new Date();
-    await db.insert(schema.user).values({
-      id: "user_burst",
-      name: "Burst",
-      email: "user_burst@example.com",
-      emailVerified: true,
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(schema.device).values({
-      id: "dev_user_burst",
-      userId: "user_burst",
-      expoPushToken: "ExponentPushToken[user_burst]",
-      createdAt: now,
-      lastSeenAt: now,
-    });
+    await freshUser("user_burst");
     const first = await freshCredentials("user_burst");
     const second = await freshCredentials("user_burst");
     const result = await withLimits({ account: LIMIT }, () =>
@@ -513,6 +612,77 @@ describe("per-minute windows under concurrent requests", () => {
       (row) => row.serviceId === first.serviceId || row.serviceId === second.serviceId,
     );
     expect(stored).toHaveLength(LIMIT);
+  });
+
+  it("creates no project for a refused webhook notification", async () => {
+    const { webhook, serviceId } = await freshCredentials();
+    const prefix = `hook-project-${serial}-`;
+    const result = await withLimits({ service: LIMIT }, () =>
+      burst((index) =>
+        call("POST", `/hooks/${webhook}`, { body: "x", project: `${prefix}${index}` }),
+      ),
+    );
+    expect(result).toMatchObject({ passed: LIMIT, limited: BURST - LIMIT });
+    const projects = (await db.select().from(schema.project)).filter((row) =>
+      row.normalizedName.startsWith(prefix),
+    );
+    expect(projects).toHaveLength(LIMIT);
+    const events = (await db.select().from(schema.event)).filter(
+      (row) => row.serviceId === serviceId,
+    );
+    expect(new Set(events.map((row) => row.projectId))).toEqual(
+      new Set(projects.map((row) => row.id)),
+    );
+  });
+
+  it("creates no project for a refused agent notification", async () => {
+    const { token, tokenId } = await freshCredentials();
+    const prefix = `agent-project-${serial}-`;
+    const result = await withLimits({ service: LIMIT }, () =>
+      burst((index) =>
+        call(
+          "POST",
+          "/api/agent/notifications",
+          { title: "Bot", body: "x", project: `${prefix}${index}` },
+          token,
+        ),
+      ),
+    );
+    expect(result).toMatchObject({ passed: LIMIT, limited: BURST - LIMIT });
+    const projects = (await db.select().from(schema.project)).filter((row) =>
+      row.normalizedName.startsWith(prefix),
+    );
+    expect(projects).toHaveLength(LIMIT);
+    const notifications = (await db.select().from(schema.agentNotification)).filter(
+      (row) => row.requesterTokenId === tokenId,
+    );
+    expect(new Set(notifications.map((row) => row.projectId))).toEqual(
+      new Set(projects.map((row) => row.id)),
+    );
+  });
+
+  it("shares one account window between agent notifications and webhooks", async () => {
+    await freshUser("user_mixed");
+    const { webhook, token } = await freshCredentials("user_mixed");
+    await withLimits({ service: 100, account: LIMIT }, async () => {
+      for (let index = 0; index < LIMIT; index += 1) {
+        expect(
+          (await call("POST", "/api/agent/notifications", { title: "Bot", body: "x" }, token))
+            .status,
+        ).toBe(201);
+      }
+      const hook = await call("POST", `/hooks/${webhook}`, { body: "x" });
+      expect(hook.status).toBe(429);
+      expect(await hook.json()).toMatchObject({ error: "Account rate limit exceeded" });
+      const agent = await call(
+        "POST",
+        "/api/agent/notifications",
+        { title: "Bot", body: "x" },
+        token,
+      );
+      expect(agent.status).toBe(429);
+      expect(await agent.json()).toMatchObject({ error: "Account rate limit exceeded" });
+    });
   });
 
   it("holds a webhook's service window for pages", async () => {
@@ -609,6 +779,80 @@ describe("per-minute windows under concurrent requests", () => {
     ).toHaveLength(LIMIT);
   });
 
+  it("admits board push retries of aged failures against the current window", async () => {
+    const { eq } = await import("drizzle-orm");
+    const { BoardPushLimited, sendBoardAskPush } = await import("../lib/board-push");
+    const { tokenId } = await freshCredentials();
+    const [token] = await db.select().from(schema.apiToken).where(eq(schema.apiToken.id, tokenId));
+    if (!token) throw new Error("Missing token");
+    const aged = new Date(Date.now() - 10 * 60_000);
+    await db.insert(schema.agentNotification).values(
+      Array.from({ length: BURST }, (_, index) => ({
+        id: `anot_aged_${tokenId}_${index}`,
+        userId: "user_a",
+        requesterTokenId: tokenId,
+        title: "Board bot",
+        body: `Ask ${index}`,
+        status: "failed",
+        error: "Synthetic failure",
+        idempotencyKey: `bask:ask_aged_${tokenId}_${index}:r1`,
+        createdAt: aged,
+      })),
+    );
+    const outcomes = await withLimits({ service: LIMIT }, () =>
+      Promise.allSettled(
+        Array.from({ length: BURST }, (_, index) =>
+          sendBoardAskPush(askRow(`ask_aged_${tokenId}_${index}`), token),
+        ),
+      ),
+    );
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(LIMIT);
+    for (const outcome of outcomes) {
+      if (outcome.status === "rejected") {
+        expect(outcome.reason).toBeInstanceOf(BoardPushLimited);
+        expect(outcome.reason.message).toBe("Requester rate limit exceeded");
+      }
+    }
+    expect(sent).toHaveLength(LIMIT);
+    const rows = (await db.select().from(schema.agentNotification)).filter(
+      (row) => row.requesterTokenId === tokenId,
+    );
+    expect(rows.filter((row) => row.createdAt > aged)).toHaveLength(LIMIT);
+    expect(rows.filter((row) => row.status === "failed")).toHaveLength(BURST - LIMIT);
+  });
+
+  it("sends one push when the same failed board push is retried concurrently", async () => {
+    const { eq } = await import("drizzle-orm");
+    const { sendBoardAskPush } = await import("../lib/board-push");
+    const { tokenId } = await freshCredentials();
+    const [token] = await db.select().from(schema.apiToken).where(eq(schema.apiToken.id, tokenId));
+    if (!token) throw new Error("Missing token");
+    const askId = `ask_retry_${tokenId}`;
+    await db.insert(schema.agentNotification).values({
+      id: `anot_retry_${tokenId}`,
+      userId: "user_a",
+      requesterTokenId: tokenId,
+      title: "Board bot",
+      body: "Ask",
+      status: "failed",
+      error: "Synthetic failure",
+      idempotencyKey: `bask:${askId}:r1`,
+      createdAt: new Date(Date.now() - 10 * 60_000),
+    });
+    const outcomes = await Promise.allSettled(
+      Array.from({ length: 5 }, () => sendBoardAskPush(askRow(askId), token)),
+    );
+    expect(sent).toHaveLength(1);
+    expect(
+      outcomes.filter((outcome) => outcome.status === "fulfilled").length,
+    ).toBeGreaterThanOrEqual(1);
+    const [row] = await db
+      .select()
+      .from(schema.agentNotification)
+      .where(eq(schema.agentNotification.id, `anot_retry_${tokenId}`));
+    expect(row).toMatchObject({ status: "accepted", acceptedCount: 1 });
+  });
+
   it("holds a token's requester window for agent pages on both routes", async () => {
     const group = await createGroup("Burst agent");
     const { token, tokenId } = await freshCredentials();
@@ -631,6 +875,155 @@ describe("per-minute windows under concurrent requests", () => {
     expect(
       (await db.select().from(schema.oncallPage)).filter((row) => row.requesterTokenId === tokenId),
     ).toHaveLength(LIMIT);
+  });
+});
+
+describe("rate window definitions", () => {
+  it("counts each surface's rows in the service, requester, and account windows", async () => {
+    const windows = await import("../lib/rate-windows");
+    const { hashApiToken, hashWebhookToken } = await import("../lib/token");
+    const userId = "user_windows";
+    const now = new Date();
+    const old = new Date(now.getTime() - 10 * 60_000);
+    await db.insert(schema.user).values({
+      id: userId,
+      name: "Windows",
+      email: `${userId}@example.com`,
+      emailVerified: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.service).values({
+      id: "svc_windows",
+      userId,
+      title: "Windows",
+      tokenHash: hashWebhookToken("whk_windows_webhook_token_000000000000"),
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.apiToken).values({
+      id: "tok_windows",
+      userId,
+      name: "Windows bot",
+      tokenHash: hashApiToken(`hark_${"q".repeat(43)}`),
+      prefix: "hark_qqqqqqq",
+      scopes: ["notifications:send"],
+      createdAt: now,
+    });
+    const group = await createGroup("Windows");
+    await db.insert(schema.event).values(
+      [now, old].map((createdAt, index) => ({
+        id: `evt_windows_${index}`,
+        serviceId: "svc_windows",
+        title: "Event",
+        body: "x",
+        status: "accepted",
+        createdAt,
+      })),
+    );
+    await db.insert(schema.interaction).values({
+      id: "int_windows",
+      userId,
+      requesterTokenId: "tok_windows",
+      title: "Ask",
+      prompt: "x",
+      kind: "approval",
+      choices: ["approve", "deny"],
+      actionDigest: "synthetic",
+      expiresAt: new Date(now.getTime() + 60_000),
+      createdAt: now,
+    });
+    await db.insert(schema.agentNotification).values({
+      id: "anot_windows",
+      userId,
+      requesterTokenId: "tok_windows",
+      title: "Bot",
+      body: "x",
+      status: "accepted",
+      createdAt: now,
+    });
+    const activity = (id: string, extra: object) => ({
+      id,
+      userId,
+      schemaVersion: 1,
+      props: {},
+      expiresAt: new Date(now.getTime() + 60_000),
+      createdAt: now,
+      updatedAt: now,
+      ...extra,
+    });
+    await db.insert(schema.liveActivity).values([
+      activity("la_windows_service", { requesterServiceId: "svc_windows" }),
+      activity("la_windows_token", { requesterTokenId: "tok_windows" }),
+      activity("la_windows_prompt", {
+        requesterTokenId: "tok_windows",
+        interactionId: "int_windows",
+      }),
+    ]);
+    await db.insert(schema.liveActivityOperation).values([
+      {
+        id: "lao_windows_service",
+        activityId: "la_windows_service",
+        requesterServiceId: "svc_windows",
+        event: "start",
+        sequence: 1,
+        createdAt: now,
+      },
+      {
+        id: "lao_windows_token",
+        activityId: "la_windows_token",
+        requesterTokenId: "tok_windows",
+        event: "start",
+        sequence: 1,
+        createdAt: now,
+      },
+      // Tied to an interaction, which already counts.
+      {
+        id: "lao_windows_prompt",
+        activityId: "la_windows_prompt",
+        requesterTokenId: "tok_windows",
+        event: "start",
+        sequence: 1,
+        createdAt: now,
+      },
+    ]);
+    await db.insert(schema.oncallPage).values(
+      [{ requesterServiceId: "svc_windows" }, { requesterTokenId: "tok_windows" }].map(
+        (origin, index) => ({
+          id: `page_windows_${index}`,
+          groupId: group.id,
+          teamId: TEAM_ID,
+          title: "Page",
+          status: "resolved",
+          sourceName: "Windows",
+          createdByUserId: userId,
+          createdAt: now,
+          updatedAt: now,
+          ...origin,
+        }),
+      ),
+    );
+
+    const since = new Date(now.getTime() - 60_000);
+    // Event, service Live Activity operation, service page.
+    expect(windows.serviceWindowUsage(db, "svc_windows", since)).toBe(3);
+    // Token Live Activity operation, interaction, notification, token page.
+    expect(windows.requesterWindowUsage(db, "tok_windows", since)).toBe(4);
+    // Event, interaction, notification, two Live Activity operations, two pages.
+    expect(windows.accountWindowUsage(db, userId, since)).toBe(7);
+
+    const svc = { id: "svc_windows", userId };
+    const token = { id: "tok_windows", userId };
+    const limits = (servicePerMinute: number, accountPerMinute: number) => ({
+      servicePerMinute,
+      accountPerMinute,
+    });
+    expect(windows.webhookWindowLimit(db, svc, limits(3, 100))).toBe("service");
+    expect(windows.webhookWindowLimit(db, svc, limits(4, 7))).toBe("account");
+    expect(windows.webhookWindowLimit(db, svc, limits(4, 8))).toBeNull();
+    expect(windows.agentWindowLimit(db, token, limits(4, 100))).toBe("requester");
+    expect(windows.agentWindowLimit(db, token, limits(5, 7))).toBe("account");
+    expect(windows.agentWindowLimit(db, token, limits(5, 8))).toBeNull();
   });
 });
 
