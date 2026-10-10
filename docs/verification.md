@@ -5,6 +5,37 @@ logs. Unchecked release evidence keeps the goal active.
 
 ## Source baseline
 
+- 2026-10-10: host CLI, broker, and skill install of SHark 1.0.0 from
+  `dfe3a27f5ff04df9183db2768b2ebe3e959dcd7a` (#132, unified product version) on shuvbot (macOS,
+  launchd `dev.shuv.shark.broker`) and shuvdev (Linux, user systemd `sharkd.service`). The
+  production service was not touched.
+  - Tarballs were packed on shuvbot from a clean detached checkout of the merge commit with
+    `pnpm install --frozen-lockfile`, then copied to shuvdev and checked by hash:
+    `sharkctl-1.0.0.tgz` (`e41320ce1d8806773a61f11d3cd01b27d2a738a1e5c6642141e4c285918367a4`) and
+    `hark-shark-broker-1.0.0.tgz`
+    (`abb99d08aeff75999c30538f569a5e957190dd01debfed1a91efaac01e251298`).
+  - Before the change, both hosts ran `sharkctl` 0.5.0 and `sharkd` 0.1.0, with healthy services,
+    empty `sharkd queue list`, and no status counts. shuvbot ran the
+    `~/.local/lib/shark-broker/e405b22180a47ab55bb4070d585017f979bc9553/` bundle, and shuvdev ran
+    `~/.local/lib/shark-broker/25e1649b18d1bac87b4475b74459ef3afd8537bb/`. Both are kept for
+    rollback.
+  - On each host, both tarballs were installed with `npm install` into
+    `~/.local/lib/shark-broker/dfe3a27f5ff04df9183db2768b2ebe3e959dcd7a/`, the `~/.local/bin`
+    `sharkctl` and `sharkd` links were moved to it, and `sharkd service install` was run again
+    without ambient `HARK_*` overrides. On shuvdev, `/usr/local/bin/sharkd` links to
+    `~/.local/bin/sharkd`, so it follows the new bundle without a root change.
+  - After the change, both hosts run `sharkctl` 1.0.0 and `sharkd` 1.0.0. `sharkd service status`
+    reported installed, loaded, running, and healthy, with no last error class and no counts, and it
+    still did about a minute later with the same PID. The launchd job and the systemd unit
+    reference only the new bundle, and shuvdev's unit is `active` with 0 restarts.
+  - `sharkctl auth status` reported authenticated, and `sharkctl interaction list` succeeded with
+    no interactions, on both hosts. No notification or Live Activity was sent.
+  - The skill at `~/.agents/skills/shark` was replaced with `skills/shark` from the merge commit on
+    both hosts. Its frontmatter shows `metadata.version: "1.0.0"`, and `SKILL.md` hashes to
+    `ce2671a15993c2604e6910240564318612acca63af9a4a746b0a8a64edd4e9da` on both. The previous copy
+    (`a5026a8588f6ecabbbb3b2c7b253eef1a5869ee75b77ebd73d6bf1c1f8e07012`) was moved to
+    `~/.agents/skills/shark.bak-20261010`. `~/.claude/skills/shark` still links to
+    `../../.agents/skills/shark`.
 - 2026-10-10: production was promoted from `6dcb736` to
   `de5f9fe6da7a84d41da00d8dc30eb917bd822acd` (on-call override creator and recipient notice #126,
   atomic Live Activity and webhook-response admission #129, Web Push service allowlist with pinned
