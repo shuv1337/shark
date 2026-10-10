@@ -148,7 +148,9 @@ ID and digest, pre-deploy snapshot ID, source SHA, and timestamp.
 For rollback, stop the current container, select the previous recorded full SHA and image ID,
 restore the matching pre-deploy database only when migrations are incompatible, start the previous
 release, prove the running image ID, then verify readiness, authenticated dashboard access, and one
-test notification. Keep rollback manual until a real drill succeeds.
+test notification. Rollback stays a manual operator step; the schema-compatible case was drilled
+on 2026-10-10 (`docs/verification.md`), and a rollback that needs the database restore has not
+been.
 
 ## Manual checks
 
