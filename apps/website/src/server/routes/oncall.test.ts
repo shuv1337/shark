@@ -967,7 +967,7 @@ describe("per-minute windows under concurrent requests", () => {
     expect(sent).toHaveLength(0);
     const retried = await sendBoardAskPush(askRow(askId), token);
     expect(retried).toMatchObject({ accepted: 1 });
-    expect(retried.inFlight).toBeUndefined();
+    expect(retried?.inFlight).toBeUndefined();
     expect(sent).toHaveLength(1);
   });
 
