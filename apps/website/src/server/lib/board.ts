@@ -38,7 +38,7 @@ import {
   or,
   sql,
 } from "drizzle-orm";
-import { db } from "../db";
+import { db, type Executor } from "../db";
 import { apiToken, boardAsk, boardAskEvent, boardNote, boardWorkItem } from "../db/schema";
 import { deliverBoardCallbacks } from "./board-callbacks";
 import { sendBoardAskPush, sweepBoardPushRetries } from "./board-push";
@@ -561,6 +561,18 @@ function terminalFields(row: AskRow, status: "answered" | "expired" | "cancelled
   };
 }
 
+/**
+ * Drops the waiting link from every work item that was blocked on a now-terminal ask, so a card
+ * never points at a question the captain already settled. The state is left alone: whether the
+ * work is still blocked is the agent's call on its next heartbeat.
+ */
+function clearWaitingAskLinks(tx: Executor, row: AskRow, now: Date): void {
+  tx.update(boardWorkItem)
+    .set({ waitingAskId: null, updatedAt: now })
+    .where(and(eq(boardWorkItem.userId, row.userId), eq(boardWorkItem.waitingAskId, row.id)))
+    .run();
+}
+
 export async function cancelAsk(
   token: TokenRow,
   key: string,
@@ -573,14 +585,19 @@ export async function cancelAsk(
     return { ok: false, status: 404, error: "No open ask with that key" };
   }
   const now = new Date();
-  const [row] = await db
-    .update(boardAsk)
-    .set({
-      ...terminalFields(existing, "cancelled", now),
-      cancelReason: reason ?? "Cancelled by agent",
-    })
-    .where(and(eq(boardAsk.id, existing.id), eq(boardAsk.status, "open")))
-    .returning();
+  const row = db.transaction((tx) => {
+    const cancelled = tx
+      .update(boardAsk)
+      .set({
+        ...terminalFields(existing, "cancelled", now),
+        cancelReason: reason ?? "Cancelled by agent",
+      })
+      .where(and(eq(boardAsk.id, existing.id), eq(boardAsk.status, "open")))
+      .returning()
+      .get();
+    if (cancelled) clearWaitingAskLinks(tx, cancelled, now);
+    return cancelled;
+  });
   if (!row) return { ok: false, status: 409, error: "Ask is no longer open" };
   await appendAskEvent(row.id, {
     dedupeKey: `cancelled:r${row.revision}`,
@@ -740,25 +757,30 @@ export async function answerAsk(
     return { ok: false, status: 422, error: "This ask does not take a typed reply" };
   }
   const now = new Date();
-  const [row] = await db
-    .update(boardAsk)
-    .set({
-      ...terminalFields(existing, "answered", now),
-      answerOptionId: input.optionId ?? null,
-      answerText: input.text ?? null,
-      answeredAt: now,
-      answeredVia: actor.via,
-      answeredSessionHash: actor.sessionHash ?? null,
-      answeredByDeviceId: actor.deviceId ?? null,
-    })
-    .where(
-      and(
-        eq(boardAsk.id, existing.id),
-        eq(boardAsk.status, "open"),
-        eq(boardAsk.revision, existing.revision),
-      ),
-    )
-    .returning();
+  const row = db.transaction((tx) => {
+    const answered = tx
+      .update(boardAsk)
+      .set({
+        ...terminalFields(existing, "answered", now),
+        answerOptionId: input.optionId ?? null,
+        answerText: input.text ?? null,
+        answeredAt: now,
+        answeredVia: actor.via,
+        answeredSessionHash: actor.sessionHash ?? null,
+        answeredByDeviceId: actor.deviceId ?? null,
+      })
+      .where(
+        and(
+          eq(boardAsk.id, existing.id),
+          eq(boardAsk.status, "open"),
+          eq(boardAsk.revision, existing.revision),
+        ),
+      )
+      .returning()
+      .get();
+    if (answered) clearWaitingAskLinks(tx, answered, now);
+    return answered;
+  });
   if (!row) return { ok: false, status: 409, error: "This ask changed concurrently" };
   await appendAskEvent(row.id, {
     dedupeKey: `answered:r${row.revision}`,
@@ -844,22 +866,27 @@ export async function dismissAsk(
     };
   }
   const now = new Date();
-  const [row] = await db
-    .update(boardAsk)
-    .set({
-      ...terminalFields(existing, "cancelled", now),
-      cancelReason: input.reason ?? "Dismissed by the captain",
-      answeredVia: actor.via,
-      answeredSessionHash: actor.sessionHash ?? null,
-    })
-    .where(
-      and(
-        eq(boardAsk.id, existing.id),
-        eq(boardAsk.status, "open"),
-        eq(boardAsk.revision, existing.revision),
-      ),
-    )
-    .returning();
+  const row = db.transaction((tx) => {
+    const dismissed = tx
+      .update(boardAsk)
+      .set({
+        ...terminalFields(existing, "cancelled", now),
+        cancelReason: input.reason ?? "Dismissed by the captain",
+        answeredVia: actor.via,
+        answeredSessionHash: actor.sessionHash ?? null,
+      })
+      .where(
+        and(
+          eq(boardAsk.id, existing.id),
+          eq(boardAsk.status, "open"),
+          eq(boardAsk.revision, existing.revision),
+        ),
+      )
+      .returning()
+      .get();
+    if (dismissed) clearWaitingAskLinks(tx, dismissed, now);
+    return dismissed;
+  });
   if (!row) return { ok: false, status: 409, error: "This ask changed concurrently" };
   await appendAskEvent(row.id, {
     dedupeKey: `cancelled:r${row.revision}`,
@@ -925,8 +952,23 @@ export async function upsertWork(
         waitingAskId = asks.find((ask) => ask.status === "open")?.id ?? null;
       } else if (input.waitingAskKey === null || input.state !== "blocked") {
         waitingAskId = null;
+      } else if (existing?.waitingAskId) {
+        // A resolved ask drops its links as it resolves, but a link stored before that shipped is
+        // only ever seen again here, so re-check the ask rather than carry a dead id forward.
+        const stored = tx
+          .select({ id: boardAsk.id })
+          .from(boardAsk)
+          .where(
+            and(
+              eq(boardAsk.id, existing.waitingAskId),
+              eq(boardAsk.userId, token.userId),
+              eq(boardAsk.status, "open"),
+            ),
+          )
+          .get();
+        waitingAskId = stored?.id ?? null;
       } else {
-        waitingAskId = existing?.waitingAskId ?? null;
+        waitingAskId = null;
       }
       // Omitted fields keep the stored value; null (or [] for links) clears them.
       const kept = <T>(value: T | null | undefined, stored: T | null | undefined): T | null =>
@@ -1135,11 +1177,16 @@ export async function sweepExpiredAsks(now = new Date()): Promise<number> {
   // `now` only decides what is due; the recorded transition time is the real clock.
   const recordedAt = new Date();
   for (const existing of due) {
-    const [row] = await db
-      .update(boardAsk)
-      .set(terminalFields(existing, "expired", recordedAt))
-      .where(and(eq(boardAsk.id, existing.id), eq(boardAsk.status, "open")))
-      .returning();
+    const row = db.transaction((tx) => {
+      const expired = tx
+        .update(boardAsk)
+        .set(terminalFields(existing, "expired", recordedAt))
+        .where(and(eq(boardAsk.id, existing.id), eq(boardAsk.status, "open")))
+        .returning()
+        .get();
+      if (expired) clearWaitingAskLinks(tx, expired, recordedAt);
+      return expired;
+    });
     if (!row) continue;
     await appendAskEvent(row.id, {
       dedupeKey: `expired:r${row.revision}`,

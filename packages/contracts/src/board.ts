@@ -181,7 +181,8 @@ export const boardAskCancelSchema = z.object({
 /**
  * Re-posting a work key is the heartbeat, so an omitted optional field keeps its stored value.
  * `null` clears a field (`heartbeatTtlSeconds: null` restores the default) and `links: []` clears
- * the links. The waiting ask is kept only while the work stays `blocked`.
+ * the links. The waiting ask is kept only while the work stays `blocked`, and an ask that is
+ * answered, cancelled, or expired drops the link on its own without waiting for a heartbeat.
  */
 export const boardWorkUpsertSchema = z.object({
   key: boardKeySchema,
