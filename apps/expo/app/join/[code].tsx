@@ -11,18 +11,12 @@ import {
   PersonAvatar,
   PrimaryButton,
   ScreenHeader,
-  SeatLimitNotice,
   ui,
 } from "../../src/components/screen-parts";
 import { ApiError, api } from "../../src/lib/api";
 import { useSession } from "../../src/lib/auth";
 import { PREVIEW_TEAM_ID, previewInvite } from "../../src/lib/inbox-preview";
-import {
-  isSeatLimitError,
-  memberCountLabel,
-  PENDING_JOIN_CODE_KEY,
-  roleLabel,
-} from "../../src/lib/teams";
+import { memberCountLabel, PENDING_JOIN_CODE_KEY, roleLabel } from "../../src/lib/teams";
 import { colors } from "../../src/lib/theme";
 
 export default function JoinTeamScreen() {
@@ -34,7 +28,6 @@ export default function JoinTeamScreen() {
   const [invite, setInvite] = useState<TeamInvitePreviewDto | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
-  const [seatLimit, setSeatLimit] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   const signedOut = !isPending && !session && !simulatorPreview;
   const signedIn = !isPending && Boolean(session);
@@ -73,15 +66,13 @@ export default function JoinTeamScreen() {
     if (joining) return;
     setJoining(true);
     setJoinError(null);
-    setSeatLimit(false);
     try {
       const teamId = simulatorPreview
         ? PREVIEW_TEAM_ID
         : (await api.acceptTeamInvite(code)).team.id;
       router.dismissTo({ pathname: "/apps", params: { team: teamId } });
     } catch (cause) {
-      if (isSeatLimitError(cause)) setSeatLimit(true);
-      else setJoinError(cause instanceof Error ? cause.message : "Couldn’t join this team.");
+      setJoinError(cause instanceof Error ? cause.message : "Couldn’t join this team.");
     } finally {
       setJoining(false);
     }
@@ -122,7 +113,6 @@ export default function JoinTeamScreen() {
             <Text style={[ui.muted, { marginTop: 12 }]}>
               Each team app still asks before signing you in, and you choose what it sees.
             </Text>
-            {seatLimit ? <SeatLimitNotice admin={false} teamName={invite.teamName} /> : null}
             {joinError ? (
               <Text
                 accessibilityLiveRegion="polite"

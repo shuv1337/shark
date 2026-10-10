@@ -301,8 +301,8 @@ describe("teams and invites", () => {
     });
     for (const kind of ["checkout", "portal"]) {
       const response = await call("POST", `/api/teams/${team.id}/billing/${kind}`);
-      expect(response.status).toBe(503);
-      expect(await response.json()).toEqual({ error: "Billing is not configured" });
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "Not found" });
     }
   });
 
