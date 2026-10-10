@@ -22,9 +22,11 @@ bundle identifiers. Startup fails closed when the matrix is incomplete.
 
 Client IPs key the per-client rate limits (Better Auth, including anonymous OAuth client
 registration at `/api/auth/oauth2/register`, device authorization, and invite previews). Cloudflare
-is DNS-only, so `CF-Connecting-IP` is client-controlled and must not be trusted. exe.dev appends the
-peer it saw to `X-Forwarded-For`, so production sets `TRUSTED_FORWARDED_FOR_HOPS=1` and leaves
-`TRUSTED_CLIENT_IP_HEADER` unset; the app then trusts only the rightmost entry. The reviewed
+is DNS-only, so `CF-Connecting-IP` is client-controlled and must not be trusted. In production,
+`X-Forwarded-For` reaches the app with two entries, both the real client IP, after any value the
+client sent. Only the rightmost entry is the client address seen by exe.dev; earlier entries can be
+forged. Production therefore sets `TRUSTED_FORWARDED_FOR_HOPS=1` and leaves
+`TRUSTED_CLIENT_IP_HEADER` unset, so the app trusts only the rightmost entry. The reviewed
 `compose.yaml` defaults the value to `1` and `shark-materialize-secrets` writes it. Both are
 operator-installed copies: until `/etc/shark/compose.yaml` and
 `/usr/local/sbin/shark-materialize-secrets` are reinstalled from the reviewed revision, the running
@@ -100,6 +102,18 @@ operator review:
 
 - `https://shark.shuv.dev/api/health` returns 200 and only `{"ok":true}`.
 - Anonymous `/`, `/docs`, `/privacy`, `/terms`, `/dashboard`, and `/cli/authorize` are denied.
+- The OAuth endpoints for the MCP server are intentionally anonymous. They must not return account
+  data:
+  - `GET /.well-known/oauth-protected-resource`, `/.well-known/oauth-protected-resource/mcp`,
+    `/.well-known/oauth-authorization-server`, and
+    `/.well-known/oauth-authorization-server/api/auth` return 200 discovery metadata only.
+  - `POST /api/auth/oauth2/register` accepts dynamic client registration. It is rate-limited per
+    client IP and grants nothing without consent. An empty body returns 400.
+  - `POST /api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, `/api/auth/oauth2/introspect`, and
+    `/api/auth/oauth2/public-client-prelogin` authenticate with a client ID, code, or token
+    instead of a session. An empty form body returns 400, and JSON returns 415.
+  - `/mcp` without a valid bearer token returns 401 with a `WWW-Authenticate` challenge that points
+    to the protected-resource metadata.
 - The running container image ID matches the release provenance.
 - The latest nightly/pre-deploy Restic snapshot is verified.
 - Disk pressure, container restarts, and the capped local log files are healthy.
