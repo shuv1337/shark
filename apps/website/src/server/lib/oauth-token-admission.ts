@@ -2,7 +2,7 @@ import type { BetterAuthPlugin } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { eq } from "drizzle-orm";
 import { db } from "../db";
-import { oauthAccessToken, oauthRefreshToken, verification } from "../db/schema";
+import { oauthAccessToken, oauthRefreshToken, session, verification } from "../db/schema";
 import { isUserAllowed } from "./admission";
 import { hashOAuthToken, OAUTH_ACCESS_TOKEN_PREFIX, OAUTH_REFRESH_TOKEN_PREFIX } from "./oauth";
 
@@ -32,23 +32,71 @@ function storedRefreshToken(presented: unknown): string | undefined {
   return hashOAuthToken(presented.slice(OAUTH_REFRESH_TOKEN_PREFIX.length));
 }
 
-function codeOwner(value: string): string | undefined {
+function parseCode(value: string): { userId?: string; sessionId?: string } {
   try {
     const parsed: unknown = JSON.parse(value);
-    if (parsed && typeof parsed === "object" && "userId" in parsed) {
-      return typeof parsed.userId === "string" ? parsed.userId : undefined;
-    }
+    if (!parsed || typeof parsed !== "object") return {};
+    const { userId, sessionId } = parsed as Record<string, unknown>;
+    return {
+      userId: typeof userId === "string" ? userId : undefined,
+      sessionId: typeof sessionId === "string" ? sessionId : undefined,
+    };
   } catch {
     // The provider rejects malformed codes itself.
+    return {};
   }
-  return undefined;
+}
+
+/** What an admitted grant depends on; offboarding deletes the session or refresh token. */
+interface GrantOwner {
+  userId: string;
+  sessionId?: string;
+  refreshToken?: string;
+}
+
+const grantOwners = new WeakMap<Request, GrantOwner>();
+
+async function revokedDuringGrant(owner: GrantOwner): Promise<boolean> {
+  if (!(await isUserAllowed(owner.userId))) return true;
+  if (owner.sessionId) {
+    const [row] = await db
+      .select({ id: session.id })
+      .from(session)
+      .where(eq(session.id, owner.sessionId))
+      .limit(1);
+    if (!row) return true;
+  }
+  if (owner.refreshToken) {
+    // Rotation only marks the presented token revoked; offboarding deletes it.
+    const [row] = await db
+      .select({ id: oauthRefreshToken.id })
+      .from(oauthRefreshToken)
+      .where(eq(oauthRefreshToken.token, owner.refreshToken))
+      .limit(1);
+    if (!row) return true;
+  }
+  return false;
+}
+
+/**
+ * A grant that throws a non-API error (for example a foreign-key failure when
+ * offboarding deletes the session mid-exchange) skips the after hook. If its
+ * owner was offboarded, answer invalid_grant; other server errors pass through.
+ */
+export async function guardTokenResponse(request: Request, response: Response) {
+  if (response.status < 500) return response;
+  const owner = grantOwners.get(request);
+  if (!owner || !(await revokedDuringGrant(owner))) return response;
+  console.warn("[auth] grant=token outcome=revoked_mid_grant");
+  return errorResponse(invalidGrant().body);
 }
 
 /**
  * Refresh and code exchange re-check the allowlist, so neither a surviving
  * refresh token nor a pending authorization code can mint tokens for someone
  * who was offboarded. Before the grant: reject owners who are no longer
- * admitted. After it: discard what was minted if offboarding landed mid-grant.
+ * admitted. After it: discard what was minted, and answer invalid_grant, if
+ * offboarding landed mid-grant.
  */
 export const oauthTokenAdmission = {
   id: "hark-oauth-token-admission",
@@ -66,28 +114,33 @@ export const oauthTokenAdmission = {
               .from(oauthRefreshToken)
               .where(eq(oauthRefreshToken.token, stored))
               .limit(1);
-            if (row && !(await isUserAllowed(row.userId))) {
+            if (!row) return;
+            if (!(await isUserAllowed(row.userId))) {
               console.warn("[auth] grant=refresh_token outcome=admission_denied");
               throw invalidGrant();
+            }
+            if (ctx.request) {
+              grantOwners.set(ctx.request, { userId: row.userId, refreshToken: stored });
             }
             return;
           }
           if (grantType === "authorization_code") {
             const code = ctx.body?.code;
             if (typeof code !== "string" || !code) return;
-            const identifier = hashOAuthToken(code);
             const [row] = await db
               .select({ id: verification.id, value: verification.value })
               .from(verification)
-              .where(eq(verification.identifier, identifier))
+              .where(eq(verification.identifier, hashOAuthToken(code)))
               .limit(1);
-            const owner = row ? codeOwner(row.value) : undefined;
-            if (row && owner && !(await isUserAllowed(owner))) {
+            const { userId, sessionId } = row ? parseCode(row.value) : {};
+            if (!row || !userId) return;
+            if (!(await isUserAllowed(userId))) {
               // Codes are single-use; a denied one is spent.
               await db.delete(verification).where(eq(verification.id, row.id));
               console.warn("[auth] grant=authorization_code outcome=admission_denied");
               throw invalidGrant();
             }
+            if (ctx.request) grantOwners.set(ctx.request, { userId, sessionId });
           }
         }),
       },
@@ -99,9 +152,17 @@ export const oauthTokenAdmission = {
           const returned = ctx.context.returned as
             | { access_token?: unknown; statusCode?: unknown; body?: { error?: unknown } }
             | undefined;
-          // RFC 6749 §5.2: invalid_grant is a 400; the provider sends some as 401.
-          if (returned?.body?.error === "invalid_grant" && returned.statusCode !== 400) {
-            return errorResponse(returned.body);
+          const owner = ctx.request ? grantOwners.get(ctx.request) : undefined;
+          if (returned?.body?.error) {
+            if (owner && (await revokedDuringGrant(owner))) {
+              console.warn("[auth] grant=token outcome=revoked_mid_grant");
+              return errorResponse(invalidGrant().body);
+            }
+            // RFC 6749 §5.2: invalid_grant is a 400; the provider sends some as 401.
+            if (returned.body.error === "invalid_grant" && returned.statusCode !== 400) {
+              return errorResponse(returned.body);
+            }
+            return;
           }
           const accessToken = returned?.access_token;
           if (
@@ -130,20 +191,9 @@ export const oauthTokenAdmission = {
             return errorResponse(invalidGrant().body);
           }
           if (!minted.userId) return;
-
-          let revoked = !(await isUserAllowed(minted.userId));
-          if (!revoked && ctx.body?.grant_type === "refresh_token") {
-            // Offboarding deletes the presented token; rotation only marks it revoked.
-            const stored = storedRefreshToken(ctx.body?.refresh_token);
-            const [presented] = stored
-              ? await db
-                  .select({ id: oauthRefreshToken.id })
-                  .from(oauthRefreshToken)
-                  .where(eq(oauthRefreshToken.token, stored))
-                  .limit(1)
-              : [];
-            revoked = !presented;
-          }
+          const revoked = owner
+            ? await revokedDuringGrant(owner)
+            : !(await isUserAllowed(minted.userId));
           if (!revoked) return;
 
           db.transaction((tx) => {

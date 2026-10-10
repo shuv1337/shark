@@ -11,6 +11,7 @@ let sqlite: typeof import("../db")["sqlite"];
 let schema: typeof import("../db/schema");
 let env: typeof import("../env")["env"];
 let offboardPersistedAccess: typeof import("./offboarding")["offboardPersistedAccess"];
+let guardTokenResponse: typeof import("./oauth-token-admission")["guardTokenResponse"];
 let resource: string;
 
 const ORIGIN = "http://localhost:5173";
@@ -28,6 +29,7 @@ beforeAll(async () => {
   schema = await import("../db/schema");
   ({ env } = await import("../env"));
   ({ offboardPersistedAccess } = await import("./offboarding"));
+  ({ guardTokenResponse } = await import("./oauth-token-admission"));
   const { runMigrations } = await import("../db/migrate");
   runMigrations();
   resource = (await import("./oauth")).mcpResourceUrl();
@@ -114,17 +116,21 @@ async function authorize(): Promise<{ code: string; verifier: string }> {
 }
 
 async function token(body: Record<string, string>) {
-  const response = await auth.handler(
-    new Request(`${ORIGIN}/api/auth/oauth2/token`, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ client_id: clientId, ...body }),
-    }),
-  );
-  return {
-    status: response.status,
-    body: (await response.json()) as Record<string, unknown>,
-  };
+  const request = new Request(`${ORIGIN}/api/auth/oauth2/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id: clientId, ...body }),
+  });
+  // Mirrors the /api/auth/* route in app.ts.
+  const response = await guardTokenResponse(request, await auth.handler(request));
+  const text = await response.text();
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    // Server errors may not carry a JSON body.
+  }
+  return { status: response.status, body: parsed };
 }
 
 function exchange({ code, verifier }: { code: string; verifier: string }) {
@@ -214,6 +220,59 @@ describe("OAuth token endpoint admission", () => {
     expect(rejected.body).toMatchObject({ error: "invalid_grant" });
     expect(rejected.body).not.toHaveProperty("access_token");
     expect(await issuedTokens()).toEqual({ access: 0, refresh: 0 });
+  });
+
+  it("rejects a code exchange when offboarding commits right after the code is consumed", async () => {
+    const pending = await authorize();
+    sqlite.exec(`
+      CREATE TEMP TRIGGER offboard_mid_grant
+      AFTER DELETE ON verification
+      WHEN json_extract(OLD.value, '$.userId') = '${USER_ID}'
+      BEGIN
+        DELETE FROM session WHERE user_id = '${USER_ID}';
+      END;
+    `);
+
+    const rejected = await exchange(pending);
+    expect(rejected.status).toBe(400);
+    expect(rejected.body).toMatchObject({ error: "invalid_grant" });
+    expect(await issuedTokens()).toEqual({ access: 0, refresh: 0 });
+  });
+
+  it("rejects a code exchange when offboarding commits between the session check and the insert", async () => {
+    const pending = await authorize();
+    // The insert then references a deleted session and fails its foreign key.
+    const { adapter } = await auth.$context;
+    const findOne = adapter.findOne;
+    adapter.findOne = (async (args: Parameters<typeof findOne>[0]) => {
+      const found = await findOne(args);
+      if (args.model === "session") sqlite.exec(`DELETE FROM session WHERE user_id = '${USER_ID}'`);
+      return found;
+    }) as typeof findOne;
+    let rejected: Awaited<ReturnType<typeof exchange>>;
+    try {
+      rejected = await exchange(pending);
+    } finally {
+      adapter.findOne = findOne;
+    }
+    expect(rejected.status).toBe(400);
+    expect(rejected.body).toMatchObject({ error: "invalid_grant" });
+    expect(await issuedTokens()).toEqual({ access: 0, refresh: 0 });
+  });
+
+  it("still reports a server error for an admitted owner", async () => {
+    const pending = await authorize();
+    sqlite.exec(`
+      CREATE TEMP TRIGGER offboard_mid_grant
+      BEFORE INSERT ON oauth_refresh_token
+      BEGIN
+        SELECT RAISE(ABORT, 'synthetic storage failure');
+      END;
+    `);
+
+    const failed = await exchange(pending);
+    expect(failed.status).toBe(500);
+    expect(failed.body).not.toMatchObject({ error: "invalid_grant" });
   });
 
   it("rejects a code exchange when offboarding deletes the tokens it just minted", async () => {
