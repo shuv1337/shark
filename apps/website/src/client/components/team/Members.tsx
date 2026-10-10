@@ -308,7 +308,7 @@ function InviteModal({
     >
       <div className="space-y-4">
         <Field
-          hint="If they already use SHark, their iPhone gets a notification too."
+          hint="Only the account with this email can accept. If they already use SHark, their iPhone gets a notification too."
           label={
             <>
               Email <span className="font-normal">(optional)</span>

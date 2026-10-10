@@ -26,7 +26,7 @@ import {
   type SQL,
   sql,
 } from "drizzle-orm";
-import { db } from "../db";
+import { db, type Executor } from "../db";
 import {
   app,
   device,
@@ -46,11 +46,13 @@ import {
   isValidTimeZone,
   nextInRotation,
   normalizeRotationStart,
+  type OverrideWindow,
   type RotationConfig,
   type Shift,
   upcomingShifts,
 } from "./oncall-schedule";
 import { buildPageClaimedPushMessages, buildPagePushMessages, sendPushMessages } from "./push";
+import { RATE_LIMIT_ERRORS, type RateAdmission, type RateWindow } from "./rate-windows";
 import { memberIds } from "./teams";
 import { generatePageResponseToken, hashPageResponseToken } from "./token";
 
@@ -61,24 +63,6 @@ const OPEN_STATUSES = ["triggered", "acknowledged"] as const;
 const UPCOMING_SHIFTS = 5;
 /** New pages a group accepts per minute; duplicates that merge do not count. */
 export const PAGES_PER_GROUP_PER_MINUTE = 10;
-
-/** Pages raised since `since`; they share the account, service, and requester per-minute budgets. */
-export async function pagesCreatedSince(
-  by: { userId: string } | { serviceId: string } | { tokenId: string },
-  since: Date,
-): Promise<number> {
-  const owner =
-    "userId" in by
-      ? eq(oncallPage.createdByUserId, by.userId)
-      : "serviceId" in by
-        ? eq(oncallPage.requesterServiceId, by.serviceId)
-        : eq(oncallPage.requesterTokenId, by.tokenId);
-  const [row] = await db
-    .select({ value: count() })
-    .from(oncallPage)
-    .where(and(owner, gte(oncallPage.createdAt, since)));
-  return row?.value ?? 0;
-}
 
 // ---------------------------------------------------------------------------
 // Groups and schedules
@@ -102,12 +86,13 @@ async function activeOverrides(groupId: string, now: number) {
     .orderBy(asc(oncallOverride.startsAt), asc(oncallOverride.id));
 }
 
-function overrideWindows(rows: Array<typeof oncallOverride.$inferSelect>) {
+export function overrideWindows(rows: Array<typeof oncallOverride.$inferSelect>): OverrideWindow[] {
   return rows.map((row) => ({
     id: row.id,
     userId: row.userId,
     startsAt: row.startsAt.getTime(),
     endsAt: row.endsAt.getTime(),
+    createdAt: row.createdAt.getTime(),
   }));
 }
 
@@ -421,13 +406,17 @@ export interface RaisePageInput {
   sourceName: string;
   /** Webhook or API token that raised the page, whose rate window it counts against. */
   origin?: { serviceId?: string; requesterTokenId?: string };
+  /**
+   * Runs synchronously in the transaction that inserts a new page (never for
+   * a merge). Returning a window rejects the page with 429, so a per-minute
+   * window checked here cannot be overshot by concurrent requests.
+   */
+  admit?: RateAdmission;
 }
 
 export type RaisePageOutcome =
   | { ok: true; status: 200 | 201; body: OncallPageCreateResponse }
-  | { ok: false; status: 400 | 429; error: string };
-
-type Executor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
+  | { ok: false; status: 400 | 429; error: string; refused?: RateWindow };
 
 function mergeDuplicate(
   executor: Executor,
@@ -462,6 +451,7 @@ export async function raisePage({
   creatorUserId,
   sourceName,
   origin,
+  admit,
 }: RaisePageInput): Promise<RaisePageOutcome> {
   let appId: string | null = null;
   if (input.appId) {
@@ -517,8 +507,9 @@ export async function raisePage({
     createdAt: new Date(now),
     updatedAt: new Date(now),
   };
-  // Synchronous, so concurrent requests cannot both pass the group cap, and a
-  // page with the same key raised meanwhile is merged instead of conflicting.
+  // Synchronous, so concurrent requests cannot both pass the group cap or the
+  // caller's windows, and a page with the same key raised meanwhile is merged
+  // instead of conflicting.
   const created = db.transaction((tx) => {
     if (input.dedupKey) {
       const existing = mergeDuplicate(tx, group, input.dedupKey);
@@ -531,7 +522,13 @@ export async function raisePage({
         and(eq(oncallPage.groupId, group.id), gte(oncallPage.createdAt, new Date(now - 60_000))),
       )
       .get();
-    if ((recent?.value ?? 0) >= PAGES_PER_GROUP_PER_MINUTE) return { kind: "limited" as const };
+    if ((recent?.value ?? 0) >= PAGES_PER_GROUP_PER_MINUTE) {
+      return { kind: "limited" as const, error: "On-call page rate limit exceeded" };
+    }
+    const refused = admit?.(tx);
+    if (refused) {
+      return { kind: "limited" as const, error: RATE_LIMIT_ERRORS[refused], refused };
+    }
     return {
       kind: "created" as const,
       page: tx.insert(oncallPage).values(values).returning().get(),
@@ -539,7 +536,12 @@ export async function raisePage({
   });
   if (created.kind === "merged") return mergedOutcome(created.page);
   if (created.kind === "limited") {
-    return { ok: false, status: 429, error: "On-call page rate limit exceeded" };
+    return {
+      ok: false,
+      status: 429,
+      error: created.error,
+      ...("refused" in created ? { refused: created.refused } : {}),
+    };
   }
   const page = created.page;
   if (!page) throw new Error("Failed to create page");

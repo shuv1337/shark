@@ -145,3 +145,75 @@ describe("OAuth storage sweep", () => {
     expect(oauth.sweepOAuthStorage(now)).toEqual({ accessTokens: 0, refreshTokens: 0, clients: 0 });
   });
 });
+
+describe("OAuth grant listing", () => {
+  it("lists only clients with live grants, from live tokens' scopes", async () => {
+    const now = new Date();
+    const later = new Date(now.getTime() + DAY);
+    const earlier = new Date(now.getTime() - 1000);
+    await db.insert(schema.user).values({
+      id: "user_list",
+      name: "List",
+      email: "user_list@example.com",
+      emailVerified: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.oauthClient).values([client("live", now), client("stale", now)]);
+    const refresh = (id: string, clientId: string, scopes: string[], extra: object) => ({
+      id,
+      token: `synthetic-${id}-hash`,
+      clientId,
+      userId: "user_list",
+      scopes: JSON.stringify(scopes),
+      createdAt: now,
+      ...extra,
+    });
+    await db
+      .insert(schema.oauthRefreshToken)
+      .values([
+        refresh("rt_list_live", "live", ["offline_access"], { expiresAt: later }),
+        refresh("rt_list_revoked", "live", ["oncall:write"], { expiresAt: later, revoked: now }),
+        refresh("rt_list_expired", "stale", ["teams:write"], { expiresAt: earlier }),
+        refresh("rt_list_unbounded", "stale", ["teams:write"], {}),
+      ]);
+    await db.insert(schema.oauthAccessToken).values([
+      {
+        id: "at_list_live",
+        token: "synthetic-at-list-live-hash",
+        clientId: "live",
+        userId: "user_list",
+        scopes: JSON.stringify(["notifications:send"]),
+        createdAt: now,
+        expiresAt: later,
+      },
+      {
+        id: "at_list_expired",
+        token: "synthetic-at-list-expired-hash",
+        clientId: "live",
+        userId: "user_list",
+        scopes: JSON.stringify(["devices:write"]),
+        createdAt: now,
+        expiresAt: earlier,
+      },
+      {
+        id: "at_list_stale",
+        token: "synthetic-at-list-stale-hash",
+        clientId: "stale",
+        userId: "user_list",
+        scopes: JSON.stringify(["services:write"]),
+        createdAt: now,
+        expiresAt: earlier,
+      },
+    ]);
+
+    expect(await oauth.listOAuthGrants("user_list")).toEqual([
+      expect.objectContaining({
+        clientId: "live",
+        scopes: ["notifications:send"],
+        offlineAccess: true,
+        tokenId: null,
+      }),
+    ]);
+  });
+});

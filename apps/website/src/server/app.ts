@@ -1,11 +1,12 @@
 import { MCP_PATH } from "@hark/contracts";
+import { APIError } from "better-auth/api";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { auth } from "./auth";
 import { env } from "./env";
 import { accessLog } from "./lib/access-log";
-import { withTrustedClientIp } from "./lib/client-ip";
+import { trustedClientIp, withTrustedClientIp } from "./lib/client-ip";
 import { guardTokenResponse } from "./lib/oauth-token-admission";
 import { databaseIsReady } from "./lib/readiness";
 import { safeReturnPath } from "./lib/return-path";
@@ -68,7 +69,12 @@ app.get("/api/health", (c) =>
   databaseIsReady() ? c.json({ ok: true }) : c.json({ ok: false }, 503),
 );
 app.get("/login", (c) =>
-  beginAppleWebSignIn(auth.handler, env.APP_URL, safeReturnPath(c.req.query("next"), env.APP_URL)),
+  beginAppleWebSignIn(
+    auth.handler,
+    env.APP_URL,
+    safeReturnPath(c.req.query("next"), env.APP_URL),
+    trustedClientIp((name) => c.req.header(name)),
+  ),
 );
 // The iPhone web view trades a pass for its own browser session; see web-view-session.ts.
 app.post("/apps/enter", async (c) => {
@@ -82,10 +88,18 @@ app.post("/apps/enter", async (c) => {
   const pass = typeof form.pass === "string" ? form.pass : "";
   const userId = pass ? await verifyFirstPartyPass(pass) : null;
   if (!userId) return c.text("Sign-in pass is invalid or expired", 401);
-  const { headers } = await auth.api.createWebViewSession({
-    body: { userId },
-    returnHeaders: true,
-  });
+  // The session-create hook refuses accounts that have left the email allowlist.
+  const opened = await auth.api
+    .createWebViewSession({ body: { userId }, returnHeaders: true })
+    .catch((error: unknown) => {
+      if (error instanceof APIError) return null;
+      throw error;
+    });
+  if (!opened) {
+    console.warn("[apps/enter] refused reason=session_denied");
+    return c.text("Forbidden", 403);
+  }
+  const { headers } = opened;
   for (const cookie of headers.getSetCookie()) c.header("Set-Cookie", cookie, { append: true });
   const next = typeof form.next === "string" ? form.next : null;
   return c.redirect(safeReturnPath(next, env.APP_URL), 303);

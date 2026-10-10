@@ -163,15 +163,13 @@ export function offboardPersistedAccess(userId: string): OffboardingResult {
       .delete(oauthConsent)
       .where(eq(oauthConsent.userId, userId))
       .run().changes;
-    // Unexchanged authorization codes live in Better Auth's verification table.
+    // Unexchanged authorization codes are Better Auth verification rows whose
+    // JSON value names the user. Other verification values may not be JSON, and
+    // SQLite does not promise to short-circuit AND, so json_valid gates the read.
     const authorizationCodes = tx
       .delete(verification)
       .where(
-        and(
-          sql`json_valid(${verification.value})`,
-          sql`json_extract(${verification.value}, '$.type') = 'authorization_code'`,
-          sql`json_extract(${verification.value}, '$.userId') = ${userId}`,
-        ),
+        sql`case when json_valid(${verification.value}) then json_extract(${verification.value}, '$.type') = 'authorization_code' and json_extract(${verification.value}, '$.userId') = ${userId} else 0 end`,
       )
       .run().changes;
 

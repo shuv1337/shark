@@ -15,3 +15,6 @@ sqlite.pragma("journal_mode = WAL");
 sqlite.pragma("foreign_keys = ON");
 
 export const db = drizzle(sqlite, { schema });
+
+/** The connection or a transaction on it; synchronous `.get()`/`.run()` work on both. */
+export type Executor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];

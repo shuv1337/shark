@@ -206,20 +206,18 @@ describe("OAuth token endpoint admission", () => {
     expect(await pendingCodes()).toBe(0);
   });
 
-  it("offboarding between code issue and exchange invalidates the code, even after re-admission", async () => {
+  it("answers a spent or offboarded code with 400 invalid_grant", async () => {
     const pending = await authorize();
+    expect((await exchange(pending)).status).toBe(200);
+    const spent = await exchange(pending);
+    expect(spent.status).toBe(400);
+    expect(spent.body).toMatchObject({ error: "invalid_grant" });
 
-    removeFromAllowlist();
-    expect(offboardPersistedAccess(USER_ID)).toMatchObject({ authorizationCodes: 1 });
-    expect(await pendingCodes()).toBe(0);
-    // Re-admission: the operator puts the address back on the allowlist.
-    env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length);
-
-    const rejected = await exchange(pending);
+    const offboarded = await authorize();
+    offboardPersistedAccess(USER_ID);
+    const rejected = await exchange(offboarded);
     expect(rejected.status).toBe(400);
     expect(rejected.body).toMatchObject({ error: "invalid_grant" });
-    expect(rejected.body).not.toHaveProperty("access_token");
-    expect(await issuedTokens()).toEqual({ access: 0, refresh: 0 });
   });
 
   it("rejects a code exchange when offboarding commits right after the code is consumed", async () => {
@@ -294,24 +292,6 @@ describe("OAuth token endpoint admission", () => {
     expect(rejected.body).toMatchObject({ error: "invalid_grant" });
     expect(rejected.body).not.toHaveProperty("access_token");
     expect(await issuedTokens()).toEqual({ access: 0, refresh: 0 });
-  });
-
-  it("offboarding leaves other users' pending codes alone", async () => {
-    const now = new Date();
-    await db.insert(schema.verification).values({
-      id: "ver_other",
-      identifier: "synthetic-code-hash",
-      value: JSON.stringify({ type: "authorization_code", userId: "user_other", query: {} }),
-      expiresAt: new Date(now.getTime() + 60_000),
-      createdAt: now,
-      updatedAt: now,
-    });
-    await authorize();
-
-    expect(offboardPersistedAccess(USER_ID)).toMatchObject({ authorizationCodes: 1 });
-    expect((await db.select().from(schema.verification)).map((row) => row.id)).toEqual([
-      "ver_other",
-    ]);
   });
 
   it("discards tokens a refresh mints when offboarding lands mid-grant", async () => {

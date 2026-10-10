@@ -25,6 +25,8 @@ export interface OverrideWindow {
   userId: string;
   startsAt: number;
   endsAt: number;
+  /** Creation time (epoch ms); breaks ties between overrides that start together. */
+  createdAt?: number;
 }
 
 export interface Shift {
@@ -190,15 +192,33 @@ export function rotationMemberAt(rotation: RotationConfig, index: number): strin
   return rotation.memberIds[index % count] ?? null;
 }
 
-/** Override in force at `instant`; the one that started last wins. */
-function activeOverride(
+/**
+ * Whether `a` takes precedence over `b` where both cover the same instant:
+ * the later `startsAt` wins, then the later `createdAt`, then the greater
+ * `id`. The order is total, so the winner never depends on input order.
+ */
+function outranks(a: OverrideWindow, b: OverrideWindow): boolean {
+  if (a.startsAt !== b.startsAt) return a.startsAt > b.startsAt;
+  const aCreated = a.createdAt ?? 0;
+  const bCreated = b.createdAt ?? 0;
+  if (aCreated !== bCreated) return aCreated > bCreated;
+  return (a.id ?? "") > (b.id ?? "");
+}
+
+/**
+ * Override in force at `instant`. Overlaps resolve by {@link outranks}: the
+ * override that started last wins, so a short cover inside a longer one
+ * takes over for its window and the longer one resumes when it ends; among
+ * overrides starting together the newest wins.
+ */
+export function activeOverride(
   overrides: readonly OverrideWindow[],
   instant: number,
 ): OverrideWindow | null {
   let winner: OverrideWindow | null = null;
   for (const candidate of overrides) {
     if (candidate.startsAt <= instant && instant < candidate.endsAt) {
-      if (!winner || candidate.startsAt >= winner.startsAt) winner = candidate;
+      if (!winner || outranks(candidate, winner)) winner = candidate;
     }
   }
   return winner;
@@ -286,6 +306,27 @@ export function currentShift(
 ): Shift | null {
   const [first] = upcomingShifts(rotation, overrides, instant, 1);
   return first && first.startsAt <= instant ? first : null;
+}
+
+/**
+ * Whether `userId` is on call, by the rotation or an override, for all of
+ * `[from, to)`. Any gap or anyone else's shift in the window makes it false.
+ */
+export function onCallThroughout(
+  rotation: RotationConfig,
+  overrides: readonly OverrideWindow[],
+  userId: string,
+  from: number,
+  to: number,
+): boolean {
+  let cursor = from;
+  for (let guard = 0; cursor < to; guard += 1) {
+    if (guard > 10_000) return false;
+    const shift = currentShift(rotation, overrides, cursor);
+    if (!shift || shift.userId !== userId || shift.endsAt <= cursor) return false;
+    cursor = shift.endsAt;
+  }
+  return true;
 }
 
 /**
