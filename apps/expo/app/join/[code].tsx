@@ -50,6 +50,10 @@ export default function JoinTeamScreen() {
       setInvite(previewInvite);
       return;
     }
+    if (!code) {
+      setLoadError("This invite link is incomplete.");
+      return;
+    }
     // The preview needs a session; signed out, the screen redirects instead.
     if (!previewCode) return;
     void api
@@ -64,7 +68,7 @@ export default function JoinTeamScreen() {
               : "Couldn’t load this invite.",
         ),
       );
-  }, [previewCode, simulatorPreview]);
+  }, [code, previewCode, simulatorPreview]);
 
   if (signedOut) return <Redirect href="/" />;
 

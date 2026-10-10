@@ -742,6 +742,7 @@ describe("team apps", () => {
     const { hashApiToken } = await import("../lib/token");
     const team = await createTeam("Re-register race");
     await join("user_b", (await invite(team.id)).code);
+    as("user_a");
     const body = { name: "Deploys", url: "https://deploys.example.com/", teamId: team.id };
     const created = await call("POST", "/api/agent/apps", body, TEAMS_TOKEN);
     expect(created.status).toBe(201);
@@ -764,16 +765,16 @@ describe("team apps", () => {
     // Let the route's pre-transaction membership read see an admin, then downgrade Bea before
     // the write transaction re-reads her role.
     const transaction = db.transaction.bind(db);
-    let armed = true;
+    let downgraded = false;
     const spy = vi.spyOn(db, "transaction").mockImplementationOnce(((
-      callback: Parameters<typeof db.transaction>[0],
+      ...args: Parameters<typeof db.transaction>
     ) => {
-      armed = false;
+      downgraded = true;
       db.update(schema.teamMember)
         .set({ role: "member" })
         .where(and(eq(schema.teamMember.teamId, team.id), eq(schema.teamMember.userId, "user_b")))
         .run();
-      return transaction(callback);
+      return transaction(...args);
     }) as typeof db.transaction);
     try {
       const renamed = await call(
@@ -782,8 +783,12 @@ describe("team apps", () => {
         { ...body, name: "Deploys hijacked" },
         adminToken,
       );
-      expect(armed).toBe(false);
+      expect(downgraded).toBe(true);
+      expect(spy).toHaveBeenCalledTimes(1);
       expect(renamed.status).toBe(403);
+      expect(await renamed.json()).toMatchObject({
+        error: expect.stringContaining("team admin"),
+      });
     } finally {
       spy.mockRestore();
     }

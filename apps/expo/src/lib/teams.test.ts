@@ -181,19 +181,14 @@ describe("join links", () => {
 });
 
 describe("team invite preview gating", () => {
-  it("waits for a resolved signed-in session before returning the code once", () => {
-    const sessionStates = [
-      { pending: true, signedIn: false },
-      { pending: false, signedIn: false },
-      { pending: false, signedIn: true },
-    ];
-
-    const previews = sessionStates.map(({ pending, signedIn }) =>
-      teamInvitePreviewCode("invite_123", pending, signedIn),
-    );
-    expect(previews).toEqual([null, null, "invite_123"]);
-    expect(previews.filter(Boolean)).toHaveLength(1);
-    expect(teamInvitePreviewCode("", false, true)).toBeNull();
+  it.each([
+    ["while auth is pending without a session", "invite_123", true, false, null],
+    ["while auth is pending with a session", "invite_123", true, true, null],
+    ["when signed out", "invite_123", false, false, null],
+    ["when signed in", "invite_123", false, true, "invite_123"],
+    ["when the code is missing", "", false, true, null],
+  ])("returns the preview code %s", (_label, code, pending, signedIn, expected) => {
+    expect(teamInvitePreviewCode(code, pending, signedIn)).toBe(expected);
   });
 });
 
