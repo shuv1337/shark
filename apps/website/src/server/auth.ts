@@ -44,6 +44,39 @@ const oauthDefaultScopes = {
   },
 } satisfies BetterAuthPlugin;
 
+/**
+ * Every token is bound to the MCP server. Better Auth 1.6.25 checks `resource`
+ * against `validAudiences` only when the client sends it (RFC 8707) and stores
+ * no audience on opaque access tokens, so a token request without `resource`
+ * would mint a token for no resource in particular. MCP (2025-06-18) requires
+ * clients to send it, so require it to name `/mcp` exactly and refuse anything
+ * else with RFC 8707's `invalid_target`. Rejected here, before the endpoint
+ * runs, the authorization code or refresh token stays unspent for a retry.
+ */
+const oauthResourceBinding = {
+  id: "hark-oauth-resource-binding",
+  hooks: {
+    before: [
+      {
+        matcher: (ctx) => ctx.path === "/oauth2/token",
+        handler: createAuthMiddleware(async (ctx) => {
+          const resource = ctx.body?.resource;
+          const expected = mcpResourceUrl();
+          if (resource !== expected) {
+            throw new APIError("BAD_REQUEST", {
+              error: "invalid_target",
+              error_description:
+                resource === undefined
+                  ? `resource is required and must be ${expected}`
+                  : `requested resource invalid; tokens are issued only for ${expected}`,
+            });
+          }
+        }),
+      },
+    ],
+  },
+} satisfies BetterAuthPlugin;
+
 const PRELOGIN_PATH = "/oauth2/public-client-prelogin";
 const PUBLIC_CLIENT_PATHS = new Set([PRELOGIN_PATH, "/oauth2/public-client"]);
 
@@ -174,7 +207,8 @@ export const auth = betterAuth({
       loginPage: OAUTH_CONSENT_PAGE,
       consentPage: OAUTH_CONSENT_PAGE,
       scopes: [...OAUTH_SCOPES],
-      // Tokens are only ever issued for the MCP server.
+      // Tokens are only ever issued for the MCP server; oauthResourceBinding
+      // makes every token request say so.
       validAudiences: [mcpResourceUrl()],
       grantTypes: ["authorization_code", "refresh_token"],
       // MCP clients (Claude, OpenCode, Cursor, …) register themselves as public
@@ -195,6 +229,7 @@ export const auth = betterAuth({
       silenceWarnings: { oauthAuthServerConfig: true },
     }),
     oauthDefaultScopes,
+    oauthResourceBinding,
     oauthPublicClientHardening,
     webViewSessionPlugin(),
   ],

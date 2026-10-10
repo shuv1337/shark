@@ -173,23 +173,29 @@ async function token(params: Record<string, string>) {
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
 }
 
-function exchange(clientId: string, code: string, verifier?: string) {
+/** `resource: null` omits RFC 8707's resource indicator from the request. */
+function exchange(
+  clientId: string,
+  code: string,
+  verifier?: string,
+  resource: string | null = RESOURCE,
+) {
   return token({
     grant_type: "authorization_code",
     client_id: clientId,
     code,
     ...(verifier ? { code_verifier: verifier } : {}),
     redirect_uri: REDIRECT_URI,
-    resource: RESOURCE,
+    ...(resource === null ? {} : { resource }),
   });
 }
 
-function refresh(clientId: string, refreshToken: string) {
+function refresh(clientId: string, refreshToken: string, resource: string | null = RESOURCE) {
   return token({
     grant_type: "refresh_token",
     client_id: clientId,
     refresh_token: refreshToken,
-    resource: RESOURCE,
+    ...(resource === null ? {} : { resource }),
   });
 }
 
@@ -401,6 +407,52 @@ describe("MCP OAuth end to end", () => {
     expect(String(first.body.refresh_token)).toMatch(/^hark_mrt_/);
     const reused = await exchange(second.clientId, second.code, second.verifier);
     expect(reused.body.error).toBe("invalid_grant");
+  });
+
+  it("issues tokens only to requests that name /mcp as their resource", async () => {
+    const { clientId, verifier, code } = await codeFor("Resource Client");
+
+    // A request without a resource indicator, or for another resource, gets RFC 8707's
+    // invalid_target before the endpoint runs, so the code is not spent.
+    const missing = await exchange(clientId, code, verifier, null);
+    expect(missing.status).toBe(400);
+    expect(missing.body).toMatchObject({ error: "invalid_target" });
+    expect(String(missing.body.error_description)).toContain(RESOURCE);
+
+    for (const foreign of [
+      `${ORIGIN}/`,
+      `${ORIGIN}/mcp/`,
+      `${ORIGIN}/api/auth`,
+      "https://attacker.example/mcp",
+    ]) {
+      const refused = await exchange(clientId, code, verifier, foreign);
+      expect(refused.status, foreign).toBe(400);
+      expect(refused.body.error, foreign).toBe("invalid_target");
+    }
+
+    const exchanged = await exchange(clientId, code, verifier);
+    expect(exchanged.status, String(exchanged.body.error_description)).toBe(200);
+    const tokens = exchanged.body as unknown as TokenSet;
+    expect(await mcpStatus(tokens.access_token)).toBe(MCP_REACHED);
+
+    // Refreshing binds the new token the same way, and a refused refresh is not a reuse.
+    const unbound = await refresh(clientId, tokens.refresh_token, null);
+    expect(unbound.status).toBe(400);
+    expect(unbound.body.error).toBe("invalid_target");
+    const elsewhere = await refresh(clientId, tokens.refresh_token, "https://attacker.example/mcp");
+    expect(elsewhere.body.error).toBe("invalid_target");
+    const rotated = await refresh(clientId, tokens.refresh_token);
+    expect(rotated.status, String(rotated.body.error_description)).toBe(200);
+    expect(await mcpStatus(String(rotated.body.access_token))).toBe(MCP_REACHED);
+
+    // The anonymous-endpoint answers in docs/operations.md are unchanged.
+    expect((await token({})).status).toBe(400);
+    const asJson = await app.request("/api/auth/oauth2/token", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ grant_type: "refresh_token", resource: RESOURCE }),
+    });
+    expect(asJson.status).toBe(415);
   });
 
   it("denying consent sends access_denied and no code", async () => {
