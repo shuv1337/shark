@@ -109,9 +109,12 @@ operator review:
     `/.well-known/oauth-authorization-server/api/auth` return 200 discovery metadata only.
   - `POST /api/auth/oauth2/register` accepts dynamic client registration. It is rate-limited per
     client IP and grants nothing without consent. An empty body returns 400.
-  - `POST /api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, `/api/auth/oauth2/introspect`, and
-    `/api/auth/oauth2/public-client-prelogin` authenticate with a client ID, code, or token
-    instead of a session. An empty form body returns 400, and JSON returns 415.
+  - `POST /api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, and `/api/auth/oauth2/introspect`
+    authenticate with a client ID, code, or token instead of a session. An empty form body returns
+    400, and JSON returns 415.
+  - `POST /api/auth/oauth2/public-client-prelogin` accepts JSON and verifies a signed
+    `oauth_query` instead of a session. An empty JSON body returns 400, and valid JSON with a
+    validly signed query returns 200 with the client's public registration fields.
   - `/mcp` without a valid bearer token returns 401 with a `WWW-Authenticate` challenge that points
     to the protected-resource metadata.
 - The team invite preview `GET /api/team-invites/:code` is intentionally anonymous so the join

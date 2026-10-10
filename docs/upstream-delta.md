@@ -171,10 +171,11 @@ Deliberate merge resolutions:
     They take no session; a client authenticates with its client ID plus a PKCE-bound code, a
     refresh token, or the token being revoked or introspected.
   - `POST /api/auth/oauth2/public-client-prelogin`, which the consent page uses to show the
-    requesting client's registered name, URI, logo, and policy links. It requires a validly
-    signed authorize query (`oauth_query`), which anyone can obtain by starting an authorization.
-    Better Auth 1.6.25 doesn't bind the body's `client_id` to that query, so a caller can read
-    the same public registration fields for any client whose random ID it already knows.
+    requesting client's registered name, URI, logo, policy links, and contacts. It requires a
+    validly signed authorize query (`oauth_query`), which anyone can obtain by starting an
+    authorization. Better Auth 1.6.25 doesn't bind the body's `client_id` to that query, so a
+    caller can read the same public registration fields for any client whose random ID it already
+    knows. Those fields include the registered `contacts`, which can contain email addresses.
 
   `docs/operations.md` lists the response each one should give in its manual checks.
   `routes/mcp-oauth.integration.test.ts` runs the whole flow through the real Better Auth

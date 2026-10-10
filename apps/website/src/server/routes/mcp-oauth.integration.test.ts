@@ -2,10 +2,22 @@ import { createHash, randomBytes } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
-process.env.NODE_ENV = "test";
-process.env.DATABASE_URL = ":memory:";
+const ORIGIN = "http://localhost:5173";
+const USER = { id: "user_e2e", email: "e2e-operator@example.com" };
+
+const FIXTURE_ENV = {
+  NODE_ENV: "test",
+  DATABASE_URL: ":memory:",
+  APP_URL: ORIGIN,
+  BETTER_AUTH_SECRET: "synthetic-e2e-auth-secret-not-real-0123456789",
+  ALLOWED_EMAILS: USER.email,
+} as const;
+const inheritedEnv = Object.fromEntries(
+  Object.keys(FIXTURE_ENV).map((key) => [key, process.env[key]]),
+);
+Object.assign(process.env, FIXTURE_ENV);
 
 /**
  * The MCP authorization flow through the real Better Auth handler and
@@ -15,10 +27,8 @@ process.env.DATABASE_URL = ":memory:";
  * page's defaults.
  */
 
-const ORIGIN = "http://localhost:5173";
 const RESOURCE = `${ORIGIN}/mcp`;
 const REDIRECT_URI = "http://127.0.0.1:33418/callback";
-const USER = { id: "user_e2e", email: "e2e-operator@example.com" };
 const REQUESTED = "teams:read teams:write offline_access";
 const GRANTED = "teams:read offline_access";
 
@@ -32,6 +42,7 @@ beforeAll(async () => {
   ({ app } = await import("../app"));
   ({ auth } = await import("../auth"));
   ({ env } = await import("../env"));
+  expect(env).toMatchObject({ APP_URL: ORIGIN, ALLOWED_EMAILS: [USER.email] });
   allowedEmails = [...env.ALLOWED_EMAILS];
   const { db } = await import("../db");
   const schema = await import("../db/schema");
@@ -61,6 +72,13 @@ beforeAll(async () => {
 afterEach(async () => {
   env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length, ...allowedEmails);
   (await auth.$context).rateLimit.enabled = false;
+});
+
+afterAll(() => {
+  for (const [key, value] of Object.entries(inheritedEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
 });
 
 function signedIn(init: RequestInit = {}): RequestInit {
@@ -256,7 +274,10 @@ describe("MCP OAuth end to end", () => {
     // Better Auth answers a wrong verifier with 401 invalid_request and burns the code.
     const wrong = await exchange(clientId, code, pkce().verifier);
     expect(wrong.status).toBe(401);
-    expect(wrong.body).toMatchObject({ error_description: "code verification failed" });
+    expect(wrong.body).toMatchObject({
+      error: "invalid_request",
+      error_description: "code verification failed",
+    });
     const afterWrong = await exchange(clientId, code, verifier);
     expect(afterWrong.body.error).toBe("invalid_grant");
 
@@ -310,6 +331,10 @@ describe("MCP OAuth end to end", () => {
     expect(next.scope).toBe(GRANTED);
     expect(next.refresh_token).not.toBe(tokens.refresh_token);
     expect(next.access_token).not.toBe(tokens.access_token);
+    // A normal refresh leaves the old access token valid until it expires or is revoked.
+    const oldClient = await mcpClient(tokens.access_token);
+    expect((await oldClient.callTool({ name: "teams_list", arguments: {} })).isError).toBeFalsy();
+    await oldClient.close();
     const client = await mcpClient(next.access_token);
     expect((await client.callTool({ name: "teams_list", arguments: {} })).isError).toBeFalsy();
     await client.close();
