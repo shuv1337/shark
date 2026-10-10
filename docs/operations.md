@@ -114,6 +114,12 @@ operator review:
     instead of a session. An empty form body returns 400, and JSON returns 415.
   - `/mcp` without a valid bearer token returns 401 with a `WWW-Authenticate` challenge that points
     to the protected-resource metadata.
+- The team invite preview `GET /api/team-invites/:code` is intentionally anonymous so the join
+  page can describe an invite before sign-in. For a valid code it returns only the team name,
+  inviter name, role, member count, and expiry, with `Cache-Control: no-store`. An unknown code
+  returns 404, and more than 30 requests a minute from one client returns 429. The access log
+  records it as `/api/team-invites/:code`. See `docs/upstream-delta.md` for why each anonymous
+  exception is acceptable.
 - The running container image ID matches the release provenance.
 - The latest nightly/pre-deploy Restic snapshot is verified.
 - Disk pressure, container restarts, and the capped local log files are healthy.

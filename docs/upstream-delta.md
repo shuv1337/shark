@@ -18,7 +18,9 @@ changes.
 - One fixed self-hosted entitlement enables multiple devices, routing, interactions, and Live
   Activities. Abuse limits are 300 requests per service per minute and 1,500 per account per minute.
 - Only `/api/health` is anonymously readable. Human-facing pages, docs exports, assets, and source
-  links require an admitted session.
+  links require an admitted session. The exceptions are machine-facing and return no account
+  content: public signing keys (`/.well-known/jwks.json`), the MCP OAuth endpoints, and the team
+  invite preview. They are listed with what each one exposes in the teams and MCP sections below.
 - Production uses the `shark-prod` deployment, attested immutable GHCR digests,
   1Password-fed secrets, exact-schema SQLite checkpoint validation, encrypted Restic snapshots,
   and operator promotion with no GitHub VM credential.
@@ -135,6 +137,14 @@ Deliberate merge resolutions:
   accepts at most 10 new pages a minute. Sharing an app (or creating one with `teamId`) from an
   agent token also needs `teams:write` and the agent budget, and each person can trigger at most
   10 team notices a minute. Request logs redact `/join/:code` and `/api/team-invites/:code`.
+- Anonymous exception to the private origin: `GET /api/team-invites/:code` returns an invite
+  preview without a session, so the join page can show what the invite is for before Apple
+  sign-in. It returns the team name, the inviter's display name, the offered role, the team's
+  member count, and the invite's expiry. It returns no email addresses, member list, or team ID.
+  An unknown, used, or expired code returns 404. Responses are `no-store` and limited to 30 a
+  minute per client IP and 600 a minute overall. The code is the secret: without it nothing is
+  returned, and with it a person learns only what they need to decide whether to join. Accepting
+  still requires an allowlisted session (`POST /api/team-invites/:code/accept`).
 
 ## MCP server integration, 2026-10-09
 
@@ -152,9 +162,24 @@ Deliberate merge resolutions:
   owner's allowlist on every call, so removing an email stops its clients immediately.
 - The Apple Watch and Mac companion scopes (`watch:*`, `macos:*`) are never OAuth scopes: they can
   answer prompts. Board scopes are grantable, and every board route has an MCP tool.
-- Intentional anonymous exceptions: `/.well-known/oauth-protected-resource[/mcp]`,
-  `/.well-known/oauth-authorization-server[/api/auth]`, and Better Auth's dynamic client
-  registration. Registration grants nothing without an allowlisted user's consent.
+- Intentional anonymous exceptions, all of which return no account content:
+  - Discovery documents: `/.well-known/oauth-protected-resource[/mcp]` and
+    `/.well-known/oauth-authorization-server[/api/auth]`.
+  - Dynamic client registration (`POST /api/auth/oauth2/register`), rate-limited to 5 a minute
+    per client IP. Registration grants nothing without an allowlisted user's consent.
+  - `POST /api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, and `/api/auth/oauth2/introspect`.
+    They take no session; a client authenticates with its client ID plus a PKCE-bound code, a
+    refresh token, or the token being revoked or introspected.
+  - `POST /api/auth/oauth2/public-client-prelogin`, which the consent page uses to show the
+    requesting client's registered name, URI, logo, and policy links. It requires a validly
+    signed authorize query (`oauth_query`), which anyone can obtain by starting an authorization.
+    Better Auth 1.6.25 doesn't bind the body's `client_id` to that query, so a caller can read
+    the same public registration fields for any client whose random ID it already knows.
+
+  `docs/operations.md` lists the response each one should give in its manual checks.
+  `routes/mcp-oauth.integration.test.ts` runs the whole flow through the real Better Auth
+  handler: registration, S256 PKCE, consent, code exchange and reuse, `/mcp`, refresh rotation
+  and reuse detection, and revocation.
 - `/api/oauth/clients` mutations require a same-origin request, like the other session routes.
 - Better Auth rate limits read the client IP the app resolves from `TRUSTED_CLIENT_IP_HEADER` or
   `TRUSTED_FORWARDED_FOR_HOPS` (production: one exe.dev hop) per `docs/operations.md`. An hourly
@@ -162,6 +187,29 @@ Deliberate merge resolutions:
   and offboarding deletes the user's OAuth tokens and consents.
 - The MCP server name is `shark`; access and refresh token prefixes stay `hark_mat_` and
   `hark_mrt_` as protocol identifiers.
+- MCP tools flatten each agent route's request body into tool arguments, so `board_ask` accepts
+  `callback.url` and `callback.token` (`boardCallbackSchema` in `packages/contracts/src/board.ts`).
+  An MCP client with `board:write` can therefore make the server POST an ask's resolution to a URL
+  it chooses, exactly as an agent token can. This is a deliberate capability, with the same guards
+  as the agent API. `isPublicHttpsUrl` is checked when the ask is written and again before each
+  delivery in `lib/board-callbacks.ts`. It rejects non-HTTPS URLs, `localhost`, `.local`, and
+  literal private, loopback, link-local, CGNAT, and IPv4-mapped addresses. Delivery uses
+  `redirect: "manual"`, so a redirect can't send it to another host, and a 10-second timeout. The
+  caller sees only the delivery status, the HTTP status code, or a short error, never the response
+  body. The check is on the URL's hostname only: it doesn't resolve DNS, so a public name that
+  resolves to a private address isn't blocked.
+- Dependency footprint: `@modelcontextprotocol/sdk` is a production dependency of
+  `@hark/website`. Per `pnpm-lock.yaml` it brings about 90 transitive packages, 54 of which
+  nothing else in the website's production tree uses. They include `express@5`, `body-parser`,
+  `qs`, `router`, `send`, `serve-static`, `cors`, `express-rate-limit`, `eventsource`,
+  `cross-spawn`, `ajv`, and `ajv-formats`. SHark serves MCP through Hono with the SDK's
+  web-standard transport, so none of the Express stack runs. The esbuild server bundle includes
+  only the SDK's server and JSON-schema code (`ajv`, `ajv-formats`, `fast-uri`,
+  `json-schema-traverse`, `zod-to-json-schema`, `content-type`). The runtime image installs only
+  `@hark/website-runtime` (`better-sqlite3`, `expo-server-sdk`). Dependency and security reviews
+  should still count the full set, because an advisory against it is reported against the
+  lockfile and a future import could bundle it. Recheck with
+  `pnpm --filter @hark/website why express` and an esbuild metafile.
 
 ## CLI and compatibility names
 
