@@ -8,7 +8,7 @@
 - `ALLOWED_EMAILS` is enforced on every browser session and every durable credential path, not only at account creation.
 - Removing an address revokes access while preserving user data; permanent deletion is a separate explicit operation.
 - SHark production has one fixed self-hosted entitlement mode with complete capabilities, no Autumn runtime, no paid-plan UI, and rate limits of 300 requests per service per minute and 1,500 requests per account per minute.
-- `/api/health` is the only anonymous content surface; human-facing pages require an admitted Apple session.
+- Human-facing pages, docs exports, private assets, and the team invite preview require an admitted Apple session. Besides `/api/health`, the only content served without a session or scoped credential is public infrastructure and static handoff content, none of which holds account content: public signing keys, OAuth discovery and the MCP OAuth endpoints, the Apple app-site association and the static SSHuv conversation handoff page, and the push service worker and its notification icons. The routes mounted without `requireAuth` in `apps/website/src/server/app.ts` and `static.ts` (`PUBLIC_PUSH_ASSETS`) are the source of truth; `docs/upstream-delta.md` describes them.
 - Protocol endpoints that must be reachable before session authentication remain network-reachable but require their signed state or scoped credentials.
 - The canonical Devil Phone SVG and safe-area raster must be recovered from an operator-controlled source and match the hashes recorded in the plan before they are used.
 - The app bundle ID is `dev.shuv.shark`.
