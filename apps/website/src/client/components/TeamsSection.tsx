@@ -2,7 +2,7 @@ import type { TeamDto } from "@hark/contracts";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { api } from "../lib/api";
-import { seatsFull, TEAM_NAME_MAX_CHARS, teamSummary } from "../lib/teams";
+import { TEAM_NAME_MAX_CHARS, teamSummary } from "../lib/teams";
 import {
   Badge,
   EmptyState,
@@ -66,11 +66,6 @@ export function TeamsSection({
                     {teamSummary(team)}
                   </span>
                 </span>
-                {seatsFull(team) && team.plan === "team" && team.role !== "member" ? (
-                  <span className="hidden sm:inline">
-                    <Badge tone="warn">Seats full</Badge>
-                  </span>
-                ) : null}
                 <span
                   aria-hidden="true"
                   className="shrink-0 text-ink-muted transition-transform group-hover:translate-x-0.5"

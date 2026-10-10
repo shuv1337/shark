@@ -215,8 +215,6 @@ export const api = {
   acceptTeamInvite: (code: string) =>
     send<TeamJoinResponse>(`/api/team-invites/${id(code)}/accept`, "POST"),
   listTeamApps: (teamId: string) => request<{ apps: AppDto[] }>(`/api/teams/${id(teamId)}/apps`),
-  startTeamCheckout: (teamId: string) =>
-    send<BillingRedirectResponse>(`/api/teams/${id(teamId)}/billing/checkout`, "POST"),
   openTeamBillingPortal: (teamId: string) =>
     send<BillingRedirectResponse>(`/api/teams/${id(teamId)}/billing/portal`, "POST"),
 

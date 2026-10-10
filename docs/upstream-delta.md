@@ -130,9 +130,10 @@ Deliberate merge resolutions:
   `rowid` (project-inbox read cursors depend on it), drops the durable inbox triggers first and
   recreates them afterwards, and lets the insert trigger materialize token-less notices (team
   invites, shared apps) with `source_name`.
-- No seat billing: `team-billing.ts` keeps upstream's exports but reports a free, unlimited plan,
-  and checkout or portal calls fail with "Billing is not configured". Seat and pricing UI, docs, and
-  the pricing page are removed. Team membership still requires an allowlisted Apple sign-in.
+- No seat billing: `team-billing.ts` reports a free, unlimited plan, and portal calls fail with
+  "Billing is not configured". The team checkout route, seat-limit error contract and client
+  notices are removed along with seat pricing UI, docs, and the pricing page. Team membership
+  still requires an allowlisted Apple sign-in.
 - Join links use `shark://join/<code>`; the iPhone app also accepts legacy `hark://join` links.
   The website `/dashboard/teams/:id` and `/join/:code` shells sit behind `requireAuth`.
 - Upstream analytics (`trackAppEvent`), Google sign-in, and App Store links are not imported.

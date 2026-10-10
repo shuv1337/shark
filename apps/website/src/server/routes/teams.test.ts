@@ -299,11 +299,10 @@ describe("teams and invites", () => {
       memberCount: 3,
       seats: { used: 3, available: null, billable: 0 },
     });
-    for (const kind of ["checkout", "portal"]) {
-      const response = await call("POST", `/api/teams/${team.id}/billing/${kind}`);
-      expect(response.status).toBe(503);
-      expect(await response.json()).toEqual({ error: "Billing is not configured" });
-    }
+    expect((await call("POST", `/api/teams/${team.id}/billing/checkout`)).status).toBe(404);
+    const response = await call("POST", `/api/teams/${team.id}/billing/portal`);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "Billing is not configured" });
   });
 
   it("pushes an invite to an existing user with that email and files it in their inbox", async () => {

@@ -1,5 +1,4 @@
 import {
-  API_ERROR_CODE_SEAT_LIMIT,
   type BillingRedirectResponse,
   MAX_MEMBERS_PER_TEAM,
   MAX_ONCALL_GROUPS_PER_TEAM,
@@ -25,13 +24,7 @@ import { selectAppsWithJoins, toAppDto } from "../lib/apps";
 import { newId } from "../lib/id";
 import { checkRotation, listTeamPages, toGroupDto } from "../lib/oncall";
 import { requireSameOriginOrNative } from "../lib/same-origin";
-import {
-  createTeamBillingPortal,
-  createTeamCheckout,
-  syncTeamSeats,
-  teamBillingConfigured,
-  teamCanSeat,
-} from "../lib/team-billing";
+import { createTeamBillingPortal, syncTeamSeats, teamBillingConfigured } from "../lib/team-billing";
 import {
   billingCustomer,
   deleteTeam,
@@ -82,11 +75,6 @@ export function send(c: Context, outcome: Outcome) {
 
 export const TEAM_NOT_FOUND = failure(404, "Team not found");
 const FORBIDDEN_ADMIN = failure(403, "Only team owners and admins can do this");
-const SEAT_LIMIT = failure(
-  402,
-  "This team has used its free seat. Upgrade to the team plan to add members.",
-  { code: API_ERROR_CODE_SEAT_LIMIT },
-);
 
 export async function readJson(c: Context): Promise<unknown> {
   return c.req.json().catch(() => null);
@@ -256,7 +244,6 @@ async function createInvite(actor: Actor, teamId: string, input: unknown): Promi
   if (members >= MAX_MEMBERS_PER_TEAM) {
     return failure(409, `Member limit reached (${MAX_MEMBERS_PER_TEAM} per team)`);
   }
-  if (!(await teamCanSeat(await billingCustomer(current.team), members + 1))) return SEAT_LIMIT;
 
   const code = generateTeamInviteCode();
   const now = new Date();
@@ -356,7 +343,6 @@ async function acceptInvite(actor: Actor, code: string): Promise<Outcome> {
     return failure(409, `This team is full (${MAX_MEMBERS_PER_TEAM} members)`);
   }
   const customer = await billingCustomer(found.team);
-  if (!(await teamCanSeat(customer, members + 1))) return SEAT_LIMIT;
 
   const now = new Date();
   const joined = db.transaction((tx) => {
@@ -454,28 +440,18 @@ async function teamPages(
   return listed.ok ? result(listed.body) : failure(400, listed.error);
 }
 
-async function billingRedirect(
-  actor: Actor,
-  teamId: string,
-  kind: "checkout" | "portal",
-): Promise<Outcome> {
+async function billingPortal(actor: Actor, teamId: string): Promise<Outcome> {
   const current = await membership(teamId, actor.id);
   if (!current) return TEAM_NOT_FOUND;
   if (!hasRole(current.role, "admin")) return FORBIDDEN_ADMIN;
   if (!teamBillingConfigured()) return failure(503, "Billing is not configured");
   const customer = await billingCustomer(current.team);
   try {
-    const url =
-      kind === "checkout"
-        ? await createTeamCheckout(customer, await memberCount(teamId))
-        : await createTeamBillingPortal(customer);
+    const url = await createTeamBillingPortal(customer);
     return result({ url } satisfies BillingRedirectResponse);
   } catch (error) {
-    console.error(`[team-billing] Could not open ${kind}`, error);
-    return failure(
-      502,
-      kind === "checkout" ? "Could not start checkout" : "Could not open billing portal",
-    );
+    console.error("[team-billing] Could not open portal", error);
+    return failure(502, "Could not open billing portal");
   }
 }
 
@@ -543,11 +519,8 @@ export const teamsSessionRoute = new Hono<AuthedEnv>()
     send(c, await revokeInvite(sessionActor(c), c.req.param("id"), c.req.param("inviteId"))),
   )
   .get("/:id/apps", async (c) => send(c, await listTeamApps(sessionActor(c), c.req.param("id"))))
-  .post("/:id/billing/checkout", async (c) =>
-    send(c, await billingRedirect(sessionActor(c), c.req.param("id"), "checkout")),
-  )
   .post("/:id/billing/portal", async (c) =>
-    send(c, await billingRedirect(sessionActor(c), c.req.param("id"), "portal")),
+    send(c, await billingPortal(sessionActor(c), c.req.param("id"))),
   )
   .get("/:id/oncall", async (c) => send(c, await listGroups(sessionActor(c), c.req.param("id"))))
   .post("/:id/oncall", async (c) =>

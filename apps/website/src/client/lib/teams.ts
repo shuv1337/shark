@@ -4,10 +4,7 @@ import type { AppDto, TeamDto, TeamRole } from "@hark/contracts";
 // Contract constants mirrored as typed literals; importing the values would
 // bundle zod into the client.
 export const TEAM_NAME_MAX_CHARS: typeof Contracts.TEAM_NAME_MAX_CHARS = 60;
-export const TEAM_FREE_SEATS: typeof Contracts.TEAM_FREE_SEATS = 1;
-export const TEAM_SEAT_PRICE_MONTHLY: typeof Contracts.TEAM_SEAT_PRICE_MONTHLY = 5;
 export const MAX_ESCALATION_STEPS: typeof Contracts.MAX_ESCALATION_STEPS = 5;
-export const API_ERROR_CODE_SEAT_LIMIT: typeof Contracts.API_ERROR_CODE_SEAT_LIMIT = "seat_limit";
 
 export const ROLE_LABELS: Record<TeamRole, string> = {
   owner: "Owner",
@@ -31,11 +28,6 @@ export function seatsLabel(team: TeamDto): string {
   const { used, available } = team.seats;
   if (available === null) return `${used} ${used === 1 ? "seat" : "seats"}`;
   return `${used} of ${available} ${available === 1 ? "seat" : "seats"}`;
-}
-
-/** No seat left for the next person to join. */
-export function seatsFull(team: TeamDto): boolean {
-  return team.seats.available !== null && team.seats.used >= team.seats.available;
 }
 
 export function teamSummary(team: TeamDto): string {

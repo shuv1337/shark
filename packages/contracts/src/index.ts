@@ -1662,9 +1662,6 @@ export interface TeamJoinResponse {
   joined: boolean;
 }
 
-/** `code` returned when a team has no free seat and no paid team plan. */
-export const API_ERROR_CODE_SEAT_LIMIT = "seat_limit" as const;
-
 // ---------------------------------------------------------------------------
 // On-call groups and pages
 // ---------------------------------------------------------------------------
