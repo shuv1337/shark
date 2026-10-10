@@ -120,6 +120,29 @@ logs. Unchecked release evidence keeps the goal active.
     was still running after the helper exited. The `deploy/README.md` sentence and the wrapper
     comments that claim the helpers leave no daemon behind are wrong for this CLI version. The
     daemon held no deploy lock. It was stopped by hand after the checks.
+- 2026-10-10: first real rollback drill on `shark-prod`, approved by the owner through a board ask
+  and run right after the `6b59406` promotion, while `6b59406` and `de5f9fe` share schema 0027 so
+  no database restore was needed. Under the deploy lock, the recorded `de5f9fe` SHA and image
+  (`provenance/de5f9fe….json`) were started the way `shark-deploy`'s own rollback does:
+  `compose stop`, then `compose up --detach` with that SHA and image. The container stopped at
+  23:11:56 UTC and the loopback health probe returned 200 again at 23:12:07, so the rollback cost
+  about 11 seconds of downtime. The running image ID matched the `de5f9fe` record
+  (`sha256:dc5c4188…dbb02`), the container was healthy with 0 restarts and logged no errors, the
+  database still reported 28 migrations and integrity `ok`, anonymous `/`, `/dashboard`, and
+  `/mcp` returned 401, `/sw.js` 200, `/robots.txt` 404, `https://shark.shuv.dev/api/health`
+  returned `{"ok":true}`, and a labeled test notification at 23:12:19 UTC was accepted for 4
+  targets. `current` was left at `6b59406` throughout, which is the documented state for a manual
+  rollback. Signed-in dashboard access was not re-checked during the 35-second window. The roll
+  forward re-ran `shark-deploy` detached for `6b59406` at 23:12:30 UTC. It verified attestation
+  again, took and verified a new pre-deploy snapshot
+  `d13517c6914eaf1dd3dc38a1000350acfe73755fdecafaacf5bd16faceb21d91`, and recorded the release
+  at `2026-10-10T23:14:02Z` with about 82 seconds of downtime (23:12:38 to 23:14:00) and no
+  `rollback.log`. After it, the running image ID matched the `6b59406` digest, integrity was `ok`
+  with no foreign-key violations, the anonymous boundary checks held, and a test notification at
+  23:14:24 UTC was accepted for 4 targets. The helper left another `op daemon` behind, which was
+  stopped by hand. The drill proves the manual rollback path in `docs/operations.md` for a
+  schema-compatible previous release; a rollback across an incompatible migration, which needs the
+  pre-deploy database restore, has not been drilled.
 - 2026-10-10: production was promoted from `6dcb736` to
   `de5f9fe6da7a84d41da00d8dc30eb917bd822acd` (on-call override creator and recipient notice #126,
   atomic Live Activity and webhook-response admission #129, Web Push service allowlist with pinned
@@ -433,7 +456,9 @@ logs. Unchecked release evidence keeps the goal active.
   commit `74b4b21ae39dfa1a9d6ba1948465340458ff468c`.
 - Sqim development artifact, HTTPS install page, signed entitlements, and two-iPhone acceptance:
   pending operator-owned identities and assets.
-- `shark-prod` no-op deployment and rollback rehearsal: not yet proven. DNS/TLS, immutable running
-  image, verified off-host snapshot, and byte-for-byte restore are proven above.
+- `shark-prod` rollback across an incompatible migration, with the pre-deploy database restore:
+  not yet proven. A schema-compatible rollback to the previous recorded release and the roll
+  forward were drilled on 2026-10-10 (above). DNS/TLS, immutable running image, verified off-host
+  snapshot, and byte-for-byte restore are proven above.
 - EAS/App Store Connect build, internal TestFlight installation, release tag, and final provenance:
   not yet proven.
