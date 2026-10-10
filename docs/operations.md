@@ -131,7 +131,9 @@ Expired push tokens are expected; reopening each iPhone re-registers it.
 The manual GitHub workflow on `main` verifies the monorepo, publishes
 `ghcr.io/shuv1337/shark:<full-sha>`, and attests the exact image digest. It has no VM credential and
 does not deploy. The operator invokes the production helper through their existing exe.dev
-identity with the reviewed SHA and digest. The host anonymously pulls the public image, verifies
+identity with the reviewed SHA and digest, detached from the SSH session with `setsid nohup` (see
+`deploy/README.md`). If the helper exits early or receives `SIGHUP`, `SIGINT`, or `SIGTERM` after it
+starts to stop the current container, it restarts the previous release. The host anonymously pulls the public image, verifies
 its repository, signer workflow, `main` ref, source SHA, hosted runner, and digest, then fetches
 application and backup secrets through separate 1Password service accounts with disjoint vault
 access. It records the image

@@ -18,11 +18,13 @@ for command in curl docker flock gh install jq; do
   }
 done
 
-deploy_root="/home/exedev/shark"
-compose_file="/etc/shark/compose.yaml"
+deploy_root="${SHARK_DEPLOY_ROOT:-/home/exedev/shark}"
+compose_file="${SHARK_COMPOSE_FILE:-/etc/shark/compose.yaml}"
+helper_root="${SHARK_HELPER_ROOT:-/usr/local/sbin}"
 runtime_env="$deploy_root/.env"
 provenance_root="$deploy_root/provenance"
 lock_file="$deploy_root/deploy.lock"
+rollback_log="$deploy_root/rollback.log"
 image="ghcr.io/shuv1337/shark@$image_digest"
 
 if [[ ! -f "$compose_file" || -L "$compose_file" ]]; then
@@ -57,7 +59,7 @@ if [[ "$resolved_digest" != "$image" ]]; then
   exit 70
 fi
 
-/usr/local/sbin/shark-materialize-secrets "$runtime_env.new"
+"$helper_root/shark-materialize-secrets" "$runtime_env.new"
 chmod 600 "$runtime_env.new"
 mv "$runtime_env.new" "$runtime_env"
 
@@ -77,21 +79,45 @@ rollback_previous() {
   fi
 }
 
-if [[ -n "$previous_image" ]]; then
-  DEPLOY_GIT_SHA="$previous_sha" SHARK_IMAGE="$previous_image" "${compose[@]}" stop
-fi
-trap rollback_previous ERR
-
-backup_stage="$(mktemp -d "$deploy_root/backup.XXXXXXXX")"
+backup_stage=""
 volume_backup=""
 cleanup() {
   if [[ -n "$volume_backup" ]]; then
     docker run --rm --volume shark-data:/data "$image" \
       rm -f "$volume_backup" >/dev/null 2>&1 || true
   fi
-  rm -rf "$backup_stage"
+  if [[ -n "$backup_stage" ]]; then
+    rm -rf "$backup_stage"
+  fi
 }
-trap cleanup EXIT
+
+# An SSH hangup or kill delivers HUP/TERM, which never fires an ERR trap, so every exit path
+# funnels through one EXIT handler. Once the previous container may be stopping, any exit before
+# the new release is recorded restarts the previous release. SIGKILL still cannot be handled.
+rollback_armed=0
+deploy_complete=0
+on_exit() {
+  local status=$?
+  trap '' HUP INT TERM PIPE
+  set +e
+  if ((rollback_armed && !deploy_complete)); then
+    echo "Deploy did not finish; restarting the previous release (log: $rollback_log)." >&2
+    rollback_previous >>"$rollback_log" 2>&1
+  fi
+  cleanup
+  exit "$status"
+}
+trap on_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+rollback_armed=1
+if [[ -n "$previous_image" ]]; then
+  DEPLOY_GIT_SHA="$previous_sha" SHARK_IMAGE="$previous_image" "${compose[@]}" stop
+fi
+
+backup_stage="$(mktemp -d "$deploy_root/backup.XXXXXXXX")"
 
 backup_id="none-first-deploy"
 if docker run --rm --volume shark-data:/data "$image" sh -c 'test -f /data/hark.sqlite'; then
@@ -107,7 +133,7 @@ if docker run --rm --volume shark-data:/data "$image" sh -c 'test -f /data/hark.
   docker cp "$copy_container:/data/backups/$backup_name" "$backup_stage/$backup_name"
   docker rm "$copy_container" >/dev/null
 
-  backup_id="$(/usr/local/sbin/shark-restic-backup "$backup_stage/$backup_name")"
+  backup_id="$("$helper_root/shark-restic-backup" "$backup_stage/$backup_name")"
   rm -f "$backup_stage/$backup_name"
   docker run --rm --volume shark-data:/data "$image" rm -f "$volume_backup" >/dev/null
   volume_backup=""
@@ -161,7 +187,6 @@ jq -n \
 chmod 600 "$provenance_file"
 cp "$provenance_file" "$current_new"
 mv "$current_new" "$current_file"
+deploy_complete=1
 
-trap - ERR
-trap cleanup EXIT
 echo "Deployed SHark $deploy_sha at $image_digest"

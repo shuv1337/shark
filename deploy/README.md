@@ -59,11 +59,21 @@ refuses to initialize a missing repository.
 Run `deploy/test-helpers` before installing updated helpers.
 
 To promote, copy the full source SHA and image digest from a green production-publisher run, log
-into exe.dev with the existing operator identity, and run:
+into exe.dev with the existing operator identity, and start the helper detached from the SSH
+session, so that a dropped connection or a closing agent session cannot interrupt it:
 
 ```sh
-/usr/local/sbin/shark-deploy <40-character-main-SHA> <sha256:image-digest>
+setsid nohup /usr/local/sbin/shark-deploy <40-character-main-SHA> <sha256:image-digest> \
+  >/tmp/shark-deploy-<short-sha>.log 2>&1 </dev/null &
 ```
+
+Follow `/tmp/shark-deploy-<short-sha>.log` until it prints `Deployed SHark <sha> at <digest>` or an
+error. Do not run the helper in the foreground of an SSH session. Once the helper has started to stop
+the current container, every exit before the new release is recorded restarts the previous release.
+That includes a failed step, `SIGHUP`, `SIGINT`, and `SIGTERM`. Rollback output is appended to
+`/home/exedev/shark/rollback.log`. `SIGKILL`, a VM reboot, or a lost Docker daemon still cannot be
+handled, so a detached run remains required. The 1Password CLI runs with `OP_CACHE=false`, so the
+helpers leave no background `op daemon` behind.
 
 The helper:
 
@@ -72,7 +82,8 @@ The helper:
    `refs/heads/main`, the selected SHA, and a GitHub-hosted runner;
 3. anonymously pulls and confirms the exact digest;
 4. refreshes application secrets through the scoped 1Password service account;
-5. stops the current container and verifies an exact-schema SQLite checkpoint copy;
+5. arms the rollback, stops the current container, and verifies an exact-schema SQLite checkpoint
+   copy;
 6. requires a verified encrypted Restic snapshot before replacing an existing deployment;
 7. starts Compose with the exact digest, verifies readiness and the private HTTP boundary; and
 8. proves the running image ID and records SHA, digest, image ID, backup ID, and timestamp.
