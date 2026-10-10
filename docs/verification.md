@@ -5,6 +5,43 @@ logs. Unchecked release evidence keeps the goal active.
 
 ## Source baseline
 
+- 2026-10-10: production was promoted from `6dcb736` to
+  `de5f9fe6da7a84d41da00d8dc30eb917bd822acd` (on-call override creator and recipient notice #126,
+  atomic Live Activity and webhook-response admission #129, Web Push service allowlist with pinned
+  delivery and prelogin `client_id` binding #127) at image digest
+  `sha256:dc5c4188c05589138665c1b56f38aa6f00fa9de05102a688009987e9839dbb02` from publisher run
+  `38031269236`. Before the deploy, the orphaned `op daemon` left by the killed `6dcb736` attempt
+  was stopped. It held no deploy lock, and no deploy, backup, or Restic process was running.
+  `shark-deploy` ran detached from the SSH session. It verified the pre-deploy encrypted Restic
+  snapshot `59eda0076967033dd05e10d9a959a77ba0f0c49573cfccb05e04091ab52b4a57` in
+  `repos/shark-prod`. That snapshot holds the schema-0026 database a `6dcb736` rollback needs.
+  A loopback health probe failed from 06:35:46 to 06:37:06 UTC, while the helper stopped the old
+  container, backed it up, and started the new one, and returned 200 from 06:37:07, so production
+  was down for about 81 seconds. The running image ID and the provenance record match the digest.
+  Startup applied migration 0027 (`1791610113104`), for 28 recorded migrations.
+  `oncall_override` gained `created_by_user_id`, which references `user(id)` with
+  `ON DELETE SET NULL`. Integrity is `ok` with no foreign-key violations. The deploy changed no
+  helpers or Compose definition. All four installed helpers and `/etc/shark/compose.yaml`
+  hash-match `main`. The container has `TRUSTED_FORWARDED_FOR_HOPS=1` and no
+  `TRUSTED_CLIENT_IP_HEADER`. Post-deploy checks:
+  - Health returned 200 with only `{"ok":true}` on the VM and through `https://shark.shuv.dev`. The
+    container was healthy with 0 restarts and logged no errors or warnings.
+  - Anonymous `/`, `/docs`, `/privacy`, `/terms`, `/dashboard`, `/cli/authorize`,
+    `/dashboard/teams/x`, and `/join/x` returned 401. `/robots.txt`, `/sitemap.xml`, and `/pricing`
+    returned 404, and `/sw.js` returned 200 JavaScript.
+  - An unknown team invite code returned 404. The access log recorded the probes as `/join/:code`
+    and `/api/team-invites/:code`.
+  - `/mcp` returned 401 with no token and with a forged one, with a challenge that points to the
+    protected-resource metadata.
+  - The four OAuth discovery documents returned 200 without `watch:*` or `macos:*` scopes.
+  - Empty requests to `/api/auth/oauth2/register` and `/api/auth/oauth2/public-client-prelogin`
+    returned 400. Each of `/api/auth/oauth2/token`, `/revoke`, and `/introspect` returned 400 for
+    an empty form and 415 for JSON. Anonymous `POST /api/web-push/subscriptions` returned 401.
+  - The 1Password CLI started a new `op daemon` during this deploy and left it running afterward,
+    without the deploy lock. This appears to be normal CLI behavior, not a sign of a killed run.
+  - Not yet done for `de5f9fe`: a test notification, signed-in dashboard access, and the macOS
+    companion check.
+
 - 2026-10-10: production was promoted from `20e14e1` to
   `6dcb7367936a8d43b5772baf5b667767fb180c8e` (auth and MCP OAuth follow-ups #111, MCP OAuth
   end-to-end test #112, teams follow-ups #110, callback SSRF pinning #117, on-call overrides and
