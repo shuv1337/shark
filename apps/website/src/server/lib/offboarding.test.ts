@@ -166,4 +166,64 @@ describe("operator offboarding", () => {
       }),
     ]);
   });
+
+  it("deletes the user's unexchanged OAuth authorization codes and nothing else", async () => {
+    const now = new Date();
+    for (const id of ["usr_offboard", "usr_other"]) {
+      await db.insert(schema.user).values({
+        id,
+        name: id,
+        email: `${id}@example.com`,
+        emailVerified: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    // Shaped like @better-auth/oauth-provider's redirectWithAuthorizationCode rows.
+    const code = (id: string, userId: string, expiresAt: Date) => ({
+      id,
+      identifier: `synthetic-code-hash-${id}`,
+      value: JSON.stringify({
+        type: "authorization_code",
+        query: {
+          client_id: "synthetic-client",
+          redirect_uri: "http://127.0.0.1:33418/callback",
+          scope: "notifications:send offline_access",
+        },
+        userId,
+        sessionId: `session_${userId}`,
+      }),
+      expiresAt,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.verification).values([
+      code("ver_pending", "usr_offboard", new Date(now.getTime() + 600_000)),
+      code("ver_expired", "usr_offboard", new Date(now.getTime() - 1000)),
+      code("ver_other_user", "usr_other", new Date(now.getTime() + 600_000)),
+      {
+        id: "ver_not_json",
+        identifier: "synthetic-state",
+        value: "opaque-state-value",
+        expiresAt: new Date(now.getTime() + 600_000),
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: "ver_other_kind",
+        identifier: "synthetic-other",
+        value: JSON.stringify({ type: "something_else", userId: "usr_offboard" }),
+        expiresAt: new Date(now.getTime() + 600_000),
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+
+    expect(offboardPersistedAccess("usr_offboard")).toMatchObject({ authorizationCodes: 2 });
+    const remaining = (await db.select({ id: schema.verification.id }).from(schema.verification))
+      .map((row) => row.id)
+      .sort();
+    expect(remaining).toEqual(["ver_not_json", "ver_other_kind", "ver_other_user"]);
+    await db.delete(schema.verification);
+  });
 });

@@ -5,7 +5,6 @@ import {
   OAUTH_OFFLINE_ACCESS_SCOPE,
 } from "@hark/contracts";
 import { useEffect, useMemo, useState } from "react";
-import { AppleButton } from "../components/AppleButton";
 import { Brand, PAGE_COLUMN } from "../components/SiteChrome";
 import { primaryButton, secondaryButton } from "../components/ui";
 import {
@@ -13,9 +12,14 @@ import {
   type OAuthClientInfo,
   oauthAuthClient,
   signedOAuthQuery,
-  signInForOAuth,
   submitOAuthConsent,
 } from "../lib/oauth-api";
+import {
+  canApproveConsent,
+  consentedScopes,
+  initialConsentSelection,
+  isHighImpactScope,
+} from "../lib/oauth-consent";
 
 /** Actions an MCP client can never take, whatever it is granted. */
 const HUMAN_ONLY = [
@@ -61,7 +65,7 @@ function readRequest(): ConsentRequest | null {
 }
 
 /**
- * OAuth consent (and sign-in) page for MCP clients. The authorization
+ * OAuth consent page for MCP clients, served behind sign-in. The authorization
  * endpoint redirects here with a signed query; approving posts the scopes
  * the person left ticked and follows the redirect back to the client.
  */
@@ -69,8 +73,8 @@ export function OAuthConsent() {
   const request = useMemo(readRequest, []);
   const { data: session, isPending } = oauthAuthClient.useSession();
   const [client, setClient] = useState<OAuthClientInfo | null>(null);
-  const [selected, setSelected] = useState<Set<ApiTokenScope>>(
-    () => new Set(request?.apiScopes ?? []),
+  const [selected, setSelected] = useState<Set<ApiTokenScope>>(() =>
+    initialConsentSelection(request?.apiScopes ?? []),
   );
   const [offlineAccess, setOfflineAccess] = useState(request?.offlineAccess ?? false);
   const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
@@ -93,18 +97,15 @@ export function OAuthConsent() {
   }, [request]);
 
   const clientName = client?.client_name?.trim() || "An MCP client";
+  const granted = consentedScopes(selected, offlineAccess);
+  const approvable = canApproveConsent(request?.apiScopes ?? [], selected, offlineAccess);
 
   const decide = async (accept: boolean) => {
     if (!request) return;
     setBusy(accept ? "approve" : "deny");
     setError(null);
     try {
-      const scopes = accept
-        ? [
-            ...OAUTH_API_SCOPES.filter((scope) => selected.has(scope)),
-            ...(offlineAccess ? [OAUTH_OFFLINE_ACCESS_SCOPE] : []),
-          ]
-        : undefined;
+      const scopes = accept ? granted : undefined;
       const url = await submitOAuthConsent(accept, scopes, request.oauthQuery);
       setDone(accept ? "approved" : "denied");
       window.location.assign(url);
@@ -150,15 +151,16 @@ export function OAuthConsent() {
               {isPending ? (
                 <p className="mt-6 text-[15px] text-ink-faint">Checking your session…</p>
               ) : !session ? (
-                <div className="mt-6">
-                  <p className="mb-5 text-[15px] leading-relaxed text-ink-muted">
-                    Sign in to choose what {clientName} may do with your SHark account. Signing in
-                    does not connect it.
-                  </p>
-                  <div className="flex flex-wrap gap-3">
-                    <AppleButton onClick={() => void signInForOAuth()} />
-                  </div>
-                </div>
+                <p className="mt-6 text-[15px] leading-relaxed text-ink-muted">
+                  Your session ended.{" "}
+                  <a
+                    className="text-ink underline decoration-line-strong underline-offset-2"
+                    href={`/login?next=${encodeURIComponent(`${window.location.pathname}${window.location.search}`)}`}
+                  >
+                    Sign in again
+                  </a>{" "}
+                  to continue.
+                </p>
               ) : done ? (
                 <div className="mt-6 rounded-2xl bg-surface-muted px-4 py-3 text-[15px] text-ink">
                   {done === "approved"
@@ -177,6 +179,7 @@ export function OAuthConsent() {
                           key={scope}
                           checked={selected.has(scope)}
                           description={API_TOKEN_SCOPE_DESCRIPTIONS[scope].description}
+                          highImpact={isHighImpactScope(scope)}
                           label={API_TOKEN_SCOPE_DESCRIPTIONS[scope].label}
                           onChange={() => toggle(scope)}
                           scope={scope}
@@ -192,6 +195,13 @@ export function OAuthConsent() {
                         />
                       ) : null}
                     </ul>
+                    {request.apiScopes.some(isHighImpactScope) ? (
+                      <p className="mt-3 text-[13px] leading-5 text-ink-faint">
+                        High-impact permissions start unticked. Tick them only if you want{" "}
+                        {clientName} to have them. Leaving these unticked means SHark will ask again
+                        next time this app connects.
+                      </p>
+                    ) : null}
                   </fieldset>
 
                   <p className="mt-4 text-[13px] leading-5 text-ink-faint">
@@ -210,14 +220,14 @@ export function OAuthConsent() {
                     </button>
                     <button
                       className={primaryButton}
-                      disabled={busy !== null || selected.size === 0}
+                      disabled={busy !== null || !approvable}
                       onClick={() => void decide(true)}
                       type="button"
                     >
                       {busy === "approve" ? "Connecting…" : "Approve"}
                     </button>
                   </div>
-                  {selected.size === 0 ? (
+                  {!approvable ? (
                     <p className="mt-3 text-[13px] text-ink-faint">
                       Choose at least one permission, or deny.
                     </p>
@@ -304,12 +314,14 @@ function ScopeOption({
   description,
   checked,
   onChange,
+  highImpact = false,
 }: {
   scope: string;
   label: string;
   description: string;
   checked: boolean;
   onChange: () => void;
+  highImpact?: boolean;
 }) {
   const id = `scope-${scope.replace(/[^a-z]/gi, "-")}`;
   return (
@@ -326,7 +338,14 @@ function ScopeOption({
           type="checkbox"
         />
         <span className="min-w-0">
-          <span className="block text-[15px] font-medium text-ink">{label}</span>
+          <span className="flex flex-wrap items-center gap-2 text-[15px] font-medium text-ink">
+            {label}
+            {highImpact ? (
+              <span className="rounded-full border border-danger-line bg-danger-soft px-2 py-0.5 text-[11px] leading-4 font-medium text-danger">
+                High impact
+              </span>
+            ) : null}
+          </span>
           <span className="mt-0.5 block text-[13px] leading-5 text-ink-faint">{description}</span>
           <span className="mt-1 block font-mono text-[12px] text-ink-disabled">{scope}</span>
         </span>
