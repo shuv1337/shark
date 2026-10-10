@@ -1,5 +1,9 @@
+import { EventEmitter } from "node:events";
+import type { ClientRequest, IncomingMessage } from "node:http";
+import type { RequestOptions } from "node:https";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { outbound, type RequestFn } from "../lib/outbound";
 
 process.env.NODE_ENV = "test";
 process.env.DATABASE_URL = ":memory:";
@@ -177,6 +181,7 @@ afterEach(async () => {
   callbacks.calls.length = 0;
   callbacks.status = 200;
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   boardStream.resetBoardStream();
   await db.delete(schema.boardAskEvent);
   await db.delete(schema.boardWorkItem);
@@ -216,6 +221,32 @@ const baseAsk = {
   taskId: "FM-CAP-BOARD-2",
   links: [{ kind: "pr", url: "https://github.com/shuv1337/shark/pull/82" }],
 };
+
+/** Synthetic DNS and socket: names resolve to a public IP and requests are captured. */
+function stubCallbackTransport(address = "93.184.216.34") {
+  vi.spyOn(outbound, "resolve").mockImplementation(async () => [{ address, family: 4 }]);
+  return vi.spyOn(outbound, "request").mockImplementation(((
+    options: RequestOptions,
+    onResponse: (response: IncomingMessage) => void,
+  ) => {
+    const req = new EventEmitter() as EventEmitter & {
+      end: (body: Buffer) => void;
+      destroy: () => void;
+    };
+    req.destroy = () => undefined;
+    req.end = (body) => {
+      const headers = options.headers as Record<string, string>;
+      callbacks.calls.push({
+        url: `https://${headers.host}${options.path}`,
+        authorization: headers.authorization ?? null,
+        body: JSON.parse(body.toString()) as Record<string, unknown>,
+      });
+      const response = Object.assign(new EventEmitter(), { statusCode: callbacks.status });
+      queueMicrotask(() => onResponse(response as unknown as IncomingMessage));
+    };
+    return req as unknown as ClientRequest;
+  }) as RequestFn);
+}
 
 async function createAsk(overrides: Record<string, unknown> = {}, token = FM) {
   const response = await agent("/asks", token, {
@@ -649,14 +680,7 @@ describe("work, notes, done", () => {
 
 describe("expiry and callbacks", () => {
   it("expires due asks and delivers every terminal status to the callback with retries", async () => {
-    vi.stubGlobal("fetch", async (url: string | URL, init?: RequestInit) => {
-      callbacks.calls.push({
-        url: String(url),
-        authorization: new Headers(init?.headers).get("authorization"),
-        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
-      });
-      return new Response(null, { status: callbacks.status });
-    });
+    stubCallbackTransport();
     const callback = { url: "https://grok.example/routine", token: "k".repeat(32) };
     const { body } = await createAsk({ expiresInSeconds: 60, callback });
     expect(await board.sweepExpiredAsks(new Date(Date.now() + 120_000))).toBe(1);
@@ -723,6 +747,104 @@ describe("expiry and callbacks", () => {
       `${body.ask.id}:r1:expired`,
       `${second.body.ask.id}:r1:cancelled`,
     ]);
+  });
+
+  it("blocks a cancelled ask's callback when its name resolves to a private address", async () => {
+    // No human answer is needed: an agent can create a silent ask and cancel it.
+    const request = stubCallbackTransport("169.254.169.254");
+    const callback = { url: "https://metadata.example/latest", token: "k".repeat(32) };
+    const { body } = await createAsk({ key: "fm:probe", push: "none", callback });
+    expect(body.pushed).toBe(false);
+    const cancelled = await agent("/asks/fm:probe/cancel", FM, {
+      method: "POST",
+      body: JSON.stringify({ reason: "probe" }),
+    });
+    expect(cancelled.status).toBe(200);
+    await boardCallbacks.deliverBoardCallbacks();
+    expect(request).not.toHaveBeenCalled();
+    const [row] = await db
+      .select()
+      .from(schema.boardAsk)
+      .where(eq(schema.boardAsk.id, body.ask.id));
+    expect(row).toMatchObject({
+      callbackStatus: "failed",
+      callbackAttempts: 1,
+      callbackLastError: "blocked_destination",
+      callbackNextAttemptAt: null,
+    });
+    const read = (await (await agent("/asks/fm:probe")).json()) as {
+      ask: { callback: { status: string; lastError: string } };
+    };
+    expect(read.ask.callback).toMatchObject({ status: "failed", lastError: "blocked_destination" });
+  });
+
+  it("records a row that can't be prepared and still delivers the rows after it", async () => {
+    stubCallbackTransport();
+    callbacks.status = 204;
+    const callback = { url: "https://grok.example/routine", token: "k".repeat(32) };
+    const bad = await createAsk({ key: "fm:bad-row", push: "none", callback });
+    const good = await createAsk({ key: "fm:good-row", push: "none", callback });
+    await db
+      .update(schema.boardAsk)
+      .set({ callbackTokenCiphertext: "synthetic-corrupt-ciphertext" })
+      .where(eq(schema.boardAsk.id, bad.body.ask.id));
+    await agent("/asks/fm:bad-row/cancel", FM, { method: "POST", body: JSON.stringify({}) });
+    await agent("/asks/fm:good-row/cancel", FM, { method: "POST", body: JSON.stringify({}) });
+
+    await expect(boardCallbacks.deliverBoardCallbacks()).resolves.toBeUndefined();
+    const [badRow] = await db
+      .select()
+      .from(schema.boardAsk)
+      .where(eq(schema.boardAsk.id, bad.body.ask.id));
+    expect(badRow).toMatchObject({
+      callbackStatus: "retrying",
+      callbackAttempts: 1,
+      callbackLastError: "internal_error",
+    });
+    const [goodRow] = await db
+      .select()
+      .from(schema.boardAsk)
+      .where(eq(schema.boardAsk.id, good.body.ask.id));
+    expect(goodRow).toMatchObject({ callbackStatus: "delivered", callbackAttempts: 1 });
+    expect(callbacks.calls.map((call) => call.body.askId)).toEqual([good.body.ask.id]);
+  });
+
+  it("re-resolves on each retry and stops once the name rebinds to a private address", async () => {
+    const request = stubCallbackTransport();
+    callbacks.status = 503;
+    const callback = { url: "https://rebind.example/hook", token: "k".repeat(32) };
+    const { body } = await createAsk({ key: "fm:rebind", push: "none", callback });
+    await agent("/asks/fm:rebind/cancel", FM, { method: "POST", body: JSON.stringify({}) });
+    await boardCallbacks.deliverBoardCallbacks();
+    const [first] = await db
+      .select()
+      .from(schema.boardAsk)
+      .where(eq(schema.boardAsk.id, body.ask.id));
+    expect(first).toMatchObject({ callbackStatus: "retrying", callbackLastError: "HTTP 503" });
+    expect(request).toHaveBeenCalledOnce();
+    expect(request.mock.calls[0]?.[0]).toMatchObject({
+      host: "93.184.216.34",
+      servername: "rebind.example",
+    });
+
+    vi.spyOn(outbound, "resolve").mockImplementation(async () => [
+      { address: "10.0.0.5", family: 4 },
+    ]);
+    await db
+      .update(schema.boardAsk)
+      .set({ callbackNextAttemptAt: new Date(0) })
+      .where(eq(schema.boardAsk.id, body.ask.id));
+    await boardCallbacks.deliverBoardCallbacks();
+    const [second] = await db
+      .select()
+      .from(schema.boardAsk)
+      .where(eq(schema.boardAsk.id, body.ask.id));
+    expect(second).toMatchObject({
+      callbackStatus: "failed",
+      callbackAttempts: 2,
+      callbackLastError: "blocked_destination",
+    });
+    expect(request).toHaveBeenCalledOnce();
   });
 
   it("announces changes on the stream", async () => {

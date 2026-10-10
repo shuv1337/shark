@@ -1,11 +1,11 @@
 import { and, eq, inArray, isNotNull, lte } from "drizzle-orm";
 import { db } from "../db";
 import { interaction } from "../db/schema";
-import { decryptCallbackToken } from "./token";
+import { attemptCallback, callbackProgress } from "./callback-delivery";
 
-const RETRY_DELAYS_MS = [0, 30_000, 120_000, 600_000, 3_600_000] as const;
 let running: Promise<void> | null = null;
 
+/** Never rejects, so fire-and-forget callers can't cause an unhandled rejection. */
 export function deliverInteractionCallbacks(): Promise<void> {
   if (running) return running;
   running = (async () => {
@@ -25,58 +25,33 @@ export function deliverInteractionCallbacks(): Promise<void> {
       .limit(20);
 
     for (const row of rows) {
-      const attempt = row.callbackAttempts + 1;
-      try {
-        const response = await fetch(row.callbackUrl as string, {
-          method: "POST",
-          redirect: "manual",
-          signal: AbortSignal.timeout(10_000),
-          headers: {
-            authorization: `Bearer ${decryptCallbackToken(row.callbackTokenCiphertext as string)}`,
-            "content-type": "application/json",
-            "user-agent": "Hark-Callbacks/1",
-          },
-          body: JSON.stringify({
-            type: "notification.response",
-            eventId: row.eventId,
-            correlationId: row.correlationId,
-            kind: row.kind,
-            status: row.status,
-            action: row.kind === "reply" ? "reply" : row.response,
-            text: row.kind === "reply" ? row.response : null,
-            respondedAt: row.respondedAt?.toISOString() ?? null,
-          }),
-        });
-        if (response.ok) {
-          await db
-            .update(interaction)
-            .set({
-              callbackStatus: "delivered",
-              callbackAttempts: attempt,
-              callbackDeliveredAt: new Date(),
-              callbackLastError: null,
-              callbackNextAttemptAt: null,
-            })
-            .where(eq(interaction.id, row.id));
-          continue;
-        }
-        throw new Error(`HTTP ${response.status}`);
-      } catch (error) {
-        const delay = RETRY_DELAYS_MS[attempt];
-        await db
-          .update(interaction)
-          .set({
-            callbackStatus: delay === undefined ? "failed" : "retrying",
-            callbackAttempts: attempt,
-            callbackLastError: error instanceof Error ? error.message.slice(0, 200) : "Failed",
-            callbackNextAttemptAt: delay === undefined ? null : new Date(Date.now() + delay),
-          })
-          .where(eq(interaction.id, row.id));
-      }
+      // Re-validated and re-pinned on every attempt, not only when the webhook
+      // was accepted.
+      const outcome = await attemptCallback({
+        ...row,
+        payload: () => ({
+          type: "notification.response",
+          eventId: row.eventId,
+          correlationId: row.correlationId,
+          kind: row.kind,
+          status: row.status,
+          action: row.kind === "reply" ? "reply" : row.response,
+          text: row.kind === "reply" ? row.response : null,
+          respondedAt: row.respondedAt?.toISOString() ?? null,
+        }),
+      });
+      await db
+        .update(interaction)
+        .set(callbackProgress(row.callbackAttempts + 1, outcome))
+        .where(eq(interaction.id, row.id));
     }
-  })().finally(() => {
-    running = null;
-  });
+  })()
+    .catch((error) => {
+      console.error("[callbacks] Interaction callback batch failed", error);
+    })
+    .finally(() => {
+      running = null;
+    });
   return running;
 }
 
