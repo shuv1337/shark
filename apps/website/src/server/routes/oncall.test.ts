@@ -1029,6 +1029,68 @@ describe("undelivered pages", () => {
     await call("POST", `/api/pages/${later.page.id}/resolve`, {});
   });
 
+  it("pages nobody new once the page is acknowledged during an escalation step", async () => {
+    const { and, eq } = await import("drizzle-orm");
+    const now = new Date();
+    await db.insert(schema.user).values({
+      id: "user_d",
+      name: "Dee",
+      email: "user_d@example.com",
+      emailVerified: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.device).values({
+      id: "dev_user_d",
+      userId: "user_d",
+      expoPushToken: "ExponentPushToken[user_d]",
+      createdAt: now,
+      lastSeenAt: now,
+    });
+    await db
+      .insert(schema.teamMember)
+      .values({ teamId: TEAM_ID, userId: "user_d", role: "member", joinedAt: now });
+    try {
+      const group = await createGroup(
+        "Ack mid-step",
+        [{ afterMinutes: 30, target: "group" }],
+        ["user_a", "user_b", "user_d"],
+      );
+      const created = (await (
+        await page(group.id, { title: "Mid-step" })
+      ).json()) as OncallPageCreateResponse;
+      expect(pushesTo("user_a")).toHaveLength(1);
+
+      // The step pages Ben then Dee; Ben acknowledges while his push is being sent.
+      duringSend.run = async () => {
+        const [row] = await db
+          .select()
+          .from(schema.oncallPage)
+          .where(eq(schema.oncallPage.id, created.page.id));
+        if (row) await oncall.acknowledgePage(row, "user_b");
+      };
+      await runDueEscalation(created.page.id);
+      expect(duringSend.run).toBeNull();
+      expect(pushesTo("user_b")).toHaveLength(1);
+      expect(pushesTo("user_d")).toHaveLength(0);
+      const [dee] = await db
+        .select()
+        .from(schema.oncallPageRecipient)
+        .where(
+          and(
+            eq(schema.oncallPageRecipient.pageId, created.page.id),
+            eq(schema.oncallPageRecipient.userId, "user_d"),
+          ),
+        );
+      expect(dee).toBeUndefined();
+      await call("POST", `/api/pages/${created.page.id}/resolve`, {});
+    } finally {
+      await db
+        .delete(schema.teamMember)
+        .where(and(eq(schema.teamMember.teamId, TEAM_ID), eq(schema.teamMember.userId, "user_d")));
+    }
+  });
+
   it("stops retrying once the page is acknowledged", async () => {
     const group = await createGroup("Solo acked", [], ["user_a"]);
     failing.add("ExponentPushToken[user_a]");

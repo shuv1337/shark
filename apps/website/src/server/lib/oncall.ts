@@ -382,19 +382,31 @@ async function claimDelivery(
   now: number,
 ): Promise<string | null> {
   const responseToken = generatePageResponseToken();
-  const inserted = await db
-    .insert(oncallPageRecipient)
-    .values({
-      pageId,
-      userId,
-      step,
-      responseTokenHash: hashPageResponseToken(responseToken),
-      deliveryStatus: "pending",
-      notifiedAt: new Date(now),
-    })
-    .onConflictDoNothing()
-    .returning({ userId: oncallPageRecipient.userId });
-  if (inserted.length > 0) return responseToken;
+  // Synchronous, so a page acknowledged or resolved meanwhile gains no new recipient.
+  const outcome = db.transaction((tx) => {
+    const open = tx
+      .select({ id: oncallPage.id })
+      .from(oncallPage)
+      .where(and(eq(oncallPage.id, pageId), eq(oncallPage.status, "triggered")))
+      .get();
+    if (!open) return "closed" as const;
+    const inserted = tx
+      .insert(oncallPageRecipient)
+      .values({
+        pageId,
+        userId,
+        step,
+        responseTokenHash: hashPageResponseToken(responseToken),
+        deliveryStatus: "pending",
+        notifiedAt: new Date(now),
+      })
+      .onConflictDoNothing()
+      .returning({ userId: oncallPageRecipient.userId })
+      .get();
+    return inserted ? ("inserted" as const) : ("exists" as const);
+  });
+  if (outcome === "closed") return null;
+  if (outcome === "inserted") return responseToken;
   return reclaimDelivery(pageId, userId, now);
 }
 
