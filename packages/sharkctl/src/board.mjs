@@ -125,7 +125,7 @@ async function waitForAsk(config, key, timeoutSeconds, runtime) {
     const remaining = Math.max(0, (deadline - now()) / 1000);
     body = await scopedRequest(
       config,
-      `/api/agent/board/asks/${encodeURIComponent(key)}/wait?timeout=${Math.min(25, remaining)}`,
+      `/api/agent/board/asks/${encodeURIComponent(key)}/wait?timeout=${Math.min(25, Math.ceil(remaining))}`,
     );
     if (body.ask.status !== "open") return { ...body, timedOut: false };
     if (now() >= deadline) return { ...body, timedOut: true };
