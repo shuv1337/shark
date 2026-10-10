@@ -37,6 +37,28 @@ the value above the real number of appending proxies, or a forged entry becomes 
 The server also sweeps OAuth storage hourly: expired access and refresh tokens, and anonymous
 registered clients older than a day that never gained a consent, token, or grant.
 
+## Per-minute rate limits
+
+`SERVICE_RATE_LIMIT_PER_MINUTE` bounds each webhook service and each agent token (the requester
+window), and `ACCOUNT_RATE_LIMIT_PER_MINUTE` bounds an account's total, both over the last 60
+seconds of recorded work (`apps/website/src/server/lib/rate-windows.ts`). Each path checks the
+windows early, before any side effect. The paths that push to people then check again in the same
+synchronous better-sqlite3 transaction that inserts the counted row, so concurrent requests
+cannot overshoot: webhook notifications and pages, agent notifications, interactions, agent pages
+(`/api/agent/oncall/:id/pages` and `/api/agent/notifications` with `oncall`), and board ask
+pushes. Each on-call group also accepts at most 10 new pages a minute, enforced the same way. The
+guarantee assumes the deployed shape: one app process on one SQLite connection.
+
+Accepted residuals, which remain check-then-act and can be overshot by a concurrent burst:
+
+- Live Activity starts, updates, and ends, from agent tokens and activity webhooks. A start can
+  end blocking activities before its rows are inserted, so reserving capacity first would mean
+  moving those side effects into the transaction. These pushes reach only the owner's devices, each
+  device holds one active activity, and updates and ends compare-and-swap the activity sequence, so
+  a burst against one activity records one operation.
+- Agent app sharing and team app creation check the agent budget but record nothing it counts.
+  Team notices have their own per-person cap.
+
 ## Admission and identity
 
 Sign in with Apple is the only provider. Add exactly the verified real or Apple relay email returned
