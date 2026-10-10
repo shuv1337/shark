@@ -179,7 +179,9 @@ operator review:
 - `/sw.js` returns 200 with JavaScript content, and a signed-in browser can enable, test, disable,
   and re-enable notifications without creating duplicate active subscriptions.
 - Web Push responses with an expired subscription status deactivate only that browser target; they
-  do not prevent delivery to healthy iPhone or browser targets.
+  do not prevent delivery to healthy iPhone or browser targets. A push service that resolves to a
+  non-public address, fails DNS, or doesn't finish resolution plus the request within 10 seconds
+  is reported as a delivery error for that target and leaves the subscription active.
 - A signed macOS app can complete device-code authorization, register its APNs token, refresh the
   server-backed inbox, and submit each approval/reply at most once. Private-preview mode must redact
   APNs alert content and omit notification actions.

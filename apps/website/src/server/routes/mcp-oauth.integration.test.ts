@@ -306,6 +306,42 @@ describe("MCP OAuth end to end", () => {
     expect(shown).toMatchObject({ client_id: clientB, client_name: "Prelogin B" });
     expect(shown).not.toHaveProperty("contacts");
     expect(JSON.stringify(shown)).not.toContain("synthetic-owner@example.com");
+
+    const sessionView = await app.request(
+      `/api/auth/oauth2/public-client?client_id=${encodeURIComponent(clientB)}`,
+      signedIn(),
+    );
+    expect(sessionView.status).toBe(200);
+    const sessionShown = (await sessionView.json()) as Record<string, unknown>;
+    expect(sessionShown).toMatchObject({ client_id: clientB, client_name: "Prelogin B" });
+    expect(sessionShown).not.toHaveProperty("contacts");
+    expect(JSON.stringify(sessionShown)).not.toContain("synthetic-owner@example.com");
+  });
+
+  it("rejects malformed or unsigned prelogin requests without revealing the client", async () => {
+    const clientId = await register("Prelogin Malformed");
+    const query = await authorize(clientId, pkce().challenge);
+    const tampered = new URLSearchParams(query);
+    tampered.set("sig", `${tampered.get("sig")?.slice(0, -2)}AA`);
+    const scopeChanged = new URLSearchParams(query);
+    scopeChanged.set("scope", "teams:read teams:write");
+
+    for (const body of [
+      "{not json",
+      JSON.stringify({ client_id: 42, oauth_query: query }),
+      JSON.stringify({ client_id: clientId, oauth_query: 42 }),
+      JSON.stringify({ client_id: clientId, oauth_query: tampered.toString() }),
+      JSON.stringify({ client_id: clientId, oauth_query: scopeChanged.toString() }),
+    ]) {
+      const response = await app.request("/api/auth/oauth2/public-client-prelogin", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: ORIGIN },
+        body,
+      });
+      expect(response.status, body).toBeGreaterThanOrEqual(400);
+      expect(response.status, body).toBeLessThan(500);
+      expect(await response.text(), body).not.toContain("Prelogin Malformed");
+    }
   });
 
   it("requires the PKCE verifier and spends a code on its first use", async () => {

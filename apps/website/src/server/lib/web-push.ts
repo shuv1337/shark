@@ -4,7 +4,13 @@ import { isKnownWebPushEndpoint, type WebPushSubscriptionInput } from "@hark/con
 import webpush from "web-push";
 import type { webPushSubscription } from "../db/schema";
 import { env } from "../env";
-import { outbound, pinAddresses, type ResolvedAddress } from "./outbound";
+import {
+  abortable,
+  BlockedDestinationError,
+  outbound,
+  pinAddresses,
+  type ResolvedAddress,
+} from "./outbound";
 import {
   fitPushPreview,
   PushPreviewTooLargeError,
@@ -75,6 +81,7 @@ export async function sendWebPushNotifications(
     return result;
   }
 
+  const lookups = new Map<string, Promise<ResolvedAddress[]>>();
   await Promise.all(
     subscriptions.map(async (row) => {
       let subscription: WebPushSubscriptionInput;
@@ -94,44 +101,85 @@ export async function sendWebPushNotifications(
       }
       // web-push re-parses with legacy `url.parse`; the canonical form parses the same way there.
       const endpoint = new URL(subscription.endpoint).href;
-      let agent: Agent;
+      // One deadline covers resolution and the request; web-push's own timeout only starts once
+      // its socket exists, so it can't bound a stalled resolver.
+      const deadline = Date.now() + WEB_PUSH_TIMEOUT_MS;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), WEB_PUSH_TIMEOUT_MS);
+      let agent: Agent | undefined;
       try {
-        agent = await pinnedAgent(endpoint);
-      } catch {
-        result.errors.push(`Browser subscription ${row.id} resolved to a blocked destination`);
-        return;
-      }
-      try {
-        await webpush.sendNotification({ ...subscription, endpoint }, serialized, {
-          TTL: 300,
-          urgency: "high",
-          agent,
-          timeout: 10_000,
-        });
-        result.accepted += 1;
-      } catch (error) {
-        const statusCode =
-          typeof error === "object" && error && "statusCode" in error
-            ? Number(error.statusCode)
-            : undefined;
-        if (statusCode === 404 || statusCode === 410) {
-          result.staleSubscriptionIds.push(row.id);
+        try {
+          agent = await abortable(pinnedAgent(endpoint, lookups), controller.signal);
+        } catch (error) {
+          result.errors.push(`Browser subscription ${row.id} ${resolveFailure(error, controller)}`);
+          return;
         }
-        result.errors.push(error instanceof Error ? error.message : "Browser push request failed");
+        try {
+          await abortable(
+            webpush.sendNotification({ ...subscription, endpoint }, serialized, {
+              TTL: 300,
+              urgency: "high",
+              agent,
+              timeout: Math.max(1, deadline - Date.now()),
+            }),
+            controller.signal,
+          );
+          result.accepted += 1;
+        } catch (error) {
+          if (controller.signal.aborted) {
+            result.errors.push(`Browser subscription ${row.id} timed out`);
+            return;
+          }
+          const statusCode =
+            typeof error === "object" && error && "statusCode" in error
+              ? Number(error.statusCode)
+              : undefined;
+          if (statusCode === 404 || statusCode === 410) {
+            result.staleSubscriptionIds.push(row.id);
+          }
+          result.errors.push(
+            error instanceof Error ? error.message : "Browser push request failed",
+          );
+        }
+      } finally {
+        clearTimeout(timer);
+        agent?.destroy();
       }
     }),
   );
   return result;
 }
 
+/** End-to-end budget for one subscription: DNS resolution plus the push request. */
+export const WEB_PUSH_TIMEOUT_MS = 10_000;
+
+/** Neither case deactivates the row: the push service may be reachable again on the next send. */
+function resolveFailure(error: unknown, controller: AbortController): string {
+  if (controller.signal.aborted) return "timed out resolving its push service";
+  if (error instanceof BlockedDestinationError) return "resolved to a blocked destination";
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return typeof code === "string" && /^[A-Z_]+$/.test(code)
+    ? `could not resolve its push service (${code})`
+    : "could not resolve its push service";
+}
+
 /**
  * An agent that only connects to the addresses validated here, so a push
  * service name that resolves somewhere private (or rebinds between check and
  * connect) is never reached. TLS SNI and certificate checks keep the hostname.
+ * `lookups` shares one resolution per hostname across a fan-out.
  */
-async function pinnedAgent(endpoint: string): Promise<Agent> {
+async function pinnedAgent(
+  endpoint: string,
+  lookups: Map<string, Promise<ResolvedAddress[]>>,
+): Promise<Agent> {
   const hostname = new URL(endpoint).hostname;
-  const records = await pinAddresses(hostname, outbound.resolve, outbound.isAllowedAddress);
+  let pending = lookups.get(hostname);
+  if (!pending) {
+    pending = pinAddresses(hostname, outbound.resolve, outbound.isAllowedAddress);
+    lookups.set(hostname, pending);
+  }
+  const records = await pending;
   const lookup: LookupFunction = (_hostname, options, callback) => {
     if (options.all) {
       callback(null, records);

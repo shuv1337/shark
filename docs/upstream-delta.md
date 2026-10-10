@@ -234,7 +234,11 @@ Deliberate merge resolutions:
   allowlisted host is then resolved through `lib/outbound.ts` and refused, without deactivating
   the row, if any record isn't public, and `web-push` gets an `https.Agent` whose `lookup`
   returns only the validated records, so TLS and `Host` keep the hostname while the socket
-  can't be rebound. Removing or testing an existing subscription still accepts any HTTPS
+  can't be rebound. Each subscription gets one 10-second deadline (`WEB_PUSH_TIMEOUT_MS` in
+  `lib/web-push.ts`) covering both the DNS resolution and the push request, since `web-push`'s
+  own `timeout` only starts once its socket exists. Subscriptions on the same push host share one
+  resolution per fan-out. A blocked address, a resolver failure, or the deadline expiring is
+  reported as a delivery error and never deactivates the row. Removing or testing an existing subscription still accepts any HTTPS
   endpoint, so a row stored before the allowlist can be deleted.
 - Dependency footprint: `@modelcontextprotocol/sdk` is a production dependency of
   `@hark/website`. Per `pnpm-lock.yaml` it brings about 90 transitive packages, 54 of which

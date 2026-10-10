@@ -649,6 +649,27 @@ describe("isKnownWebPushEndpoint", () => {
       expect(isKnownWebPushEndpoint(endpoint), endpoint).toBe(false);
     }
   });
+
+  it("matches hostnames exactly after WHATWG normalization, without trailing dots or lookalikes", () => {
+    for (const endpoint of [
+      // Fullwidth letters normalize to the real ASCII hostname.
+      "https://\uff46\uff43\uff4d.googleapis.com/fcm/send/synthetic",
+      "https://xn--synthetic-tld.push.apple.com/synthetic",
+    ]) {
+      expect(isKnownWebPushEndpoint(endpoint), endpoint).toBe(true);
+    }
+    for (const endpoint of [
+      "https://fcm.googleapis.com./fcm/send/synthetic",
+      "https://web.push.apple.com./synthetic",
+      "https://wns2-synthetic.notify.windows.com./w/synthetic",
+      // Cyrillic homoglyphs become punycode, not the allowlisted name.
+      "https://f\u0441m.googleapis.com/fcm/send/synthetic",
+      "https://web.push.\u0430pple.com/synthetic",
+      "https://xn--fcm-synthetic.googleapis.com/fcm/send/synthetic",
+    ]) {
+      expect(isKnownWebPushEndpoint(endpoint), endpoint).toBe(false);
+    }
+  });
 });
 
 describe("webPushSubscriptionRegisterSchema", () => {

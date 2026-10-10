@@ -76,7 +76,8 @@ export function isKnownWebPushEndpoint(value: string): boolean {
     return false;
   }
   if (url.protocol !== "https:" || url.username || url.password) return false;
-  if (url.port !== "" && url.port !== "443") return false;
+  // WHATWG URL already normalizes an explicit :443 on https to "".
+  if (url.port !== "") return false;
   const hostname = url.hostname.toLowerCase();
   return WEB_PUSH_SERVICE_HOSTS.some((pattern) =>
     pattern.startsWith("*.") ? hostname.endsWith(pattern.slice(1)) : hostname === pattern,

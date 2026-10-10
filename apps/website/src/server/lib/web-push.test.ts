@@ -10,6 +10,7 @@ process.env.VAPID_SUBJECT = "mailto:operator@example.com";
 
 const mock = vi.hoisted(() => ({
   statusCode: 201,
+  hang: false,
   payloads: [] as string[],
   endpoints: [] as string[],
   agents: [] as Agent[],
@@ -29,6 +30,7 @@ vi.mock("web-push", () => ({
       mock.endpoints.push(subscription.endpoint);
       mock.agents.push(options.agent);
       mock.payloads.push(payload);
+      if (mock.hang) await new Promise(() => undefined);
       if (mock.statusCode !== 201) {
         throw Object.assign(new Error("push rejected"), { statusCode: mock.statusCode });
       }
@@ -39,7 +41,9 @@ vi.mock("web-push", () => ({
 
 describe("sendWebPushNotifications", () => {
   beforeEach(() => {
+    vi.useRealTimers();
     mock.statusCode = 201;
+    mock.hang = false;
     mock.payloads.length = 0;
     mock.endpoints.length = 0;
     mock.agents.length = 0;
@@ -138,6 +142,7 @@ describe("sendWebPushNotifications", () => {
     const saved = structuredClone(input);
     const result = await sendWebPushNotifications(await rows(), input);
     expect(result).toEqual({ accepted: 2, errors: [], staleSubscriptionIds: [] });
+    expect(outbound.resolve).toHaveBeenCalledTimes(1);
     expect(mock.payloads).toHaveLength(2);
     for (const serialized of mock.payloads) {
       expect(Buffer.byteLength(serialized, "utf8")).toBeLessThanOrEqual(
@@ -232,6 +237,59 @@ describe("sendWebPushNotifications", () => {
       errors: ["Browser subscription web_rebound resolved to a blocked destination"],
       staleSubscriptionIds: [],
     });
+  });
+
+  it("gives up on a resolver that never answers without sending or pruning", async () => {
+    vi.spyOn(outbound, "resolve").mockReturnValue(new Promise(() => undefined));
+    const { sendWebPushNotifications, WEB_PUSH_TIMEOUT_MS } = await import("./web-push");
+    const subscription = await row("web_stalled_dns", "https://fcm.googleapis.com/fcm/send/x");
+    vi.useFakeTimers();
+    let settled = false;
+    const pending = sendWebPushNotifications([subscription], { title: "SHark", body: "Synthetic" });
+    void pending.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(WEB_PUSH_TIMEOUT_MS - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await pending).toEqual({
+      accepted: 0,
+      errors: ["Browser subscription web_stalled_dns timed out resolving its push service"],
+      staleSubscriptionIds: [],
+    });
+    expect(mock.endpoints).toEqual([]);
+  });
+
+  it("gives up on a push request that never answers within the same deadline", async () => {
+    mock.hang = true;
+    const { sendWebPushNotifications, WEB_PUSH_TIMEOUT_MS } = await import("./web-push");
+    const subscription = await row("web_stalled_send", "https://web.push.apple.com/synthetic");
+    vi.useFakeTimers();
+    const pending = sendWebPushNotifications([subscription], { title: "SHark", body: "Synthetic" });
+    await vi.advanceTimersByTimeAsync(WEB_PUSH_TIMEOUT_MS);
+    expect(await pending).toEqual({
+      accepted: 0,
+      errors: ["Browser subscription web_stalled_send timed out"],
+      staleSubscriptionIds: [],
+    });
+    expect(mock.endpoints).toEqual(["https://web.push.apple.com/synthetic"]);
+  });
+
+  it("reports a resolver failure as such, not as a blocked destination, and keeps the row", async () => {
+    vi.spyOn(outbound, "resolve").mockRejectedValue(
+      Object.assign(new Error("getaddrinfo ENOTFOUND fcm.googleapis.com"), { code: "ENOTFOUND" }),
+    );
+    const { sendWebPushNotifications } = await import("./web-push");
+    const result = await sendWebPushNotifications(
+      [await row("web_dns_down", "https://fcm.googleapis.com/fcm/send/synthetic")],
+      { title: "SHark", body: "Synthetic" },
+    );
+    expect(result).toEqual({
+      accepted: 0,
+      errors: ["Browser subscription web_dns_down could not resolve its push service (ENOTFOUND)"],
+      staleSubscriptionIds: [],
+    });
+    expect(mock.endpoints).toEqual([]);
   });
 
   it("connects only to the validated addresses", async () => {
