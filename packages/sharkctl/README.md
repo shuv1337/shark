@@ -190,8 +190,10 @@ shifts.
 pages whoever is on call (or the whole group when nobody is) and escalates until someone
 acknowledges. A repeat with the same `--dedup-key` merges into the open page. `notify <body>
 --oncall <group_id>` does the same from `notify`, using `--idempotency-key` as the dedup key. Both
-exit `7` when the page reached no device. `pages list --team <team_id> [--all] [--limit <n>]
-[--cursor <c>]`, `pages get <page_id>`, and `pages resolve <page_id> [--note <text>]` follow up.
+exit `7` when no push was accepted yet. The page still exists: it keeps escalating and SHark
+retries the push, so do not raise it again (reuse the dedup key if you must re-send).
+`pages list --team <team_id> [--all] [--limit <n>] [--cursor <c>]`, `pages get <page_id>`, and
+`pages resolve <page_id> [--note <text>]` follow up.
 Acknowledging and escalating are deliberately human-only: an acknowledgement tells the team a
 person is on it.
 

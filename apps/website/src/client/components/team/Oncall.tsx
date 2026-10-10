@@ -187,11 +187,14 @@ function GroupCard({
         title: `Test page from ${viewerName}`,
         body: "This is a test. Acknowledge it to confirm on-call works.",
       });
-      const notified = response.page.notified[0]?.name ?? target;
+      const notified = response.page.notified[0]?.name;
+      const unreached = response.page.undelivered?.[0]?.name ?? target;
       setStatus(
         response.deduplicated
           ? "Merged into the open test page."
-          : `Test page sent to ${notified}. Acknowledge it from the iPhone or below.`,
+          : notified
+            ? `Test page sent to ${notified}. Acknowledge it from the iPhone or below.`
+            : `Could not reach ${unreached}'s iPhone yet. Escalation continues, and SHark retries the push for a day unless it is acknowledged.`,
       );
       onPaged();
     } catch (err) {

@@ -416,12 +416,15 @@ export const pageResponsesRoute = new Hono()
     if (!parsed.success) return c.json({ error: "Invalid page response" }, 400);
     const found = await pageRecipientByToken(c.req.param("id"), parsed.data.responseToken);
     if (!found) return c.json({ error: "Page not found" }, 404);
-    if (found.usedAt || !(await claimPageResponseToken(found.page.id, found.userId))) {
+    if (
+      found.usedAt ||
+      !(await claimPageResponseToken(found.page.id, found.userId, parsed.data.responseToken))
+    ) {
       return spentCredential(c, found.page);
     }
     const outcome = await acknowledgePage(found.page, found.userId);
     if (!outcome.ok) {
-      await releasePageResponseToken(found.page.id, found.userId);
+      await releasePageResponseToken(found.page.id, found.userId, parsed.data.responseToken);
       return c.json({ error: outcome.error, status: outcome.page.status }, 409);
     }
     return c.json({ ok: true, status: outcome.page.status });
@@ -431,12 +434,15 @@ export const pageResponsesRoute = new Hono()
     if (!parsed.success) return c.json({ error: "Invalid page response" }, 400);
     const found = await pageRecipientByToken(c.req.param("id"), parsed.data.responseToken);
     if (!found) return c.json({ error: "Page not found" }, 404);
-    if (found.usedAt || !(await claimPageResponseToken(found.page.id, found.userId))) {
+    if (
+      found.usedAt ||
+      !(await claimPageResponseToken(found.page.id, found.userId, parsed.data.responseToken))
+    ) {
       return spentCredential(c, found.page);
     }
     const outcome = await escalatePage(found.page.id, true);
     if (!outcome.ok) {
-      await releasePageResponseToken(found.page.id, found.userId);
+      await releasePageResponseToken(found.page.id, found.userId, parsed.data.responseToken);
       return c.json(
         { error: outcome.error, status: outcome.page?.status ?? found.page.status },
         outcome.status,

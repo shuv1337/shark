@@ -180,6 +180,9 @@ importers:
       jose:
         specifier: ^6.2.4
         version: 6.2.4
+      undici:
+        specifier: ^7.28.0
+        version: 7.28.0
       web-push:
         specifier: ^3.6.7
         version: 3.6.7
@@ -280,6 +283,9 @@ importers:
       expo-server-sdk:
         specifier: ^6.1.0
         version: 6.1.0
+      undici:
+        specifier: ^7.28.0
+        version: 7.28.0
 
 packages:
 

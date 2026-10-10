@@ -6,7 +6,8 @@ const shared = {
   target: "node22",
   format: "esm",
   // better-sqlite3 is a native module; expo-server-sdk reads its own package.json at runtime.
-  external: ["better-sqlite3", "expo-server-sdk"],
+  // undici stays external so the Expo client's dispatcher comes from the same copy as its fetch.
+  external: ["better-sqlite3", "expo-server-sdk", "undici"],
   banner: {
     js: [
       "import { createRequire as __createRequire } from 'node:module';",

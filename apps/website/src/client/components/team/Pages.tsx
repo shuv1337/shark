@@ -163,10 +163,15 @@ function pageProgress(page: OncallPageDto): string {
         }`
       : "Acknowledged";
   }
-  const notified =
+  const paged =
     page.notified.length > 0
       ? `Paged ${page.notified.map((person) => person.name).join(", ")}`
       : "Paging";
+  const undelivered = page.undelivered ?? [];
+  const notified =
+    undelivered.length > 0
+      ? `${paged} · not reached yet: ${undelivered.map((person) => person.name).join(", ")}`
+      : paged;
   return page.nextEscalationAt
     ? `${notified} · escalates ${relativeFuture(page.nextEscalationAt)}`
     : notified;

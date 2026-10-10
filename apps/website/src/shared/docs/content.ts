@@ -1304,13 +1304,17 @@ sharkctl apps remove app_...`,
                 name: "target",
                 type: "next | group",
                 detail:
-                  "`next` pages the next person in the rotation; `group` pages everyone in it who has not been paged yet.",
+                  "`next` pages the next person in the rotation; `group` pages everyone in it whose page has not been delivered yet.",
               },
             ],
           },
           {
             kind: "p",
             text: "The default is the next person after 5 minutes, then the whole group 10 minutes later. Pages with the same `dedupKey` merge into the open page (its `repeatCount` grows) instead of paging again.",
+          },
+          {
+            kind: "p",
+            text: "Someone counts as paged only once a push to one of their iPhones is accepted. If the push fails or they have no active iPhone, the page lists them under `undelivered` and escalation steps can still reach them. SHark also retries their push after about 1 minute, then about 2, 4, and 8, then roughly every 15 minutes (each wait has up to 20% jitter), until it is delivered, someone acknowledges or resolves the page, or the page is a day old. A push Expo refuses permanently (for example, a payload that is too large) is not retried on its own. `sharkctl page` exits `7` when no push was accepted yet; the page still exists and keeps escalating, so do not raise it again.",
           },
           {
             kind: "code",

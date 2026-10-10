@@ -9,9 +9,17 @@ vi.mock("../env", () => ({
   },
 }));
 
-const delivery = vi.hoisted(() => ({ expo: vi.fn(), web: vi.fn(), macos: vi.fn() }));
+const delivery = vi.hoisted(() => ({
+  expo: vi.fn(),
+  web: vi.fn(),
+  macos: vi.fn(),
+  expoOptions: [] as unknown[],
+}));
 vi.mock("expo-server-sdk", () => ({
   Expo: class {
+    constructor(options: unknown) {
+      delivery.expoOptions.push(options);
+    }
     chunkPushNotifications(messages: unknown[]) {
       return messages.length ? [messages] : [];
     }
@@ -26,6 +34,7 @@ vi.mock("./apns", async (importOriginal) => ({
   sendNotificationPush: delivery.macos,
 }));
 
+import { Agent } from "undici";
 import { sendPushFanout, sendPushMessages } from "./push";
 import { EXPO_MESSAGE_BYTE_BUDGET, pushJsonBytes } from "./push-preview";
 import { encryptMacosApnsToken, encryptWebPushSubscription } from "./token";
@@ -45,6 +54,12 @@ describe("push delivery budgets", () => {
     );
     delivery.web.mockReset().mockResolvedValue({ statusCode: 201 });
     delivery.macos.mockReset().mockResolvedValue({ accepted: true, reason: null });
+  });
+
+  it("bounds every Expo request so one hung send cannot stall the on-call worker", async () => {
+    await sendPushMessages([{ to: "ExponentPushToken[synthetic-timeout]", body: "Body" }]);
+    expect(delivery.expoOptions).toHaveLength(1);
+    expect((delivery.expoOptions[0] as { httpAgent?: unknown }).httpAgent).toBeInstanceOf(Agent);
   });
 
   it("budgets array recipients individually and preserves skipped/stale ticket mapping", async () => {
@@ -67,6 +82,7 @@ describe("push delivery budgets", () => {
     expect(result).toEqual({
       accepted: 100,
       errors: ["Push payload metadata exceeds the 3328-byte budget", "Unregistered"],
+      errorCodes: ["MessageTooBig", "DeviceNotRegistered"],
       staleTokens: ["ExponentPushToken[stale]"],
       staleSubscriptionIds: [],
       staleMacosDeviceIds: [],
@@ -97,6 +113,7 @@ describe("push delivery budgets", () => {
     expect(result).toEqual({
       accepted: 0,
       errors: ["Push payload metadata exceeds the 3328-byte budget"],
+      errorCodes: ["MessageTooBig"],
       staleTokens: [],
       staleSubscriptionIds: [],
       staleMacosDeviceIds: [],
