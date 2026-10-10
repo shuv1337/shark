@@ -841,6 +841,81 @@ describe("work re-posts", () => {
   });
 });
 
+describe("waiting-ask links", () => {
+  const putWork = async (body: Record<string, unknown>) => {
+    const response = await agent("/work", FM, { method: "PUT", body: JSON.stringify(body) });
+    expect(response.status).toBeLessThan(300);
+    return ((await response.json()) as { work: { waitingAskId: string | null } }).work;
+  };
+  const stored = async (key: string) => {
+    const [row] = await db
+      .select()
+      .from(schema.boardWorkItem)
+      .where(eq(schema.boardWorkItem.workKey, key));
+    if (!row) throw new Error("missing synthetic work item");
+    return row;
+  };
+  /** A work item parked on a fresh open ask, the shape every case below starts from. */
+  const blockOn = async (workKey: string, askKey: string, askOverrides = {}) => {
+    const { body } = await createAsk({ key: askKey, ...askOverrides });
+    const work = await putWork({
+      key: workKey,
+      title: "Blocked on a question",
+      state: "blocked",
+      waitingAskKey: askKey,
+    });
+    expect(work.waitingAskId).toBe(body.ask.id);
+    return body.ask;
+  };
+
+  it("drops the link when the captain answers, and leaves the state to the agent", async () => {
+    const ask = await blockOn("fm:link:answered", "fm:link:answered:ask");
+    const answered = await session(`/asks/${ask.id}/answer`, {
+      method: "POST",
+      body: JSON.stringify({ digest: ask.digest, optionId: "ship" }),
+    });
+    expect(answered.status).toBe(200);
+    expect(await stored("fm:link:answered")).toMatchObject({
+      waitingAskId: null,
+      state: "blocked",
+    });
+  });
+
+  it("drops the link when the agent cancels the ask", async () => {
+    await blockOn("fm:link:cancelled", "fm:link:cancelled:ask");
+    const cancelled = await agent("/asks/fm:link:cancelled:ask/cancel", FM, {
+      method: "POST",
+      body: JSON.stringify({ reason: "Decided in chat" }),
+    });
+    expect(cancelled.status).toBe(200);
+    expect(await stored("fm:link:cancelled")).toMatchObject({
+      waitingAskId: null,
+      state: "blocked",
+    });
+  });
+
+  it("drops the link when the sweep expires the ask", async () => {
+    await blockOn("fm:link:expired", "fm:link:expired:ask", { expiresInSeconds: 60 });
+    expect(await board.sweepExpiredAsks(new Date(Date.now() + 120_000))).toBe(1);
+    expect(await stored("fm:link:expired")).toMatchObject({ waitingAskId: null, state: "blocked" });
+  });
+
+  it("leaves a work item waiting on a different ask alone", async () => {
+    await blockOn("fm:link:other", "fm:link:other:ask");
+    const kept = await blockOn("fm:link:kept", "fm:link:kept:ask");
+    const cancelled = await agent("/asks/fm:link:other:ask/cancel", FM, {
+      method: "POST",
+      body: JSON.stringify({ reason: "Decided in chat" }),
+    });
+    expect(cancelled.status).toBe(200);
+    expect(await stored("fm:link:other")).toMatchObject({ waitingAskId: null });
+    expect(await stored("fm:link:kept")).toMatchObject({
+      waitingAskId: kept.id,
+      state: "blocked",
+    });
+  });
+});
+
 describe("expiry and callbacks", () => {
   it("expires due asks and delivers every terminal status to the callback with retries", async () => {
     stubCallbackTransport();
