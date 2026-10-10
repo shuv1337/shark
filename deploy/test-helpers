@@ -241,16 +241,24 @@ if [[ "$1" == "compose" ]]; then
         fi
         [[ "${FAKE_ROLLBACK_FAIL:-0}" != "1" ]] || exit 1
       fi
+      # Docker can start the container before the compose client returns.
+      hang up-before-start
       if [[ -e "$FAKE_STATE/stopping" ]]; then
         echo "up-noop $SHARK_IMAGE" >>"$FAKE_STATE/log"
       else
         echo "up $SHARK_IMAGE" >>"$FAKE_STATE/log"
         printf '%s\n' "$SHARK_IMAGE" >"$FAKE_STATE/running"
       fi
+      hang up-after-start
+      if [[ "${FAKE_UP_FAIL:-0}" == "1" && "$SHARK_IMAGE" != *@sha256:1111* ]]; then
+        exit 43
+      fi
       ;;
     ps)
       [[ "${FAKE_PS_FAIL:-0}" != "1" ]] || exit 42
-      echo "fake-container"
+      if [[ -s "$FAKE_STATE/running" ]]; then
+        echo "fake-container"
+      fi
       ;;
     *) exit 64 ;;
   esac
@@ -354,9 +362,13 @@ run_deploy() {
   local root="$FAKE_STATE/root"
   install -d -m 700 "$root"
   : >"$FAKE_STATE/log"
-  printf '%s\n' "$previous_deploy_image" >"$FAKE_STATE/running"
-  printf '{"git_sha":"%s","image":"%s"}\n' "$previous_deploy_sha" "$previous_deploy_image" \
-    >"$root/current"
+  if [[ "${FIRST_DEPLOY:-0}" == "1" ]]; then
+    : >"$FAKE_STATE/running"
+  else
+    printf '%s\n' "$previous_deploy_image" >"$FAKE_STATE/running"
+    printf '{"git_sha":"%s","image":"%s"}\n' "$previous_deploy_sha" "$previous_deploy_image" \
+      >"$root/current"
+  fi
   touch "$FAKE_STATE/compose.yaml"
   if [[ "${UNWRITABLE_ROLLBACK_LOG:-0}" == "1" ]]; then
     install -d -m 700 "$root/rollback.log"
@@ -447,6 +459,21 @@ FAKE_HAS_DATABASE=1 FAKE_HANG_AT=restic run_deploy term-during-restic TERM
 assert_status 143 "SIGTERM during the Restic backup"
 assert_rolled_back "SIGTERM during the Restic backup"
 
+FAKE_HANG_AT=up-before-start run_deploy hup-during-up-before-start HUP
+assert_status 129 "SIGHUP during the new compose up, before its container started"
+assert_rolled_back "SIGHUP during the new compose up, before its container started"
+
+FAKE_HANG_AT=up-after-start run_deploy hup-during-up-after-start HUP
+assert_status 129 "SIGHUP during the new compose up, after its container started"
+assert_left_new_release "SIGHUP during the new compose up, after its container started" \
+  "$previous_deploy_sha"
+grep -q "leaving it running but unrecorded" "$FAKE_STATE/out" ||
+  fail_case "did not report the unrecorded release."
+
+FAKE_UP_FAIL=1 run_deploy up-failure
+assert_status 43 "new compose up failing after its container started"
+assert_rolled_back "new compose up failing after its container started"
+
 FAKE_HANG_AT=health run_deploy hup-during-health HUP
 assert_status 129 "SIGHUP after the new container started"
 assert_left_new_release "SIGHUP after the new container started" "$previous_deploy_sha"
@@ -491,6 +518,18 @@ FAKE_HANG_AT=attest run_deploy hup-before-stop HUP
 assert_status 129 "SIGHUP before stopping the previous container"
 [[ ! -s "$FAKE_STATE/log" ]] ||
   fail_case "touched the running container before it stopped it."
+grep -qx "Interrupted by SIGHUP before the running release was touched." "$FAKE_STATE/out" ||
+  fail_case "did not handle SIGHUP during attestation in its own trap."
+
+FIRST_DEPLOY=1 FAKE_WRONG_IMAGE=1 run_deploy first-deploy-failure
+assert_status 70 "failed first deploy"
+grep -qx "Deploy did not finish, and there is no previous release to restart." \
+  "$FAKE_STATE/out" || fail_case "did not report that there is no previous release."
+if grep -q "restarting the previous release" "$FAKE_STATE/out"; then
+  fail_case "claimed to restart a previous release on a first deploy."
+fi
+[[ "$(cat "$FAKE_STATE/log")" == "up $next_deploy_image" && ! -e "$FAKE_STATE/root/current" ]] ||
+  fail_case "touched a release on a failed first deploy."
 
 run_deploy success
 assert_status 0 "success"

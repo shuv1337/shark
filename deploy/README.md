@@ -78,10 +78,13 @@ exit before the new release is recorded in `current`. That covers a failed step 
 and `SIGTERM`. The rollback first waits for any pending stop, then starts the previous image. A
 `SIGHUP` restarts the previous release only until the new container has been started. That case
 only arises for an attached run. After that point a hangup leaves the new release running but
-unrecorded, because the new release may already have migrated the database. Verify it, then
+unrecorded, because the new release may already have migrated the database. A hangup while the
+new `compose up` is still in flight keeps the new release only if the service container is already
+running the new image, and otherwise restarts the previous release. Verify it, then
 re-run the helper for that SHA or roll back manually. Rollback output is appended to
 `/home/exedev/shark/rollback.log`, or goes to the helper's stderr if that file cannot be opened. A
-failed rollback prints `Rollback FAILED` to stderr. An automatic rollback after the new container
+failed rollback prints `Rollback FAILED` to stderr. A first deploy has no previous release, so a
+failure there says so and restarts nothing. An automatic rollback after the new container
 has started does not restore the pre-deploy database. Follow `docs/operations.md` when its
 migrations are incompatible. `SIGKILL`, a VM reboot, or a lost Docker daemon still cannot be
 handled, so a detached run remains required. The 1Password CLI runs with `OP_CACHE=false`, so the

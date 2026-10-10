@@ -54,6 +54,10 @@ rollback_previous() {
 }
 
 restart_previous_release() {
+  if [[ -z "$previous_image" ]]; then
+    echo "Deploy did not finish, and there is no previous release to restart." >&2
+    return
+  fi
   echo "Deploy did not finish; restarting the previous release (log: $rollback_log)." >&2
   local status=0
   if { : >>"$rollback_log"; } 2>/dev/null; then
@@ -67,9 +71,21 @@ restart_previous_release() {
   fi
 }
 
-# The new provenance record has fresh content, so `current` matches it only after the rename.
+# The new record carries this run's deployed_at, so in practice `current` matches it only after
+# the rename. An earlier record could match only if it was written in the same second for the same
+# SHA, image, and backup ID, and the deploy lock plus a full deploy run sit between the two.
 release_recorded() {
   ((provenance_written)) && cmp -s "$provenance_file" "$current_file"
+}
+
+new_release_running() {
+  local container_id running_image_id expected_image_id
+  container_id="$(DEPLOY_GIT_SHA="$deploy_sha" SHARK_IMAGE="$image" \
+    "${compose[@]}" ps --quiet --status running shark)" || return 1
+  [[ "$container_id" =~ ^[[:alnum:]_.-]+$ ]] || return 1
+  running_image_id="$(docker inspect --format '{{.Image}}' "$container_id")" || return 1
+  expected_image_id="$(docker image inspect --format '{{.Id}}' "$image")" || return 1
+  [[ -n "$expected_image_id" && "$running_image_id" == "$expected_image_id" ]]
 }
 
 backup_stage=""
@@ -88,12 +104,20 @@ cleanup() {
 # funnels through one EXIT handler. Once the previous container may be stopping, a failure,
 # SIGINT, or SIGTERM before the new release is recorded restarts the previous release. A SIGHUP
 # after the new release has started leaves it running, because its migrations may already have
-# changed the schema; only an explicit SIGINT/SIGTERM or a failed check rolls that back.
+# changed the schema; only an explicit SIGINT/SIGTERM or a failed check rolls that back. Docker can
+# start the new container before `compose up` returns, and bash runs the trap only once that client
+# exits, so a SIGHUP while the new `up` is in flight checks what is actually running.
 # SIGKILL still cannot be handled.
 rollback_armed=0
+new_release_issued=0
 new_release_up=0
 deploy_complete=0
 exit_signal=""
+hangup_after_new_release_started() {
+  [[ "$exit_signal" == HUP ]] || return 1
+  ((new_release_up)) && return 0
+  ((new_release_issued)) && new_release_running
+}
 on_exit() {
   local status=$?
   trap '' HUP INT TERM PIPE
@@ -101,12 +125,14 @@ on_exit() {
   if ((rollback_armed && !deploy_complete)); then
     if release_recorded; then
       echo "SHark $deploy_sha was recorded as current before the exit; leaving it running." >&2
-    elif [[ "$exit_signal" == HUP ]] && ((new_release_up)); then
+    elif hangup_after_new_release_started; then
       echo "Hangup after SHark $deploy_sha started; leaving it running but unrecorded." >&2
       echo "Verify it, then rerun shark-deploy for this SHA or roll back manually." >&2
     else
       restart_previous_release
     fi
+  elif ((!rollback_armed)) && [[ -n "$exit_signal" ]]; then
+    echo "Interrupted by SIG$exit_signal before the running release was touched." >&2
   fi
   cleanup
   exit "$status"
@@ -180,6 +206,7 @@ if docker run --rm --volume shark-data:/data "$image" sh -c 'test -f /data/hark.
   volume_backup=""
 fi
 
+new_release_issued=1
 DEPLOY_GIT_SHA="$deploy_sha" SHARK_IMAGE="$image" "${compose[@]}" up --detach
 new_release_up=1
 for _attempt in $(seq 1 30); do
