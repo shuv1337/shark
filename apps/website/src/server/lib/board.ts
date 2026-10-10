@@ -952,8 +952,23 @@ export async function upsertWork(
         waitingAskId = asks.find((ask) => ask.status === "open")?.id ?? null;
       } else if (input.waitingAskKey === null || input.state !== "blocked") {
         waitingAskId = null;
+      } else if (existing?.waitingAskId) {
+        // A resolved ask drops its links as it resolves, but a link stored before that shipped is
+        // only ever seen again here, so re-check the ask rather than carry a dead id forward.
+        const stored = tx
+          .select({ id: boardAsk.id })
+          .from(boardAsk)
+          .where(
+            and(
+              eq(boardAsk.id, existing.waitingAskId),
+              eq(boardAsk.userId, token.userId),
+              eq(boardAsk.status, "open"),
+            ),
+          )
+          .get();
+        waitingAskId = stored?.id ?? null;
       } else {
-        waitingAskId = existing?.waitingAskId ?? null;
+        waitingAskId = null;
       }
       // Omitted fields keep the stored value; null (or [] for links) clears them.
       const kept = <T>(value: T | null | undefined, stored: T | null | undefined): T | null =>
