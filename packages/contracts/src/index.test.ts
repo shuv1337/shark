@@ -928,10 +928,13 @@ describe("OAuth scopes", () => {
 
   it("mark scopes that reach people or remove setup as high impact", () => {
     for (const scope of OAUTH_HIGH_IMPACT_SCOPES) expect(OAUTH_SCOPES).toContain(scope);
-    expect(OAUTH_HIGH_IMPACT_SCOPES).toEqual(
-      expect.arrayContaining(["oncall:write", "teams:write", "services:write", "devices:write"]),
-    );
-    expect(OAUTH_HIGH_IMPACT_SCOPES).not.toContain("offline_access");
-    expect(OAUTH_HIGH_IMPACT_SCOPES).not.toContain("notifications:send");
+    expect([...OAUTH_HIGH_IMPACT_SCOPES].sort()).toEqual([
+      "apps:write",
+      "devices:write",
+      "oncall:write",
+      "services:write",
+      "teams:write",
+      "tokens:manage",
+    ]);
   });
 });

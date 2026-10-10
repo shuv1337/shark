@@ -14,7 +14,12 @@ import {
   signedOAuthQuery,
   submitOAuthConsent,
 } from "../lib/oauth-api";
-import { consentedScopes, initialConsentSelection, isHighImpactScope } from "../lib/oauth-consent";
+import {
+  canApproveConsent,
+  consentedScopes,
+  initialConsentSelection,
+  isHighImpactScope,
+} from "../lib/oauth-consent";
 
 /** Actions an MCP client can never take, whatever it is granted. */
 const HUMAN_ONLY = [
@@ -93,6 +98,7 @@ export function OAuthConsent() {
 
   const clientName = client?.client_name?.trim() || "An MCP client";
   const granted = consentedScopes(selected, offlineAccess);
+  const approvable = canApproveConsent(request?.apiScopes ?? [], selected, offlineAccess);
 
   const decide = async (accept: boolean) => {
     if (!request) return;
@@ -192,7 +198,8 @@ export function OAuthConsent() {
                     {request.apiScopes.some(isHighImpactScope) ? (
                       <p className="mt-3 text-[13px] leading-5 text-ink-faint">
                         High-impact permissions start unticked. Tick them only if you want{" "}
-                        {clientName} to have them.
+                        {clientName} to have them. Leaving these unticked means SHark will ask again
+                        next time this app connects.
                       </p>
                     ) : null}
                   </fieldset>
@@ -213,14 +220,14 @@ export function OAuthConsent() {
                     </button>
                     <button
                       className={primaryButton}
-                      disabled={busy !== null || granted.length === 0}
+                      disabled={busy !== null || !approvable}
                       onClick={() => void decide(true)}
                       type="button"
                     >
                       {busy === "approve" ? "Connecting…" : "Approve"}
                     </button>
                   </div>
-                  {granted.length === 0 ? (
+                  {!approvable ? (
                     <p className="mt-3 text-[13px] text-ink-faint">
                       Choose at least one permission, or deny.
                     </p>

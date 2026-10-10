@@ -150,6 +150,11 @@ Deliberate merge resolutions:
 - Consent is Apple-only and served behind `requireAuth`, so a signed-out visitor goes through
   `/login`. Sessions are already restricted to allowlisted accounts, and `/mcp` re-checks the
   owner's allowlist on every call, so removing an email stops its clients immediately.
+- The consent page leaves high-impact scopes (`OAUTH_HIGH_IMPACT_SCOPES`) unticked, but
+  `OAUTH_DEFAULT_SCOPES` still requests them, and Better Auth skips consent only when the stored
+  consent covers every requested scope. Leaving them unticked therefore shows consent again on each
+  re-authorization: at least every 30 days when the refresh token expires, and whenever the client
+  re-registers.
 - The Apple Watch and Mac companion scopes (`watch:*`, `macos:*`) are never OAuth scopes: they can
   answer prompts. Board scopes are grantable, and every board route has an MCP tool.
 - Intentional anonymous exceptions: `/.well-known/oauth-protected-resource[/mcp]`,

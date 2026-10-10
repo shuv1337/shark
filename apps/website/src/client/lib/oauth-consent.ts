@@ -17,8 +17,21 @@ export function initialConsentSelection(requested: readonly ApiTokenScope[]): Se
 }
 
 /**
- * The scopes an approval grants, in canonical order. Empty means there is
- * nothing to approve; `offline_access` alone is a valid grant.
+ * Whether Approve is available. A request for API scopes needs at least one
+ * ticked, so unticking them all cannot leave an `offline_access`-only grant;
+ * a request for `offline_access` alone needs it ticked.
+ */
+export function canApproveConsent(
+  requested: readonly ApiTokenScope[],
+  selected: ReadonlySet<ApiTokenScope>,
+  offlineAccess: boolean,
+): boolean {
+  return requested.length > 0 ? selected.size > 0 : offlineAccess;
+}
+
+/**
+ * The scopes an approval grants, in canonical order. `offline_access` alone
+ * is a valid grant when it is all the client asked for.
  */
 export function consentedScopes(
   selected: ReadonlySet<ApiTokenScope>,
