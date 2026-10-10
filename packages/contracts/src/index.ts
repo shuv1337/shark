@@ -990,6 +990,20 @@ export const OAUTH_DEFAULT_SCOPES: readonly OAuthScope[] = OAUTH_SCOPES.filter(
   (scope) => scope !== "tokens:manage",
 );
 
+/**
+ * Scopes that reach other people or remove and rewire account setup. The
+ * consent page leaves them unticked, even when requested, so a person grants
+ * them only by choosing to.
+ */
+export const OAUTH_HIGH_IMPACT_SCOPES = [
+  "services:write",
+  "devices:write",
+  "apps:write",
+  "tokens:manage",
+  "teams:write",
+  "oncall:write",
+] as const satisfies readonly OAuthScope[];
+
 /** A connected MCP/OAuth client as shown in the dashboard. */
 export interface OAuthClientGrantDto {
   clientId: string;
@@ -1477,7 +1491,7 @@ export interface AppDto extends AppSummaryDto {
   /** `null` until the owner approves sign-in; passes are refused until then. */
   consentedAt: string | null;
   lastOpenedAt: string | null;
-  /** Name of the agent token that registered the app, when known. */
+  /** Name of the agent token that registered the app, when known; shown only to whoever added it. */
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
@@ -1596,7 +1610,10 @@ export const teamMemberUpdateSchema = z.strictObject({ role: teamRoleSchema });
 export type TeamMemberUpdateInput = z.infer<typeof teamMemberUpdateSchema>;
 
 export const teamInviteCreateSchema = z.strictObject({
-  /** Optional: an existing SHark user with this email also gets a push notification. */
+  /**
+   * Optional: only the account with this email (case-insensitive) can accept,
+   * and an existing SHark user with it also gets a push notification.
+   */
   email: z.email().max(254).optional(),
   role: z.enum(["admin", "member"]).default("member"),
 });

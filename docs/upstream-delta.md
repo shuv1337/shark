@@ -136,7 +136,13 @@ Deliberate merge resolutions:
   the webhook and agent per-minute windows, count against the account window, and each group
   accepts at most 10 new pages a minute. Sharing an app (or creating one with `teamId`) from an
   agent token also needs `teams:write` and the agent budget, and each person can trigger at most
-  10 team notices a minute. Request logs redact `/join/:code` and `/api/team-invites/:code`.
+  10 team notices a minute; moving an app back out of a team notifies nobody and needs only
+  `apps:write`. Request logs redact `/join/:code` and `/api/team-invites/:code`.
+- Team follow-ups: an invite created with an email can only be accepted by the account with that
+  email (case-insensitive). A member who leaves or is removed gets back the apps they added, as when
+  a team is deleted. An app's registering token name (`createdBy`) is shown only to the member who
+  added it. `/apps/enter` accepts passes from consented current members of a team-shared SHark-origin
+  app, not just its adder.
 - Anonymous exception to the private origin: `GET /api/team-invites/:code` returns an invite
   preview without a session, so the join page can show what the invite is for before Apple
   sign-in. It returns the team name, the inviter's display name, the offered role, the team's
@@ -160,6 +166,11 @@ Deliberate merge resolutions:
 - Consent is Apple-only and served behind `requireAuth`, so a signed-out visitor goes through
   `/login`. Sessions are already restricted to allowlisted accounts, and `/mcp` re-checks the
   owner's allowlist on every call, so removing an email stops its clients immediately.
+- The consent page leaves high-impact scopes (`OAUTH_HIGH_IMPACT_SCOPES`) unticked, but
+  `OAUTH_DEFAULT_SCOPES` still requests them, and Better Auth skips consent only when the stored
+  consent covers every requested scope. Leaving them unticked therefore shows consent again on each
+  re-authorization: at least every 30 days when the refresh token expires, and whenever the client
+  re-registers.
 - The Apple Watch and Mac companion scopes (`watch:*`, `macos:*`) are never OAuth scopes: they can
   answer prompts. Board scopes are grantable, and every board route has an MCP tool.
 - Intentional anonymous exceptions, all of which return no account content:
@@ -185,7 +196,7 @@ Deliberate merge resolutions:
 - Better Auth rate limits read the client IP the app resolves from `TRUSTED_CLIENT_IP_HEADER` or
   `TRUSTED_FORWARDED_FOR_HOPS` (production: one exe.dev hop) per `docs/operations.md`. An hourly
   sweeper deletes expired OAuth tokens and day-old anonymous clients that were never connected,
-  and offboarding deletes the user's OAuth tokens and consents.
+  and offboarding deletes the user's OAuth tokens, consents, and unexchanged authorization codes.
 - The MCP server name is `shark`; access and refresh token prefixes stay `hark_mat_` and
   `hark_mrt_` as protocol identifiers.
 - MCP tools flatten each agent route's request body into tool arguments, so `board_ask` accepts

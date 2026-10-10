@@ -1222,7 +1222,7 @@ sharkctl apps remove app_...`,
         blocks: [
           {
             kind: "p",
-            text: "Owners and admins create invite links. Each link joins one person, expires after seven days, and can be revoked. Add an email to also push the invite to an existing SHark user with that address.",
+            text: "Owners and admins create invite links. Each link joins one person, expires after seven days, and can be revoked. Add an email to limit the invite to the account with that address (case-insensitive); an existing SHark user with it also gets a push.",
           },
           {
             kind: "code",
@@ -1567,7 +1567,7 @@ sharkctl apps remove app_...`,
             items: [
               "Your client calls the server, gets `401` with a `resource_metadata` pointer, and registers itself with SHark (dynamic client registration).",
               "Your browser opens SHark's consent page. Sign in with Apple if needed; the email allowlist still applies.",
-              "Review what the client asks for, untick anything you do not want, and approve. SHark remembers your answer for that client and set of permissions.",
+              "Review what the client asks for, untick anything you do not want, and approve. High-impact permissions (managing webhook services, devices, web apps, tokens, teams, and on-call, which can page people) start unticked; tick them only if the client needs them. SHark remembers your answer for that client and set of permissions.",
               "The client receives a one-hour access token for `/mcp`, plus a refresh token if you left Stay connected ticked.",
             ],
           },

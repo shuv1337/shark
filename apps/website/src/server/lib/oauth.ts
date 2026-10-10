@@ -9,7 +9,7 @@ import {
   OAUTH_SCOPES,
   type OAuthClientGrantDto,
 } from "@hark/contracts";
-import { and, desc, eq, inArray, isNotNull, isNull, lt, lte, notExists } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, notExists } from "drizzle-orm";
 import { db } from "../db";
 import {
   apiToken,
@@ -328,20 +328,23 @@ export async function listOAuthGrants(userId: string): Promise<OAuthClientGrantD
         clientId: oauthRefreshToken.clientId,
         scopes: oauthRefreshToken.scopes,
         createdAt: oauthRefreshToken.createdAt,
-        expiresAt: oauthRefreshToken.expiresAt,
-        revoked: oauthRefreshToken.revoked,
       })
       .from(oauthRefreshToken)
-      .where(eq(oauthRefreshToken.userId, userId)),
+      .where(
+        and(
+          eq(oauthRefreshToken.userId, userId),
+          isNull(oauthRefreshToken.revoked),
+          gt(oauthRefreshToken.expiresAt, now),
+        ),
+      ),
     db
       .select({
         clientId: oauthAccessToken.clientId,
         scopes: oauthAccessToken.scopes,
         createdAt: oauthAccessToken.createdAt,
-        expiresAt: oauthAccessToken.expiresAt,
       })
       .from(oauthAccessToken)
-      .where(eq(oauthAccessToken.userId, userId)),
+      .where(and(eq(oauthAccessToken.userId, userId), gt(oauthAccessToken.expiresAt, now))),
     db
       .select()
       .from(apiToken)
@@ -372,13 +375,11 @@ export async function listOAuthGrants(userId: string): Promise<OAuthClientGrantD
     item.createdAt = earliest(item.createdAt, consent.createdAt);
   }
   for (const refresh of refreshes) {
-    if (refresh.revoked || !refresh.expiresAt || refresh.expiresAt <= now) continue;
     const item = entry(refresh.clientId);
     for (const scope of parseScopes(refresh.scopes)) item.scopes.add(scope);
     item.createdAt = earliest(item.createdAt, refresh.createdAt);
   }
   for (const access of accesses) {
-    if (!access.expiresAt || access.expiresAt <= now) continue;
     const item = entry(access.clientId);
     for (const scope of parseScopes(access.scopes)) item.scopes.add(scope);
     item.createdAt = earliest(item.createdAt, access.createdAt);

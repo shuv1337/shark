@@ -57,8 +57,8 @@ docker compose --env-file /home/exedev/shark/.env --file /etc/shark/compose.yaml
 ```
 
 The command revokes Apple grants and persisted access (sessions, API tokens, webhooks, devices,
-interaction and on-call page credentials, and MCP OAuth access tokens, refresh tokens, and
-consents) but preserves account data. Re-admitting the address later requires new sign-ins and new
+interaction and on-call page credentials, and MCP OAuth access tokens, refresh tokens, consents,
+and unexchanged authorization codes) but preserves account data. Re-admitting the address later requires new sign-ins and new
 MCP consent. Use the separate
 authenticated account-deletion flow only for permanent deletion.
 
