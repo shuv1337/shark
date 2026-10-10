@@ -14,6 +14,8 @@ const sent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 /** Expo push tokens whose sends Expo rejects; rejected messages are not in `sent`. */
 const failing = vi.hoisted(() => new Set<string>());
 const rejected = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+/** Runs once inside the next Expo send, to interleave work with a delivery in progress. */
+const duringSend = vi.hoisted(() => ({ run: null as null | (() => Promise<void>) }));
 const NAMES: Record<string, string> = {
   user_a: "Ana",
   user_b: "Ben",
@@ -46,6 +48,9 @@ vi.mock("expo-server-sdk", () => {
       return [messages];
     }
     async sendPushNotificationsAsync(messages: Array<Record<string, unknown>>) {
+      const interleaved = duringSend.run;
+      duringSend.run = null;
+      await interleaved?.();
       return messages.map((message) => {
         if (failing.has(message.to as string)) {
           rejected.push(message);
@@ -104,6 +109,7 @@ afterEach(() => {
   sent.length = 0;
   rejected.length = 0;
   failing.clear();
+  duringSend.run = null;
   as("user_a");
 });
 
@@ -958,6 +964,69 @@ describe("undelivered pages", () => {
       deliveryStatus: "delivered",
     });
     await call("POST", `/api/pages/${created.page.id}/resolve`, {});
+  });
+
+  it("binds lock-screen claims to the credential presented, not just the recipient", async () => {
+    const group = await createGroup("Solo rotated", [], ["user_a"]);
+    failing.add("ExponentPushToken[user_a]");
+    const created = (await (
+      await page(group.id, { title: "Replica lag" })
+    ).json()) as OncallPageCreateResponse;
+    const undelivered = (rejectedTo("user_a")[0]?.data as { responseToken?: string } | undefined)
+      ?.responseToken;
+    expect(undelivered).toBeTruthy();
+    failing.clear();
+    await ageAttempts(created.page.id);
+    await oncall.processDueEscalations();
+    const current = responseTokenFor("user_a");
+
+    // A credential looked up before a retry replaced it cannot spend or release the new one.
+    expect(
+      await oncall.claimPageResponseToken(created.page.id, "user_a", undelivered as string),
+    ).toBe(false);
+    expect(await oncall.claimPageResponseToken(created.page.id, "user_a", current)).toBe(true);
+    await oncall.releasePageResponseToken(created.page.id, "user_a", undelivered as string);
+    expect((await recipient(created.page.id, "user_a"))?.responseTokenUsedAt).not.toBeNull();
+    await oncall.releasePageResponseToken(created.page.id, "user_a", current);
+    expect((await recipient(created.page.id, "user_a"))?.responseTokenUsedAt).toBeNull();
+    await call("POST", `/api/pages/${created.page.id}/resolve`, {});
+  });
+
+  it("does not retry a page acknowledged while the worker is running", async () => {
+    const { eq } = await import("drizzle-orm");
+    const first = await createGroup("Solo race one", [], ["user_a"]);
+    const second = await createGroup("Solo race two", [], ["user_a"]);
+    failing.add("ExponentPushToken[user_a]");
+    const earlier = (await (
+      await page(first.id, { title: "Earlier" })
+    ).json()) as OncallPageCreateResponse;
+    const later = (await (
+      await page(second.id, { title: "Later" })
+    ).json()) as OncallPageCreateResponse;
+    failing.clear();
+    await ageAttempts(later.page.id);
+    await db
+      .update(schema.oncallPageRecipient)
+      .set({ notifiedAt: new Date(Date.now() - oncall.UNDELIVERED_RETRY_MS - 5000) })
+      .where(eq(schema.oncallPageRecipient.pageId, earlier.page.id));
+
+    // Both pages are selected; the later one is acknowledged while the earlier one is sent.
+    duringSend.run = async () => {
+      const [row] = await db
+        .select()
+        .from(schema.oncallPage)
+        .where(eq(schema.oncallPage.id, later.page.id));
+      if (row) await oncall.acknowledgePage(row, "user_a");
+    };
+    await oncall.processDueEscalations();
+    expect(duringSend.run).toBeNull();
+    const pagesSent = pushesTo("user_a").map(
+      (message) => (message.data as { pageId?: string }).pageId,
+    );
+    expect(pagesSent).toEqual([earlier.page.id]);
+    expect(await recipient(later.page.id, "user_a")).toMatchObject({ deliveryStatus: "failed" });
+    await call("POST", `/api/pages/${earlier.page.id}/resolve`, {});
+    await call("POST", `/api/pages/${later.page.id}/resolve`, {});
   });
 
   it("stops retrying once the page is acknowledged", async () => {

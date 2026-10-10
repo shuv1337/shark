@@ -425,6 +425,14 @@ async function reclaimDelivery(
         eq(oncallPageRecipient.pageId, pageId),
         eq(oncallPageRecipient.userId, userId),
         redeliverable(now),
+        // Atomic with the claim, so a page acknowledged or resolved meanwhile is not paged again.
+        inArray(
+          oncallPageRecipient.pageId,
+          db
+            .select({ id: oncallPage.id })
+            .from(oncallPage)
+            .where(and(eq(oncallPage.id, pageId), eq(oncallPage.status, "triggered"))),
+        ),
         ...(attemptedBefore ? [lte(oncallPageRecipient.notifiedAt, attemptedBefore)] : []),
       ),
     )
@@ -1079,9 +1087,14 @@ export function startOncallEscalationWorker(): () => void {
 /**
  * Claims a lock-screen credential for one action. Credentials are single-use:
  * the first successful acknowledge or escalate spends it. Returns false when
- * it was already spent (including by a concurrent request).
+ * it was already spent (including by a concurrent request) or was replaced
+ * by a newer delivery attempt since it was looked up.
  */
-export async function claimPageResponseToken(pageId: string, userId: string): Promise<boolean> {
+export async function claimPageResponseToken(
+  pageId: string,
+  userId: string,
+  responseToken: string,
+): Promise<boolean> {
   const claimed = await db
     .update(oncallPageRecipient)
     .set({ responseTokenUsedAt: new Date() })
@@ -1089,6 +1102,7 @@ export async function claimPageResponseToken(pageId: string, userId: string): Pr
       and(
         eq(oncallPageRecipient.pageId, pageId),
         eq(oncallPageRecipient.userId, userId),
+        eq(oncallPageRecipient.responseTokenHash, hashPageResponseToken(responseToken)),
         isNull(oncallPageRecipient.responseTokenUsedAt),
       ),
     )
@@ -1097,9 +1111,19 @@ export async function claimPageResponseToken(pageId: string, userId: string): Pr
 }
 
 /** Returns a claimed credential when its action did not happen. */
-export async function releasePageResponseToken(pageId: string, userId: string): Promise<void> {
+export async function releasePageResponseToken(
+  pageId: string,
+  userId: string,
+  responseToken: string,
+): Promise<void> {
   await db
     .update(oncallPageRecipient)
     .set({ responseTokenUsedAt: null })
-    .where(and(eq(oncallPageRecipient.pageId, pageId), eq(oncallPageRecipient.userId, userId)));
+    .where(
+      and(
+        eq(oncallPageRecipient.pageId, pageId),
+        eq(oncallPageRecipient.userId, userId),
+        eq(oncallPageRecipient.responseTokenHash, hashPageResponseToken(responseToken)),
+      ),
+    );
 }
