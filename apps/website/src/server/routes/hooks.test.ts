@@ -833,6 +833,77 @@ describe("POST /hooks/:token", () => {
     expect(await response.json()).toMatchObject({ error: "Account rate limit exceeded" });
   });
 
+  it("admits webhook responses atomically and counts each once in the account window", async () => {
+    const { eq } = await import("drizzle-orm");
+    const now = new Date();
+    await db.insert(schema.user).values({
+      id: "user_hook_response_rate",
+      name: "Response Rate",
+      email: "response-rate@example.com",
+      emailVerified: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const responseRateToken = "whk_response-rate-abcdefghijklmnopq";
+    await db.insert(schema.service).values({
+      id: "svc_hook_response_rate",
+      userId: "user_hook_response_rate",
+      title: "Response Rate",
+      tokenHash: hashWebhookToken(responseRateToken),
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.device).values({
+      id: "dev_hook_response_rate",
+      userId: "user_hook_response_rate",
+      expoPushToken: "ExponentPushToken[hook-response-rate]",
+      platform: "ios",
+      active: true,
+      interactionSchemaVersion: 1,
+      createdAt: now,
+      lastSeenAt: now,
+    });
+
+    const previousPro = billingTestState.pro;
+    billingTestState.pro = true;
+    billingTestState.accountPerMinute = 3;
+    try {
+      const responses = await Promise.all(
+        Array.from({ length: 12 }, (_, index) =>
+          post(responseRateToken, {
+            title: "Approve",
+            body: `request ${index}`,
+            response: { type: "approval", expiresInSeconds: 300 },
+          }),
+        ),
+      );
+      const statuses = responses.map((response) => response.status);
+      expect(statuses.filter((status) => status === 200)).toHaveLength(3);
+      const refused = responses.filter((response) => response.status === 429);
+      expect(refused).toHaveLength(9);
+      for (const response of refused) {
+        expect(response.headers.get("Retry-After")).toBe("60");
+      }
+
+      const events = await db
+        .select()
+        .from(schema.event)
+        .where(eq(schema.event.serviceId, "svc_hook_response_rate"));
+      const interactions = await db
+        .select()
+        .from(schema.interaction)
+        .where(eq(schema.interaction.userId, "user_hook_response_rate"));
+      expect(events).toHaveLength(3);
+      expect(interactions).toHaveLength(3);
+      expect(new Set(interactions.map((row) => row.eventId))).toEqual(
+        new Set(events.map((row) => row.id)),
+      );
+    } finally {
+      billingTestState.pro = previousPro;
+      billingTestState.accountPerMinute = null;
+    }
+  });
+
   it("routes an ordinary webhook to a targeted browser subscription", async () => {
     billingTestState.pro = true;
     const now = new Date();

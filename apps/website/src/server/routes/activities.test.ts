@@ -343,6 +343,119 @@ describe("Live Activity agent routes", () => {
     expect(await response.json()).toMatchObject({ error: "Requester rate limit exceeded" });
   });
 
+  it("admits exactly the requester limit of concurrent starts", async () => {
+    await db
+      .update(schema.device)
+      .set({ active: false })
+      .where(eq(schema.device.userId, "activity_user_1"));
+    billingState.serviceRate = 3;
+    const responses = await Promise.all(
+      Array.from({ length: 12 }, (_, index) =>
+        start({ title: `Run ${index}`, status: "Starting" }),
+      ),
+    );
+    const admitted = responses.filter((response) => response.status === 201);
+    const limited = responses.filter((response) => response.status === 429);
+    expect(admitted).toHaveLength(3);
+    expect(limited).toHaveLength(9);
+    for (const response of limited) {
+      expect(response.headers.get("Retry-After")).toBe("60");
+      expect(await response.json()).toMatchObject({
+        error: "Requester rate limit exceeded",
+        retryAfterSeconds: 60,
+      });
+    }
+    expect(db.select().from(schema.liveActivity).all()).toHaveLength(3);
+    expect(db.select().from(schema.liveActivityOperation).all()).toHaveLength(3);
+  });
+
+  it("admits exactly the requester limit of concurrent updates and ends", async () => {
+    await db
+      .update(schema.device)
+      .set({ active: false })
+      .where(eq(schema.device.userId, "activity_user_1"));
+    const ids: string[] = [];
+    for (let index = 0; index < 24; index += 1) {
+      const response = await start({ title: `Run ${index}`, status: "Starting" });
+      ids.push(((await response.json()) as { activity: { id: string } }).activity.id);
+    }
+    // Make every activity mutable and empty the window so only the
+    // concurrent mutations below count.
+    await db.update(schema.liveActivity).set({ status: "active" });
+    await db.delete(schema.liveActivityOperation);
+    billingState.serviceRate = 3;
+
+    const updates = await Promise.all(
+      ids.slice(0, 12).map((id) =>
+        agent(`/${id}`, WRITE_SECRET, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "Next" }),
+        }),
+      ),
+    );
+    expect(updates.filter((response) => response.status === 200)).toHaveLength(3);
+    const limitedUpdates = updates.filter((response) => response.status === 429);
+    expect(limitedUpdates).toHaveLength(9);
+    for (const response of limitedUpdates) {
+      expect(response.headers.get("Retry-After")).toBe("60");
+    }
+    expect(
+      db
+        .select()
+        .from(schema.liveActivity)
+        .all()
+        .filter((row) => row.sequence === 1),
+    ).toHaveLength(3);
+
+    await db.delete(schema.liveActivityOperation);
+    const ends = await Promise.all(
+      ids.slice(12).map((id) => agent(`/${id}/end`, WRITE_SECRET, { method: "POST", body: "{}" })),
+    );
+    expect(ends.filter((response) => response.status === 200)).toHaveLength(3);
+    expect(ends.filter((response) => response.status === 429)).toHaveLength(9);
+    expect(
+      db
+        .select()
+        .from(schema.liveActivity)
+        .all()
+        .filter((row) => row.status === "ended"),
+    ).toHaveLength(3);
+    expect(db.select().from(schema.liveActivityOperation).all()).toHaveLength(3);
+  });
+
+  it("refuses a replace start over the limit without ending the blocker", async () => {
+    const first = await start({
+      title: "Old run",
+      status: "Running",
+      deviceIds: ["activity_dev_1"],
+    });
+    const firstBody = (await first.json()) as { activity: { id: string } };
+    apnsCalls.length = 0;
+    billingState.serviceRate = 1;
+    const refused = await start({
+      title: "New run",
+      status: "Starting",
+      replace: true,
+      deviceIds: ["activity_dev_1"],
+    });
+    expect(refused.status).toBe(429);
+    expect(apnsCalls).toHaveLength(0);
+    expect(
+      db
+        .select()
+        .from(schema.liveActivity)
+        .where(eq(schema.liveActivity.id, firstBody.activity.id))
+        .get(),
+    ).toMatchObject({ status: "active" });
+    expect(
+      db
+        .select()
+        .from(schema.liveActivityDelivery)
+        .where(eq(schema.liveActivityDelivery.activityId, firstBody.activity.id))
+        .get(),
+    ).toMatchObject({ status: "accepted" });
+  });
+
   it("registers encrypted tokens only for an owned device and activity", async () => {
     const token = "dd".repeat(32);
     const registered = await app.request("/api/devices/live-activity/push-to-start", {
