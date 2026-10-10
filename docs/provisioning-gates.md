@@ -165,11 +165,12 @@ The selected replacement is a split publish/promote boundary:
 
    ```sh
    setsid nohup /usr/local/sbin/shark-deploy <full-main-sha> <sha256:image-digest> \
-     >/tmp/shark-deploy-<short-sha>.log 2>&1 </dev/null &
+     >"$HOME/shark-deploy-<short-sha>.log" 2>&1 </dev/null &
    ```
 
-   Follow the log until the helper reports success or an error. See `deploy/README.md` for the
-   rollback behavior.
+   Follow the log until the helper reports success or an error. To abort, send
+   `kill -TERM -- -<PID>` using the PID from the log's first line; a detached run ignores `SIGHUP`.
+   See `deploy/README.md` for the rollback behavior.
 
 The host helper must verify repository, signer workflow, `refs/heads/main`, source SHA, hosted
 runner, and digest before it materializes secrets or touches the current service. GitHub stores no

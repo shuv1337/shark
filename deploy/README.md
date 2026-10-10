@@ -64,14 +64,26 @@ session, so that a dropped connection or a closing agent session cannot interrup
 
 ```sh
 setsid nohup /usr/local/sbin/shark-deploy <40-character-main-SHA> <sha256:image-digest> \
-  >/tmp/shark-deploy-<short-sha>.log 2>&1 </dev/null &
+  >"$HOME/shark-deploy-<short-sha>.log" 2>&1 </dev/null &
 ```
 
-Follow `/tmp/shark-deploy-<short-sha>.log` until it prints `Deployed SHark <sha> at <digest>` or an
-error. Do not run the helper in the foreground of an SSH session. Once the helper has started to stop
-the current container, every exit before the new release is recorded restarts the previous release.
-That includes a failed step, `SIGHUP`, `SIGINT`, and `SIGTERM`. Rollback output is appended to
-`/home/exedev/shark/rollback.log`. `SIGKILL`, a VM reboot, or a lost Docker daemon still cannot be
+Follow `~/shark-deploy-<short-sha>.log` until it prints `Deployed SHark <sha> at <digest>` or an
+error. Do not run the helper in the foreground of an SSH session. Its first line names its PID. Under
+`setsid` that PID also leads the helper's process group. To abort a detached run, send
+`kill -TERM -- -<PID>`. `nohup` makes the helper ignore `SIGHUP`, so a hangup has no effect on a
+detached run. Never use `SIGKILL`.
+
+Once the helper has started to stop the current container, it restarts the previous release on any
+exit before the new release is recorded in `current`. That covers a failed step or check, `SIGINT`,
+and `SIGTERM`. The rollback first waits for any pending stop, then starts the previous image. A
+`SIGHUP` restarts the previous release only until the new container has been started. That case
+only arises for an attached run. After that point a hangup leaves the new release running but
+unrecorded, because the new release may already have migrated the database. Verify it, then
+re-run the helper for that SHA or roll back manually. Rollback output is appended to
+`/home/exedev/shark/rollback.log`, or goes to the helper's stderr if that file cannot be opened. A
+failed rollback prints `Rollback FAILED` to stderr. An automatic rollback after the new container
+has started does not restore the pre-deploy database. Follow `docs/operations.md` when its
+migrations are incompatible. `SIGKILL`, a VM reboot, or a lost Docker daemon still cannot be
 handled, so a detached run remains required. The 1Password CLI runs with `OP_CACHE=false`, so the
 helpers leave no background `op daemon` behind.
 
