@@ -46,23 +46,29 @@ every surface uses:
 
 - Service window: the webhook service's events, Live Activity operations, and pages.
 - Requester window: the agent token's Live Activity operations, interactions, one-shot
-  notifications (including board ask pushes), and pages.
+  notifications (including board ask pushes and each board push retry), and pages.
 - Account window: every event from the owner's services, every interaction, agent notification,
-  and page, and every Live Activity operation not tied to an interaction (the interaction already
-  counts).
+  board push retry, and page, and every Live Activity operation not tied to an interaction (the
+  interaction already counts).
 
-Each path checks the windows early to answer cheaply. The paths that push to people then check
-again in the same synchronous better-sqlite3 transaction that inserts the counted row, so
-concurrent requests cannot overshoot: webhook notifications and pages, agent notifications,
+Each path checks the windows early to answer cheaply. The paths listed here then check again in
+the same synchronous better-sqlite3 transaction that inserts the counted row, so concurrent
+requests cannot overshoot them: webhook notifications and pages, agent notifications,
 interactions, agent pages (`/api/agent/oncall/:id/pages` and `/api/agent/notifications` with
-`oncall`), and board ask pushes. A project named by a webhook or agent notification is created in
-that transaction only after admission, so a refused notification leaves no project behind. A board
-push retry of a failed attempt is admitted in the same way and moves the notification's
-`createdAt` to the retry time so it counts again; the transaction also claims the attempt, so
-overlapping retries of one revision send one push (an attempt stuck in `processing` for two
-minutes is treated as abandoned and may be retried). Each on-call group also accepts at most 10 new
-pages a minute, enforced the same way. The guarantee assumes the deployed shape: one app process on
-one SQLite connection.
+`oncall`), and board ask pushes. That is not every counted surface; the residuals below are not
+admitted this way. A request with an `Idempotency-Key` skips the early check and, inside the
+transaction, replays a stored twin before admission, so a raced duplicate replays instead of
+answering `429`. A project named by a webhook or agent notification is created in that transaction
+only after admission, so a refused notification leaves no project behind.
+
+A board push retry of a failed attempt is admitted in the same way and records its own
+`agent_notification_retry` row, so every attempt counts in the window it was made in and earlier
+attempts keep their usage. The transaction also claims the attempt with a fresh claim id, and only
+that claim may record the outcome. A revision with an attempt still sending in this process is
+never reclaimed; one stuck in `processing` for two minutes and not running here (for example after
+a restart) is treated as abandoned and may be retried. Each on-call group also accepts at most 10
+new pages a minute, enforced the same way. These guarantees assume the deployed shape: one app
+process on one SQLite connection.
 
 Accepted residuals, which remain check-then-act and can be overshot by a concurrent burst:
 

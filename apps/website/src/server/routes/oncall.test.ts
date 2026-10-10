@@ -11,6 +11,11 @@ process.env.DATABASE_URL = ":memory:";
 
 const authState = vi.hoisted(() => ({ userId: "user_a" as string | null }));
 const sent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+/** Expo send outcomes: each queued gate settles one send; otherwise `fail` decides. */
+const pushControl = vi.hoisted(() => ({
+  fail: false,
+  gates: [] as Array<Promise<"ok" | "fail">>,
+}));
 const NAMES: Record<string, string> = {
   user_a: "Ana",
   user_b: "Ben",
@@ -44,7 +49,13 @@ vi.mock("expo-server-sdk", () => {
     }
     async sendPushNotificationsAsync(messages: Array<Record<string, unknown>>) {
       sent.push(...messages);
-      return messages.map(() => ({ status: "ok", id: "ticket" }));
+      const gate = pushControl.gates.shift();
+      const outcome = gate ? await gate : pushControl.fail ? "fail" : "ok";
+      return messages.map(() =>
+        outcome === "ok"
+          ? { status: "ok", id: "ticket" }
+          : { status: "error", message: "Synthetic push failure" },
+      );
     }
   }
   return { Expo, default: Expo };
@@ -89,6 +100,8 @@ function responseTokenFor(userId: string): string {
 
 afterEach(() => {
   sent.length = 0;
+  pushControl.fail = false;
+  pushControl.gates.length = 0;
   as("user_a");
 });
 
@@ -460,6 +473,23 @@ describe("override permissions", () => {
     expect(stored?.startsAt.getTime()).toBeGreaterThanOrEqual(before);
   });
 
+  it("lets a holder hand off the first hour of their override in the same millisecond", async () => {
+    const group = await createGroup("Same instant");
+    const [benStart] = benShift(group);
+    const frozen = vi.spyOn(Date, "now").mockReturnValue(Date.now());
+    try {
+      for (let index = 0; index < 10; index += 1) {
+        const start = benStart + 2 * index * HOUR;
+        as("user_a");
+        expect((await override(group.id, "user_b", start, start + 2 * HOUR)).status).toBe(201);
+        as("user_b");
+        expect((await override(group.id, "user_c", start, start + HOUR)).status).toBe(201);
+      }
+    } finally {
+      frozen.mockRestore();
+    }
+  });
+
   it("lets the recipient drop a handoff and the original holder hand it on again", async () => {
     const group = await createGroup("Redelegate");
     const [benStart] = benShift(group);
@@ -817,8 +847,132 @@ describe("per-minute windows under concurrent requests", () => {
     const rows = (await db.select().from(schema.agentNotification)).filter(
       (row) => row.requesterTokenId === tokenId,
     );
-    expect(rows.filter((row) => row.createdAt > aged)).toHaveLength(LIMIT);
+    expect(rows.filter((row) => row.createdAt > aged)).toHaveLength(0);
     expect(rows.filter((row) => row.status === "failed")).toHaveLength(BURST - LIMIT);
+    const retries = (await db.select().from(schema.agentNotificationRetry)).filter(
+      (row) => row.requesterTokenId === tokenId,
+    );
+    expect(retries).toHaveLength(LIMIT);
+  });
+
+  it("counts every board push retry of a recent failure in the window", async () => {
+    const { eq } = await import("drizzle-orm");
+    const { BoardPushLimited, sendBoardAskPush } = await import("../lib/board-push");
+    const { tokenId } = await freshCredentials();
+    const [token] = await db.select().from(schema.apiToken).where(eq(schema.apiToken.id, tokenId));
+    if (!token) throw new Error("Missing token");
+    pushControl.fail = true;
+    const outcomes: PromiseSettledResult<unknown>[] = [];
+    await withLimits({ service: LIMIT }, async () => {
+      for (let attempt = 0; attempt < BURST; attempt += 1) {
+        outcomes.push(
+          ...(await Promise.allSettled([sendBoardAskPush(askRow(`ask_loop_${tokenId}`), token)])),
+        );
+      }
+    });
+    expect(sent).toHaveLength(LIMIT);
+    const rejected = outcomes.filter((outcome) => outcome.status === "rejected");
+    expect(rejected).toHaveLength(BURST - LIMIT);
+    for (const outcome of rejected) expect(outcome.reason).toBeInstanceOf(BoardPushLimited);
+    const { requesterWindowUsage } = await import("../lib/rate-windows");
+    expect(requesterWindowUsage(db, tokenId, new Date(Date.now() - 60_000))).toBe(LIMIT);
+  });
+
+  it("does not start a second attempt while one is still sending in this process", async () => {
+    const { eq } = await import("drizzle-orm");
+    const { sendBoardAskPush } = await import("../lib/board-push");
+    const { tokenId } = await freshCredentials();
+    const [token] = await db.select().from(schema.apiToken).where(eq(schema.apiToken.id, tokenId));
+    if (!token) throw new Error("Missing token");
+    const askId = `ask_overlap_${tokenId}`;
+    let release: (outcome: "ok" | "fail") => void = () => {};
+    pushControl.gates.push(new Promise((resolve) => (release = resolve)));
+    const first = sendBoardAskPush(askRow(askId), token);
+    await settle();
+    expect(sent).toHaveLength(1);
+    // Even once its claim looks abandoned, the running attempt is not reclaimed.
+    await db
+      .update(schema.agentNotification)
+      .set({ claimedAt: new Date(Date.now() - 10 * 60_000) })
+      .where(eq(schema.agentNotification.requesterTokenId, tokenId));
+    const second = await sendBoardAskPush(askRow(askId), token);
+    expect(second).toMatchObject({ accepted: 0, inFlight: true });
+    expect(sent).toHaveLength(1);
+    release("ok");
+    expect(await first).toMatchObject({ accepted: 1 });
+    expect(await sendBoardAskPush(askRow(askId), token)).toMatchObject({ accepted: 1 });
+    expect(sent).toHaveLength(1);
+    const [row] = await db
+      .select()
+      .from(schema.agentNotification)
+      .where(eq(schema.agentNotification.requesterTokenId, tokenId));
+    expect(row).toMatchObject({ status: "accepted", acceptedCount: 1 });
+  });
+
+  it("keeps a superseded board push attempt from recording its outcome", async () => {
+    const { eq } = await import("drizzle-orm");
+    const { sendBoardAskPush } = await import("../lib/board-push");
+    const { tokenId } = await freshCredentials();
+    const [token] = await db.select().from(schema.apiToken).where(eq(schema.apiToken.id, tokenId));
+    if (!token) throw new Error("Missing token");
+    let release: (outcome: "ok" | "fail") => void = () => {};
+    pushControl.gates.push(new Promise((resolve) => (release = resolve)));
+    const stale = sendBoardAskPush(askRow(`ask_fence_${tokenId}`), token);
+    await settle();
+    // Another worker (say, after a restart) took the attempt over and is sending.
+    await db
+      .update(schema.agentNotification)
+      .set({ claimId: "bpc_takeover", claimedAt: new Date() })
+      .where(eq(schema.agentNotification.requesterTokenId, tokenId));
+    release("fail");
+    expect(await stale).toMatchObject({ accepted: 0 });
+    const [row] = await db
+      .select()
+      .from(schema.agentNotification)
+      .where(eq(schema.agentNotification.requesterTokenId, tokenId));
+    expect(row).toMatchObject({ status: "processing", claimId: "bpc_takeover", error: null });
+  });
+
+  it("replays a raced idempotent twin instead of refusing it at the limit", async () => {
+    const { token } = await freshCredentials();
+    const { token: interactionToken } = await freshCredentials();
+    const { webhook } = await freshCredentials();
+    const twins = (request: () => Response | Promise<Response>) =>
+      withLimits({ service: 1 }, () => Promise.all([request(), request()]));
+    const statuses = async (responses: Response[]) =>
+      responses.map((response) => response.status).sort();
+    const notifications = await twins(() =>
+      app.request("/api/agent/notifications", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+          "idempotency-key": "twin-notification",
+        },
+        body: JSON.stringify({ title: "Bot", body: "twin" }),
+      }),
+    );
+    expect(await statuses(notifications)).toEqual([200, 201]);
+    const interactions = await twins(() =>
+      app.request("/api/agent/interactions", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${interactionToken}`,
+          "idempotency-key": "twin-interaction",
+        },
+        body: JSON.stringify({ title: "Deploy", prompt: "Ship?", kind: "approval" }),
+      }),
+    );
+    expect(await statuses(interactions)).toEqual([200, 201]);
+    const hooks = await twins(() =>
+      app.request(`/hooks/${webhook}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "idempotency-key": "twin-hook" },
+        body: JSON.stringify({ body: "twin" }),
+      }),
+    );
+    expect((await statuses(hooks)).every((status) => status < 300)).toBe(true);
   });
 
   it("sends one push when the same failed board push is retried concurrently", async () => {
@@ -942,6 +1096,15 @@ describe("rate window definitions", () => {
       status: "accepted",
       createdAt: now,
     });
+    await db.insert(schema.agentNotificationRetry).values(
+      [now, old].map((createdAt, index) => ({
+        id: `bpc_windows_${index}`,
+        notificationId: "anot_windows",
+        userId,
+        requesterTokenId: "tok_windows",
+        createdAt,
+      })),
+    );
     const activity = (id: string, extra: object) => ({
       id,
       userId,
@@ -1007,10 +1170,10 @@ describe("rate window definitions", () => {
     const since = new Date(now.getTime() - 60_000);
     // Event, service Live Activity operation, service page.
     expect(windows.serviceWindowUsage(db, "svc_windows", since)).toBe(3);
-    // Token Live Activity operation, interaction, notification, token page.
-    expect(windows.requesterWindowUsage(db, "tok_windows", since)).toBe(4);
-    // Event, interaction, notification, two Live Activity operations, two pages.
-    expect(windows.accountWindowUsage(db, userId, since)).toBe(7);
+    // Token Live Activity operation, interaction, notification, its recent retry, token page.
+    expect(windows.requesterWindowUsage(db, "tok_windows", since)).toBe(5);
+    // Event, interaction, notification, its recent retry, two Live Activity operations, two pages.
+    expect(windows.accountWindowUsage(db, userId, since)).toBe(8);
 
     const svc = { id: "svc_windows", userId };
     const token = { id: "tok_windows", userId };
@@ -1019,11 +1182,11 @@ describe("rate window definitions", () => {
       accountPerMinute,
     });
     expect(windows.webhookWindowLimit(db, svc, limits(3, 100))).toBe("service");
-    expect(windows.webhookWindowLimit(db, svc, limits(4, 7))).toBe("account");
-    expect(windows.webhookWindowLimit(db, svc, limits(4, 8))).toBeNull();
-    expect(windows.agentWindowLimit(db, token, limits(4, 100))).toBe("requester");
-    expect(windows.agentWindowLimit(db, token, limits(5, 7))).toBe("account");
-    expect(windows.agentWindowLimit(db, token, limits(5, 8))).toBeNull();
+    expect(windows.webhookWindowLimit(db, svc, limits(4, 8))).toBe("account");
+    expect(windows.webhookWindowLimit(db, svc, limits(4, 9))).toBeNull();
+    expect(windows.agentWindowLimit(db, token, limits(5, 100))).toBe("requester");
+    expect(windows.agentWindowLimit(db, token, limits(6, 8))).toBe("account");
+    expect(windows.agentWindowLimit(db, token, limits(6, 9))).toBeNull();
   });
 });
 

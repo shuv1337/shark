@@ -316,7 +316,7 @@ export const DOC_CONTENT: DocSection[] = [
           },
           {
             kind: "p",
-            text: "The per-minute counters use a rolling 60-second window and are shared across notifications, interactive responses, and Live Activity operations. A limited request returns `429` with a `Retry-After: 60` header and `retryAfterSeconds` in the body. Notifications are not metered monthly.",
+            text: "The per-minute counters use a rolling 60-second window and are shared across webhook notifications, agent notifications (including board ask pushes and their retries), interactive responses, on-call pages, and Live Activity operations. The per-service limit also bounds each agent token. A limited request returns `429` with a `Retry-After: 60` header and `retryAfterSeconds` in the body. Notifications are not metered monthly.",
           },
         ],
       },
