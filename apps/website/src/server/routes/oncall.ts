@@ -5,11 +5,12 @@ import {
   oncallPageCreateSchema,
   oncallPageResolveSchema,
 } from "@hark/contracts";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, gt } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db";
 import { oncallGroup, oncallOverride, oncallPage, team, teamMember } from "../db/schema";
+import { getBilling } from "../lib/billing";
 import { newId } from "../lib/id";
 import {
   acknowledgePage,
@@ -19,6 +20,7 @@ import {
   memberGroup,
   memberPage,
   openPagesFor,
+  overrideWindows,
   pageRecipientByToken,
   people,
   type RaisePageInput,
@@ -29,7 +31,8 @@ import {
   toGroupDto,
   toPageDto,
 } from "../lib/oncall";
-import { upcomingShifts } from "../lib/oncall-schedule";
+import { onCallThroughout, upcomingShifts } from "../lib/oncall-schedule";
+import { agentAdmission } from "../lib/rate-windows";
 import { hasRole } from "../lib/teams";
 import {
   type AgentEnv,
@@ -38,7 +41,7 @@ import {
   requireAuth,
   requireScopes,
 } from "../middleware";
-import { enforceAgentRateLimit } from "./activities";
+import { agentRateLimit } from "./activities";
 import { type Actor, type Outcome, readJson, send, withAgent } from "./teams";
 
 const result = (body: unknown, status: 200 | 201 = 200): Outcome => ({ status, body });
@@ -50,6 +53,14 @@ const failure = (status: Outcome["status"], error: string, extra: object = {}): 
 const GROUP_NOT_FOUND = failure(404, "On-call group not found");
 const PAGE_NOT_FOUND = failure(404, "Page not found");
 const FORBIDDEN_ADMIN = failure(403, "Only team owners and admins can change on-call groups");
+const FORBIDDEN_HANDOFF = failure(
+  403,
+  "Members can only hand off time they are on call for; ask a team owner or admin to schedule other time",
+);
+const PARTLY_SHADOWED = failure(
+  409,
+  "That window is partly covered by a later-starting override; split the override around it",
+);
 const MAX_OVERRIDE_MS = 90 * 86_400_000;
 
 // ---------------------------------------------------------------------------
@@ -97,37 +108,93 @@ async function deleteGroup(actor: Actor, groupId: string): Promise<Outcome> {
   return result({ ok: true });
 }
 
-/** Admins schedule anyone; any member can schedule themselves (e.g. covering a shift). */
+/**
+ * Team owners and admins schedule anyone for any window. A member can only
+ * hand off time they are already on call for (by the rotation or an earlier
+ * override) to any team member, so a member never displaces someone else; a
+ * member's handoff starts no earlier than now, since past time is not theirs
+ * to give away. Either way, 201 means the override is in force for all of its
+ * remaining window: one that a later-starting override would partly shadow
+ * is refused rather than stored half-effective.
+ */
 async function createOverride(actor: Actor, groupId: string, input: unknown): Promise<Outcome> {
-  const found = await memberGroup(groupId, actor.id);
-  if (!found) return GROUP_NOT_FOUND;
   const parsed = oncallOverrideCreateSchema.safeParse(input);
-  if (!parsed.success) return failure(400, "Invalid override", { issues: parsed.error.issues });
-  if (parsed.data.userId !== actor.id && !hasRole(found.role as "member", "admin")) {
-    return failure(403, "Only team owners and admins can schedule someone else");
+  if (!parsed.success) {
+    return (await memberGroup(groupId, actor.id))
+      ? failure(400, "Invalid override", { issues: parsed.error.issues })
+      : GROUP_NOT_FOUND;
   }
-  const [target] = await db
-    .select({ userId: teamMember.userId })
-    .from(teamMember)
-    .where(
-      and(eq(teamMember.teamId, found.group.teamId), eq(teamMember.userId, parsed.data.userId)),
-    )
-    .limit(1);
-  if (!target) return failure(400, "The override must name a team member");
-  const startsAt = Date.parse(parsed.data.startsAt);
+  const requestedStart = Date.parse(parsed.data.startsAt);
   const endsAt = Date.parse(parsed.data.endsAt);
-  if (endsAt <= startsAt) return failure(400, "endsAt must be after startsAt");
-  if (endsAt <= Date.now()) return failure(400, "endsAt must be in the future");
-  if (endsAt - startsAt > MAX_OVERRIDE_MS) return failure(400, "Overrides last at most 90 days");
-  await db.insert(oncallOverride).values({
-    id: newId("ovr"),
-    groupId,
-    userId: parsed.data.userId,
-    startsAt: new Date(startsAt),
-    endsAt: new Date(endsAt),
-    createdAt: new Date(),
+  const now = Date.now();
+  // Synchronous, so the membership, role, rotation, and overrides it decides
+  // on are the ones current when the row is written, and two concurrent
+  // handoffs cannot both give away the same time.
+  const outcome = db.transaction((tx) => {
+    const found = tx
+      .select({ group: oncallGroup, role: teamMember.role })
+      .from(oncallGroup)
+      .innerJoin(
+        teamMember,
+        and(eq(teamMember.teamId, oncallGroup.teamId), eq(teamMember.userId, actor.id)),
+      )
+      .where(eq(oncallGroup.id, groupId))
+      .get();
+    if (!found) return { ok: false as const, error: GROUP_NOT_FOUND };
+    const target = tx
+      .select({ userId: teamMember.userId })
+      .from(teamMember)
+      .where(
+        and(eq(teamMember.teamId, found.group.teamId), eq(teamMember.userId, parsed.data.userId)),
+      )
+      .get();
+    if (!target)
+      return { ok: false as const, error: failure(400, "The override must name a team member") };
+    if (endsAt <= requestedStart)
+      return { ok: false as const, error: failure(400, "endsAt must be after startsAt") };
+    if (endsAt <= now)
+      return { ok: false as const, error: failure(400, "endsAt must be in the future") };
+    if (endsAt - requestedStart > MAX_OVERRIDE_MS) {
+      return { ok: false as const, error: failure(400, "Overrides last at most 90 days") };
+    }
+    const admin = hasRole(found.role as "member", "admin");
+    const startsAt = admin ? requestedStart : Math.max(requestedStart, now);
+    // Only the part still to come decides who is paged.
+    const from = Math.max(startsAt, now);
+    const rotation = rotationOf(found.group);
+    const existing = overrideWindows(
+      tx
+        .select()
+        .from(oncallOverride)
+        .where(and(eq(oncallOverride.groupId, groupId), gt(oncallOverride.endsAt, new Date(now))))
+        .all(),
+    );
+    if (!admin && !onCallThroughout(rotation, existing, actor.id, from, endsAt)) {
+      return { ok: false as const, error: FORBIDDEN_HANDOFF };
+    }
+    // Strictly newer than every live override, so among overrides starting
+    // together this one outranks them by `createdAt`, never by a random id.
+    const createdAt = Math.max(now, ...existing.map((window) => (window.createdAt ?? 0) + 1));
+    const row = {
+      id: newId("ovr"),
+      groupId,
+      userId: parsed.data.userId,
+      startsAt: new Date(startsAt),
+      endsAt: new Date(endsAt),
+      createdAt: new Date(createdAt),
+    };
+    const [candidate] = overrideWindows([row]);
+    if (
+      !candidate ||
+      !onCallThroughout(rotation, [...existing, candidate], row.userId, from, endsAt)
+    ) {
+      return { ok: false as const, error: PARTLY_SHADOWED };
+    }
+    tx.insert(oncallOverride).values(row).run();
+    return { ok: true as const, group: found.group };
   });
-  return result({ group: await toGroupDto(found.group) }, 201);
+  if (!outcome.ok) return outcome.error;
+  return result({ group: await toGroupDto(outcome.group) }, 201);
 }
 
 async function deleteOverride(actor: Actor, groupId: string, overrideId: string): Promise<Outcome> {
@@ -152,6 +219,7 @@ async function createPage(
   input: unknown,
   sourceName: string,
   origin?: RaisePageInput["origin"],
+  admit?: RaisePageInput["admit"],
 ): Promise<Outcome> {
   const found = await memberGroup(groupId, actor.id);
   if (!found) return GROUP_NOT_FOUND;
@@ -163,6 +231,7 @@ async function createPage(
     creatorUserId: actor.id,
     sourceName,
     origin,
+    admit,
   });
   return outcome.ok ? result(outcome.body, outcome.status) : failure(outcome.status, outcome.error);
 }
@@ -204,14 +273,7 @@ async function myOncall(actor: Actor): Promise<Outcome> {
       .select()
       .from(oncallOverride)
       .where(eq(oncallOverride.groupId, group.id));
-    const windows = overrides
-      .filter((row) => row.endsAt.getTime() > now)
-      .map((row) => ({
-        id: row.id,
-        userId: row.userId,
-        startsAt: row.startsAt.getTime(),
-        endsAt: row.endsAt.getTime(),
-      }));
+    const windows = overrideWindows(overrides.filter((row) => row.endsAt.getTime() > now));
     for (const shift of upcomingShifts(rotationOf(group), windows, now, 10)) {
       if (shift.userId !== actor.id) continue;
       shifts.push({
@@ -396,15 +458,24 @@ export const oncallAgentRoute = new Hono<AgentEnv>()
   )
   .post("/:groupId/pages", requireScopes("oncall:write"), async (c) =>
     withAgent(c, async (actor) => {
-      const limited = await enforceAgentRateLimit(c.get("apiToken"), actor);
+      const token = c.get("apiToken");
+      const { limits } = await getBilling(actor, true);
+      const limited = agentRateLimit(token, limits);
       if (limited) {
         c.header("Retry-After", "60");
         return { status: 429, body: limited };
       }
-      const token = c.get("apiToken");
-      return createPage(actor, c.req.param("groupId"), await readJson(c), token.name, {
-        requesterTokenId: token.id,
-      });
+      const outcome = await createPage(
+        actor,
+        c.req.param("groupId"),
+        await readJson(c),
+        token.name,
+        { requesterTokenId: token.id },
+        agentAdmission(token, limits),
+      );
+      if (outcome.status !== 429) return outcome;
+      c.header("Retry-After", "60");
+      return { status: 429, body: { ...(outcome.body as object), retryAfterSeconds: 60 } };
     }),
   );
 
@@ -424,6 +495,7 @@ export async function raisePageFor(
   input: unknown,
   sourceName: string,
   origin: RaisePageInput["origin"],
+  admit?: RaisePageInput["admit"],
 ) {
   const found = await memberGroup(groupId, userId);
   if (!found) return { ok: false as const, status: 404 as const, error: "On-call group not found" };
@@ -442,5 +514,6 @@ export async function raisePageFor(
     creatorUserId: userId,
     sourceName,
     origin,
+    admit,
   });
 }

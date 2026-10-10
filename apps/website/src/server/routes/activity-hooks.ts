@@ -10,13 +10,11 @@ import {
   liveActivityStartSchema,
   liveActivityUpdateSchema,
 } from "@hark/contracts";
-import { and, count, desc, eq, gte, inArray, or } from "drizzle-orm";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
 import {
   device,
-  event,
-  interaction,
   liveActivity,
   liveActivityDelivery,
   liveActivityOperation,
@@ -26,7 +24,7 @@ import {
 import { isEmailAllowed } from "../lib/admission";
 import { checkNotificationAllowance, getBilling, trackNotification } from "../lib/billing";
 import { newId } from "../lib/id";
-import { pagesCreatedSince } from "../lib/oncall";
+import { RATE_LIMIT_ERRORS, webhookWindowLimit } from "../lib/rate-windows";
 import { hashWebhookToken } from "../lib/token";
 import {
   type ActivityRow,
@@ -115,66 +113,16 @@ async function operationReplay(serviceId: string, key: string | undefined, reque
   return row ? ({ conflict: false, operation, row } as const) : undefined;
 }
 
+/**
+ * The webhook service and account windows from `rate-windows.ts`, the same
+ * definition `/hooks` deliveries use. Live Activity operations are recorded
+ * after APNs dispatch begins, so this check is not atomic with the insert;
+ * concurrent operations can overshoot a window by the number in flight.
+ */
 async function enforceRateLimit(service: ServiceRow, owner: UserRow) {
   const billing = await getBilling(owner, true);
-  const since = new Date(Date.now() - 60_000);
-  const [
-    [serviceEvents],
-    [serviceActivities],
-    servicePages,
-    [accountEvents],
-    [accountInteractions],
-    [accountActivities],
-    accountPages,
-  ] = await Promise.all([
-    db
-      .select({ value: count() })
-      .from(event)
-      .where(and(eq(event.serviceId, service.id), gte(event.createdAt, since))),
-    db
-      .select({ value: count() })
-      .from(liveActivityOperation)
-      .where(
-        and(
-          eq(liveActivityOperation.requesterServiceId, service.id),
-          gte(liveActivityOperation.createdAt, since),
-        ),
-      ),
-    pagesCreatedSince({ serviceId: service.id }, since),
-    db
-      .select({ value: count() })
-      .from(event)
-      .innerJoin(serviceTable, eq(event.serviceId, serviceTable.id))
-      .where(and(eq(serviceTable.userId, service.userId), gte(event.createdAt, since))),
-    db
-      .select({ value: count() })
-      .from(interaction)
-      .where(and(eq(interaction.userId, service.userId), gte(interaction.createdAt, since))),
-    db
-      .select({ value: count() })
-      .from(liveActivityOperation)
-      .innerJoin(liveActivity, eq(liveActivity.id, liveActivityOperation.activityId))
-      .where(
-        and(eq(liveActivity.userId, service.userId), gte(liveActivityOperation.createdAt, since)),
-      ),
-    pagesCreatedSince({ userId: service.userId }, since),
-  ]);
-  if (
-    (serviceEvents?.value ?? 0) + (serviceActivities?.value ?? 0) + servicePages >=
-    billing.limits.servicePerMinute
-  ) {
-    return { error: "Service rate limit exceeded", retryAfterSeconds: 60 as const };
-  }
-  if (
-    (accountEvents?.value ?? 0) +
-      (accountInteractions?.value ?? 0) +
-      (accountActivities?.value ?? 0) +
-      accountPages >=
-    billing.limits.accountPerMinute
-  ) {
-    return { error: "Account rate limit exceeded", retryAfterSeconds: 60 as const };
-  }
-  return null;
+  const refused = webhookWindowLimit(db, service, billing.limits);
+  return refused ? { error: RATE_LIMIT_ERRORS[refused], retryAfterSeconds: 60 as const } : null;
 }
 
 function pendingTokenAck(result: { updateTokenPending: boolean }) {

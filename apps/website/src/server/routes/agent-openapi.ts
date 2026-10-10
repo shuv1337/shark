@@ -1118,12 +1118,15 @@ export const agentOperations: Record<string, Partial<Record<AgentMethod, AgentOp
   },
   "/oncall/{groupId}/overrides": {
     post: {
-      summary: "Put someone on call for a window (admins: anyone; members: themselves)",
+      summary:
+        "Put someone on call for a window (admins: any window; members: only time they are on call for)",
       scopes: ["oncall:write"],
       params: [idParam("groupId")],
       request: oncallOverrideCreateSchema,
       status: 201,
       response: wrap("group", ref("OncallGroup")),
+      description:
+        "Returns 409 when a later-starting override partly covers the window; split the override around it.",
     },
   },
   "/oncall/{groupId}/overrides/{overrideId}": {

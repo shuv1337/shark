@@ -183,6 +183,13 @@
       "when": 1791573278955,
       "tag": "0025_upstream_oauth_mcp",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1791602325119,
+      "tag": "0026_board_push_retries",
+      "breakpoints": true
     }
   ]
 }

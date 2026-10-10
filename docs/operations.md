@@ -37,6 +37,52 @@ the value above the real number of appending proxies, or a forged entry becomes 
 The server also sweeps OAuth storage hourly: expired access and refresh tokens, and anonymous
 registered clients older than a day that never gained a consent, token, or grant.
 
+## Per-minute rate limits
+
+`SERVICE_RATE_LIMIT_PER_MINUTE` bounds each webhook service and each agent token (the requester
+window), and `ACCOUNT_RATE_LIMIT_PER_MINUTE` bounds an account's total, both over the last 60
+seconds of recorded work. `apps/website/src/server/lib/rate-windows.ts` holds the one definition
+every surface uses:
+
+- Service window: the webhook service's events, Live Activity operations, and pages.
+- Requester window: the agent token's Live Activity operations, interactions, one-shot
+  notifications (including board ask pushes and each board push retry), and pages.
+- Account window: every event from the owner's services, every interaction, agent notification,
+  board push retry, and page, and every Live Activity operation not tied to an interaction (the
+  interaction already counts).
+
+Each path checks the windows early to answer cheaply. The paths listed here then check again in
+the same synchronous better-sqlite3 transaction that inserts the counted row, so concurrent
+requests cannot overshoot them: webhook notifications and pages, agent notifications,
+interactions, agent pages (`/api/agent/oncall/:id/pages` and `/api/agent/notifications` with
+`oncall`), and board ask pushes. That is not every counted surface; the residuals below are not
+admitted this way. A request with an `Idempotency-Key` skips the early check and, inside the
+transaction, replays a stored twin before admission, so a raced duplicate replays instead of
+answering `429`. A project named by a webhook or agent notification is created in that transaction
+only after admission, so a refused notification leaves no project behind.
+
+A board push retry of a failed attempt is admitted in the same way and records its own
+`agent_notification_retry` row, so every attempt counts in the window it was made in and earlier
+attempts keep their usage. Retry rows only matter for 60 seconds, so the board sweeper deletes
+those older than an hour, in batches of 1000 each minute. The transaction also claims the attempt with a fresh claim id, and only
+that claim may record the outcome. A revision with an attempt still sending in this process is
+never reclaimed; one stuck in `processing` for two minutes and not running here (for example after
+a restart) is treated as abandoned and may be retried. Each on-call group also accepts at most 10
+new pages a minute, enforced the same way. These guarantees assume the deployed shape: one app
+process on one SQLite connection.
+
+Accepted residuals, which remain check-then-act and can be overshot by a concurrent burst:
+
+- Live Activity starts, updates, and ends, from agent tokens and activity webhooks. They use the
+  same window definition, but a start can end blocking activities before its rows are inserted, so
+  reserving capacity first would mean moving those side effects into the transaction. These pushes
+  reach only the owner's devices, each device holds one active activity, and updates and ends
+  compare-and-swap the activity sequence, so a burst against one activity records one operation.
+- Agent app sharing and team app creation check the agent budget but record nothing it counts.
+  Team notices have their own per-person cap.
+- A webhook notification with `response` is admitted as one event, then records its interaction
+  outside that transaction, so it adds two rows to the account window.
+
 ## Admission and identity
 
 Sign in with Apple is the only provider. Add exactly the verified real or Apple relay email returned

@@ -52,6 +52,7 @@ function makeDatabase(options?: { migrationCount?: number; latest?: number }) {
       "oauth_access_token",
       "oauth_refresh_token",
       "oauth_consent",
+      "agent_notification_retry",
     ]
       .map((name) => `create table "${name}" (id text primary key);`)
       .join("\n")}
