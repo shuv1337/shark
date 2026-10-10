@@ -177,6 +177,20 @@ async function token(params: Record<string, string>) {
   };
 }
 
+/** Posts a form body verbatim, for parameters `URLSearchParams` from a record cannot repeat. */
+async function rawToken(pairs: Array<[string, string]>) {
+  const response = await app.request("/api/auth/oauth2/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: pairs.map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join("&"),
+  });
+  return {
+    status: response.status,
+    headers: response.headers,
+    body: (await response.json()) as Record<string, unknown>,
+  };
+}
+
 /** RFC 6749 §5.1–5.2: every token endpoint response, errors included, is uncacheable. */
 function expectUncacheable(headers: Headers, label: string) {
   expect(headers.get("cache-control"), label).toBe("no-store");
@@ -480,6 +494,63 @@ describe("MCP OAuth end to end", () => {
       body: JSON.stringify({ grant_type: "refresh_token", resource: RESOURCE }),
     });
     expect(asJson.status).toBe(415);
+  });
+
+  it("requires every repeated resource value to name /mcp", async () => {
+    const { clientId, verifier, code } = await codeFor("Repeated Resource Client");
+    const base: Array<[string, string]> = [
+      ["grant_type", "authorization_code"],
+      ["client_id", clientId],
+      ["code", code],
+      ["code_verifier", verifier],
+      ["redirect_uri", REDIRECT_URI],
+    ];
+    const foreign = "https://attacker.example/mcp";
+
+    // RFC 8707 allows repeating resource and requires every value to be acceptable; the
+    // parsed body keeps only the last one, so both orders must be refused without spending
+    // the code.
+    for (const order of [
+      [foreign, RESOURCE],
+      [RESOURCE, foreign],
+    ]) {
+      const refused = await rawToken([
+        ...base,
+        ...order.map((r): [string, string] => ["resource", r]),
+      ]);
+      expect(refused.status, order.join(" ")).toBe(400);
+      expect(refused.body.error, order.join(" ")).toBe("invalid_target");
+      expectUncacheable(refused.headers, order.join(" "));
+    }
+    const twice = await rawToken([...base, ["resource", RESOURCE], ["resource", RESOURCE]]);
+    expect(twice.status, String(twice.body.error_description)).toBe(200);
+    const tokens = twice.body as unknown as TokenSet;
+    expect(await mcpStatus(tokens.access_token)).toBe(MCP_REACHED);
+
+    const refreshBase: Array<[string, string]> = [
+      ["grant_type", "refresh_token"],
+      ["client_id", clientId],
+      ["refresh_token", tokens.refresh_token],
+    ];
+    for (const order of [
+      [foreign, RESOURCE],
+      [RESOURCE, foreign],
+    ]) {
+      const refused = await rawToken([
+        ...refreshBase,
+        ...order.map((r): [string, string] => ["resource", r]),
+      ]);
+      expect(refused.status, order.join(" ")).toBe(400);
+      expect(refused.body.error, order.join(" ")).toBe("invalid_target");
+    }
+    // The refusals neither rotated nor revoked the refresh token.
+    const rotated = await rawToken([
+      ...refreshBase,
+      ["resource", RESOURCE],
+      ["resource", RESOURCE],
+    ]);
+    expect(rotated.status, String(rotated.body.error_description)).toBe(200);
+    expect(await mcpStatus(String(rotated.body.access_token))).toBe(MCP_REACHED);
   });
 
   it("denying consent sends access_denied and no code", async () => {

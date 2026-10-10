@@ -193,7 +193,9 @@ Deliberate merge resolutions:
     audience on opaque access tokens, so SHark's `hark-oauth-resource-binding` plugin in
     `auth.ts` requires every `authorization_code` and `refresh_token` request to name
     `https://shark.shuv.dev/mcp` exactly and answers anything else with 400 `invalid_target`
-    before the code or refresh token is spent; other bodies keep Better Auth's own answers.
+    before the code or refresh token is spent; other bodies keep Better Auth's own answers. It
+    reads the raw form in `onRequest` because RFC 8707 lets `resource` repeat and every value
+    must be acceptable, while better-call's form parser keeps only the last one.
     Better Auth adds `Cache-Control: no-store` and `Pragma: no-cache` only to successful token
     responses, so `app.ts` adds them to every `/api/auth/oauth2/token` response (RFC 6749 §5.2). Every access token `/mcp` accepts was therefore
     requested for `/mcp`; tokens issued before this rule expire within their one-hour TTL. MCP

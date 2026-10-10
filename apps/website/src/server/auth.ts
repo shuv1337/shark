@@ -57,35 +57,42 @@ export const TOKEN_RESPONSE_HEADERS = { "Cache-Control": "no-store", Pragma: "no
  * runs, the authorization code or refresh token stays unspent for a retry.
  * Only the grant types SHark issues are checked, so a request without a
  * usable `grant_type` still gets Better Auth's own answer.
+ *
+ * This reads the raw form rather than the parsed body: RFC 8707 lets a client
+ * repeat `resource`, and every value must be valid, but better-call's form
+ * parser keeps only the last one.
  */
 const BOUND_GRANT_TYPES = new Set(["authorization_code", "refresh_token"]);
 
+function invalidTarget(description: string): Response {
+  return Response.json(
+    { error: "invalid_target", error_description: description },
+    { status: 400, headers: TOKEN_RESPONSE_HEADERS },
+  );
+}
+
 const oauthResourceBinding = {
   id: "hark-oauth-resource-binding",
-  hooks: {
-    before: [
-      {
-        matcher: (ctx) =>
-          ctx.path === "/oauth2/token" && BOUND_GRANT_TYPES.has(String(ctx.body?.grant_type)),
-        handler: createAuthMiddleware(async (ctx) => {
-          const resource = ctx.body?.resource;
-          const expected = mcpResourceUrl();
-          if (resource !== expected) {
-            throw new APIError(
-              "BAD_REQUEST",
-              {
-                error: "invalid_target",
-                error_description:
-                  resource === undefined
-                    ? `resource is required and must be ${expected}`
-                    : `requested resource invalid; tokens are issued only for ${expected}`,
-              },
-              TOKEN_RESPONSE_HEADERS,
-            );
-          }
-        }),
-      },
-    ],
+  onRequest: async (request) => {
+    if (request.method !== "POST") return;
+    if (!new URL(request.url).pathname.endsWith("/oauth2/token")) return;
+    const contentType = request.headers.get("content-type") ?? "";
+    // Anything else is refused by the endpoint's media-type check (415).
+    if (!contentType.toLowerCase().startsWith("application/x-www-form-urlencoded")) return;
+    const form = new URLSearchParams(await request.clone().text());
+    if (!BOUND_GRANT_TYPES.has(form.get("grant_type") ?? "")) return;
+    const expected = mcpResourceUrl();
+    const resources = form.getAll("resource");
+    if (resources.length === 0) {
+      return { response: invalidTarget(`resource is required and must be ${expected}`) };
+    }
+    if (resources.some((resource) => resource !== expected)) {
+      return {
+        response: invalidTarget(
+          `requested resource invalid; tokens are issued only for ${expected}`,
+        ),
+      };
+    }
   },
 } satisfies BetterAuthPlugin;
 
