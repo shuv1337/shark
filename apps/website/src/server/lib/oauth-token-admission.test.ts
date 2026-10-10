@@ -210,6 +210,28 @@ describe("OAuth token endpoint admission", () => {
     env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length);
 
     const rejected = await exchange(pending);
+    expect(rejected.status).toBe(400);
+    expect(rejected.body).toMatchObject({ error: "invalid_grant" });
+    expect(rejected.body).not.toHaveProperty("access_token");
+    expect(await issuedTokens()).toEqual({ access: 0, refresh: 0 });
+  });
+
+  it("rejects a code exchange when offboarding deletes the tokens it just minted", async () => {
+    const pending = await authorize();
+    // Offboarding commits right after the grant stores its access token.
+    sqlite.exec(`
+      CREATE TEMP TRIGGER offboard_mid_grant
+      AFTER INSERT ON oauth_access_token
+      WHEN NEW.user_id = '${USER_ID}'
+      BEGIN
+        DELETE FROM oauth_access_token WHERE user_id = NEW.user_id;
+        DELETE FROM oauth_refresh_token WHERE user_id = NEW.user_id;
+        DELETE FROM session WHERE user_id = NEW.user_id;
+      END;
+    `);
+
+    const rejected = await exchange(pending);
+    expect(rejected.status).toBe(400);
     expect(rejected.body).toMatchObject({ error: "invalid_grant" });
     expect(rejected.body).not.toHaveProperty("access_token");
     expect(await issuedTokens()).toEqual({ access: 0, refresh: 0 });

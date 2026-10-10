@@ -13,6 +13,18 @@ function invalidGrant(): APIError {
   return new APIError("BAD_REQUEST", { error: "invalid_grant", error_description: DENIED });
 }
 
+/** After hooks answer with a raw Response: a returned APIError keeps the grant's 200 status. */
+function errorResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 400,
+    headers: {
+      "content-type": "application/json",
+      "cache-control": "no-store",
+      pragma: "no-cache",
+    },
+  });
+}
+
 function storedRefreshToken(presented: unknown): string | undefined {
   if (typeof presented !== "string" || !presented.startsWith(OAUTH_REFRESH_TOKEN_PREFIX)) {
     return undefined;
@@ -84,7 +96,13 @@ export const oauthTokenAdmission = {
       {
         matcher: (ctx) => ctx.path === TOKEN_PATH,
         handler: createAuthMiddleware(async (ctx) => {
-          const returned = ctx.context.returned as { access_token?: unknown } | undefined;
+          const returned = ctx.context.returned as
+            | { access_token?: unknown; statusCode?: unknown; body?: { error?: unknown } }
+            | undefined;
+          // RFC 6749 §5.2: invalid_grant is a 400; the provider sends some as 401.
+          if (returned?.body?.error === "invalid_grant" && returned.statusCode !== 400) {
+            return errorResponse(returned.body);
+          }
           const accessToken = returned?.access_token;
           if (
             typeof accessToken !== "string" ||
@@ -106,7 +124,12 @@ export const oauthTokenAdmission = {
               ),
             )
             .limit(1);
-          if (!minted?.userId) return;
+          if (!minted) {
+            // Offboarding already deleted what this grant just minted.
+            console.warn("[auth] grant=token outcome=revoked_mid_grant");
+            return errorResponse(invalidGrant().body);
+          }
+          if (!minted.userId) return;
 
           let revoked = !(await isUserAllowed(minted.userId));
           if (!revoked && ctx.body?.grant_type === "refresh_token") {
@@ -130,15 +153,7 @@ export const oauthTokenAdmission = {
             }
           });
           console.warn("[auth] grant=token outcome=revoked_mid_grant");
-          // An APIError thrown after the handler keeps the grant's 200 status.
-          return new Response(JSON.stringify(invalidGrant().body), {
-            status: 400,
-            headers: {
-              "content-type": "application/json",
-              "cache-control": "no-store",
-              pragma: "no-cache",
-            },
-          });
+          return errorResponse(invalidGrant().body);
         }),
       },
     ],
