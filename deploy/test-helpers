@@ -22,6 +22,10 @@ if { true >&9; } 2>/dev/null; then
   echo "1Password inherited the deployment lock descriptor." >&2
   exit 1
 fi
+if [[ "${OP_CACHE:-}" != "false" ]]; then
+  echo "1Password would leave a background cache daemon running." >&2
+  exit 1
+fi
 if [[ "${OP_FAIL:-0}" == "1" ]]; then
   exit 1
 fi
@@ -195,5 +199,346 @@ if "$repo_root/deploy/shark-restic-backup" "$outside_file" >/dev/null 2>&1; then
   exit 1
 fi
 [[ -f "$outside_file" ]]
+
+# shark-deploy rollback: run the real script against fake docker, curl, gh, and flock, and
+# deliver signals to its whole process group the way a dropped SSH session does.
+deploy_fake_bin="$test_root/deploy-bin"
+deploy_helpers="$test_root/deploy-helpers"
+install -d -m 700 "$deploy_fake_bin" "$deploy_helpers"
+
+cat >"$deploy_fake_bin/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+hang() {
+  if [[ "${FAKE_HANG_AT:-}" == "$1" && ! -e "$FAKE_STATE/reached" ]]; then
+    touch "$FAKE_STATE/reached"
+    sleep 30
+  fi
+}
+if [[ "$1" == "compose" ]]; then
+  shift
+  while [[ "$1" == --* ]]; do shift 2; done
+  case "$1" in
+    stop)
+      # dockerd finishes a stop even if the compose client is killed or fails partway; until it
+      # does, the draining container still reports running and a bare `up` is a no-op.
+      echo "stop $SHARK_IMAGE" >>"$FAKE_STATE/log"
+      touch "$FAKE_STATE/stopping"
+      if [[ "${FAKE_STOP_FAIL:-0}" == "1" && ! -e "$FAKE_STATE/stop-failed" ]]; then
+        touch "$FAKE_STATE/stop-failed"
+        exit 41
+      fi
+      hang stop
+      rm -f "$FAKE_STATE/stopping"
+      : >"$FAKE_STATE/running"
+      ;;
+    up)
+      if [[ "$SHARK_IMAGE" == *@sha256:1111* ]]; then
+        if [[ "${FAKE_SIGNAL_ROLLBACK:-0}" == "1" ]]; then
+          kill -HUP "$PPID"
+          kill -INT "$PPID"
+          kill -TERM "$PPID"
+        fi
+        [[ "${FAKE_ROLLBACK_FAIL:-0}" != "1" ]] || exit 1
+      fi
+      # Docker can start the container before the compose client returns.
+      hang up-before-start
+      if [[ -e "$FAKE_STATE/stopping" ]]; then
+        echo "up-noop $SHARK_IMAGE" >>"$FAKE_STATE/log"
+      else
+        echo "up $SHARK_IMAGE" >>"$FAKE_STATE/log"
+        printf '%s\n' "$SHARK_IMAGE" >"$FAKE_STATE/running"
+      fi
+      hang up-after-start
+      if [[ "${FAKE_UP_FAIL:-0}" == "1" && "$SHARK_IMAGE" != *@sha256:1111* ]]; then
+        exit 43
+      fi
+      ;;
+    ps)
+      [[ "${FAKE_PS_FAIL:-0}" != "1" ]] || exit 42
+      if [[ -s "$FAKE_STATE/running" ]]; then
+        echo "fake-container"
+      fi
+      ;;
+    *) exit 64 ;;
+  esac
+  exit 0
+fi
+case "$1" in
+  pull) ;;
+  image)
+    if [[ "$4" == "{{.Id}}" ]]; then
+      echo "id:$5"
+    else
+      echo "$5"
+    fi
+    ;;
+  inspect)
+    if [[ "${FAKE_WRONG_IMAGE:-0}" == "1" ]]; then
+      echo "id:unexpected"
+    else
+      echo "id:$(<"$FAKE_STATE/running")"
+    fi
+    ;;
+  run)
+    case " $* " in
+      *" test -f /data/hark.sqlite"*) [[ "${FAKE_HAS_DATABASE:-0}" == "1" ]] ;;
+      *" node dist/operator/backup-database.js "*)
+        touch "$FAKE_STATE/volume-backup"
+        hang backup
+        ;;
+      *" rm -f /data/backups/"*) rm -f "$FAKE_STATE/volume-backup" ;;
+      *) exit 64 ;;
+    esac
+    ;;
+  create) echo "fake-copy-container" ;;
+  cp) printf 'sqlite fixture\n' >"$3" ;;
+  rm) ;;
+  *) exit 64 ;;
+esac
+EOF
+
+real_mv="$(command -v mv)"
+cat >"$deploy_fake_bin/mv" <<EOF
+#!/usr/bin/env bash
+"$real_mv" "\$@" || exit \$?
+if [[ "\${FAKE_SIGNAL_AFTER_RENAME:-0}" == "1" && "\${2##*/}" == "current" ]]; then
+  kill -TERM "\$PPID"
+fi
+EOF
+
+cat >"$deploy_fake_bin/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+url="${*: -1}"
+case "$url" in
+  http://127.0.0.1:8787/api/health)
+    if [[ "${FAKE_HANG_AT:-}" == "health" ]]; then
+      touch "$FAKE_STATE/reached"
+      sleep 30
+    fi
+    ;;
+  https://shark.shuv.dev/api/health) ;;
+  https://shark.shuv.dev/robots.txt | https://shark.shuv.dev/sitemap.xml) printf '404' ;;
+  https://shark.shuv.dev/*) printf '401' ;;
+  *) exit 64 ;;
+esac
+EOF
+
+cat >"$deploy_fake_bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${FAKE_HANG_AT:-}" == "attest" ]]; then
+  touch "$FAKE_STATE/reached"
+  sleep 30
+fi
+EOF
+
+printf '#!/usr/bin/env bash\n' >"$deploy_fake_bin/flock"
+printf '#!/usr/bin/env bash\nprintf "fake\\n" >"$1"\n' >"$deploy_helpers/shark-materialize-secrets"
+cat >"$deploy_helpers/shark-restic-backup" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${FAKE_HANG_AT:-}" == "restic" ]]; then
+  touch "$FAKE_STATE/reached"
+  sleep 30
+fi
+[[ -f "$1" ]]
+rm -f "$1"
+printf 'b%.0s' {1..64}
+echo
+EOF
+chmod 700 "$deploy_fake_bin"/* "$deploy_helpers"/*
+
+previous_deploy_sha="1111111111111111111111111111111111111111"
+previous_deploy_image="ghcr.io/shuv1337/shark@sha256:$(printf '1%.0s' {1..64})"
+next_deploy_sha="2222222222222222222222222222222222222222"
+next_deploy_digest="sha256:$(printf '2%.0s' {1..64})"
+next_deploy_image="ghcr.io/shuv1337/shark@$next_deploy_digest"
+
+# Usage: run_deploy <case> [signal] ; sets deploy_status and FAKE_STATE.
+run_deploy() {
+  local case_name="$1" signal="${2:-}"
+  export FAKE_STATE="$test_root/deploy-$case_name"
+  local root="$FAKE_STATE/root"
+  install -d -m 700 "$root"
+  : >"$FAKE_STATE/log"
+  if [[ "${FIRST_DEPLOY:-0}" == "1" ]]; then
+    : >"$FAKE_STATE/running"
+  else
+    printf '%s\n' "$previous_deploy_image" >"$FAKE_STATE/running"
+    printf '{"git_sha":"%s","image":"%s"}\n' "$previous_deploy_sha" "$previous_deploy_image" \
+      >"$root/current"
+  fi
+  touch "$FAKE_STATE/compose.yaml"
+  if [[ "${UNWRITABLE_ROLLBACK_LOG:-0}" == "1" ]]; then
+    install -d -m 700 "$root/rollback.log"
+  fi
+  set -m
+  PATH="$deploy_fake_bin:$PATH" \
+    SHARK_DEPLOY_ROOT="$root" SHARK_COMPOSE_FILE="$FAKE_STATE/compose.yaml" \
+    SHARK_HELPER_ROOT="$deploy_helpers" \
+    "$repo_root/deploy/shark-deploy" "$next_deploy_sha" "$next_deploy_digest" \
+    >"$FAKE_STATE/out" 2>&1 9>&- &
+  local pid=$!
+  set +m
+  if [[ -n "$signal" ]]; then
+    for _ in $(seq 1 100); do
+      [[ -e "$FAKE_STATE/reached" ]] && break
+      sleep 0.1
+    done
+    [[ -e "$FAKE_STATE/reached" ]] || {
+      echo "shark-deploy $case_name never reached its hang point." >&2
+      exit 1
+    }
+    kill "-$signal" -- "-$pid"
+  fi
+  deploy_status=0
+  wait "$pid" || deploy_status=$?
+}
+
+fail_case() {
+  echo "shark-deploy $1" >&2
+  echo "--- compose log" >&2
+  cat "$FAKE_STATE/log" >&2
+  echo "--- output" >&2
+  cat "$FAKE_STATE/out" >&2
+  exit 1
+}
+
+assert_status() {
+  [[ "$deploy_status" == "$1" ]] || fail_case "exited $deploy_status, expected $1 ($2)."
+}
+
+assert_no_leftovers() {
+  if compgen -G "$FAKE_STATE/root/backup.*" >/dev/null; then
+    fail_case "left its backup staging directory behind ($1)."
+  fi
+  [[ ! -e "$FAKE_STATE/volume-backup" ]] || fail_case "left the volume backup behind ($1)."
+}
+
+assert_rolled_back() {
+  [[ "$(tail -n 1 "$FAKE_STATE/log")" == "up $previous_deploy_image" &&
+    "$(<"$FAKE_STATE/running")" == "$previous_deploy_image" ]] ||
+    fail_case "did not restart the previous release ($1)."
+  [[ "$(jq -r .git_sha "$FAKE_STATE/root/current")" == "$previous_deploy_sha" ]] ||
+    fail_case "changed the recorded release while rolling back ($1)."
+  assert_no_leftovers "$1"
+}
+
+assert_left_new_release() {
+  [[ "$(tail -n 1 "$FAKE_STATE/log")" == "up $next_deploy_image" &&
+    "$(<"$FAKE_STATE/running")" == "$next_deploy_image" ]] ||
+    fail_case "did not leave the new release running ($1)."
+  [[ "$(jq -r .git_sha "$FAKE_STATE/root/current")" == "$2" ]] ||
+    fail_case "recorded the wrong release ($1)."
+  [[ ! -e "$FAKE_STATE/root/rollback.log" ]] || fail_case "attempted a rollback ($1)."
+  assert_no_leftovers "$1"
+}
+
+FAKE_HANG_AT=stop run_deploy hup-during-stop HUP
+assert_status 129 "SIGHUP while stopping the previous container"
+assert_rolled_back "SIGHUP while stopping the previous container"
+
+FAKE_HANG_AT=stop run_deploy term-during-stop TERM
+assert_status 143 "SIGTERM while stopping the previous container"
+assert_rolled_back "SIGTERM while stopping the previous container"
+
+FAKE_HANG_AT=stop run_deploy int-during-stop INT
+assert_status 130 "SIGINT while stopping the previous container"
+assert_rolled_back "SIGINT while stopping the previous container"
+
+FAKE_STOP_FAIL=1 run_deploy stop-failure
+assert_status 41 "compose stop failing partway"
+assert_rolled_back "compose stop failing partway"
+
+FAKE_HAS_DATABASE=1 FAKE_HANG_AT=backup run_deploy hup-during-checkpoint HUP
+assert_status 129 "SIGHUP during the SQLite checkpoint"
+assert_rolled_back "SIGHUP during the SQLite checkpoint"
+
+FAKE_HAS_DATABASE=1 FAKE_HANG_AT=restic run_deploy term-during-restic TERM
+assert_status 143 "SIGTERM during the Restic backup"
+assert_rolled_back "SIGTERM during the Restic backup"
+
+FAKE_HANG_AT=up-before-start run_deploy hup-during-up-before-start HUP
+assert_status 129 "SIGHUP during the new compose up, before its container started"
+assert_rolled_back "SIGHUP during the new compose up, before its container started"
+
+FAKE_HANG_AT=up-after-start run_deploy hup-during-up-after-start HUP
+assert_status 129 "SIGHUP during the new compose up, after its container started"
+assert_left_new_release "SIGHUP during the new compose up, after its container started" \
+  "$previous_deploy_sha"
+grep -q "leaving it running but unrecorded" "$FAKE_STATE/out" ||
+  fail_case "did not report the unrecorded release."
+
+FAKE_UP_FAIL=1 run_deploy up-failure
+assert_status 43 "new compose up failing after its container started"
+assert_rolled_back "new compose up failing after its container started"
+
+FAKE_HANG_AT=health run_deploy hup-during-health HUP
+assert_status 129 "SIGHUP after the new container started"
+assert_left_new_release "SIGHUP after the new container started" "$previous_deploy_sha"
+grep -q "leaving it running but unrecorded" "$FAKE_STATE/out" ||
+  fail_case "did not report the unrecorded release."
+
+FAKE_HANG_AT=health run_deploy term-during-health TERM
+assert_status 143 "SIGTERM while waiting for the new container"
+assert_rolled_back "SIGTERM while waiting for the new container"
+
+FAKE_HANG_AT=health run_deploy int-during-health INT
+assert_status 130 "SIGINT while waiting for the new container"
+assert_rolled_back "SIGINT while waiting for the new container"
+
+FAKE_WRONG_IMAGE=1 run_deploy wrong-image
+assert_status 70 "running image mismatch"
+assert_rolled_back "running image mismatch"
+
+FAKE_PS_FAIL=1 run_deploy ps-failure
+assert_status 42 "failed container lookup"
+assert_rolled_back "failed container lookup"
+
+FAKE_WRONG_IMAGE=1 FAKE_SIGNAL_ROLLBACK=1 run_deploy signals-during-rollback
+assert_status 70 "signals during the rollback"
+assert_rolled_back "signals during the rollback"
+
+FAKE_WRONG_IMAGE=1 UNWRITABLE_ROLLBACK_LOG=1 run_deploy unwritable-rollback-log
+assert_status 70 "unwritable rollback log"
+assert_rolled_back "unwritable rollback log"
+grep -q "rollback output follows" "$FAKE_STATE/out" ||
+  fail_case "did not report the unwritable rollback log."
+
+FAKE_WRONG_IMAGE=1 FAKE_ROLLBACK_FAIL=1 run_deploy rollback-failure
+assert_status 70 "failed rollback"
+grep -q "^Rollback FAILED" "$FAKE_STATE/out" || fail_case "did not report the failed rollback."
+
+FAKE_SIGNAL_AFTER_RENAME=1 run_deploy term-after-record
+assert_status 143 "SIGTERM after recording the new release"
+assert_left_new_release "SIGTERM after recording the new release" "$next_deploy_sha"
+
+FAKE_HANG_AT=attest run_deploy hup-before-stop HUP
+assert_status 129 "SIGHUP before stopping the previous container"
+[[ ! -s "$FAKE_STATE/log" ]] ||
+  fail_case "touched the running container before it stopped it."
+grep -qx "Interrupted by SIGHUP before the running release was touched." "$FAKE_STATE/out" ||
+  fail_case "did not handle SIGHUP during attestation in its own trap."
+
+FIRST_DEPLOY=1 FAKE_WRONG_IMAGE=1 run_deploy first-deploy-failure
+assert_status 70 "failed first deploy"
+grep -qx "Deploy did not finish, and there is no previous release to restart." \
+  "$FAKE_STATE/out" || fail_case "did not report that there is no previous release."
+if grep -q "restarting the previous release" "$FAKE_STATE/out"; then
+  fail_case "claimed to restart a previous release on a first deploy."
+fi
+[[ "$(cat "$FAKE_STATE/log")" == "up $next_deploy_image" && ! -e "$FAKE_STATE/root/current" ]] ||
+  fail_case "touched a release on a failed first deploy."
+
+run_deploy success
+assert_status 0 "success"
+[[ "$(cat "$FAKE_STATE/log")" == "stop $previous_deploy_image"$'\n'"up $next_deploy_image" ]]
+[[ "$(jq -r .git_sha "$FAKE_STATE/root/current")" == "$next_deploy_sha" ]]
+
+FAKE_HAS_DATABASE=1 run_deploy success-with-database
+assert_status 0 "success with an existing database"
+assert_left_new_release "success with an existing database" "$next_deploy_sha"
+[[ "$(jq -r .backup_id "$FAKE_STATE/root/current")" == "$(printf 'b%.0s' {1..64})" ]]
 
 echo "SHark deployment helper tests passed."
