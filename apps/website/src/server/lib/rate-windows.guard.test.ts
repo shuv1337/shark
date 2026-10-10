@@ -7,6 +7,9 @@ import { describe, expect, it } from "vitest";
  * Every row in these tables counts toward a per-minute rate window, so each
  * insert must run in the synchronous transaction that checks the windows
  * (see rate-windows.ts). Drizzle export name to SQL table name.
+ *
+ * The guard is a count-based tripwire: it cannot detect a removed admission
+ * check inside an allowlisted transaction, and it matches receivers by name.
  */
 const COUNTED_TABLES = {
   event: "event",
@@ -83,7 +86,8 @@ const ADMITTED_INSERTS: AdmittedInsert[] = [
     table: "liveActivityOperation",
     receiver: "tx",
     count: 4,
-    admittedBy: "agent Live Activity start, update, end, and the shared update/end admission",
+    admittedBy:
+      "agent start transaction, shared update/end admission (admitLiveActivityMutation), and interaction-linked start/resolve (startInteractionLiveActivity, resolveInteractionLiveActivity; excluded from requester/account windows because the interaction itself was admitted)",
   },
   {
     file: "routes/activity-hooks.ts",
@@ -149,39 +153,67 @@ function lineAt(source: string, index: number) {
   return source.slice(0, index).split("\n").length;
 }
 
-function findCountedInserts(): Hit[] {
+/** Blanks out comments, keeping string literals and line numbers intact. */
+function stripComments(source: string) {
+  let out = "";
+  let i = 0;
+  while (i < source.length) {
+    const char = source[i] ?? "";
+    const next = source[i + 1];
+    if (char === "/" && (next === "/" || next === "*")) {
+      const end = next === "/" ? source.indexOf("\n", i) : source.indexOf("*/", i + 2);
+      const stop = end < 0 ? source.length : next === "/" ? end : end + 2;
+      out += source.slice(i, stop).replace(/[^\n]/g, " ");
+      i = stop;
+    } else if (char === '"' || char === "'" || char === "`") {
+      let j = i + 1;
+      while (j < source.length && source[j] !== char) j += source[j] === "\\" ? 2 : 1;
+      out += source.slice(i, j + 1);
+      i = j + 1;
+    } else {
+      out += char;
+      i += 1;
+    }
+  }
+  return out;
+}
+
+function scanSource(file: string, rawSource: string): Hit[] {
   const hits: Hit[] = [];
   const sqlTables = Object.entries(COUNTED_TABLES) as Array<[CountedTable, string]>;
-  for (const path of sourceFiles(serverRoot)) {
-    const file = relative(serverRoot, path).split("\\").join("/");
-    const source = readFileSync(path, "utf8");
-    const { names, namespaces } = countedBindings(source);
+  const source = stripComments(rawSource);
+  const { names, namespaces } = countedBindings(source);
 
-    for (const match of source.matchAll(/(\w+)\s*\.\s*insert\s*\(\s*([\w.]+)\s*\)/g)) {
-      const [, receiver = "", target = ""] = match;
-      const [head, member] = target.split(".");
-      const table =
-        member && head && namespaces.includes(head) && member in COUNTED_TABLES
-          ? (member as CountedTable)
-          : !member && head
-            ? names.get(head)
-            : undefined;
-      if (table) hits.push({ file, table, receiver, line: lineAt(source, match.index ?? 0) });
-    }
+  for (const match of source.matchAll(/(\w+)\s*\.\s*insert\s*\(\s*([\w.]+)\s*\)/g)) {
+    const [, receiver = "", target = ""] = match;
+    const [head, member] = target.split(".");
+    const table =
+      member && head && namespaces.includes(head) && member in COUNTED_TABLES
+        ? (member as CountedTable)
+        : !member && head
+          ? names.get(head)
+          : undefined;
+    if (table) hits.push({ file, table, receiver, line: lineAt(source, match.index ?? 0) });
+  }
 
-    for (const match of source.matchAll(/insert\s+(?:or\s+\w+\s+)?into\s+["`]?(\w+)["`]?/gi)) {
-      const entry = sqlTables.find(([, sqlName]) => sqlName === match[1]?.toLowerCase());
-      if (entry) {
-        hits.push({
-          file,
-          table: entry[0],
-          receiver: "raw SQL",
-          line: lineAt(source, match.index ?? 0),
-        });
-      }
+  for (const match of source.matchAll(/insert\s+(?:or\s+\w+\s+)?into\s+["`]?(\w+)["`]?/gi)) {
+    const entry = sqlTables.find(([, sqlName]) => sqlName === match[1]?.toLowerCase());
+    if (entry) {
+      hits.push({
+        file,
+        table: entry[0],
+        receiver: "raw SQL",
+        line: lineAt(source, match.index ?? 0),
+      });
     }
   }
   return hits;
+}
+
+function findCountedInserts(): Hit[] {
+  return sourceFiles(serverRoot).flatMap((path) =>
+    scanSource(relative(serverRoot, path).split("\\").join("/"), readFileSync(path, "utf8")),
+  );
 }
 
 describe("rate window admission guard", () => {
@@ -227,15 +259,24 @@ describe("rate window admission guard", () => {
     ).toEqual([]);
   });
 
-  it("detects inserts through aliases, namespaces, and raw SQL", () => {
+  it("detects inserts through aliases, namespaces, comments, and raw SQL", () => {
     const source = [
       'import { event as eventTable, user } from "../db/schema";',
       'import * as schema from "./db/schema";',
+      "db.insert(eventTable).values(row);",
+      "tx.insert(schema.oncallPage).values(row);",
+      'sqlite.exec("INSERT INTO agent_notification (id) VALUES (1)");',
+      "db.insert(/* x */ eventTable).values(row);",
+      "db.insert( // x\n  schema.interaction\n).values(row);",
+      "db.insert(user).values(row);",
+      "// db.insert(eventTable)",
     ].join("\n");
-    const { names, namespaces } = countedBindings(source);
-    expect(names.get("eventTable")).toBe("event");
-    expect(names.has("user")).toBe(false);
-    expect(namespaces).toEqual(["schema"]);
-    expect(findCountedInserts().length).toBeGreaterThan(0);
+    expect(scanSource("fixture.ts", source)).toEqual([
+      { file: "fixture.ts", table: "event", receiver: "db", line: 3 },
+      { file: "fixture.ts", table: "oncallPage", receiver: "tx", line: 4 },
+      { file: "fixture.ts", table: "event", receiver: "db", line: 6 },
+      { file: "fixture.ts", table: "interaction", receiver: "db", line: 7 },
+      { file: "fixture.ts", table: "agentNotification", receiver: "raw SQL", line: 5 },
+    ]);
   });
 });

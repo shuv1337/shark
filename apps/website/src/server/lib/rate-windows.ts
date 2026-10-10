@@ -159,17 +159,13 @@ export function serviceWindowUsage(executor: Executor, serviceId: string, since:
         .where(and(eq(event.serviceId, serviceId), gte(event.createdAt, since)))
         .get(),
     ) +
-    value(
-      executor
-        .select({ value: count() })
-        .from(liveActivityOperation)
-        .where(
-          and(
-            eq(liveActivityOperation.requesterServiceId, serviceId),
-            gte(liveActivityOperation.createdAt, since),
-          ),
-        )
-        .get(),
+    liveActivityOperations(
+      executor,
+      and(
+        eq(liveActivityOperation.requesterServiceId, serviceId),
+        gte(liveActivityOperation.createdAt, since),
+        isNull(liveActivity.interactionId),
+      ),
     ) +
     countPagesSince(executor, { serviceId }, since)
   );

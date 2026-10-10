@@ -58,8 +58,9 @@ requests cannot overshoot them: webhook notifications (with the `response` inter
 transaction) and pages, agent notifications, interactions, agent pages
 (`/api/agent/oncall/:id/pages` and `/api/agent/notifications` with `oncall`), board ask pushes,
 and Live Activity starts, updates, and ends from agent tokens and activity webhooks. A Live
-Activity start is admitted, and its activity and operation rows recorded, before it ends any
-blocking activity or sends any push, so a refused start changes nothing; updates and ends still
+Activity start runs admission, then ends any blocking activity, then inserts its activity and
+operation rows, all in one transaction, and sends pushes only after it commits, so a refused start
+changes nothing; updates and ends still
 compare-and-swap the activity sequence. `rate-windows.guard.test.ts` fails if a new insert into a
 counted table appears outside the known admitted call sites. A request with an `Idempotency-Key`
 skips the early check and, inside the
