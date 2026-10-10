@@ -41,12 +41,25 @@ logs. Unchecked release evidence keeps the goal active.
     accepted for 5 targets: 2 iOS, 1 macOS, and 2 web. Afterward, the container logged no push
     errors or rejected receipts and still had 0 restarts.
   - The installed macOS companion (`dev.shuv.shark.macos`) has a stored credential and an active
-    registered device. Its inbox was not inspected visually.
-  - `sharkctl` re-authentication with the `teams:*`, `oncall:*`, and `board:*` scopes was not
-    completed. Apple web sign-in waited for the operator's passkey, and the device code expired.
-    The signed-in dashboard check and the end-to-end MCP OAuth client check depend on the same
-    browser sign-in and remain pending. Because those checks are pending, the `.pre-20e14e1` config
-    backups on the VM were kept. The live copies hash-match `main`.
+    registered device. The operator confirmed that its menu-bar inbox loads on `20e14e1`.
+  - Apple web sign-in with a passkey succeeded. The signed-in dashboard loaded with 0 console or
+    page errors, and all 9 of its API requests, including `/api/teams`, `/api/oauth/clients`, and
+    `/api/api-tokens`, returned 200. The Teams section showed its empty state. Inbox, devices,
+    activity, and the board (`/board`, 5 recently done items) kept their existing data. Bare
+    `/dashboard/teams` returns 404 because teams render on `/dashboard` and only
+    `/dashboard/teams/:teamId` is routed.
+  - `sharkctl` re-authenticated through the browser device flow with the 14 default scopes plus
+    `teams:read`, `teams:write`, `oncall:read`, `oncall:write`, `board:read`, and `board:write`.
+    The new login holds exactly those 20 scopes.
+  - An end-to-end MCP OAuth client registered dynamically against `/mcp` and requested only
+    `inbox:read board:read`. The consent page offered only those two scopes. After approval, the
+    token exchange granted exactly those scopes, with no refresh token. The client listed 75 tools
+    (30 marked read-only) and called `inbox_projects` without error. After Disconnect in the
+    dashboard, the client no longer appeared, `/mcp` returned 401 for the old access token, and
+    a refresh attempt returned 400.
+  - The `.pre-20e14e1` backups of `/etc/shark/compose.yaml` and
+    `/usr/local/sbin/shark-materialize-secrets` were deleted from the VM. The live copies still
+    hash-match `main` with unchanged owners and modes. The older `.pre-d304727` copies remain.
 
 - 2026-08-20: native macOS menu-bar companion, scoped device-code authorization, encrypted APNs
   device registration, privacy-redacted delivery, inbox/actions, and mixed-platform fanout were
