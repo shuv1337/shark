@@ -16,6 +16,7 @@ import {
   pagesNeedYouLabel,
   seatsFull,
   seatsLabel,
+  teamInvitePreviewCode,
 } from "./teams";
 
 function app(id: string, team?: { id: string; name: string }): AppDto {
@@ -176,6 +177,23 @@ describe("join links", () => {
     42,
   ])("rejects %s", (url) => {
     expect(joinCodeFromUrl(url)).toBeNull();
+  });
+});
+
+describe("team invite preview gating", () => {
+  it("waits for a resolved signed-in session before returning the code once", () => {
+    const sessionStates = [
+      { pending: true, signedIn: false },
+      { pending: false, signedIn: false },
+      { pending: false, signedIn: true },
+    ];
+
+    const previews = sessionStates.map(({ pending, signedIn }) =>
+      teamInvitePreviewCode("invite_123", pending, signedIn),
+    );
+    expect(previews).toEqual([null, null, "invite_123"]);
+    expect(previews.filter(Boolean)).toHaveLength(1);
+    expect(teamInvitePreviewCode("", false, true)).toBeNull();
   });
 });
 

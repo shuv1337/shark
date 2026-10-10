@@ -22,6 +22,7 @@ import {
   memberCountLabel,
   PENDING_JOIN_CODE_KEY,
   roleLabel,
+  teamInvitePreviewCode,
 } from "../../src/lib/teams";
 import { colors } from "../../src/lib/theme";
 
@@ -37,7 +38,7 @@ export default function JoinTeamScreen() {
   const [seatLimit, setSeatLimit] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   const signedOut = !isPending && !session && !simulatorPreview;
-  const signedIn = !isPending && Boolean(session);
+  const previewCode = teamInvitePreviewCode(code, isPending, Boolean(session));
 
   useEffect(() => {
     // Remember the invite so it reopens right after sign-in.
@@ -50,9 +51,9 @@ export default function JoinTeamScreen() {
       return;
     }
     // The preview needs a session; signed out, the screen redirects instead.
-    if (!signedIn) return;
+    if (!previewCode) return;
     void api
-      .previewTeamInvite(code)
+      .previewTeamInvite(previewCode)
       .then(setInvite)
       .catch((cause: unknown) =>
         setLoadError(
@@ -63,7 +64,7 @@ export default function JoinTeamScreen() {
               : "Couldn’t load this invite.",
         ),
       );
-  }, [code, simulatorPreview, signedIn]);
+  }, [previewCode, simulatorPreview]);
 
   if (signedOut) return <Redirect href="/" />;
 

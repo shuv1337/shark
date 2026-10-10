@@ -738,6 +738,59 @@ describe("team apps", () => {
     });
   });
 
+  it("refuses a team app rename when an admin is downgraded before the write transaction", async () => {
+    const { hashApiToken } = await import("../lib/token");
+    const team = await createTeam("Re-register race");
+    await join("user_b", (await invite(team.id)).code);
+    const body = { name: "Deploys", url: "https://deploys.example.com/", teamId: team.id };
+    const created = await call("POST", "/api/agent/apps", body, TEAMS_TOKEN);
+    expect(created.status).toBe(201);
+    const { app: teamApp } = (await created.json()) as { app: AppDto };
+    const adminToken = `hark_${"r".repeat(43)}`;
+    await db.insert(schema.apiToken).values({
+      id: "tok_reregister_race",
+      userId: "user_b",
+      name: "Race bot",
+      tokenHash: hashApiToken(adminToken),
+      prefix: "hark_rrrrrrr",
+      scopes: ["apps:read", "apps:write", "teams:read", "teams:write"],
+      createdAt: new Date(),
+    });
+    await db
+      .update(schema.teamMember)
+      .set({ role: "admin" })
+      .where(and(eq(schema.teamMember.teamId, team.id), eq(schema.teamMember.userId, "user_b")));
+
+    // Let the route's pre-transaction membership read see an admin, then downgrade Bea before
+    // the write transaction re-reads her role.
+    const transaction = db.transaction.bind(db);
+    let armed = true;
+    const spy = vi.spyOn(db, "transaction").mockImplementationOnce(((
+      callback: Parameters<typeof db.transaction>[0],
+    ) => {
+      armed = false;
+      db.update(schema.teamMember)
+        .set({ role: "member" })
+        .where(and(eq(schema.teamMember.teamId, team.id), eq(schema.teamMember.userId, "user_b")))
+        .run();
+      return transaction(callback);
+    }) as typeof db.transaction);
+    try {
+      const renamed = await call(
+        "POST",
+        "/api/agent/apps",
+        { ...body, name: "Deploys hijacked" },
+        adminToken,
+      );
+      expect(armed).toBe(false);
+      expect(renamed.status).toBe(403);
+    } finally {
+      spy.mockRestore();
+    }
+    const [unchanged] = await db.select().from(schema.app).where(eq(schema.app.id, teamApp.id));
+    expect(unchanged?.name).toBe("Deploys");
+  });
+
   it("lets an apps:write token move its owner's app back out of a team without teams:write", async () => {
     const team = await createTeam("Unshare");
     await join("user_b", (await invite(team.id)).code);
