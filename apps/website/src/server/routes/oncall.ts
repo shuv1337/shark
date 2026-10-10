@@ -33,7 +33,7 @@ import {
 } from "../lib/oncall";
 import { onCallThroughout, upcomingShifts } from "../lib/oncall-schedule";
 import { agentAdmission } from "../lib/rate-windows";
-import { hasRole } from "../lib/teams";
+import { hasRole, sendNotice } from "../lib/teams";
 import {
   type AgentEnv,
   type AuthedEnv,
@@ -181,6 +181,7 @@ async function createOverride(actor: Actor, groupId: string, input: unknown): Pr
       userId: parsed.data.userId,
       startsAt: new Date(startsAt),
       endsAt: new Date(endsAt),
+      createdByUserId: actor.id,
       createdAt: new Date(createdAt),
     };
     const [candidate] = overrideWindows([row]);
@@ -191,10 +192,44 @@ async function createOverride(actor: Actor, groupId: string, input: unknown): Pr
       return { ok: false as const, error: PARTLY_SHADOWED };
     }
     tx.insert(oncallOverride).values(row).run();
-    return { ok: true as const, group: found.group };
+    return { ok: true as const, group: found.group, row };
   });
   if (!outcome.ok) return outcome.error;
+  if (outcome.row.userId !== actor.id) {
+    void notifyOverrideRecipient(actor, outcome.group, outcome.row).catch((error: unknown) =>
+      console.error("[oncall] Override notice failed", error),
+    );
+  }
   return result({ group: await toGroupDto(outcome.group) }, 201);
+}
+
+function formatOverrideTime(at: Date, timezone: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(at);
+}
+
+/** Tells the person an override names that someone else put them on call. */
+async function notifyOverrideRecipient(
+  actor: Actor,
+  group: typeof oncallGroup.$inferSelect,
+  row: { userId: string; startsAt: Date; endsAt: Date },
+): Promise<void> {
+  const from = formatOverrideTime(row.startsAt, group.timezone);
+  const until = formatOverrideTime(row.endsAt, group.timezone);
+  await sendNotice([row.userId], {
+    senderUserId: actor.id,
+    title: `${actor.name} put you on call for ${group.name}`,
+    body: `You're on call from ${from} until ${until}.`,
+    sourceName: group.name,
+    url: "shark://oncall",
+    conversationKey: `oncall-${group.id}`,
+  });
 }
 
 async function deleteOverride(actor: Actor, groupId: string, overrideId: string): Promise<Outcome> {
@@ -206,8 +241,15 @@ async function deleteOverride(actor: Actor, groupId: string, overrideId: string)
     .where(and(eq(oncallOverride.id, overrideId), eq(oncallOverride.groupId, groupId)))
     .limit(1);
   if (!row) return failure(404, "Override not found");
-  if (row.userId !== actor.id && !hasRole(found.role as "member", "admin")) {
-    return failure(403, "Only team owners and admins can remove someone else's override");
+  if (
+    row.userId !== actor.id &&
+    row.createdByUserId !== actor.id &&
+    !hasRole(found.role as "member", "admin")
+  ) {
+    return failure(
+      403,
+      "Only team owners and admins can remove an override that neither names you nor was created by you",
+    );
   }
   await db.delete(oncallOverride).where(eq(oncallOverride.id, row.id));
   return result({ group: await toGroupDto(found.group) });
