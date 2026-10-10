@@ -170,7 +170,17 @@ async function token(params: Record<string, string>) {
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(params).toString(),
   });
-  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  return {
+    status: response.status,
+    headers: response.headers,
+    body: (await response.json()) as Record<string, unknown>,
+  };
+}
+
+/** RFC 6749 §5.1–5.2: every token endpoint response, errors included, is uncacheable. */
+function expectUncacheable(headers: Headers, label: string) {
+  expect(headers.get("cache-control"), label).toBe("no-store");
+  expect(headers.get("pragma"), label).toBe("no-cache");
 }
 
 /** `resource: null` omits RFC 8707's resource indicator from the request. */
@@ -418,6 +428,7 @@ describe("MCP OAuth end to end", () => {
     expect(missing.status).toBe(400);
     expect(missing.body).toMatchObject({ error: "invalid_target" });
     expect(String(missing.body.error_description)).toContain(RESOURCE);
+    expectUncacheable(missing.headers, "missing resource");
 
     for (const foreign of [
       `${ORIGIN}/`,
@@ -428,10 +439,12 @@ describe("MCP OAuth end to end", () => {
       const refused = await exchange(clientId, code, verifier, foreign);
       expect(refused.status, foreign).toBe(400);
       expect(refused.body.error, foreign).toBe("invalid_target");
+      expectUncacheable(refused.headers, foreign);
     }
 
     const exchanged = await exchange(clientId, code, verifier);
     expect(exchanged.status, String(exchanged.body.error_description)).toBe(200);
+    expectUncacheable(exchanged.headers, "exchange");
     const tokens = exchanged.body as unknown as TokenSet;
     expect(await mcpStatus(tokens.access_token)).toBe(MCP_REACHED);
 
@@ -443,10 +456,24 @@ describe("MCP OAuth end to end", () => {
     expect(elsewhere.body.error).toBe("invalid_target");
     const rotated = await refresh(clientId, tokens.refresh_token);
     expect(rotated.status, String(rotated.body.error_description)).toBe(200);
+    expectUncacheable(rotated.headers, "refresh");
     expect(await mcpStatus(String(rotated.body.access_token))).toBe(MCP_REACHED);
 
-    // The anonymous-endpoint answers in docs/operations.md are unchanged.
-    expect((await token({})).status).toBe(400);
+    // Better Auth's own errors are uncacheable too, and the resource check only applies to
+    // the grant types SHark issues, so the documented answers for other bodies are unchanged.
+    const replayed = await exchange(clientId, code, verifier);
+    expect(replayed.status).toBe(401);
+    expect(replayed.body.error).toBe("invalid_grant");
+    expectUncacheable(replayed.headers, "replayed code");
+    const empty = await token({});
+    expect(empty.status).toBe(400);
+    expect(empty.body).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(empty.body.error).toBeUndefined();
+    expectUncacheable(empty.headers, "empty form");
+    const unsupported = await token({ grant_type: "client_credentials", client_id: clientId });
+    expect(unsupported.status).toBe(400);
+    expect(unsupported.body.error).toBe("unsupported_grant_type");
+    expectUncacheable(unsupported.headers, "unsupported grant");
     const asJson = await app.request("/api/auth/oauth2/token", {
       method: "POST",
       headers: { "content-type": "application/json" },

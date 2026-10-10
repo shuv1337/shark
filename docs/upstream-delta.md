@@ -191,9 +191,11 @@ Deliberate merge resolutions:
     refresh token, or the token being revoked or introspected. Better Auth 1.6.25 checks the
     RFC 8707 `resource` against `validAudiences` only when the client sends one and stores no
     audience on opaque access tokens, so SHark's `hark-oauth-resource-binding` plugin in
-    `auth.ts` requires every token request (code exchange and refresh) to name
+    `auth.ts` requires every `authorization_code` and `refresh_token` request to name
     `https://shark.shuv.dev/mcp` exactly and answers anything else with 400 `invalid_target`
-    before the code or refresh token is spent. Every access token `/mcp` accepts was therefore
+    before the code or refresh token is spent; other bodies keep Better Auth's own answers.
+    Better Auth adds `Cache-Control: no-store` and `Pragma: no-cache` only to successful token
+    responses, so `app.ts` adds them to every `/api/auth/oauth2/token` response (RFC 6749 §5.2). Every access token `/mcp` accepts was therefore
     requested for `/mcp`; tokens issued before this rule expire within their one-hour TTL. MCP
     (2025-06-18) requires clients to send `resource`; current Claude Code and OpenCode do through
     the TypeScript SDK (which sends it once it has read the protected resource metadata `/mcp`

@@ -44,6 +44,9 @@ const oauthDefaultScopes = {
   },
 } satisfies BetterAuthPlugin;
 
+/** RFC 6749 §5.1–5.2: token endpoint responses, errors included, are never cached. */
+export const TOKEN_RESPONSE_HEADERS = { "Cache-Control": "no-store", Pragma: "no-cache" } as const;
+
 /**
  * Every token is bound to the MCP server. Better Auth 1.6.25 checks `resource`
  * against `validAudiences` only when the client sends it (RFC 8707) and stores
@@ -52,24 +55,33 @@ const oauthDefaultScopes = {
  * clients to send it, so require it to name `/mcp` exactly and refuse anything
  * else with RFC 8707's `invalid_target`. Rejected here, before the endpoint
  * runs, the authorization code or refresh token stays unspent for a retry.
+ * Only the grant types SHark issues are checked, so a request without a
+ * usable `grant_type` still gets Better Auth's own answer.
  */
+const BOUND_GRANT_TYPES = new Set(["authorization_code", "refresh_token"]);
+
 const oauthResourceBinding = {
   id: "hark-oauth-resource-binding",
   hooks: {
     before: [
       {
-        matcher: (ctx) => ctx.path === "/oauth2/token",
+        matcher: (ctx) =>
+          ctx.path === "/oauth2/token" && BOUND_GRANT_TYPES.has(String(ctx.body?.grant_type)),
         handler: createAuthMiddleware(async (ctx) => {
           const resource = ctx.body?.resource;
           const expected = mcpResourceUrl();
           if (resource !== expected) {
-            throw new APIError("BAD_REQUEST", {
-              error: "invalid_target",
-              error_description:
-                resource === undefined
-                  ? `resource is required and must be ${expected}`
-                  : `requested resource invalid; tokens are issued only for ${expected}`,
-            });
+            throw new APIError(
+              "BAD_REQUEST",
+              {
+                error: "invalid_target",
+                error_description:
+                  resource === undefined
+                    ? `resource is required and must be ${expected}`
+                    : `requested resource invalid; tokens are issued only for ${expected}`,
+              },
+              TOKEN_RESPONSE_HEADERS,
+            );
           }
         }),
       },
