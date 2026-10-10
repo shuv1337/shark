@@ -196,6 +196,13 @@ export function rotationMemberAt(rotation: RotationConfig, index: number): strin
  * Whether `a` takes precedence over `b` where both cover the same instant:
  * the later `startsAt` wins, then the later `createdAt`, then the greater
  * `id`. The order is total, so the winner never depends on input order.
+ *
+ * Deliberately not newest-created-wins: that would let a long override
+ * created after a short cover silently erase the cover, while this rule's
+ * one sharp edge (a new override partly covered by a later-starting one) is
+ * refused with 409 at creation, so a new override never shadows an existing
+ * one it would surround. (A later-starting override can still take over the
+ * tail of an earlier cover.)
  */
 function outranks(a: OverrideWindow, b: OverrideWindow): boolean {
   if (a.startsAt !== b.startsAt) return a.startsAt > b.startsAt;

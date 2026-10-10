@@ -46,7 +46,7 @@ describe("oncall delivery status migration", () => {
     recipient.run("old", "missed", 0, now);
     recipient.run("closed", "missed", 0, now);
 
-    applyMigration(database, "0027_oncall_delivery_status.sql");
+    applyMigration(database, "0028_oncall_delivery_status.sql");
 
     const rows = database
       .prepare(

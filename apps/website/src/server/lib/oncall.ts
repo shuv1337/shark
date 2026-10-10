@@ -169,7 +169,9 @@ export async function toGroupDto(group: GroupRow, now = Date.now()): Promise<Onc
   const current = currentShift(rotation, windows, now);
   const map = await people([
     ...group.memberIds,
-    ...overrideRows.map((row) => row.userId),
+    ...overrideRows.flatMap((row) =>
+      row.createdByUserId ? [row.userId, row.createdByUserId] : [row.userId],
+    ),
     ...shifts.map((shift) => shift.userId),
   ]);
   const [open] = await db
@@ -181,6 +183,7 @@ export async function toGroupDto(group: GroupRow, now = Date.now()): Promise<Onc
     person: personOrUnknown(map, row.userId),
     startsAt: row.startsAt.toISOString(),
     endsAt: row.endsAt.toISOString(),
+    createdBy: row.createdByUserId ? personOrUnknown(map, row.createdByUserId) : null,
   }));
   return {
     id: group.id,
