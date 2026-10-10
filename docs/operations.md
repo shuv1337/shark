@@ -159,8 +159,10 @@ operator review:
     authenticate with a client ID, code, or token instead of a session. An empty form body returns
     400, and JSON returns 415.
   - `POST /api/auth/oauth2/public-client-prelogin` accepts JSON and verifies a signed
-    `oauth_query` instead of a session. An empty JSON body returns 400, and valid JSON with a
-    validly signed query returns 200 with the client's public registration fields.
+    `oauth_query` instead of a session. An empty JSON body returns 400, a `client_id` that
+    differs from the signed query's returns 400, and valid JSON with a validly signed query for
+    the same client returns 200 with the client's public registration fields, without
+    `contacts`.
   - `/mcp` without a valid bearer token returns 401 with a `WWW-Authenticate` challenge that points
     to the protected-resource metadata.
 - The team invite preview `GET /api/team-invites/:code` is intentionally anonymous so the join
