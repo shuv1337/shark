@@ -1,5 +1,4 @@
 import {
-  API_ERROR_CODE_SEAT_LIMIT,
   type AppDto,
   HARK_PAGE_CATEGORY_ID,
   type OncallPageDto,
@@ -20,12 +19,6 @@ import { ApiError } from "./api-error";
 /** A bare 404 without a server code: the server predates teams / on-call. */
 export function isUnsupportedRoute(error: unknown): boolean {
   return error instanceof ApiError && error.status === 404 && error.code === undefined;
-}
-
-export function isSeatLimitError(error: unknown): boolean {
-  return (
-    error instanceof ApiError && (error.code === API_ERROR_CODE_SEAT_LIMIT || error.status === 402)
-  );
 }
 
 export interface TeamSection {
@@ -77,12 +70,17 @@ export function seatsLabel(seats: TeamDto["seats"]): string {
   return `${seats.used} of ${seats.available} seat${seats.available === 1 ? "" : "s"}`;
 }
 
-export function seatsFull(seats: TeamDto["seats"]): boolean {
-  return seats.available !== null && seats.used >= seats.available;
-}
-
 export function roleLabel(role: TeamRole): string {
   return role === "owner" ? "Owner" : role === "admin" ? "Admin" : "Member";
+}
+
+/** The invite code to preview once auth has resolved to a signed-in session. */
+export function teamInvitePreviewCode(
+  code: string,
+  sessionPending: boolean,
+  hasSession: boolean,
+): string | null {
+  return code.length > 0 && !sessionPending && hasSession ? code : null;
 }
 
 export function canManageTeam(role: TeamRole | undefined): boolean {

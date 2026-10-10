@@ -301,8 +301,8 @@ describe("teams and invites", () => {
     });
     for (const kind of ["checkout", "portal"]) {
       const response = await call("POST", `/api/teams/${team.id}/billing/${kind}`);
-      expect(response.status).toBe(503);
-      expect(await response.json()).toEqual({ error: "Billing is not configured" });
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "Not found" });
     }
   });
 
@@ -736,6 +736,64 @@ describe("team apps", () => {
       id: teamApp.id,
       name: "Status v2",
     });
+  });
+
+  it("refuses a team app rename when an admin is downgraded before the write transaction", async () => {
+    const { hashApiToken } = await import("../lib/token");
+    const team = await createTeam("Re-register race");
+    await join("user_b", (await invite(team.id)).code);
+    as("user_a");
+    const body = { name: "Deploys", url: "https://deploys.example.com/", teamId: team.id };
+    const created = await call("POST", "/api/agent/apps", body, TEAMS_TOKEN);
+    expect(created.status).toBe(201);
+    const { app: teamApp } = (await created.json()) as { app: AppDto };
+    const adminToken = `hark_${"r".repeat(43)}`;
+    await db.insert(schema.apiToken).values({
+      id: "tok_reregister_race",
+      userId: "user_b",
+      name: "Race bot",
+      tokenHash: hashApiToken(adminToken),
+      prefix: "hark_rrrrrrr",
+      scopes: ["apps:read", "apps:write", "teams:read", "teams:write"],
+      createdAt: new Date(),
+    });
+    await db
+      .update(schema.teamMember)
+      .set({ role: "admin" })
+      .where(and(eq(schema.teamMember.teamId, team.id), eq(schema.teamMember.userId, "user_b")));
+
+    // Let the route's pre-transaction membership read see an admin, then downgrade Bea before
+    // the write transaction re-reads her role.
+    const transaction = db.transaction.bind(db);
+    let downgraded = false;
+    const spy = vi.spyOn(db, "transaction").mockImplementationOnce(((
+      ...args: Parameters<typeof db.transaction>
+    ) => {
+      downgraded = true;
+      db.update(schema.teamMember)
+        .set({ role: "member" })
+        .where(and(eq(schema.teamMember.teamId, team.id), eq(schema.teamMember.userId, "user_b")))
+        .run();
+      return transaction(...args);
+    }) as typeof db.transaction);
+    try {
+      const renamed = await call(
+        "POST",
+        "/api/agent/apps",
+        { ...body, name: "Deploys hijacked" },
+        adminToken,
+      );
+      expect(downgraded).toBe(true);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(renamed.status).toBe(403);
+      expect(await renamed.json()).toMatchObject({
+        error: expect.stringContaining("team admin"),
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    const [unchanged] = await db.select().from(schema.app).where(eq(schema.app.id, teamApp.id));
+    expect(unchanged?.name).toBe("Deploys");
   });
 
   it("lets an apps:write token move its owner's app back out of a team without teams:write", async () => {

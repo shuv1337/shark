@@ -6,7 +6,6 @@ import {
   escalationLabel,
   formatHandoff,
   groupAppsByTeam,
-  isSeatLimitError,
   isUnsupportedRoute,
   joinCodeFromUrl,
   onCallSummary,
@@ -14,8 +13,8 @@ import {
   pagePushData,
   pagesNeedingResponse,
   pagesNeedYouLabel,
-  seatsFull,
   seatsLabel,
+  teamInvitePreviewCode,
 } from "./teams";
 
 function app(id: string, team?: { id: string; name: string }): AppDto {
@@ -58,12 +57,10 @@ describe("groupAppsByTeam", () => {
 });
 
 describe("seats", () => {
-  it("labels and detects full teams", () => {
+  it("labels team seats", () => {
     expect(seatsLabel({ used: 3, available: 5, billable: 2 })).toBe("3 of 5 seats");
     expect(seatsLabel({ used: 1, available: 1, billable: 0 })).toBe("1 of 1 seat");
     expect(seatsLabel({ used: 7, available: null, billable: 6 })).toBe("7 seats");
-    expect(seatsFull({ used: 1, available: 1, billable: 0 })).toBe(true);
-    expect(seatsFull({ used: 7, available: null, billable: 6 })).toBe(false);
   });
 });
 
@@ -72,11 +69,6 @@ describe("api error classification", () => {
     expect(isUnsupportedRoute(new ApiError("x", 404))).toBe(true);
     expect(isUnsupportedRoute(new ApiError("x", 404, "not_found"))).toBe(false);
     expect(isUnsupportedRoute(new ApiError("x", 500))).toBe(false);
-  });
-
-  it("recognizes seat limits", () => {
-    expect(isSeatLimitError(new ApiError("x", 402, "seat_limit"))).toBe(true);
-    expect(isSeatLimitError(new ApiError("x", 403, "forbidden"))).toBe(false);
   });
 });
 
@@ -176,6 +168,18 @@ describe("join links", () => {
     42,
   ])("rejects %s", (url) => {
     expect(joinCodeFromUrl(url)).toBeNull();
+  });
+});
+
+describe("team invite preview gating", () => {
+  it.each([
+    ["while auth is pending without a session", "invite_123", true, false, null],
+    ["while auth is pending with a session", "invite_123", true, true, null],
+    ["when signed out", "invite_123", false, false, null],
+    ["when signed in", "invite_123", false, true, "invite_123"],
+    ["when the code is missing", "", false, true, null],
+  ])("returns the preview code %s", (_label, code, pending, signedIn, expected) => {
+    expect(teamInvitePreviewCode(code, pending, signedIn)).toBe(expected);
   });
 });
 
