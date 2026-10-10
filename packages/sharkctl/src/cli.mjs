@@ -436,7 +436,7 @@ async function waitForInteraction(config, id, timeoutSeconds, runtime) {
     const remaining = Math.max(0, (deadline - now()) / 1000);
     body = await request(
       config,
-      `/api/agent/interactions/${encodeURIComponent(id)}/wait?timeout=${Math.min(25, Math.ceil(remaining))}`,
+      `/api/agent/interactions/${encodeURIComponent(id)}/wait?timeout=${Math.min(25, Math.round(remaining * 10) / 10)}`,
     );
     if (TERMINAL.has(body.interaction.status)) return body;
     if (now() >= deadline) return { ...body, timedOut: true };
