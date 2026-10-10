@@ -1125,6 +1125,8 @@ export const agentOperations: Record<string, Partial<Record<AgentMethod, AgentOp
       request: oncallOverrideCreateSchema,
       status: 201,
       response: wrap("group", ref("OncallGroup")),
+      description:
+        "Returns 409 when a later-starting override partly covers the window; split the override around it.",
     },
   },
   "/oncall/{groupId}/overrides/{overrideId}": {

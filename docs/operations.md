@@ -63,7 +63,8 @@ only after admission, so a refused notification leaves no project behind.
 
 A board push retry of a failed attempt is admitted in the same way and records its own
 `agent_notification_retry` row, so every attempt counts in the window it was made in and earlier
-attempts keep their usage. The transaction also claims the attempt with a fresh claim id, and only
+attempts keep their usage. Retry rows only matter for 60 seconds, so the board sweeper deletes
+those older than an hour, in batches of 1000 each minute. The transaction also claims the attempt with a fresh claim id, and only
 that claim may record the outcome. A revision with an attempt still sending in this process is
 never reclaimed; one stuck in `processing` for two minutes and not running here (for example after
 a restart) is treated as abandoned and may be retried. Each on-call group also accepts at most 10

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, lt } from "drizzle-orm";
 import { db } from "../db";
 import {
   agentNotification,
@@ -65,6 +65,28 @@ const DELIVERED = new Set(["accepted", "partial"]);
 const ABANDONED_MS = 2 * 60_000;
 /** Notifications with an attempt running in this process; SHark runs one process. */
 const activeAttempts = new Set<string>();
+
+/** Retry rows only count in 60-second windows; older ones are swept. */
+export const RETRY_RETENTION_MS = 60 * 60_000;
+const RETRY_SWEEP_BATCH = 1000;
+
+/** Deletes up to one batch of board push retry rows past retention. */
+export function sweepBoardPushRetries(now = new Date()): number {
+  const cutoff = new Date(now.getTime() - RETRY_RETENTION_MS);
+  return db
+    .delete(agentNotificationRetry)
+    .where(
+      inArray(
+        agentNotificationRetry.id,
+        db
+          .select({ id: agentNotificationRetry.id })
+          .from(agentNotificationRetry)
+          .where(lt(agentNotificationRetry.createdAt, cutoff))
+          .limit(RETRY_SWEEP_BATCH),
+      ),
+    )
+    .run().changes;
+}
 
 export interface BoardPushResult {
   notificationId: string;
@@ -180,7 +202,6 @@ export async function sendBoardAskPush(
         })
         .where(eq(agentNotification.id, row.id))
         .run();
-      activeAttempts.add(row.id);
       return { kind: "claimed" as const, id: row.id };
     }
     const id = newId("anot");
@@ -205,7 +226,6 @@ export async function sendBoardAskPush(
         createdAt: now,
       })
       .run();
-    activeAttempts.add(id);
     return { kind: "claimed" as const, id };
   });
   if (claim.kind === "delivered") return { notificationId: claim.id, accepted: 1 };
@@ -218,6 +238,8 @@ export async function sendBoardAskPush(
   );
 
   try {
+    // Marked only after COMMIT, so a failed commit cannot strand the id.
+    activeAttempts.add(notificationId);
     return await fanOut();
   } catch (error) {
     await db

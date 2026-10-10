@@ -40,7 +40,7 @@ import {
 import { db } from "../db";
 import { apiToken, boardAsk, boardAskEvent, boardNote, boardWorkItem } from "../db/schema";
 import { deliverBoardCallbacks } from "./board-callbacks";
-import { sendBoardAskPush } from "./board-push";
+import { sendBoardAskPush, sweepBoardPushRetries } from "./board-push";
 import { boardVersion, notifyBoardChanged } from "./board-stream";
 import { newId } from "./id";
 import { encryptCallbackToken } from "./token";
@@ -1109,8 +1109,16 @@ export async function sweepExpiredAsks(now = new Date()): Promise<number> {
 }
 
 export function startBoardSweeper(): () => void {
-  void sweepExpiredAsks().catch(() => {});
-  const timer = setInterval(() => void sweepExpiredAsks().catch(() => {}), 60_000);
+  const sweep = () => {
+    void sweepExpiredAsks().catch(() => {});
+    try {
+      sweepBoardPushRetries();
+    } catch (error) {
+      console.error("[board] Retry sweep failed", error);
+    }
+  };
+  sweep();
+  const timer = setInterval(sweep, 60_000);
   timer.unref();
   return () => clearInterval(timer);
 }

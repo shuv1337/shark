@@ -933,6 +933,73 @@ describe("per-minute windows under concurrent requests", () => {
     expect(row).toMatchObject({ status: "processing", claimId: "bpc_takeover", error: null });
   });
 
+  it("retries an abandoned board push after its reclaim failed to commit", async () => {
+    const { eq } = await import("drizzle-orm");
+    const { sendBoardAskPush } = await import("../lib/board-push");
+    const { tokenId } = await freshCredentials();
+    const [token] = await db.select().from(schema.apiToken).where(eq(schema.apiToken.id, tokenId));
+    if (!token) throw new Error("Missing token");
+    const askId = `ask_commitfail_${tokenId}`;
+    await db.insert(schema.agentNotification).values({
+      id: `anot_commitfail_${tokenId}`,
+      userId: "user_a",
+      requesterTokenId: tokenId,
+      title: "Board bot",
+      body: "Ask",
+      status: "processing",
+      idempotencyKey: `bask:${askId}:r1`,
+      claimId: "bpc_restarted",
+      claimedAt: new Date(Date.now() - 10 * 60_000),
+      createdAt: new Date(Date.now() - 10 * 60_000),
+    });
+    const transaction = db.transaction.bind(db);
+    const fault = vi.spyOn(db, "transaction").mockImplementationOnce(((
+      callback: Parameters<typeof db.transaction>[0],
+    ) =>
+      transaction((tx) => {
+        callback(tx);
+        throw new Error("Synthetic commit failure");
+      })) as typeof db.transaction);
+    await expect(sendBoardAskPush(askRow(askId), token)).rejects.toThrow(
+      "Synthetic commit failure",
+    );
+    fault.mockRestore();
+    expect(sent).toHaveLength(0);
+    const retried = await sendBoardAskPush(askRow(askId), token);
+    expect(retried).toMatchObject({ accepted: 1 });
+    expect(retried.inFlight).toBeUndefined();
+    expect(sent).toHaveLength(1);
+  });
+
+  it("sweeps board push retry rows past retention", async () => {
+    const { sweepBoardPushRetries, RETRY_RETENTION_MS } = await import("../lib/board-push");
+    const { tokenId } = await freshCredentials();
+    const now = new Date();
+    await db.insert(schema.agentNotification).values({
+      id: `anot_sweep_${tokenId}`,
+      userId: "user_a",
+      requesterTokenId: tokenId,
+      title: "Board bot",
+      body: "Ask",
+      status: "failed",
+      createdAt: now,
+    });
+    await db.insert(schema.agentNotificationRetry).values(
+      [now.getTime() - 60_000, now.getTime() - RETRY_RETENTION_MS - 1].map((at, index) => ({
+        id: `bpc_sweep_${tokenId}_${index}`,
+        notificationId: `anot_sweep_${tokenId}`,
+        userId: "user_a",
+        requesterTokenId: tokenId,
+        createdAt: new Date(at),
+      })),
+    );
+    expect(sweepBoardPushRetries(now)).toBeGreaterThanOrEqual(1);
+    const left = (await db.select().from(schema.agentNotificationRetry)).filter(
+      (row) => row.requesterTokenId === tokenId,
+    );
+    expect(left.map((row) => row.id)).toEqual([`bpc_sweep_${tokenId}_0`]);
+  });
+
   it("replays a raced idempotent twin instead of refusing it at the limit", async () => {
     const { token } = await freshCredentials();
     const { token: interactionToken } = await freshCredentials();

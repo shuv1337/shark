@@ -311,6 +311,7 @@ export const agentNotification = sqliteTable(
 /**
  * One row per retry of a failed or abandoned board push. The notification row
  * counts its first attempt; each retry counts here in the per-minute windows.
+ * Rows only matter for 60 seconds; the board sweeper deletes those over an hour old.
  */
 export const agentNotificationRetry = sqliteTable(
   "agent_notification_retry",
