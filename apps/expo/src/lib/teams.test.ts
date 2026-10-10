@@ -14,6 +14,7 @@ import {
   pagesNeedingResponse,
   pagesNeedYouLabel,
   seatsLabel,
+  teamInvitePreviewCode,
 } from "./teams";
 
 function app(id: string, team?: { id: string; name: string }): AppDto {
@@ -167,6 +168,18 @@ describe("join links", () => {
     42,
   ])("rejects %s", (url) => {
     expect(joinCodeFromUrl(url)).toBeNull();
+  });
+});
+
+describe("team invite preview gating", () => {
+  it.each([
+    ["while auth is pending without a session", "invite_123", true, false, null],
+    ["while auth is pending with a session", "invite_123", true, true, null],
+    ["when signed out", "invite_123", false, false, null],
+    ["when signed in", "invite_123", false, true, "invite_123"],
+    ["when the code is missing", "", false, true, null],
+  ])("returns the preview code %s", (_label, code, pending, signedIn, expected) => {
+    expect(teamInvitePreviewCode(code, pending, signedIn)).toBe(expected);
   });
 });
 
