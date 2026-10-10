@@ -430,6 +430,8 @@ Identity:
   them. Prefix every key with your harness and host so agents on the same login never collide:
   `<harness>-<host>:<repo-or-area>:<task>[:<topic>]`, for example
   `codex-shuvdev:shark:upstream-merge` or `claude-shuvbot:shark:upstream-merge:conflicts`.
+  Agents sharing a token can read, ack, and cancel each other's asks, and revoking it signs out
+  every agent on the host. A token per agent isolates them when that matters.
 - Pass `--agent "<Harness> (<host>)"` on every `ask`, `work`, `done`, and `note`, for example
   `--agent "Codex (shuvdev)"`. The board's crew strip shows the token name; `--agent` says which
   harness posted the item.
@@ -440,10 +442,14 @@ Work lifecycle:
 
 - Post `board work --state in_flight` when you start, with a one-line `--status` and a link to the
   PR, issue, or doc when one exists. Re-run it with the same key at real milestones; each call is
-  also the heartbeat. Items quiet past `--heartbeat-ttl` (default 6h) show as stale, so set a
-  shorter TTL for work you expect to update often.
+  also the heartbeat. A re-run keeps the links, progress, status, detail, host, agent, and TTL it
+  does not repeat, and keeps the waiting ask only while the item stays `blocked`; to clear one,
+  pipe JSON such as `{"progress":null}` or `{"links":[]}` on stdin. Items quiet past `--heartbeat-ttl` (default 6h) show as stale, so set a shorter TTL for
+  work you expect to update often.
 - Use `--state review` while waiting on CI or review, `--state blocked --waiting-ask <ask-key>`
   while waiting on the user, and `--state queued` for work you have accepted but not started.
+  `--waiting-ask` is looked up across every ask on the account, not just your token's, so prefix
+  ask keys with your harness and host to avoid pointing at another agent's ask.
 - End every item on every terminal path: `board done --outcome done` on success,
   `--outcome failed` with a short `--note-file` on failure, and `--outcome cancelled` when the user
   stops the work or it is superseded. Never leave an item in flight when you finish a turn that

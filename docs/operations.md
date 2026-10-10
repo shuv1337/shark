@@ -60,7 +60,9 @@ transaction) and pages, agent notifications, interactions, agent pages
 and Live Activity starts, updates, and ends from agent tokens and activity webhooks. A Live
 Activity start runs admission, then ends any blocking activity, then inserts its activity and
 operation rows, all in one transaction, and sends pushes only after it commits, so a refused start
-changes nothing; updates and ends still
+ends no live activity and sends nothing (it may still mark rows that were already past expiry as
+ended). If a blocker changed after the start planned its replacement, the transaction ends it from
+its current row, or rolls back with `409 ACTIVE_ACTIVITY_CONFLICT`; updates and ends still
 compare-and-swap the activity sequence. `rate-windows.guard.test.ts` fails if a new insert into a
 counted table appears outside the known admitted call sites. A request with an `Idempotency-Key`
 skips the early check and, inside the
@@ -131,7 +133,13 @@ Expired push tokens are expected; reopening each iPhone re-registers it.
 The manual GitHub workflow on `main` verifies the monorepo, publishes
 `ghcr.io/shuv1337/shark:<full-sha>`, and attests the exact image digest. It has no VM credential and
 does not deploy. The operator invokes the production helper through their existing exe.dev
-identity with the reviewed SHA and digest. The host anonymously pulls the public image, verifies
+identity with the reviewed SHA and digest, detached from the SSH session with `setsid nohup` (see
+`deploy/README.md`). Abort a detached run with `SIGTERM` to its process group; it ignores `SIGHUP`.
+If the helper fails, or receives `SIGINT` or `SIGTERM`, after it starts to stop the current
+container and before it records the new release, it waits for the stop and restarts the previous
+release. A `SIGHUP` to an attached run after the new container has started leaves that release
+running but unrecorded, because its migrations may already have run; during the new `compose up`
+it does so only if the service container is already running the new image. The host anonymously pulls the public image, verifies
 its repository, signer workflow, `main` ref, source SHA, hosted runner, and digest, then fetches
 application and backup secrets through separate 1Password service accounts with disjoint vault
 access. It records the image
@@ -166,12 +174,11 @@ operator review:
     `contacts`.
   - `/mcp` without a valid bearer token returns 401 with a `WWW-Authenticate` challenge that points
     to the protected-resource metadata.
-- The team invite preview `GET /api/team-invites/:code` is intentionally anonymous so the join
-  page can describe an invite before sign-in. For a valid code it returns only the team name,
-  inviter name, role, member count, and expiry, with `Cache-Control: no-store`. An unknown code
-  returns 404, and more than 30 requests a minute from one client returns 429. The access log
-  records it as `/api/team-invites/:code`. See `docs/upstream-delta.md` for why each anonymous
-  exception is acceptable.
+- The team invite preview `GET /api/team-invites/:code` returns 401 without a session. Signed in,
+  a valid code returns only the team name, inviter name, role, member count, and expiry, with
+  `Cache-Control: no-store`. An unknown code returns 404, and more than 30 requests a minute from
+  one client returns 429. The access log records it as `/api/team-invites/:code`. See
+  `docs/upstream-delta.md` for why each anonymous exception is acceptable.
 - The running container image ID matches the release provenance.
 - The latest nightly/pre-deploy Restic snapshot is verified.
 - Disk pressure, container restarts, and the capped local log files are healthy.

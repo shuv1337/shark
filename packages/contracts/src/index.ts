@@ -90,11 +90,13 @@ const projectNameSchema = z
 import {
   isKnownWebPushEndpoint,
   isPublicHttpsUrl,
+  publicHttpsHref,
   publicHttpsUrlSchema,
   WEB_PUSH_SERVICE_HOSTS,
 } from "./url";
 
-export { isKnownWebPushEndpoint, isPublicHttpsUrl, WEB_PUSH_SERVICE_HOSTS };
+export { isPublicAddress } from "./ip";
+export { isKnownWebPushEndpoint, isPublicHttpsUrl, publicHttpsHref, WEB_PUSH_SERVICE_HOSTS };
 
 /**
  * Tap destinations are handed to the iOS app and opened with `Linking.openURL`,

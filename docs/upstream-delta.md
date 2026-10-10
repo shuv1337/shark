@@ -19,7 +19,8 @@ changes.
   Activities. Abuse limits are 300 requests per service per minute and 1,500 per account per minute.
 - Human-facing pages, docs exports, source links, private assets (`/assets/*`, `/ogimage.png`),
   and the team invite preview require an admitted session. Besides `/api/health`, anonymous
-  responses are machine-facing and return no account content:
+  responses are limited to public infrastructure and static handoff content, none of which returns
+  account content:
   - public signing keys (`/.well-known/jwks.json`) and the MCP OAuth endpoints, listed with what
     each one exposes in the MCP section below;
   - the Apple app-site association (`/.well-known/apple-app-site-association`) and the static
@@ -149,14 +150,15 @@ Deliberate merge resolutions:
   a team is deleted. An app's registering token name (`createdBy`) is shown only to the member who
   added it. `/apps/enter` accepts passes from consented current members of a team-shared SHark-origin
   app, not just its adder.
-- Anonymous exception to the private origin: `GET /api/team-invites/:code` returns an invite
-  preview without a session, so the join page can show what the invite is for before Apple
-  sign-in. It returns the team name, the inviter's display name, the offered role, the team's
-  member count, and the invite's expiry. It returns no email addresses, member list, or team ID.
-  An unknown, used, or expired code returns 404. Responses are `no-store` and limited to 30 a
-  minute per client IP and 600 a minute overall. The code is the secret: without it nothing is
-  returned, and with it a person learns only what they need to decide whether to join. Accepting
-  still requires an allowlisted session (`POST /api/team-invites/:code/accept`).
+- Invite preview: `GET /api/team-invites/:code` requires an allowlisted session, like the
+  `/join/:code` page and the iPhone join screen that call it (both send a signed-out person to
+  sign in first and reopen the invite afterwards). For a signed-in person it returns team
+  metadata: the team name, the inviter's display name, the offered role, the team's member count,
+  and the invite's expiry. It returns no email addresses, member list, or team ID. An unknown,
+  used, or expired code returns 404. Responses are `no-store` and limited to 30 a minute per
+  client IP and 600 a minute overall. Accepting also requires an allowlisted session
+  (`POST /api/team-invites/:code/accept`). Cookie-authenticated team, invite, on-call, and page
+  mutations refuse a foreign or `null` `Origin` with 403; the iPhone app sends no `Origin`.
 
 ## MCP server integration, 2026-10-09
 

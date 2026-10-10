@@ -49,8 +49,9 @@ if [[ -z "$OP_SERVICE_ACCOUNT_TOKEN" ||
 fi
 export OP_SERVICE_ACCOUNT_TOKEN
 
+# OP_CACHE=false keeps the CLI from leaving a background `op daemon` behind after the run.
 op_without_deploy_lock() {
-  op "$@" 9>&-
+  OP_CACHE=false op "$@" 9>&-
 }
 
 items_json="$(mktemp "$deploy_root/backup-items.XXXXXXXX.json")"
