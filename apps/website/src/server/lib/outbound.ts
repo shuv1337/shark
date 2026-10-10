@@ -45,14 +45,13 @@ export type PostOptions = {
 class BlockedDestinationError extends Error {}
 class TimeoutError extends Error {}
 
-/** Errors that mean no connection was made, so the next validated address is safe to try. */
-const CONNECT_ERRORS = new Set([
-  "ECONNREFUSED",
-  "EHOSTUNREACH",
-  "ENETUNREACH",
-  "EADDRNOTAVAIL",
-  "ETIMEDOUT",
-]);
+/**
+ * Errors only raised while connecting, so the request never reached the
+ * receiver and the next validated address is safe to try. ETIMEDOUT is left
+ * out because it can also come from an established socket; the overall
+ * deadline bounds slow connects instead.
+ */
+const CONNECT_ERRORS = new Set(["ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "EADDRNOTAVAIL"]);
 
 export async function postCallback(url: string, options: PostOptions): Promise<CallbackOutcome> {
   const timeoutMs = options.timeoutMs ?? 10_000;

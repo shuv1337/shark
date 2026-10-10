@@ -22,7 +22,7 @@ export type CallbackProgress = {
 
 /**
  * Makes one delivery attempt for one row and never throws. A row that can't be
- * prepared, such as one with corrupt token ciphertext, reports
+ * prepared, such as one with a missing URL or corrupt token ciphertext, reports
  * `internal_error` so it is retried and retired like any other failure
  * instead of aborting the batch.
  */
@@ -31,10 +31,14 @@ export async function attemptCallback(row: {
   callbackTokenCiphertext: string | null;
   payload: () => unknown;
 }): Promise<CallbackAttemptOutcome> {
+  const { callbackUrl, callbackTokenCiphertext } = row;
+  if (callbackUrl === null || callbackTokenCiphertext === null) {
+    return { ok: false, error: "internal_error" };
+  }
   try {
-    return await postCallback(row.callbackUrl as string, {
+    return await postCallback(callbackUrl, {
       headers: {
-        authorization: `Bearer ${decryptCallbackToken(row.callbackTokenCiphertext as string)}`,
+        authorization: `Bearer ${decryptCallbackToken(callbackTokenCiphertext)}`,
         "content-type": "application/json",
         "user-agent": "Hark-Callbacks/1",
       },

@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { ClientRequest, IncomingMessage } from "node:http";
 import type { RequestOptions } from "node:https";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { outbound, type RequestFn } from "../lib/outbound";
 
 process.env.NODE_ENV = "test";
@@ -141,6 +141,10 @@ beforeAll(async () => {
     createdAt: now,
     updatedAt: now,
   });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 /** Synthetic DNS and socket so callback delivery never leaves the process. */
@@ -419,7 +423,6 @@ describe("POST /hooks/:token", () => {
       host: "ci.example.com",
       authorization: "Bearer private-callback-token",
     });
-    vi.restoreAllMocks();
     const status = await app.request(`/hooks/${TOKEN}/events/${createdBody.eventId}`);
     expect(await status.json()).toMatchObject({
       ok: true,
@@ -492,7 +495,6 @@ describe("POST /hooks/:token", () => {
       callbackLastError: "blocked_destination",
     });
     expect(callbackRequest).not.toHaveBeenCalled();
-    vi.restoreAllMocks();
   });
 
   it("records an interaction callback row that can't be prepared and keeps delivering", async () => {
@@ -559,7 +561,6 @@ describe("POST /hooks/:token", () => {
       .where(eq(schema.interaction.id, goodId));
     expect(goodRow).toMatchObject({ callbackStatus: "delivered", callbackAttempts: 1 });
     expect(callbackRequest).toHaveBeenCalledOnce();
-    vi.restoreAllMocks();
   });
 
   it("requires Pro for webhook responses", async () => {

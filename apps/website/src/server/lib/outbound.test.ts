@@ -279,9 +279,27 @@ describe("postCallback dual-stack failover", () => {
     expect(await post()).toEqual({ ok: false, error: "HTTP 503" });
     expect(captured).toHaveLength(1);
 
-    captured.length = 0;
-    vi.spyOn(outbound, "request").mockImplementation(fakeRequest("ECONNRESET", captured));
-    expect(await post()).toEqual({ ok: false, error: "network_error" });
+    for (const code of ["ECONNRESET", "ETIMEDOUT"]) {
+      captured.length = 0;
+      vi.spyOn(outbound, "request").mockImplementation(fakeRequest(code, captured));
+      expect(await post()).toEqual({ ok: false, error: "network_error" });
+      expect(captured).toHaveLength(1);
+    }
+  });
+
+  it("ignores errors emitted after the status arrives", async () => {
+    vi.spyOn(outbound, "resolve").mockImplementation(resolvesTo(PUBLIC_V6, PUBLIC_V4));
+    const captured: Captured[] = [];
+    vi.spyOn(outbound, "request").mockImplementation(((options, onResponse) => {
+      const req = fakeRequest(503, captured)(options, onResponse) as unknown as FakeReq;
+      req.destroy = () => {
+        const error = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+        queueMicrotask(() => req.emit("error", error));
+      };
+      return req as unknown as ClientRequest;
+    }) as RequestFn);
+    expect(await post()).toEqual({ ok: false, error: "HTTP 503" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(captured).toHaveLength(1);
   });
 
@@ -304,6 +322,26 @@ describe("postCallback dual-stack failover", () => {
     });
     expect(outcome).toEqual({ ok: false, error: "timeout" });
     expect(captured).toHaveLength(1);
+  });
+
+  it("keeps the overall deadline when a fast connect error precedes a hanging address", async () => {
+    vi.spyOn(outbound, "resolve").mockImplementation(resolvesTo(PUBLIC_V6, PUBLIC_V4));
+    const captured: Captured[] = [];
+    let calls = 0;
+    vi.spyOn(outbound, "request").mockImplementation(((options, onResponse) =>
+      fakeRequest(calls++ === 0 ? "ECONNREFUSED" : null, captured)(
+        options,
+        onResponse,
+      )) as RequestFn);
+    const started = Date.now();
+    const outcome = await postCallback("https://callback.example.test/hook", {
+      headers: {},
+      body: "{}",
+      timeoutMs: 50,
+    });
+    expect(outcome).toEqual({ ok: false, error: "timeout" });
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(captured.map((call) => call.options.host)).toEqual([PUBLIC_V6, PUBLIC_V4]);
   });
 });
 

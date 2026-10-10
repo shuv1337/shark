@@ -213,8 +213,9 @@ Deliberate merge resolutions:
   benchmarking, documentation, or another reserved range. IPv4-mapped and IPv4-compatible IPv6
   are always refused, and NAT64 (`64:ff9b::/96`) and 6to4 are judged by their embedded IPv4
   address. It then connects to an IP it validated, trying the remaining validated records in order
-  only when a connect fails, with TLS SNI, certificate verification, and `Host` still using the
-  original hostname, so DNS rebinding can't change the address between the check and the connect.
+  only when a connect is refused or the host or network is unreachable, with TLS SNI, certificate
+  verification, and `Host` still using the original hostname, so DNS rebinding can't change the
+  address between the check and the connect.
   Redirects aren't followed, requests time out after 10 seconds overall, response bodies are
   discarded, and the connection is closed once the status arrives. Any HTTPS port is allowed. A
   blocked destination fails at once without retrying. The caller sees only the delivery status and
