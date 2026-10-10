@@ -543,12 +543,20 @@ export const oncallPageRecipient = sqliteTable(
     /** Set on the credential's first successful use; it is single-use. */
     responseTokenUsedAt: integer("response_token_used_at", { mode: "timestamp_ms" }),
     acceptedCount: integer("accepted_count").notNull().default(0),
+    /**
+     * `pending` while a push is in flight, then `delivered` (Expo accepted at
+     * least one push), `failed`, or `skipped` (no active device). Only
+     * `delivered` recipients count as paged; the rest are paged again.
+     */
+    deliveryStatus: text("delivery_status").notNull().default("pending"),
+    /** Start of the latest delivery attempt. */
     notifiedAt: integer("notified_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => [
     uniqueIndex("oncall_page_recipient_page_user_unique").on(table.pageId, table.userId),
     uniqueIndex("oncall_page_recipient_token_unique").on(table.responseTokenHash),
     index("oncall_page_recipient_user_idx").on(table.userId, table.notifiedAt),
+    index("oncall_page_recipient_delivery_idx").on(table.deliveryStatus, table.notifiedAt),
   ],
 );
 

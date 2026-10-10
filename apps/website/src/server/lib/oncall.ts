@@ -22,6 +22,7 @@ import {
   isNull,
   lt,
   lte,
+  ne,
   or,
   type SQL,
   sql,
@@ -61,6 +62,14 @@ const OPEN_STATUSES = ["triggered", "acknowledged"] as const;
 const UPCOMING_SHIFTS = 5;
 /** New pages a group accepts per minute; duplicates that merge do not count. */
 export const PAGES_PER_GROUP_PER_MINUTE = 10;
+/**
+ * How long an undelivered recipient of an open page waits before the worker
+ * pages them again, and how long an attempt may stay in flight before it is
+ * presumed lost (for example, the server restarted mid-send).
+ */
+export const UNDELIVERED_RETRY_MS = 60_000;
+
+export type DeliveryStatus = "pending" | "delivered" | "failed" | "skipped";
 
 /** Pages raised since `since`; they share the account, service, and requester per-minute budgets. */
 export async function pagesCreatedSince(
@@ -275,6 +284,13 @@ export async function toPageDtos(rows: PageRow[]): Promise<OncallPageDto[]> {
       .flatMap((row) => [row.acknowledgedByUserId, row.resolvedByUserId])
       .filter((id): id is string => typeof id === "string"),
   ]);
+  const recipientsOf = (pageId: string, delivered: boolean) =>
+    recipients
+      .filter(
+        (recipient) =>
+          recipient.pageId === pageId && (recipient.deliveryStatus === "delivered") === delivered,
+      )
+      .map((recipient) => personOrUnknown(map, recipient.userId));
   return rows.map((row) => {
     const pageApp = row.appId ? appsById.get(row.appId) : undefined;
     return {
@@ -289,9 +305,8 @@ export async function toPageDtos(rows: PageRow[]): Promise<OncallPageDto[]> {
       status: row.status as OncallPageStatus,
       dedupKey: row.dedupKey,
       repeatCount: row.repeatCount,
-      notified: recipients
-        .filter((recipient) => recipient.pageId === row.id)
-        .map((recipient) => personOrUnknown(map, recipient.userId)),
+      notified: recipientsOf(row.id, true),
+      undelivered: recipientsOf(row.id, false),
       escalationStep: row.escalationStep,
       nextEscalationAt: row.nextEscalationAt?.toISOString() ?? null,
       acknowledgedBy: row.acknowledgedByUserId
@@ -341,8 +356,135 @@ async function deactivateStale(tokens: string[]): Promise<void> {
 }
 
 /**
- * Pages `userIds` (skipping anyone already notified), each with their own
- * one-shot lock-screen credential. Returns pushes accepted by Expo.
+ * A recipient row whose push did not land may be paged again: it failed, it
+ * was skipped, or its attempt has been in flight too long to still be live.
+ */
+function redeliverable(now: number): SQL {
+  return and(
+    ne(oncallPageRecipient.deliveryStatus, "delivered"),
+    or(
+      inArray(oncallPageRecipient.deliveryStatus, ["failed", "skipped"]),
+      lte(oncallPageRecipient.notifiedAt, new Date(now - UNDELIVERED_RETRY_MS)),
+    ),
+  ) as SQL;
+}
+
+/**
+ * Starts a delivery attempt for `userId` with a fresh one-shot credential.
+ * A recipient already delivered, or with an attempt in flight, is not
+ * claimed. An undelivered recipient's earlier credential never reached a
+ * device, so replacing it is safe. Returns the credential, or null.
+ */
+async function claimDelivery(
+  pageId: string,
+  userId: string,
+  step: number,
+  now: number,
+): Promise<string | null> {
+  const responseToken = generatePageResponseToken();
+  const inserted = await db
+    .insert(oncallPageRecipient)
+    .values({
+      pageId,
+      userId,
+      step,
+      responseTokenHash: hashPageResponseToken(responseToken),
+      deliveryStatus: "pending",
+      notifiedAt: new Date(now),
+    })
+    .onConflictDoNothing()
+    .returning({ userId: oncallPageRecipient.userId });
+  if (inserted.length > 0) return responseToken;
+  return reclaimDelivery(pageId, userId, now);
+}
+
+/**
+ * Claims another attempt for an existing undelivered recipient. With
+ * `attemptedBefore`, only when their latest attempt started by then.
+ */
+async function reclaimDelivery(
+  pageId: string,
+  userId: string,
+  now: number,
+  attemptedBefore?: Date,
+): Promise<string | null> {
+  const responseToken = generatePageResponseToken();
+  const responseTokenHash = hashPageResponseToken(responseToken);
+  const at = new Date(now);
+  const reclaimed = await db
+    .update(oncallPageRecipient)
+    .set({
+      responseTokenHash,
+      responseTokenUsedAt: null,
+      acceptedCount: 0,
+      deliveryStatus: "pending",
+      notifiedAt: at,
+    })
+    .where(
+      and(
+        eq(oncallPageRecipient.pageId, pageId),
+        eq(oncallPageRecipient.userId, userId),
+        redeliverable(now),
+        ...(attemptedBefore ? [lte(oncallPageRecipient.notifiedAt, attemptedBefore)] : []),
+      ),
+    )
+    .returning({ userId: oncallPageRecipient.userId });
+  return reclaimed.length > 0 ? responseToken : null;
+}
+
+/** Sends one claimed attempt and records whether it was delivered. Returns pushes accepted. */
+async function deliver(
+  page: PageRow,
+  groupName: string,
+  userId: string,
+  responseToken: string,
+  tokens: string[],
+): Promise<number> {
+  let accepted = 0;
+  let deliveryStatus: DeliveryStatus = "skipped";
+  let staleTokens: string[] = [];
+  if (tokens.length > 0) {
+    try {
+      const result = await sendPushMessages(
+        buildPagePushMessages({
+          to: tokens,
+          pageId: page.id,
+          teamId: page.teamId,
+          groupName,
+          title: page.title,
+          body: page.body ?? `${groupName}: paged by ${page.sourceName}`,
+          responseToken,
+          ...(page.url ? { url: page.url } : {}),
+          ...(page.appId ? { appId: page.appId } : {}),
+        }),
+      );
+      accepted = result.accepted;
+      staleTokens = result.staleTokens;
+      deliveryStatus = accepted > 0 ? "delivered" : "failed";
+    } catch (error) {
+      console.error("[oncall] Page push failed", error);
+      deliveryStatus = "failed";
+    }
+  }
+  // Scoped to this attempt's credential so a slower, superseded attempt cannot overwrite a newer one.
+  await db
+    .update(oncallPageRecipient)
+    .set({ acceptedCount: accepted, deliveryStatus })
+    .where(
+      and(
+        eq(oncallPageRecipient.pageId, page.id),
+        eq(oncallPageRecipient.userId, userId),
+        eq(oncallPageRecipient.responseTokenHash, hashPageResponseToken(responseToken)),
+      ),
+    );
+  await deactivateStale(staleTokens);
+  return accepted;
+}
+
+/**
+ * Pages `userIds`, skipping anyone already delivered or with an attempt in
+ * flight, each with their own one-shot lock-screen credential. Returns
+ * pushes accepted by Expo.
  */
 async function notifyRecipients(
   page: PageRow,
@@ -353,40 +495,10 @@ async function notifyRecipients(
   let accepted = 0;
   const targets = await devicesOf(userIds);
   for (const userId of userIds) {
-    const responseToken = generatePageResponseToken();
-    const inserted = await db
-      .insert(oncallPageRecipient)
-      .values({
-        pageId: page.id,
-        userId,
-        step,
-        responseTokenHash: hashPageResponseToken(responseToken),
-        notifiedAt: new Date(),
-      })
-      .onConflictDoNothing()
-      .returning({ userId: oncallPageRecipient.userId });
-    if (inserted.length === 0) continue;
+    const responseToken = await claimDelivery(page.id, userId, step, Date.now());
+    if (!responseToken) continue;
     const tokens = targets.filter((target) => target.userId === userId).map((t) => t.token);
-    if (tokens.length === 0) continue;
-    const result = await sendPushMessages(
-      buildPagePushMessages({
-        to: tokens,
-        pageId: page.id,
-        teamId: page.teamId,
-        groupName,
-        title: page.title,
-        body: page.body ?? `${groupName}: paged by ${page.sourceName}`,
-        responseToken,
-        ...(page.url ? { url: page.url } : {}),
-        ...(page.appId ? { appId: page.appId } : {}),
-      }),
-    );
-    await deactivateStale(result.staleTokens);
-    await db
-      .update(oncallPageRecipient)
-      .set({ acceptedCount: result.accepted })
-      .where(and(eq(oncallPageRecipient.pageId, page.id), eq(oncallPageRecipient.userId, userId)));
-    accepted += result.accepted;
+    accepted += await deliver(page, groupName, userId, responseToken, tokens);
   }
   return accepted;
 }
@@ -553,11 +665,26 @@ export async function raisePage({
   };
 }
 
-async function notifiedUserIds(pageId: string): Promise<Set<string>> {
+/** Everyone a delivery was attempted for, delivered or not. */
+async function recipientUserIds(pageId: string): Promise<Set<string>> {
   const rows = await db
     .select({ userId: oncallPageRecipient.userId })
     .from(oncallPageRecipient)
     .where(eq(oncallPageRecipient.pageId, pageId));
+  return new Set(rows.map((row) => row.userId));
+}
+
+/** Recipients whose page reached a device; escalation does not page them again. */
+async function deliveredUserIds(pageId: string): Promise<Set<string>> {
+  const rows = await db
+    .select({ userId: oncallPageRecipient.userId })
+    .from(oncallPageRecipient)
+    .where(
+      and(
+        eq(oncallPageRecipient.pageId, pageId),
+        eq(oncallPageRecipient.deliveryStatus, "delivered"),
+      ),
+    );
   return new Set(rows.map((row) => row.userId));
 }
 
@@ -594,7 +721,8 @@ export async function escalatePage(pageId: string, manual: boolean): Promise<Esc
     return { ok: true, page: { ...page, nextEscalationAt: null } };
   }
 
-  const notified = await notifiedUserIds(page.id);
+  // A person whose push failed or was skipped was not paged, so they stay eligible.
+  const notified = await deliveredUserIds(page.id);
   const team = await pageableMemberIds(group.teamId);
   let targets: string[];
   let lastPagedUserId = page.lastPagedUserId;
@@ -645,7 +773,7 @@ export async function escalatePage(pageId: string, manual: boolean): Promise<Esc
 
 /** Clears the page from everyone else's devices once it is claimed. */
 async function sendClaimed(page: PageRow, exceptUserId: string, claimedBy: string): Promise<void> {
-  const recipients = [...(await notifiedUserIds(page.id))].filter((id) => id !== exceptUserId);
+  const recipients = [...(await recipientUserIds(page.id))].filter((id) => id !== exceptUserId);
   const targets = await devicesOf(recipients);
   if (targets.length === 0) return;
   const result = await sendPushMessages(
@@ -846,7 +974,72 @@ export async function openPagesFor(userId: string): Promise<OncallPageDto[]> {
 
 let running: Promise<void> | null = null;
 
-/** Runs every due escalation step. State lives in the database, so restarts resume. */
+/**
+ * Pages again every recipient of an open page whose push failed or was
+ * skipped at least {@link UNDELIVERED_RETRY_MS} ago, until it is delivered
+ * or the page is acknowledged or resolved. Escalation steps still run on
+ * the group's schedule; this covers the time between and after them.
+ */
+async function retryUndelivered(now: Date): Promise<void> {
+  const attemptedBefore = new Date(now.getTime() - UNDELIVERED_RETRY_MS);
+  const due = await db
+    .select({
+      page: oncallPage,
+      groupName: oncallGroup.name,
+      userId: oncallPageRecipient.userId,
+    })
+    .from(oncallPageRecipient)
+    .innerJoin(oncallPage, eq(oncallPage.id, oncallPageRecipient.pageId))
+    .innerJoin(oncallGroup, eq(oncallGroup.id, oncallPage.groupId))
+    .where(
+      and(
+        eq(oncallPage.status, "triggered"),
+        ne(oncallPageRecipient.deliveryStatus, "delivered"),
+        lte(oncallPageRecipient.notifiedAt, attemptedBefore),
+      ),
+    )
+    .orderBy(asc(oncallPageRecipient.notifiedAt))
+    .limit(50);
+  const pageable = new Map<string, Set<string>>();
+  for (const { page, groupName, userId } of due) {
+    try {
+      let team = pageable.get(page.teamId);
+      if (!team) {
+        team = await pageableMemberIds(page.teamId);
+        pageable.set(page.teamId, team);
+      }
+      if (!team.has(userId)) {
+        // Not pageable now; push them to the back of the queue instead of retrying.
+        await db
+          .update(oncallPageRecipient)
+          .set({ notifiedAt: now })
+          .where(
+            and(
+              eq(oncallPageRecipient.pageId, page.id),
+              eq(oncallPageRecipient.userId, userId),
+              ne(oncallPageRecipient.deliveryStatus, "delivered"),
+              lte(oncallPageRecipient.notifiedAt, attemptedBefore),
+            ),
+          );
+        continue;
+      }
+      const responseToken = await reclaimDelivery(page.id, userId, Date.now(), attemptedBefore);
+      if (!responseToken) continue;
+      const tokens = (await devicesOf([userId])).map((target) => target.token);
+      const accepted = await deliver(page, groupName, userId, responseToken, tokens);
+      if (accepted > 0 && page.createdByUserId) {
+        await trackNotification(page.createdByUserId, `${page.id}:retry:${userId}`);
+      }
+    } catch (error) {
+      console.error("[oncall] Page retry failed", error);
+    }
+  }
+}
+
+/**
+ * Runs every due escalation step, then pages again anyone a push did not
+ * reach. State lives in the database, so restarts resume.
+ */
 export function processDueEscalations(now = new Date()): Promise<void> {
   if (running) return running;
   running = (async () => {
@@ -869,6 +1062,7 @@ export function processDueEscalations(now = new Date()): Promise<void> {
         console.error("[oncall] Escalation failed", error);
       }
     }
+    await retryUndelivered(now);
   })().finally(() => {
     running = null;
   });

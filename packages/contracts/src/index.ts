@@ -1778,8 +1778,14 @@ export interface OncallPageDto {
   dedupKey: string | null;
   /** How many times a duplicate page was merged into this one. */
   repeatCount: number;
-  /** People notified so far, in order. */
+  /** People whose page reached a device so far, in order. */
   notified: OncallPersonDto[];
+  /**
+   * People paged whose push failed or who had no active device; they are
+   * paged again until it is delivered or the page is acknowledged. Absent on
+   * older servers.
+   */
+  undelivered?: OncallPersonDto[];
   escalationStep: number;
   nextEscalationAt: string | null;
   acknowledgedBy: OncallPersonDto | null;
