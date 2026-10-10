@@ -70,8 +70,8 @@ secrets_json="$(mktemp "$deploy_root/backup-secrets.XXXXXXXX.json")"
 backup_log="$(mktemp "$deploy_root/restic-backup.XXXXXXXX.json")"
 restored_copy="$(mktemp "$deploy_root/restic-restore.XXXXXXXX.sqlite")"
 cleanup() {
-  rm -f -- "$items_json" "$secrets_json" "$backup_log" "$restored_copy"
   stop_started_op_daemons
+  rm -f -- "$items_json" "$secrets_json" "$backup_log" "$restored_copy"
 }
 trap cleanup EXIT
 chmod 600 "$items_json" "$secrets_json" "$backup_log" "$restored_copy"

@@ -4,7 +4,9 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 test_root="$(mktemp -d)"
 cleanup() {
-  pkill -u "$(id -u)" -f '^op daemon 300$' 2>/dev/null || true
+  if [[ -f "$test_root/shark/fake-op-daemons" ]]; then
+    xargs kill 2>/dev/null <"$test_root/shark/fake-op-daemons" || true
+  fi
   rm -rf -- "$test_root"
 }
 trap cleanup EXIT
@@ -41,6 +43,7 @@ fi
 if [[ ! -e "$SHARK_DEPLOY_ROOT/fake-op-daemon.pid" ]]; then
   (exec -a "op daemon" sleep 300) >/dev/null 2>&1 </dev/null &
   printf '%s\n' "$!" >"$SHARK_DEPLOY_ROOT/fake-op-daemon.pid"
+  printf '%s\n' "$!" >>"$SHARK_DEPLOY_ROOT/fake-op-daemons"
 fi
 if [[ "${OP_FAIL:-0}" == "1" ]]; then
   exit 1
@@ -176,6 +179,7 @@ assert_started_op_daemon_stopped() {
 }
 (exec -a "op daemon" sleep 300) >/dev/null 2>&1 </dev/null &
 preexisting_op_daemon=$!
+printf '%s\n' "$preexisting_op_daemon" >>"$deploy_root/fake-op-daemons"
 
 "$repo_root/deploy/shark-materialize-secrets" "$deploy_root/.env.new"
 assert_started_op_daemon_stopped "Secret materializer"
