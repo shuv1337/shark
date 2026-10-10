@@ -41,7 +41,7 @@ import { notificationEventTag } from "../lib/notification-withdrawal";
 import { revokeOAuthGrant } from "../lib/oauth";
 import { type ProjectResolution, resolveProject } from "../lib/projects";
 import { buildInteractionPushMessages, buildPushMessages, sendPushFanout } from "../lib/push";
-import { agentAdmission, RATE_LIMIT_ERRORS } from "../lib/rate-windows";
+import { agentAdmission, agentWindowLimit, RATE_LIMIT_ERRORS } from "../lib/rate-windows";
 import { hashInteractionResponseToken } from "../lib/token";
 import {
   type AgentEnv,
@@ -244,7 +244,23 @@ async function insertAgentNotification(
 ): Promise<NotificationInsertOutcome> {
   try {
     return db.transaction((tx): NotificationInsertOutcome => {
-      const refused = agentAdmission(token, limits)(tx);
+      // A request that raced its own idempotent twin replays it rather than
+      // being refused for the capacity the twin consumed.
+      if (values.idempotencyKey) {
+        const existing = tx
+          .select()
+          .from(agentNotification)
+          .where(
+            and(
+              eq(agentNotification.requesterTokenId, token.id),
+              eq(agentNotification.idempotencyKey, values.idempotencyKey),
+            ),
+          )
+          .get();
+        if (existing?.requestHash === requestHash) return { kind: "replayed", row: existing };
+        if (existing) return { kind: "conflict" };
+      }
+      const refused = agentWindowLimit(tx, token, limits);
       if (refused) return { kind: "limited", error: RATE_LIMIT_ERRORS[refused] };
       const projectResolution = projectName
         ? resolveProject(tx, token.userId, projectName)
@@ -485,7 +501,9 @@ export const agentRoute = new Hono<AgentEnv>()
     const selectedWebSubscriptions = targets.webSubscriptions;
     const selectedMacosDevices = targets.macosDevices;
 
-    const limited = agentRateLimit(token, billing.limits);
+    // With an Idempotency-Key, a raced twin may already hold the capacity; the
+    // insert transaction replays it before admission, so skip the early check.
+    const limited = idempotencyKey ? null : agentRateLimit(token, billing.limits);
     if (limited) {
       c.header("Retry-After", "60");
       return c.json(limited, 429);
@@ -818,7 +836,9 @@ export const agentRoute = new Hono<AgentEnv>()
     const selectedWebSubscriptions = targets.webSubscriptions;
     const selectedMacosDevices = targets.macosDevices;
 
-    const limited = agentRateLimit(token, billing.limits);
+    // With an Idempotency-Key, a raced twin may already hold the capacity; the
+    // transaction below replays it before admission, so skip the early check.
+    const limited = idempotencyKey ? null : agentRateLimit(token, billing.limits);
     if (limited) {
       c.header("Retry-After", "60");
       return c.json(limited, 429);
@@ -883,11 +903,47 @@ export const agentRoute = new Hono<AgentEnv>()
     let row: InteractionRow;
     try {
       // Synchronous, so concurrent requests cannot all pass the agent windows.
-      const inserted = db.transaction((tx) => {
-        const refused = agentAdmission(token, billing.limits)(tx);
-        if (refused) return { limited: RATE_LIMIT_ERRORS[refused] };
-        return { row: tx.insert(interaction).values(values).returning().get() };
-      });
+      const inserted = db.transaction(
+        (
+          tx,
+        ):
+          | { existing: InteractionRow }
+          | { limited: string }
+          | { row: InteractionRow | undefined } => {
+          if (idempotencyKey) {
+            const existing = tx
+              .select()
+              .from(interaction)
+              .where(
+                and(
+                  eq(interaction.requesterTokenId, token.id),
+                  eq(interaction.idempotencyKey, idempotencyKey),
+                ),
+              )
+              .get();
+            if (existing) return { existing };
+          }
+          const refused = agentWindowLimit(tx, token, billing.limits);
+          if (refused) return { limited: RATE_LIMIT_ERRORS[refused] };
+          return { row: tx.insert(interaction).values(values).returning().get() };
+        },
+      );
+      if ("existing" in inserted) {
+        const { existing } = inserted;
+        if (existing.requestHash !== requestHash) {
+          return c.json(
+            { error: "Idempotency-Key was already used with a different payload" },
+            409,
+          );
+        }
+        const liveActivityId = await linkedLiveActivityId(existing.id);
+        return c.json({
+          interaction: toDto(await expireIfNeeded(existing)),
+          accepted: existing.acceptedCount,
+          idempotent: true,
+          ...(liveActivityId ? { liveActivityId } : {}),
+        });
+      }
       if ("limited" in inserted) {
         c.header("Retry-After", "60");
         return c.json({ error: inserted.limited, retryAfterSeconds: 60 }, 429);

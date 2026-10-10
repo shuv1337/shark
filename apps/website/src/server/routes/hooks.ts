@@ -309,7 +309,9 @@ export const hooksRoute = new Hono()
       targetedMacosDevices = selectedMacos.filter((registeredDevice) => registeredDevice.active);
     }
 
-    const limited = rateLimitedResponse(c, svc, billing);
+    // With an Idempotency-Key, a raced twin may already hold the capacity; the
+    // admission transaction replays it first, so skip the early check.
+    const limited = idempotencyKey ? null : rateLimitedResponse(c, svc, billing);
     if (limited) return limited;
 
     if (!(await checkNotificationAllowance(svc.userId))) {
@@ -353,12 +355,22 @@ export const hooksRoute = new Hono()
     };
 
     let admitted:
+      | { existing: typeof event.$inferSelect }
       | { refused: "service" | "account" }
       | { refused: null; projectResolution: ProjectResolution };
     try {
       // Synchronous, so concurrent deliveries cannot all pass the windows, and
-      // a refused or rolled-back delivery creates no project.
+      // a refused or rolled-back delivery creates no project. A raced
+      // idempotent twin replays before admission rather than being refused.
       admitted = db.transaction((tx) => {
+        if (idempotencyKey) {
+          const existing = tx
+            .select()
+            .from(event)
+            .where(and(eq(event.serviceId, svc.id), eq(event.idempotencyKey, idempotencyKey)))
+            .get();
+          if (existing) return { existing };
+        }
         const refused = webhookWindowLimit(tx, svc, billing.limits);
         if (refused) return { refused };
         const projectResolution = parsed.data.project
@@ -382,6 +394,16 @@ export const hooksRoute = new Hono()
         }
       }
       throw error;
+    }
+    if ("existing" in admitted) {
+      if (admitted.existing.requestHash !== requestHash) {
+        return c.json<WebhookResponse>(
+          { ok: false, error: "Idempotency-Key was already used with a different payload" },
+          409,
+        );
+      }
+      const replay = replayResponse(admitted.existing);
+      return c.json(replay.body, replay.status);
     }
     if (admitted.refused) return limitedResponse(c, svc, billing, admitted.refused);
     const { projectResolution } = admitted;

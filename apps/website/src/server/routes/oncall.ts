@@ -172,13 +172,16 @@ async function createOverride(actor: Actor, groupId: string, input: unknown): Pr
     if (!admin && !onCallThroughout(rotation, existing, actor.id, from, endsAt)) {
       return { ok: false as const, error: FORBIDDEN_HANDOFF };
     }
+    // Strictly newer than every live override, so among overrides starting
+    // together this one outranks them by `createdAt`, never by a random id.
+    const createdAt = Math.max(now, ...existing.map((window) => (window.createdAt ?? 0) + 1));
     const row = {
       id: newId("ovr"),
       groupId,
       userId: parsed.data.userId,
       startsAt: new Date(startsAt),
       endsAt: new Date(endsAt),
-      createdAt: new Date(now),
+      createdAt: new Date(createdAt),
     };
     const [candidate] = overrideWindows([row]);
     if (
