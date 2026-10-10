@@ -1750,6 +1750,8 @@ export interface OncallOverrideDto {
   person: OncallPersonDto;
   startsAt: string;
   endsAt: string;
+  /** Who scheduled it; null for overrides that predate creator tracking or whose creator was deleted. */
+  createdBy: OncallPersonDto | null;
 }
 
 export interface OncallGroupDto {

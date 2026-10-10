@@ -449,8 +449,15 @@ function Overrides({
           {overrides.map((override) => (
             <li className="flex flex-wrap items-center gap-x-2.5 gap-y-1 py-2" key={override.id}>
               <PersonAvatar person={override.person} size="sm" />
-              <span className="min-w-0 flex-1 truncate text-[15px] text-ink">
-                {override.person.name}
+              <span className="flex min-w-0 flex-1 items-baseline gap-x-1">
+                <span className="min-w-0 truncate text-[15px] text-ink">
+                  {override.person.name}
+                </span>
+                {override.createdBy && override.createdBy.userId !== override.person.userId ? (
+                  <span className="shrink-0 text-[13px] text-ink-faint">
+                    · added by {override.createdBy.name}
+                  </span>
+                ) : null}
               </span>
               <span className="order-last w-full pl-[34px] text-[13px] text-ink-faint tabular-nums sm:order-none sm:w-auto sm:pl-0">
                 {formatDateTime(override.startsAt)} – {formatDateTime(override.endsAt)}

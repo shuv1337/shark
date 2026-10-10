@@ -22,10 +22,11 @@ import {
  * advisory and the in-transaction check is the one that holds. Do not remove
  * the in-transaction check as a duplicate.
  *
- * Events, interactions, agent notifications (including board pushes and
- * their retries), and pages are admitted in the transaction that records
- * them. Live Activity operations and webhook Live Activity responses are not
- * yet; see "Rate limits" in docs/operations.md for those residuals.
+ * Events (with a webhook `response` interaction), interactions, agent
+ * notifications (including board pushes and their retries), pages, and Live
+ * Activity starts, updates, and ends are admitted in the transaction that
+ * records them. A test guards that every insert into a counted table stays on
+ * an admitted call site; see "Per-minute rate limits" in docs/operations.md.
  *
  * One definition per window, used by every surface:
  *
@@ -35,7 +36,8 @@ import {
  *   interactions, its one-shot notifications (including board pushes and
  *   each board push retry), and its pages.
  * - Account window (the owner): every event from the owner's services, every
- *   interaction, agent notification, board push retry, and page, and every
+ *   interaction not tied to an event (a webhook `response` counts once, as its
+ *   event), every agent notification, board push retry, and page, and every
  *   Live Activity operation not tied to an interaction (the interaction
  *   already counts).
  *
@@ -107,7 +109,13 @@ export function accountWindowUsage(executor: Executor, userId: string, since: Da
       executor
         .select({ value: count() })
         .from(interaction)
-        .where(and(eq(interaction.userId, userId), gte(interaction.createdAt, since)))
+        .where(
+          and(
+            eq(interaction.userId, userId),
+            gte(interaction.createdAt, since),
+            isNull(interaction.eventId),
+          ),
+        )
         .get(),
     ) +
     value(
@@ -151,17 +159,13 @@ export function serviceWindowUsage(executor: Executor, serviceId: string, since:
         .where(and(eq(event.serviceId, serviceId), gte(event.createdAt, since)))
         .get(),
     ) +
-    value(
-      executor
-        .select({ value: count() })
-        .from(liveActivityOperation)
-        .where(
-          and(
-            eq(liveActivityOperation.requesterServiceId, serviceId),
-            gte(liveActivityOperation.createdAt, since),
-          ),
-        )
-        .get(),
+    liveActivityOperations(
+      executor,
+      and(
+        eq(liveActivityOperation.requesterServiceId, serviceId),
+        gte(liveActivityOperation.createdAt, since),
+        isNull(liveActivity.interactionId),
+      ),
     ) +
     countPagesSince(executor, { serviceId }, since)
   );

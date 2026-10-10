@@ -354,14 +354,61 @@ export const hooksRoute = new Hono()
       createdAt: new Date(),
     };
 
+    let interactionId: string | undefined;
+    let responseToken: string | undefined;
+    let interactionActionDigest: string | undefined;
+    let interactionExpiresAt: Date | undefined;
+    let interactionValues: typeof interaction.$inferInsert | undefined;
+    if (parsed.data.response) {
+      const response = parsed.data.response;
+      interactionId = newId("int");
+      responseToken = generateInteractionResponseToken();
+      interactionExpiresAt = new Date(Date.now() + response.expiresInSeconds * 1000);
+      const kind = response.type === "text" ? "reply" : response.type;
+      const choices =
+        kind === "approval" ? ["approve", "deny"] : kind === "yes_no" ? ["yes", "no"] : ["reply"];
+      interactionActionDigest = hashRequest({
+        interactionId,
+        title: resolved.title,
+        prompt: resolved.body,
+        kind,
+        choices,
+        url: resolved.url ?? null,
+      });
+      interactionValues = {
+        id: interactionId,
+        userId: svc.userId,
+        requesterServiceId: svc.id,
+        eventId,
+        title: resolved.title,
+        prompt: resolved.body,
+        kind,
+        status: "pending",
+        choices,
+        url: resolved.url ?? null,
+        imageUrl: resolved.imageUrl ?? null,
+        correlationId: response.correlationId ?? null,
+        actionDigest: interactionActionDigest,
+        responseTokenHash: hashInteractionResponseToken(responseToken),
+        callbackUrl: response.callback?.url ?? null,
+        callbackTokenCiphertext: response.callback
+          ? encryptCallbackToken(response.callback.token)
+          : null,
+        callbackStatus: response.callback ? "pending" : null,
+        callbackNextAttemptAt: response.callback ? new Date() : null,
+        expiresAt: interactionExpiresAt,
+        createdAt: eventValues.createdAt,
+      };
+    }
+
     let admitted:
       | { existing: typeof event.$inferSelect }
       | { refused: "service" | "account" }
       | { refused: null; projectResolution: ProjectResolution };
     try {
       // Synchronous, so concurrent deliveries cannot all pass the windows, and
-      // a refused or rolled-back delivery creates no project. A raced
-      // idempotent twin replays before admission rather than being refused.
+      // a refused or rolled-back delivery creates no project or interaction. A
+      // raced idempotent twin replays before admission rather than being refused.
       admitted = db.transaction((tx) => {
         if (idempotencyKey) {
           const existing = tx
@@ -379,6 +426,7 @@ export const hooksRoute = new Hono()
         tx.insert(event)
           .values({ ...eventValues, projectId: projectResolution.projectId })
           .run();
+        if (interactionValues) tx.insert(interaction).values(interactionValues).run();
         return { refused: null, projectResolution };
       });
     } catch (error) {
@@ -461,53 +509,10 @@ export const hooksRoute = new Hono()
         .map((target) => target.row);
     }
 
-    let interactionId: string | undefined;
-    let responseToken: string | undefined;
-    let interactionActionDigest: string | undefined;
-    let interactionExpiresAt: Date | undefined;
     if (parsed.data.response) {
       devices = devices.filter(
         (registeredDevice) => registeredDevice.interactionSchemaVersion === 1,
       );
-      const response = parsed.data.response;
-      interactionId = newId("int");
-      responseToken = generateInteractionResponseToken();
-      interactionExpiresAt = new Date(Date.now() + response.expiresInSeconds * 1000);
-      const kind = response.type === "text" ? "reply" : response.type;
-      const choices =
-        kind === "approval" ? ["approve", "deny"] : kind === "yes_no" ? ["yes", "no"] : ["reply"];
-      interactionActionDigest = hashRequest({
-        interactionId,
-        title: resolved.title,
-        prompt: resolved.body,
-        kind,
-        choices,
-        url: resolved.url ?? null,
-      });
-      await db.insert(interaction).values({
-        id: interactionId,
-        userId: svc.userId,
-        requesterServiceId: svc.id,
-        eventId,
-        title: resolved.title,
-        prompt: resolved.body,
-        kind,
-        status: "pending",
-        choices,
-        url: resolved.url ?? null,
-        imageUrl: resolved.imageUrl ?? null,
-        correlationId: response.correlationId ?? null,
-        actionDigest: interactionActionDigest,
-        responseTokenHash: hashInteractionResponseToken(responseToken),
-        callbackUrl: response.callback?.url ?? null,
-        callbackTokenCiphertext: response.callback
-          ? encryptCallbackToken(response.callback.token)
-          : null,
-        callbackStatus: response.callback ? "pending" : null,
-        callbackNextAttemptAt: response.callback ? new Date() : null,
-        expiresAt: interactionExpiresAt,
-        createdAt: new Date(),
-      });
     }
 
     if (devices.length + webSubscriptions.length + macosDevices.length === 0) {
