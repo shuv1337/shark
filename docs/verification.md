@@ -12,8 +12,10 @@ logs. Unchecked release evidence keeps the goal active.
   `sha256:d56a3c61033d3814e3f7a3cb303079b435ad0eff68b13a02c546abbc53307d82` from publisher run
   `38027629316`. A first `shark-deploy` attempt was killed when its operator session ended. It had
   already stopped the `20e14e1` container, and because it was killed by a signal, its rollback trap
-  never ran. The new image never started, so the database stayed at schema 0025. Production was
-  down from about 05:31 to 05:35 UTC. A re-run of `shark-deploy`, detached from the SSH session,
+  never ran. The new image never started, so the database stayed at schema 0025. Before it was
+  killed, it had written pre-deploy snapshot
+  `1a667909835d0c4c96107627aaee5dea6c8f26782084fbc011fd6998c15e92d8`, which also holds schema 0025
+  but is not the recorded backup. Production was down from about 05:31 to 05:35 UTC. A re-run of `shark-deploy`, detached from the SSH session,
   verified the pre-deploy encrypted Restic snapshot
   `0bbc347db385ff9a5749a99995fd54350868070a1f38fbfe0f224c8fd151c50c` in `repos/shark-prod`. That
   snapshot holds the schema-0025 database a `20e14e1` rollback needs. The running image ID and the
