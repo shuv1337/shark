@@ -2089,7 +2089,11 @@ describe("undelivered pages", () => {
       };
       await runDueEscalation(created.page.id);
       expect(duringSend.run).toBeNull();
-      expect(pushesTo("user_b")).toHaveLength(1);
+      // Ben's page push landed after the acknowledgement, so it is withdrawn after it.
+      expect(pushesTo("user_b").map((message) => message.data)).toEqual([
+        expect.objectContaining({ pageId: created.page.id, responseToken: expect.any(String) }),
+        expect.objectContaining({ command: "page.claimed", pageId: created.page.id }),
+      ]);
       expect(pushesTo("user_d")).toHaveLength(0);
       const [dee] = await db
         .select()
@@ -2156,6 +2160,36 @@ describe("undelivered pages", () => {
     await oncall.releasePageResponseToken(created.page.id, "user_a", presented);
     await oncall.processDueEscalations();
     expect(pushesTo("user_a")).toHaveLength(1);
+    await call("POST", `/api/pages/${created.page.id}/resolve`, {});
+  });
+
+  it("gives an escalation step back when it could not start an attempt for anyone", async () => {
+    const group = await createGroup(
+      "Solo step held",
+      [{ afterMinutes: 30, target: "group" }],
+      ["user_a"],
+    );
+    failing.add("ExponentPushToken[user_a]");
+    const created = (await (
+      await page(group.id, { title: "Held step" })
+    ).json()) as OncallPageCreateResponse;
+    const presented = (rejectedTo("user_a")[0]?.data as { responseToken?: string } | undefined)
+      ?.responseToken as string;
+    failing.clear();
+    // Not in flight, so the step is claimed, but the lock-screen claim blocks a new attempt.
+    expect(await oncall.claimPageResponseToken(created.page.id, "user_a", presented)).toBe(true);
+    as("user_a");
+    expect((await call("POST", `/api/pages/${created.page.id}/escalate`)).status).toBe(409);
+    await runDueEscalation(created.page.id);
+    const held = await pageDto(created.page.id);
+    expect(held.escalationStep).toBe(0);
+    expect(Date.parse(held.nextEscalationAt ?? "")).toBeGreaterThan(Date.now());
+    expect(pushesTo("user_a")).toHaveLength(0);
+
+    await oncall.releasePageResponseToken(created.page.id, "user_a", presented);
+    await runDueEscalation(created.page.id);
+    expect(pushesTo("user_a")).toHaveLength(1);
+    expect((await pageDto(created.page.id)).escalationStep).toBe(1);
     await call("POST", `/api/pages/${created.page.id}/resolve`, {});
   });
 

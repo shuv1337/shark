@@ -11,6 +11,7 @@ import {
   type WebhookRequest,
 } from "@hark/contracts";
 import { Expo, type ExpoPushMessage, type ExpoPushTicket } from "expo-server-sdk";
+import { Agent } from "undici";
 import type { macosDevice, webPushSubscription } from "../db/schema";
 import { env } from "../env";
 import type { NotificationPayloadInput } from "./apns";
@@ -218,10 +219,27 @@ export function buildPageClaimedPushMessages(
   return to.map((token) => ({ to: token, data, _contentAvailable: true }));
 }
 
+/**
+ * Per-phase limits for one Expo request. Undici's defaults wait up to five
+ * minutes for headers and again for the body, so one hung request could
+ * stall the on-call worker. With up to three tries on 429, a send settles
+ * within about two and a half minutes, well inside the on-call
+ * `DELIVERY_STALE_MS`, so an attempt is only presumed lost after a crash.
+ */
+export const EXPO_CONNECT_TIMEOUT_MS = 10_000;
+export const EXPO_RESPONSE_TIMEOUT_MS = 20_000;
+
 let expoClient: Expo | undefined;
 function getExpo(): Expo {
   if (!expoClient) {
-    expoClient = new Expo(env.EXPO_ACCESS_TOKEN ? { accessToken: env.EXPO_ACCESS_TOKEN } : {});
+    expoClient = new Expo({
+      ...(env.EXPO_ACCESS_TOKEN ? { accessToken: env.EXPO_ACCESS_TOKEN } : {}),
+      httpAgent: new Agent({
+        connect: { timeout: EXPO_CONNECT_TIMEOUT_MS },
+        headersTimeout: EXPO_RESPONSE_TIMEOUT_MS,
+        bodyTimeout: EXPO_RESPONSE_TIMEOUT_MS,
+      }),
+    });
   }
   return expoClient;
 }

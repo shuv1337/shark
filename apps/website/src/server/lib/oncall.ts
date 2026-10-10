@@ -73,8 +73,9 @@ export const UNDELIVERED_RETRY_MAX_MS = 15 * 60_000;
 export const UNDELIVERED_RETRY_MAX_AGE_MS = 24 * 3_600_000;
 /**
  * How long an attempt may stay in flight before it is presumed lost (for
- * example, the server restarted mid-send). Long enough that a slow Expo
- * request is not mistaken for a lost one and paged twice.
+ * example, the server restarted mid-send). Expo requests time out well
+ * before this (see `EXPO_RESPONSE_TIMEOUT_MS`), so a slow request is not
+ * mistaken for a lost one and paged twice.
  */
 export const DELIVERY_STALE_MS = 5 * 60_000;
 /** Retries per worker pass, so a backlog after a deploy drains gradually. */
@@ -564,29 +565,61 @@ async function deliver(
     .set({ acceptedCount: accepted, deliveryStatus, nextAttemptAt })
     .where(attempt);
   await deactivateStale(staleTokens);
+  if (accepted > 0) {
+    const reached = tokens.filter((token) => !staleTokens.includes(token));
+    await withdrawIfClosed(page.id, reached).catch((error: unknown) => {
+      console.error("[oncall] Could not withdraw a late page push", error);
+    });
+  }
   return accepted;
+}
+
+/**
+ * Withdraws a page push that was accepted after the page was acknowledged or
+ * resolved. The page.claimed sent when it closed may have reached the
+ * device first, which would leave this alert showing.
+ */
+async function withdrawIfClosed(pageId: string, tokens: string[]): Promise<void> {
+  if (tokens.length === 0) return;
+  const [current] = await db
+    .select({
+      status: oncallPage.status,
+      acknowledgedByUserId: oncallPage.acknowledgedByUserId,
+      resolvedByUserId: oncallPage.resolvedByUserId,
+    })
+    .from(oncallPage)
+    .where(eq(oncallPage.id, pageId))
+    .limit(1);
+  if (!current || current.status === "triggered") return;
+  const closedBy = current.acknowledgedByUserId ?? current.resolvedByUserId;
+  const result = await sendPushMessages(
+    buildPageClaimedPushMessages(tokens, pageId, closedBy ? await userName(closedBy) : "Someone"),
+  );
+  await deactivateStale(result.staleTokens);
 }
 
 /**
  * Pages `userIds`, skipping anyone already delivered or with an attempt in
  * flight, each with their own one-shot lock-screen credential. Returns
- * pushes accepted by Expo.
+ * pushes accepted by Expo and how many people an attempt was started for.
  */
 async function notifyRecipients(
   page: PageRow,
   groupName: string,
   userIds: string[],
   step: number,
-): Promise<number> {
+): Promise<{ accepted: number; attempted: number }> {
   let accepted = 0;
+  let attempted = 0;
   const targets = await devicesOf(userIds);
   for (const userId of userIds) {
     const responseToken = await claimDelivery(page.id, userId, step, Date.now());
     if (!responseToken) continue;
+    attempted += 1;
     const tokens = targets.filter((target) => target.userId === userId).map((t) => t.token);
     accepted += await deliver(page, groupName, userId, responseToken, tokens);
   }
-  return accepted;
+  return { accepted, attempted };
 }
 
 /** Team members who may still sign in; removed operators are never paged. */
@@ -759,7 +792,7 @@ export async function raisePage({
   const page = created.page;
   if (!page) throw new Error("Failed to create page");
 
-  const accepted = await notifyRecipients(page, group.name, initial, 0);
+  const { accepted } = await notifyRecipients(page, group.name, initial, 0);
   if (accepted > 0) await trackNotification(creatorUserId, page.id);
   return {
     ok: true,
@@ -899,7 +932,36 @@ export async function escalatePage(pageId: string, manual: boolean): Promise<Esc
     const [latest] = await db.select().from(oncallPage).where(eq(oncallPage.id, page.id)).limit(1);
     return { ok: false, status: 409, error: "Page changed; try again", page: latest ?? page };
   }
-  const accepted = await notifyRecipients(claimed, group.name, targets, stepIndex + 1);
+  const { accepted, attempted } = await notifyRecipients(
+    claimed,
+    group.name,
+    targets,
+    stepIndex + 1,
+  );
+  if (targets.length > 0 && attempted === 0) {
+    // A concurrent attempt took every target after the check above; give the step back.
+    const [restored] = await db
+      .update(oncallPage)
+      .set({
+        escalationStep: stepIndex,
+        nextEscalationAt: manual ? page.nextEscalationAt : new Date(now + 30_000),
+        lastPagedUserId: page.lastPagedUserId,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(oncallPage.id, page.id),
+          eq(oncallPage.status, "triggered"),
+          eq(oncallPage.escalationStep, stepIndex + 1),
+        ),
+      )
+      .returning();
+    if (restored) {
+      return manual
+        ? { ok: false, status: 409, error: "This page is still being delivered", page: restored }
+        : { ok: true, page: restored };
+    }
+  }
   if (accepted > 0 && claimed.createdByUserId) {
     await trackNotification(claimed.createdByUserId, `${claimed.id}:${stepIndex + 1}`);
   }
