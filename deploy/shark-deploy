@@ -21,6 +21,7 @@ done
 deploy_root="${SHARK_DEPLOY_ROOT:-/home/exedev/shark}"
 compose_file="${SHARK_COMPOSE_FILE:-/etc/shark/compose.yaml}"
 helper_root="${SHARK_HELPER_ROOT:-/usr/local/sbin}"
+readiness_seconds="${SHARK_READINESS_SECONDS:-60}"
 runtime_env="$deploy_root/.env"
 provenance_root="$deploy_root/provenance"
 lock_file="$deploy_root/deploy.lock"
@@ -209,12 +210,12 @@ fi
 new_release_issued=1
 DEPLOY_GIT_SHA="$deploy_sha" SHARK_IMAGE="$image" "${compose[@]}" up --detach
 new_release_up=1
-# Every check has a deadline, so a request the server accepts but never answers cannot stall the
-# deploy past its rollback window.
-for _attempt in $(seq 1 30); do
-  if curl --fail --silent --max-time 10 http://127.0.0.1:8787/api/health >/dev/null; then
-    break
-  fi
+# The readiness wait has one overall budget and every probe has its own deadline, so a server
+# that accepts connections but never answers fails into the rollback within about that budget
+# instead of stalling the deploy.
+readiness_deadline=$((SECONDS + readiness_seconds))
+until curl --fail --silent --max-time 5 http://127.0.0.1:8787/api/health >/dev/null; do
+  ((SECONDS < readiness_deadline)) || break
   sleep 2
 done
 curl --fail --silent --max-time 10 http://127.0.0.1:8787/api/health >/dev/null

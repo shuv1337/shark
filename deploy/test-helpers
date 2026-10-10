@@ -367,6 +367,12 @@ case "$url" in
       touch "$FAKE_STATE/reached"
       sleep 30
     fi
+    # A server that accepts the connection and never answers: honor --max-time by timing out.
+    if [[ "${FAKE_HANG_AT:-}" == "health-timeout" ]]; then
+      [[ " $* " == *" --max-time "* ]] || exit 64
+      sleep 1
+      exit 28
+    fi
     ;;
   https://shark.shuv.dev/api/health) ;;
   https://shark.shuv.dev/robots.txt | https://shark.shuv.dev/sitemap.xml) printf '404' ;;
@@ -426,7 +432,7 @@ run_deploy() {
   set -m
   PATH="$deploy_fake_bin:$PATH" \
     SHARK_DEPLOY_ROOT="$root" SHARK_COMPOSE_FILE="$FAKE_STATE/compose.yaml" \
-    SHARK_HELPER_ROOT="$deploy_helpers" \
+    SHARK_HELPER_ROOT="$deploy_helpers" SHARK_READINESS_SECONDS=3 \
     "$repo_root/deploy/shark-deploy" "$next_deploy_sha" "$next_deploy_digest" \
     >"$FAKE_STATE/out" 2>&1 9>&- &
   local pid=$!
@@ -537,6 +543,15 @@ assert_rolled_back "SIGTERM while waiting for the new container"
 FAKE_HANG_AT=health run_deploy int-during-health INT
 assert_status 130 "SIGINT while waiting for the new container"
 assert_rolled_back "SIGINT while waiting for the new container"
+
+# The new container accepts connections but never answers: the readiness budget expires, the
+# confirming probe times out, and the previous release is restarted without any signal.
+health_timeout_started=$SECONDS
+FAKE_HANG_AT=health-timeout run_deploy health-timeout
+assert_status 28 "new container never answers its health probe"
+assert_rolled_back "new container never answers its health probe"
+((SECONDS - health_timeout_started <= 15)) ||
+  fail_case "took $((SECONDS - health_timeout_started))s to give up on a hung health probe."
 
 FAKE_WRONG_IMAGE=1 run_deploy wrong-image
 assert_status 70 "running image mismatch"

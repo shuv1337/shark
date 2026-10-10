@@ -58,7 +58,11 @@ op_daemons_before="$(op_daemons)"
 stop_started_op_daemons() {
   local pid
   for pid in $(op_daemons); do
-    grep -qx -- "$pid" <<<"$op_daemons_before" || kill -- "$pid" 2>/dev/null || true
+    grep -qx -- "$pid" <<<"$op_daemons_before" && continue
+    # Re-read the command line right before signalling, so a PID recycled since the lookup is
+    # left alone.
+    [[ "$(ps -o command= -p "$pid" 2>/dev/null)" =~ ^op\ daemon(\ |$) ]] || continue
+    kill -- "$pid" 2>/dev/null || true
   done
 }
 op_without_deploy_lock() {
