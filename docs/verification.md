@@ -68,6 +68,58 @@ logs. Unchecked release evidence keeps the goal active.
     `c96e5e045c4651ee2e59f5ebc00207777c336d99f8ab8cc9a059d9f90333cc00`). The installed copy
     therefore came from that unpublished working state, not from either bundle revision.
     `~/.claude/skills/shark` still links to `../../.agents/skills/shark`.
+- 2026-10-10: production was promoted from `de5f9fe` to
+  `6b594067d00aeab5f61e0097b4a9b98dd42be66b` (signal-safe `shark-deploy` rollback #134, Cursor
+  review code fixes #136, ledger corrections #135) at image digest
+  `sha256:c47c9119a3317eae20a9eb53ccb13b16e055c5825c51630861ea89e0ec38e817` from publisher run
+  `38093252648`. This was the first run of the #134 helper. Before the deploy:
+  - Read-only VM checks for the #134 follow-up: `systemd-analyze cat-config systemd/logind.conf`
+    shows only the commented default `#KillUserProcesses=no`, and the live logind property
+    (`busctl get-property org.freedesktop.login1 /org/freedesktop/login1
+    org.freedesktop.login1.Manager KillUserProcesses`) is `false` on Ubuntu 24.04.4 with systemd
+    255. `loginctl show-user` reports `Linger=yes`. Logout therefore sends no signal to a detached
+    run, so the `SIGTERM`-after-`up` rollback concern does not apply on this VM.
+  - `deploy/test-helpers` passed locally at `6b59406`. The three helpers that #134 changed
+    (`shark-deploy`, `shark-materialize-secrets`, `shark-restic-backup`) were copied to the VM,
+    hash-checked against `main`, syntax-checked, and installed root-owned with mode `0755`.
+    `shark-backup` and `/etc/shark/compose.yaml` already hash-matched `main`. The replaced
+    `shark-deploy` was the `eb151aa` revision.
+  - The `op daemon` left by the `de5f9fe` deploy (started 06:35:43 UTC) was stopped. No deploy,
+    backup, or Restic process was running. The 09:00 UTC `shark-backup.timer` run had completed.
+  `shark-deploy` ran detached with `setsid nohup` at 22:59:51 UTC and printed its PID as its
+  first line; the SSH session that started it ended at once, and the helper survived. It verified
+  the pre-deploy encrypted Restic snapshot
+  `e0180679d0e8c80d4616ee37ae6ba2d6b30ec2d980609bc09825e427bff17536` in `repos/shark-prod`. That
+  snapshot holds the schema-0027 database a `de5f9fe` rollback needs; `6b59406` adds no migration,
+  so a rollback to `de5f9fe` is schema-compatible. Docker events show the old container killed at
+  23:00:01 and the new one started at 23:01:32 UTC; a one-second loopback health probe saw 91
+  non-200 responses and the first 200 at 23:01:33, so production was down for about 92 seconds,
+  spent in the checkpoint and Restic snapshot. The helper printed `Deployed SHark …` and exited;
+  no `rollback.log` exists. `current` records the SHA, digest, image ID, backup ID, and
+  `2026-10-10T23:01:35Z`, and the running image ID matches the digest. Migrations are unchanged
+  at 28 (last `1791610113104`). Integrity is `ok` with no foreign-key violations. The container
+  has `TRUSTED_FORWARDED_FOR_HOPS=1` and no `TRUSTED_CLIENT_IP_HEADER`. Post-deploy checks:
+  - Health returned 200 with only `{"ok":true}` on the VM and through `https://shark.shuv.dev`.
+    The container was healthy with 0 restarts and logged no errors or warnings.
+  - Anonymous `/`, `/docs`, `/privacy`, `/terms`, `/dashboard`, `/cli/authorize`,
+    `/dashboard/teams/x`, `/join/x`, and `/api/team-invites/<unknown>` returned 401.
+    `/robots.txt`, `/sitemap.xml`, and `/pricing` returned 404, and `/sw.js` returned 200.
+  - `/mcp` returned 401 with no token and with a forged one, with a challenge that points to the
+    protected-resource metadata.
+  - The four OAuth discovery documents returned 200 without `watch:*` or `macos:*` scopes.
+  - Empty requests to `/api/auth/oauth2/register` and `/api/auth/oauth2/public-client-prelogin`
+    returned 400. Each of `/api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, and
+    `/api/auth/oauth2/introspect` returned 400 for an empty form and 415 for JSON. Anonymous
+    `POST /api/web-push/subscriptions` and an anonymous foreign-Origin `POST /api/teams` returned
+    401.
+  - One labeled test notification was sent at 23:02:53 UTC through the existing `sharkctl` login,
+    returned exit 0, and was accepted for 4 targets.
+  - Not re-checked for `6b59406`: signed-in dashboard access and the macOS companion.
+  - **`OP_CACHE=false` did not prevent the daemon.** A new `op daemon` (1Password CLI 2.35.0)
+    started at 22:59:57 UTC, 6 seconds into the run while `shark-materialize-secrets` ran, and
+    was still running after the helper exited. The `deploy/README.md` sentence and the wrapper
+    comments that claim the helpers leave no daemon behind are wrong for this CLI version. The
+    daemon held no deploy lock. It was stopped by hand after the checks.
 - 2026-10-10: production was promoted from `6dcb736` to
   `de5f9fe6da7a84d41da00d8dc30eb917bd822acd` (on-call override creator and recipient notice #126,
   atomic Live Activity and webhook-response admission #129, Web Push service allowlist with pinned
