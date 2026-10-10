@@ -448,6 +448,8 @@ Work lifecycle:
   work you expect to update often.
 - Use `--state review` while waiting on CI or review, `--state blocked --waiting-ask <ask-key>`
   while waiting on the user, and `--state queued` for work you have accepted but not started.
+  `--waiting-ask` is looked up across every ask on the account, not just your token's, so prefix
+  ask keys with your harness and host to avoid pointing at another agent's ask.
 - End every item on every terminal path: `board done --outcome done` on success,
   `--outcome failed` with a short `--note-file` on failure, and `--outcome cancelled` when the user
   stops the work or it is superseded. Never leave an item in flight when you finish a turn that

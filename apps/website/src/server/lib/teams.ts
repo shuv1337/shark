@@ -348,7 +348,21 @@ export async function sendNotice(userIds: string[], notice: HarkNotice): Promise
   return accepted;
 }
 
-/** An error's class name, safe to log where its message could carry credentials. */
+const LOGGED_ERROR_CLASSES: ReadonlyArray<readonly [ErrorConstructor, string]> = [
+  [TypeError, "TypeError"],
+  [RangeError, "RangeError"],
+  [SyntaxError, "SyntaxError"],
+  [ReferenceError, "ReferenceError"],
+  [URIError, "URIError"],
+  [EvalError, "EvalError"],
+];
+
+/**
+ * A fixed label for an error's class, safe to log where its message could carry credentials.
+ * `name` and `constructor.name` are writable by whoever threw, so neither is read.
+ */
 export function errorClass(error: unknown): string {
-  return error instanceof Error ? error.name : typeof error;
+  if (!(error instanceof Error)) return error === null ? "null" : typeof error;
+  if (error instanceof AggregateError) return "AggregateError";
+  return LOGGED_ERROR_CLASSES.find(([type]) => error instanceof type)?.[1] ?? "Error";
 }

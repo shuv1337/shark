@@ -997,57 +997,64 @@ export async function markDone(
   ]);
   if (rejected) return rejected;
   const now = new Date();
-  const [existing] = await db
-    .select()
-    .from(boardWorkItem)
-    .where(and(eq(boardWorkItem.userId, token.userId), eq(boardWorkItem.workKey, input.key)))
-    .limit(1);
-  if (existing && existing.requesterTokenId !== token.id && existing.requesterTokenId !== null) {
-    return { ok: false, status: 409, error: "Another agent owns this work key" };
-  }
-  if (!existing && !input.title) {
-    return { ok: false, status: 422, error: "A new done item needs a title" };
-  }
-  const links = existing
-    ? [
-        ...existing.links,
-        ...input.links.filter((link) => !existing.links.some((known) => known.url === link.url)),
-      ]
-    : input.links;
-  const fields = {
-    requesterTokenId: token.id,
-    agentLabel: token.name,
-    agentDisplay: input.agentDisplay ?? existing?.agentDisplay ?? null,
-    title: input.title ?? existing?.title ?? input.key,
-    state: input.outcome,
-    links,
-    note: input.note ?? null,
-    waitingAskId: null,
-    completedAt: now,
-    completionVerb: input.verb,
-    lastHeartbeatAt: now,
-    updatedAt: now,
-  };
-  const [row] = existing
-    ? await db
-        .update(boardWorkItem)
-        .set(fields)
-        .where(eq(boardWorkItem.id, existing.id))
-        .returning()
-    : await db
-        .insert(boardWorkItem)
-        .values({
-          id: newId("bwork"),
-          userId: token.userId,
-          workKey: input.key,
-          ...fields,
-          startedAt: null,
-          createdAt: now,
-        })
-        .returning();
-  if (!row) return { ok: false, status: 409, error: "Work item changed concurrently" };
-  notifyBoardChanged(token.userId);
-  return { ok: true, row };
+  // Same single synchronous transaction as upsertWork, so a heartbeat can't land between the
+  // read and the write and have its links or ownership overwritten by a stale snapshot.
+  const outcome = db.transaction((tx): { ok: true; row: WorkRow } | BoardFailure => {
+    const existing = tx
+      .select()
+      .from(boardWorkItem)
+      .where(and(eq(boardWorkItem.userId, token.userId), eq(boardWorkItem.workKey, input.key)))
+      .get();
+    if (existing && existing.requesterTokenId !== token.id && existing.requesterTokenId !== null) {
+      return { ok: false, status: 409, error: "Another agent owns this work key" };
+    }
+    if (!existing && !input.title) {
+      return { ok: false, status: 422, error: "A new done item needs a title" };
+    }
+    const links = existing
+      ? [
+          ...existing.links,
+          ...input.links.filter((link) => !existing.links.some((known) => known.url === link.url)),
+        ]
+      : input.links;
+    const fields = {
+      requesterTokenId: token.id,
+      agentLabel: token.name,
+      agentDisplay: input.agentDisplay ?? existing?.agentDisplay ?? null,
+      title: input.title ?? existing?.title ?? input.key,
+      state: input.outcome,
+      links,
+      note: input.note ?? null,
+      waitingAskId: null,
+      completedAt: now,
+      completionVerb: input.verb,
+      lastHeartbeatAt: now,
+      updatedAt: now,
+    };
+    const row = existing
+      ? tx
+          .update(boardWorkItem)
+          .set(fields)
+          .where(eq(boardWorkItem.id, existing.id))
+          .returning()
+          .get()
+      : tx
+          .insert(boardWorkItem)
+          .values({
+            id: newId("bwork"),
+            userId: token.userId,
+            workKey: input.key,
+            ...fields,
+            startedAt: null,
+            createdAt: now,
+          })
+          .returning()
+          .get();
+    if (!row) return { ok: false, status: 409, error: "Work item changed concurrently" };
+    return { ok: true, row };
+  });
+  if (outcome.ok) notifyBoardChanged(token.userId);
+  return outcome;
 }
 
 export async function upsertNote(

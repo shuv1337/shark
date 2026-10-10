@@ -95,6 +95,7 @@ import {
   WEB_PUSH_SERVICE_HOSTS,
 } from "./url";
 
+export { isPublicAddress } from "./ip";
 export { isKnownWebPushEndpoint, isPublicHttpsUrl, publicHttpsHref, WEB_PUSH_SERVICE_HOSTS };
 
 /**

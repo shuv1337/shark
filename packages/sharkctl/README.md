@@ -207,8 +207,9 @@ Agents on one host can share a token if each prefixes its keys with its harness 
 all of them. A token per agent isolates them and lets the crew strip name each one.
 
 `board work` is an upsert and a heartbeat: re-posting a key keeps any optional field the call
-omits, except that the waiting ask is dropped once the item leaves `blocked`. `--waiting-ask` with a
-key that matches none of your asks is refused. To clear one, pipe JSON on stdin, for example `{"progress":null}` or `{"links":[]}`.
+omits, except that the waiting ask is dropped once the item leaves `blocked`. `--waiting-ask` is
+matched against every ask on the account, not only the current token's, and a key that matches
+none of them is refused. To clear one, pipe JSON on stdin, for example `{"progress":null}` or `{"links":[]}`.
 
 `board ask --key <key> --title <title>` is an upsert: repeating it unchanged only records that the
 agent still cares, changing the title, body, options, or links bumps the revision and sends one new

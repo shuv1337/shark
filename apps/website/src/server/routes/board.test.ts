@@ -753,6 +753,46 @@ describe("work re-posts", () => {
     expect(await put(base)).toMatchObject({ detail: "new", progress: 0.9 });
   });
 
+  it("serializes a done with a heartbeat that races it", async () => {
+    const [token] = await db.select().from(schema.apiToken).where(eq(schema.apiToken.id, "tok_fm"));
+    if (!token) throw new Error("missing synthetic token");
+    const pr = { kind: "pr", url: "https://github.com/x/y/pull/7" } as const;
+    const ci = { kind: "other", url: "https://ci.example.com/run/7" } as const;
+    const release = { kind: "doc", url: "https://releases.example.com/7" } as const;
+    // Land the heartbeat at several points while the done is in progress.
+    for (let ticks = 0; ticks < 8; ticks++) {
+      const key = `fm:done-race:${ticks}`;
+      await board.upsertWork(token, { key, title: "Race", state: "in_flight", links: [pr] });
+      const done = board.markDone(token, {
+        key,
+        verb: "merged",
+        outcome: "done",
+        links: [release],
+      });
+      for (let i = 0; i < ticks; i++) await Promise.resolve();
+      const beat = await board.upsertWork(token, {
+        key,
+        title: "Race",
+        state: "review",
+        links: [pr, ci],
+      });
+      expect((await done).ok && beat.ok).toBe(true);
+      const [row] = await db
+        .select()
+        .from(schema.boardWorkItem)
+        .where(eq(schema.boardWorkItem.workKey, key));
+      // Either serial order is fine; a done built from the pre-heartbeat snapshot is not.
+      if (row?.completedAt) {
+        expect(
+          row.links.map((link) => link.url),
+          `ticks=${ticks}`,
+        ).toEqual([pr.url, ci.url, release.url]);
+      } else {
+        expect(row, `ticks=${ticks}`).toMatchObject({ state: "review", links: [pr, ci] });
+      }
+    }
+  });
+
   it("clears agentDisplay with null and restores the default TTL with null", async () => {
     const base = { key: "fm:nullable", title: "Nullable", state: "queued" };
     await put({ ...base, agentDisplay: "Synthetic Harness", heartbeatTtlSeconds: 600 });
