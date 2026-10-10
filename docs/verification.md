@@ -77,21 +77,24 @@ logs. Unchecked release evidence keeps the goal active.
     shows only the commented default `#KillUserProcesses=no`, and the live logind property
     (`busctl get-property org.freedesktop.login1 /org/freedesktop/login1
     org.freedesktop.login1.Manager KillUserProcesses`) is `false` on Ubuntu 24.04.4 with systemd
-    255. `loginctl show-user` reports `Linger=yes`. Logout therefore sends no signal to a detached
-    run, so the `SIGTERM`-after-`up` rollback concern does not apply on this VM.
+    255. With `KillUserProcesses=false`, logout sends no signal to a detached run, so the
+    `SIGTERM`-after-`up` rollback concern does not apply on this VM. `loginctl show-user` also
+    reports `Linger=yes`, which only keeps the user manager running and is not what protects a
+    `setsid` run.
   - `deploy/test-helpers` passed locally at `6b59406`. The three helpers that #134 changed
     (`shark-deploy`, `shark-materialize-secrets`, `shark-restic-backup`) were copied to the VM,
     hash-checked against `main`, syntax-checked, and installed root-owned with mode `0755`.
     `shark-backup` and `/etc/shark/compose.yaml` already hash-matched `main`. The replaced
-    `shark-deploy` was the `eb151aa` revision.
+    `shark-deploy` was blob `1e6738ea15c4e8953172dd4df8186f9e4bc139f3`, the revision on `main`
+    from `f56d7cd` through `de5f9fe`.
   - The `op daemon` left by the `de5f9fe` deploy (started 06:35:43 UTC) was stopped. No deploy,
     backup, or Restic process was running. The 09:00 UTC `shark-backup.timer` run had completed.
   `shark-deploy` ran detached with `setsid nohup` at 22:59:51 UTC and printed its PID as its
   first line; the SSH session that started it ended at once, and the helper survived. It verified
   the pre-deploy encrypted Restic snapshot
   `e0180679d0e8c80d4616ee37ae6ba2d6b30ec2d980609bc09825e427bff17536` in `repos/shark-prod`. That
-  snapshot holds the schema-0027 database a `de5f9fe` rollback needs; `6b59406` adds no migration,
-  so a rollback to `de5f9fe` is schema-compatible. Docker events show the old container killed at
+  snapshot holds the schema-0027 database. `6b59406` adds no migration, so the live database
+  stays at schema 0027 and a `de5f9fe` rollback would not need it. Docker events show the old container killed at
   23:00:01 and the new one started at 23:01:32 UTC; a one-second loopback health probe saw 91
   non-200 responses and the first 200 at 23:01:33, so production was down for about 92 seconds,
   spent in the checkpoint and Restic snapshot. The helper printed `Deployed SHark …` and exited;
@@ -103,18 +106,22 @@ logs. Unchecked release evidence keeps the goal active.
     The container was healthy with 0 restarts and logged no errors or warnings.
   - Anonymous `/`, `/docs`, `/privacy`, `/terms`, `/dashboard`, `/cli/authorize`,
     `/dashboard/teams/x`, `/join/x`, and `/api/team-invites/<unknown>` returned 401.
-    `/robots.txt`, `/sitemap.xml`, and `/pricing` returned 404, and `/sw.js` returned 200.
+    `/robots.txt`, `/sitemap.xml`, and `/pricing` returned 404, and `/sw.js` returned 200
+    JavaScript. The access-log redaction of the invite probes was not re-checked.
   - `/mcp` returned 401 with no token and with a forged one, with a challenge that points to the
     protected-resource metadata.
   - The four OAuth discovery documents returned 200 without `watch:*` or `macos:*` scopes.
   - Empty requests to `/api/auth/oauth2/register` and `/api/auth/oauth2/public-client-prelogin`
     returned 400. Each of `/api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, and
     `/api/auth/oauth2/introspect` returned 400 for an empty form and 415 for JSON. Anonymous
-    `POST /api/web-push/subscriptions` and an anonymous foreign-Origin `POST /api/teams` returned
-    401.
+    `POST /api/web-push/subscriptions` returned 401, as did an anonymous `POST /api/teams` with a
+    foreign `Origin`; that is the `requireAuth` answer, not the #136 same-origin check, which
+    only a cookie-authenticated request reaches.
   - One labeled test notification was sent at 23:02:53 UTC through the existing `sharkctl` login,
-    returned exit 0, and was accepted for 4 targets.
-  - Not re-checked for `6b59406`: signed-in dashboard access and the macOS companion.
+    returned exit 0, and was accepted for 4 targets. On-device delivery was not separately
+    confirmed.
+  - Not re-checked for `6b59406`: signed-in dashboard access, the #136 same-origin refusal for
+    a signed-in cross-origin mutation, and the macOS companion.
   - **`OP_CACHE=false` did not prevent the daemon.** A new `op daemon` (1Password CLI 2.35.0)
     started at 22:59:57 UTC, 6 seconds into the run while `shark-materialize-secrets` ran, and
     was still running after the helper exited. The `deploy/README.md` sentence and the wrapper
