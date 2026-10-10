@@ -3,6 +3,7 @@ import {
   type ApiTokenScope,
   OAUTH_API_SCOPES,
   OAUTH_OFFLINE_ACCESS_SCOPE,
+  publicHttpsHref,
 } from "@hark/contracts";
 import { useEffect, useMemo, useState } from "react";
 import { Brand, PAGE_COLUMN } from "../components/SiteChrome";
@@ -260,8 +261,8 @@ function ClientHeader({
   name: string;
   redirectHost: string | null;
 }) {
-  const logoUri = httpsOnly(client?.logo_uri);
-  const clientUri = httpsOnly(client?.client_uri);
+  const logoUri = publicHttpsHref(client?.logo_uri);
+  const clientUri = publicHttpsHref(client?.client_uri);
   return (
     <div className="flex items-start gap-4">
       {logoUri ? (
@@ -303,15 +304,6 @@ function ClientHeader({
 }
 
 /** Anonymous registration accepts any string here; only HTTPS URLs are rendered. */
-function httpsOnly(uri: string | null | undefined): string | null {
-  if (!uri) return null;
-  try {
-    return new URL(uri).protocol === "https:" ? uri : null;
-  } catch {
-    return null;
-  }
-}
-
 function safeHost(uri: string): string {
   try {
     return new URL(uri).host;

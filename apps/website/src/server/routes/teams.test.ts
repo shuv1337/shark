@@ -9,7 +9,7 @@ import type {
   TeamJoinResponse,
   TeamMemberDto,
 } from "@hark/contracts";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 process.env.NODE_ENV = "test";
@@ -247,6 +247,42 @@ describe("teams and invites", () => {
     expect((await from("POST", `/api/teams/${team.id}/leave`)).status).toBe(404);
   });
 
+  it("refuses cross-origin simple forms and method-override headers", async () => {
+    const team = await createTeam("Form origins");
+    as("user_b");
+    const foreign = "https://evil.example";
+    const forms: Array<[string, BodyInit]> = [
+      ["application/x-www-form-urlencoded", "name=Hijacked"],
+      ["multipart/form-data; boundary=synthetic", "--synthetic--\r\n"],
+      ["text/plain", '{"name":"Hijacked"}'],
+    ];
+    for (const [type, body] of forms) {
+      for (const path of ["/api/teams", `/api/teams/${team.id}/leave`]) {
+        const response = await app.request(path, {
+          method: "POST",
+          headers: { "content-type": type, origin: foreign },
+          body,
+        });
+        expect(response.status, `${type} ${path}`).toBe(403);
+      }
+    }
+    for (const override of ["GET", "HEAD"]) {
+      for (const header of ["x-http-method-override", "x-http-method", "x-method-override"]) {
+        const response = await app.request(`/api/teams/${team.id}`, {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: foreign, [header]: override },
+          body: "{}",
+        });
+        expect(response.status, `${header}: ${override}`).toBe(403);
+      }
+    }
+    as("user_a");
+    const unchanged = (await (await call("GET", `/api/teams/${team.id}`)).json()) as {
+      team: { name: string };
+    };
+    expect(unchanged.team.name).toBe("Form origins");
+  });
+
   it("keeps every team on the free plan with unlimited seats and no billing", async () => {
     const team = await createTeam("Unbilled");
     expect(team).toMatchObject({ plan: "free", seats: { used: 1, available: null, billable: 0 } });
@@ -447,6 +483,55 @@ describe("team apps", () => {
     expect(returned.consentedAt).not.toBeNull();
   });
 
+  it("refuses a pass and writes no member state when removal lands mid-request", async () => {
+    const team = await createTeam("Mid-pass removal");
+    await join("user_b", (await invite(team.id)).code);
+    const now = new Date();
+    await db.insert(schema.app).values({
+      id: "app_midpass_001",
+      userId: "user_a",
+      teamId: team.id,
+      name: "Ops",
+      url: "https://midpass.example.com/",
+      origin: "https://midpass.example.com",
+      createdAt: now,
+      updatedAt: now,
+    });
+    // Remove Bea once the route has passed its access check and reads her app state.
+    const select = db.select.bind(db);
+    let armed = true;
+    const spy = vi.spyOn(db, "select").mockImplementation(((...args: Parameters<typeof select>) => {
+      const builder = select(...args);
+      const from = builder.from.bind(builder);
+      builder.from = ((table: Parameters<typeof from>[0]) => {
+        if (armed && table === schema.appMemberState) {
+          armed = false;
+          db.delete(schema.teamMember)
+            .where(
+              and(eq(schema.teamMember.teamId, team.id), eq(schema.teamMember.userId, "user_b")),
+            )
+            .run();
+        }
+        return from(table);
+      }) as typeof from;
+      return builder;
+    }) as typeof db.select);
+    try {
+      as("user_b");
+      const pass = await call("POST", "/api/apps/app_midpass_001/pass", { consent: true });
+      expect(armed).toBe(false);
+      expect(pass.status).toBe(404);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(
+      await db
+        .select()
+        .from(schema.appMemberState)
+        .where(eq(schema.appMemberState.appId, "app_midpass_001")),
+    ).toEqual([]);
+  });
+
   it("gives a leaving member back the apps they added, with their own sign-in state", async () => {
     const team = await createTeam("Leavers");
     await join("user_b", (await invite(team.id)).code);
@@ -625,6 +710,21 @@ describe("team apps", () => {
       memberToken,
     );
     expect(renamed.status).toBe(403);
+    await db
+      .update(schema.teamMember)
+      .set({ role: "admin" })
+      .where(and(eq(schema.teamMember.teamId, team.id), eq(schema.teamMember.userId, "user_b")));
+    const byAdmin = await call(
+      "POST",
+      "/api/agent/apps",
+      { ...body, name: "Status (admin)" },
+      memberToken,
+    );
+    expect(byAdmin.status).toBe(200);
+    expect(((await byAdmin.json()) as { app: AppDto }).app).toMatchObject({
+      id: teamApp.id,
+      name: "Status (admin)",
+    });
     const again = await call(
       "POST",
       "/api/agent/apps",

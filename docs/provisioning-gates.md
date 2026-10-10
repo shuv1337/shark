@@ -88,8 +88,10 @@ ssh exe.dev domain add shark-prod shark.shuv.dev
 
 Do not make the exe.dev HTTP share public or change its selected port until the reviewed production
 container is ready on loopback port `8787`. At cutover, select port `8787`, make the share public,
-and verify that `/api/health` is the only anonymous content response. The MCP OAuth endpoints and
-the public signing keys (`/.well-known/jwks.json`) are expected anonymous exceptions. Check them against the responses listed
+and verify that the only anonymous content responses are `/api/health`, the Web Push assets
+(`/sw.js`, `/favicon.png`, `/app-store-icon.png`), `/.well-known/apple-app-site-association`, and
+the `/conversation/v1/:reference` handoff page. The MCP OAuth endpoints and the public signing keys
+(`/.well-known/jwks.json`) are also expected anonymous exceptions. Check them against the responses listed
 under "Manual checks" in [`operations.md`](./operations.md).
 
 ## 1Password

@@ -625,7 +625,6 @@ async function appsRequest(config, path, init) {
   }
 }
 
-/** Adds a re-login hint naming the scopes a 403 reported as missing. */
 function requireId(id, usage) {
   if (!id) throw new UsageError(`${usage} requires an ID`);
   return encodeURIComponent(id);

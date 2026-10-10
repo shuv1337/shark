@@ -37,6 +37,7 @@ export default function JoinTeamScreen() {
   const [seatLimit, setSeatLimit] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   const signedOut = !isPending && !session && !simulatorPreview;
+  const signedIn = !isPending && Boolean(session);
 
   useEffect(() => {
     // Remember the invite so it reopens right after sign-in.
@@ -48,6 +49,8 @@ export default function JoinTeamScreen() {
       setInvite(previewInvite);
       return;
     }
+    // The preview needs a session; signed out, the screen redirects instead.
+    if (!signedIn) return;
     void api
       .previewTeamInvite(code)
       .then(setInvite)
@@ -60,7 +63,7 @@ export default function JoinTeamScreen() {
               : "Couldn’t load this invite.",
         ),
       );
-  }, [code, simulatorPreview]);
+  }, [code, simulatorPreview, signedIn]);
 
   if (signedOut) return <Redirect href="/" />;
 

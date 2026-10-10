@@ -442,9 +442,9 @@ Work lifecycle:
 
 - Post `board work --state in_flight` when you start, with a one-line `--status` and a link to the
   PR, issue, or doc when one exists. Re-run it with the same key at real milestones; each call is
-  also the heartbeat. A re-run keeps the links, progress, status, detail, host, waiting ask, and
-  TTL it does not repeat; to clear one, pipe JSON such as `{"progress":null}` or `{"links":[]}` on
-  stdin. Items quiet past `--heartbeat-ttl` (default 6h) show as stale, so set a shorter TTL for
+  also the heartbeat. A re-run keeps the links, progress, status, detail, host, agent, and TTL it
+  does not repeat, and keeps the waiting ask only while the item stays `blocked`; to clear one,
+  pipe JSON such as `{"progress":null}` or `{"links":[]}` on stdin. Items quiet past `--heartbeat-ttl` (default 6h) show as stale, so set a shorter TTL for
   work you expect to update often.
 - Use `--state review` while waiting on CI or review, `--state blocked --waiting-ask <ask-key>`
   while waiting on the user, and `--state queued` for work you have accepted but not started.

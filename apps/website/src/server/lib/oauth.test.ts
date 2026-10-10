@@ -223,7 +223,16 @@ describe("client links", () => {
     expect(oauth.httpsUrlOrNull("https://client.example/logo.png")).toBe(
       "https://client.example/logo.png",
     );
+    expect(oauth.httpsUrlOrNull(" https:client.example/logo.png")).toBe(
+      "https://client.example/logo.png",
+    );
     for (const value of [
+      "https://127.0.0.1/",
+      "https://localhost/",
+      "https://10.0.0.5/",
+      "https://169.254.169.254/latest/meta-data/",
+      "https://[::1]/",
+      "https://user:secret@client.example/",
       "javascript:alert(1)",
       "data:image/svg+xml,<svg/>",
       "http://client.example/",

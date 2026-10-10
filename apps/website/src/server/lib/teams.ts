@@ -306,42 +306,49 @@ export async function sendNotice(userIds: string[], notice: HarkNotice): Promise
         .where(eq(agentNotification.id, id));
       continue;
     }
-    const result = await sendPushMessages(
-      buildPushMessages({
-        to: devices.map((row) => row.token),
-        eventId: id,
-        serviceId: "hark-teams",
-        conversationKey: notice.conversationKey,
-        ...(notice.appId ? { appId: notice.appId } : {}),
-        resolved: {
-          title: notice.title,
-          body: notice.body,
-          ...(notice.url ? { url: notice.url } : {}),
-        },
-      }),
-    );
-    if (result.staleTokens.length > 0) {
-      await db
-        .update(device)
-        .set({ active: false })
-        .where(inArray(device.expoPushToken, result.staleTokens));
+    let delivered = 0;
+    try {
+      const result = await sendPushMessages(
+        buildPushMessages({
+          to: devices.map((row) => row.token),
+          eventId: id,
+          serviceId: "hark-teams",
+          conversationKey: notice.conversationKey,
+          ...(notice.appId ? { appId: notice.appId } : {}),
+          resolved: {
+            title: notice.title,
+            body: notice.body,
+            ...(notice.url ? { url: notice.url } : {}),
+          },
+        }),
+      );
+      delivered = result.accepted;
+      if (result.staleTokens.length > 0) {
+        await db
+          .update(device)
+          .set({ active: false })
+          .where(inArray(device.expoPushToken, result.staleTokens));
+      }
+    } catch (error) {
+      // Provider errors can embed push tokens, so only the error's class is logged.
+      console.error("[teams] Notice push threw", errorClass(error));
     }
     await db
       .update(agentNotification)
       .set({
-        status:
-          result.accepted === devices.length
-            ? "accepted"
-            : result.accepted > 0
-              ? "partial"
-              : "failed",
-        acceptedCount: result.accepted,
-        failedCount: devices.length - result.accepted,
+        status: delivered === devices.length ? "accepted" : delivered > 0 ? "partial" : "failed",
+        acceptedCount: delivered,
+        failedCount: devices.length - delivered,
         // Provider errors can embed push tokens, so the stored reason is deliberately coarse.
-        error: result.accepted < devices.length ? "Push delivery failed" : null,
+        error: delivered < devices.length ? "Push delivery failed" : null,
       })
       .where(eq(agentNotification.id, id));
-    accepted += result.accepted;
+    accepted += delivered;
   }
   return accepted;
+}
+
+/** An error's class name, safe to log where its message could carry credentials. */
+export function errorClass(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
 }

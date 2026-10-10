@@ -56,6 +56,16 @@ export function isPublicHttpsUrl(value: string): boolean {
 }
 
 /**
+ * The normalized href of a public HTTPS URL without credentials, else null. Use it before
+ * rendering a URL someone else supplied, so a loose spelling never reaches the page as-is.
+ */
+export function publicHttpsHref(value: string | null | undefined): string | null {
+  if (!value || !isPublicHttpsUrl(value)) return null;
+  const url = new URL(value);
+  return url.username || url.password ? null : url.href;
+}
+
+/**
  * Push services that production browsers hand out subscription endpoints on:
  * FCM (Chrome, Opera, Samsung Internet), Mozilla autopush (Firefox), WNS
  * (Edge), and Apple's web push service (Safari). A leading `*.` matches any

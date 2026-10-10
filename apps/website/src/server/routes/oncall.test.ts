@@ -716,6 +716,13 @@ describe("override notices", () => {
     });
     const eventId = (pushesTo("user_c")[0]?.data as { eventId?: string } | undefined)?.eventId;
     expect(eventId).toMatch(/^anot/);
+    // Drop the row the insert trigger made so the read must backfill this token-less notice.
+    const { eq } = await import("drizzle-orm");
+    const inboxId = `ibox:agent_notification:${eventId}`;
+    await db.delete(schema.inboxItem).where(eq(schema.inboxItem.id, inboxId));
+    expect(
+      await db.select().from(schema.inboxItem).where(eq(schema.inboxItem.id, inboxId)),
+    ).toHaveLength(0);
     const detail = await call(
       "GET",
       `/api/inbox/${encodeURIComponent(`ibox:agent_notification:${eventId}`)}`,
@@ -747,7 +754,7 @@ describe("override notices", () => {
     expect(detail.item).toMatchObject({ status: "failed" });
   });
 
-  it("still creates the override when sending the notice rejects", async () => {
+  it("still creates the override and records a failed notice when the push throws", async () => {
     const group = await createGroup("Notice rejected");
     const start = benStart(group);
     pushControl.crash = true;
@@ -757,8 +764,29 @@ describe("override notices", () => {
       const created = await override(group.id, "user_c", start, start + HOUR);
       expect(created.status).toBe(201);
       await settle();
-      expect(logged).toHaveBeenCalledWith("[oncall] Override notice failed", expect.any(Error));
+      expect(logged).toHaveBeenCalledWith("[teams] Notice push threw", "Error");
+      expect(JSON.stringify(logged.mock.calls)).not.toContain("Synthetic push crash");
+      const { desc, eq } = await import("drizzle-orm");
+      const [notice] = await db
+        .select()
+        .from(schema.agentNotification)
+        .where(eq(schema.agentNotification.userId, "user_c"))
+        .orderBy(desc(schema.agentNotification.createdAt))
+        .limit(1);
+      expect(notice).toMatchObject({
+        status: "failed",
+        acceptedCount: 0,
+        failedCount: 1,
+        error: "Push delivery failed",
+      });
       as("user_c");
+      const item = (await (
+        await call(
+          "GET",
+          `/api/inbox/${encodeURIComponent(`ibox:agent_notification:${notice?.id}`)}`,
+        )
+      ).json()) as { item: unknown };
+      expect(item.item).toMatchObject({ status: "failed" });
       const listed = (await (await call("GET", `/api/oncall/${group.id}`)).json()) as {
         group: OncallGroupDto;
       };
@@ -1799,10 +1827,19 @@ describe("pages", () => {
     sent.length = 0;
     const limited = await page(group.id, { title: "One too many" });
     expect(limited.status).toBe(429);
-    expect(await limited.json()).toEqual({ error: "On-call page rate limit exceeded" });
+    expect(limited.headers.get("retry-after")).toBe("60");
+    expect(await limited.json()).toEqual({
+      error: "On-call page rate limit exceeded",
+      retryAfterSeconds: 60,
+    });
     const viaHook = await call("POST", `/hooks/${WEBHOOK}`, { body: "x", oncall: group.id });
     expect(viaHook.status).toBe(429);
     expect(viaHook.headers.get("retry-after")).toBe("60");
+    expect(await viaHook.json()).toEqual({
+      ok: false,
+      error: "On-call page rate limit exceeded",
+      retryAfterSeconds: 60,
+    });
     expect(sent).toHaveLength(0);
     const merged = await page(group.id, { title: "Alert 0", dedupKey: "k0" });
     expect(merged.status).toBe(200);

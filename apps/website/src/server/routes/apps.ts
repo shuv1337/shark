@@ -11,6 +11,7 @@ import {
   appSharingSchema,
   appUpdateSchema,
   MAX_APPS_PER_ACCOUNT,
+  type TeamRole,
 } from "@hark/contracts";
 import { and, count, eq, ne } from "drizzle-orm";
 import { Hono } from "hono";
@@ -29,7 +30,7 @@ import {
 import { newId } from "../lib/id";
 import { resolveProjectForDelivery } from "../lib/projects";
 import { isSameOriginOrNative } from "../lib/same-origin";
-import { memberIds, membership, returnAppToAdder, sendNotice } from "../lib/teams";
+import { errorClass, memberIds, membership, returnAppToAdder, sendNotice } from "../lib/teams";
 import {
   type AgentEnv,
   type AuthedEnv,
@@ -157,7 +158,7 @@ async function notifyTeamOfApp(actor: Actor, row: AppRow, teamId: string, teamNa
     sourceName: teamName,
     appId: row.id,
     conversationKey: `team-${teamId}`,
-  }).catch((error: unknown) => console.error("[apps] Share notice failed", error));
+  }).catch((error: unknown) => console.error("[apps] Share notice failed", errorClass(error)));
 }
 
 /**
@@ -253,6 +254,14 @@ export const appsAgentRoute = new Hono<AgentEnv>()
     // Synchronous transaction: the existence check, cap check, and write
     // cannot interleave with another request on the single SQLite connection.
     const outcome = db.transaction((tx) => {
+      const current = teamId
+        ? tx
+            .select({ role: teamMember.role })
+            .from(teamMember)
+            .where(and(eq(teamMember.teamId, teamId), eq(teamMember.userId, token.userId)))
+            .get()
+        : undefined;
+      if (teamId && !current) return { kind: "no_team" as const };
       const existing = tx
         .select({ id: app.id, teamId: app.teamId, userId: app.userId })
         .from(app)
@@ -263,7 +272,10 @@ export const appsAgentRoute = new Hono<AgentEnv>()
         )
         .get();
       if (existing && existing.teamId === teamId) {
-        if (destination && !canManageApp(token.userId, { app: existing, role: destination.role })) {
+        if (
+          current &&
+          !canManageApp(token.userId, { app: existing, role: current.role as TeamRole })
+        ) {
           return { kind: "forbidden" as const };
         }
         tx.update(app)
@@ -309,6 +321,7 @@ export const appsAgentRoute = new Hono<AgentEnv>()
       return { kind: "created" as const, id };
     });
 
+    if (outcome.kind === "no_team") return c.json({ error: "Team not found" }, 404);
     if (outcome.kind === "limit") return c.json({ error: APP_LIMIT_ERROR }, 409);
     if (outcome.kind === "forbidden") return c.json(FORBIDDEN_MANAGE, 403);
     if (outcome.kind === "shared_elsewhere")

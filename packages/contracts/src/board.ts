@@ -180,7 +180,8 @@ export const boardAskCancelSchema = z.object({
 
 /**
  * Re-posting a work key is the heartbeat, so an omitted optional field keeps its stored value.
- * `null` clears a field and `links: []` clears the links.
+ * `null` clears a field (`heartbeatTtlSeconds: null` restores the default) and `links: []` clears
+ * the links. The waiting ask is kept only while the work stays `blocked`.
  */
 export const boardWorkUpsertSchema = z.object({
   key: boardKeySchema,
@@ -191,8 +192,8 @@ export const boardWorkUpsertSchema = z.object({
   progress: z.number().min(0).max(1).nullable().optional(),
   links: z.array(boardLinkSchema).max(BOARD_MAX_LINKS).optional(),
   host: singleLine(60).nullable().optional(),
-  agentDisplay: singleLine(60).optional(),
-  /** Key of one of this token's asks that this work is waiting on. */
+  agentDisplay: singleLine(60).nullable().optional(),
+  /** Key of one of this account's asks that this work is waiting on; an unknown key is refused. */
   waitingAskKey: boardKeySchema.nullable().optional(),
   /** Defaults to {@link BOARD_DEFAULT_HEARTBEAT_TTL_SECONDS} for a new work item. */
   heartbeatTtlSeconds: z
@@ -200,6 +201,7 @@ export const boardWorkUpsertSchema = z.object({
     .int()
     .min(60)
     .max(7 * 86_400)
+    .nullable()
     .optional(),
 });
 export type BoardWorkUpsertInput = z.infer<typeof boardWorkUpsertSchema>;

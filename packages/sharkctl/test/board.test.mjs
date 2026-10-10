@@ -294,6 +294,34 @@ test("board work, done, and note send the documented payloads", async () => {
   }
 });
 
+test("board work forwards a {progress:null} clear from stdin", async () => {
+  const { calls, restore } = mockFetch(() => Response.json({ ok: true }, { status: 200 }));
+  try {
+    await execute(
+      ["board", "work", "--key", "k", "--title", "T", "--state", "in_flight", "--stdin"],
+      env,
+      { stdin: [JSON.stringify({ progress: null, links: [] })] },
+    );
+    assert.deepEqual(calls[0].body, {
+      progress: null,
+      links: [],
+      key: "k",
+      title: "T",
+      state: "in_flight",
+    });
+    await assert.rejects(
+      execute(
+        ["board", "work", "--key", "k", "--title", "T", "--state", "in_flight", "--stdin"],
+        env,
+        { stdin: [JSON.stringify({ progress: 2 })] },
+      ),
+      /--progress must be a number from 0 to 1/,
+    );
+  } finally {
+    restore();
+  }
+});
+
 test("board work, done, and note send --agent and screen it before sending", async () => {
   const { calls, restore } = mockFetch(() => Response.json({ ok: true }, { status: 200 }));
   try {

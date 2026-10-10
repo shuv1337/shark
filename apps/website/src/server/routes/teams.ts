@@ -35,6 +35,7 @@ import {
 import {
   billingCustomer,
   deleteTeam,
+  errorClass,
   hasRole,
   listMembers,
   listTeams,
@@ -289,7 +290,9 @@ async function createInvite(actor: Actor, teamId: string, input: unknown): Promi
         sourceName: "SHark Teams",
         url: `shark://join/${code}`,
         conversationKey: `team-${teamId}`,
-      }).catch((error: unknown) => console.error("[teams] Invite notice failed", error));
+      }).catch((error: unknown) =>
+        console.error("[teams] Invite notice failed", errorClass(error)),
+      );
     }
   }
   const body: TeamInviteCreateResponse = { invite: toInviteDto(row), code, url: inviteUrl(code) };

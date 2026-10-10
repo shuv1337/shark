@@ -687,6 +687,7 @@ describe("work re-posts", () => {
     host: string | null;
     waitingAskId: string | null;
     heartbeatTtlSeconds: number;
+    agentDisplay: string | null;
   };
   const put = async (body: Record<string, unknown>) => {
     const response = await agent("/work", FM, { method: "PUT", body: JSON.stringify(body) });
@@ -743,6 +744,49 @@ describe("work re-posts", () => {
 
     const created = await put({ key: "fm:fresh", title: "Fresh", state: "queued" });
     expect(created).toMatchObject({ links: [], progress: null, heartbeatTtlSeconds: 21_600 });
+  });
+
+  it("keeps both of two concurrent partial heartbeats", async () => {
+    const base = { key: "fm:concurrent-keep", title: "Concurrent", state: "in_flight" };
+    await put({ ...base, detail: "old", progress: 0.1 });
+    await Promise.all([put({ ...base, detail: "new" }), put({ ...base, progress: 0.9 })]);
+    expect(await put(base)).toMatchObject({ detail: "new", progress: 0.9 });
+  });
+
+  it("clears agentDisplay with null and restores the default TTL with null", async () => {
+    const base = { key: "fm:nullable", title: "Nullable", state: "queued" };
+    await put({ ...base, agentDisplay: "Synthetic Harness", heartbeatTtlSeconds: 600 });
+    expect(await put(base)).toMatchObject({
+      agentDisplay: "Synthetic Harness",
+      heartbeatTtlSeconds: 600,
+    });
+    expect(await put({ ...base, agentDisplay: null, heartbeatTtlSeconds: null })).toMatchObject({
+      agentDisplay: null,
+      heartbeatTtlSeconds: 21_600,
+    });
+  });
+
+  it("refuses an unknown waiting ask and drops the link once the work leaves blocked", async () => {
+    const base = { key: "fm:waiting", title: "Waiting" };
+    const unknown = await agent("/work", FM, {
+      method: "PUT",
+      body: JSON.stringify({ ...base, state: "blocked", waitingAskKey: "fm:waiting:none" }),
+    });
+    expect(unknown.status).toBe(400);
+
+    const { body: asked } = await createAsk({ key: "fm:waiting:ask" });
+    const blocked = await put({ ...base, state: "blocked", waitingAskKey: "fm:waiting:ask" });
+    expect(blocked.waitingAskId).toBe(asked.ask.id);
+    expect((await put({ ...base, state: "blocked" })).waitingAskId).toBe(asked.ask.id);
+    expect((await put({ ...base, state: "in_flight" })).waitingAskId).toBeNull();
+
+    const cancelled = await agent("/asks/fm:waiting:ask/cancel", FM, {
+      method: "POST",
+      body: JSON.stringify({ reason: "Decided in chat" }),
+    });
+    expect(cancelled.status).toBe(200);
+    const late = await put({ ...base, state: "blocked", waitingAskKey: "fm:waiting:ask" });
+    expect(late.waitingAskId).toBeNull();
   });
 
   it("shows the harness name a note was posted with", async () => {

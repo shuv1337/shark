@@ -8,6 +8,7 @@ import {
   OAUTH_OFFLINE_ACCESS_SCOPE,
   OAUTH_SCOPES,
   type OAuthClientGrantDto,
+  publicHttpsHref,
 } from "@hark/contracts";
 import { and, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, notExists } from "drizzle-orm";
 import { db } from "../db";
@@ -506,12 +507,7 @@ export async function oauthClientNames(clientIds: string[]): Promise<Map<string,
   return new Map(rows.map((row) => [row.clientId, row.name?.trim() || "MCP client"]));
 }
 
-/** Registration accepts any string for a client's logo and home page; only HTTPS URLs are shown. */
+/** Registration accepts any string for a client's logo and home page; only public HTTPS URLs are shown. */
 export function httpsUrlOrNull(value: string | null | undefined): string | null {
-  if (!value) return null;
-  try {
-    return new URL(value).protocol === "https:" ? value : null;
-  } catch {
-    return null;
-  }
+  return publicHttpsHref(value);
 }

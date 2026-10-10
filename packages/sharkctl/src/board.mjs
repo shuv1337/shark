@@ -268,7 +268,11 @@ export async function boardCommand(action, positionals, options, context) {
       throw new BoardUsageError(`--state must be one of ${[...WORK_STATES].join(", ")}`);
     }
     const progress = options.progress === undefined ? stdin.progress : Number(options.progress);
-    if (progress !== undefined && (!Number.isFinite(progress) || progress < 0 || progress > 1)) {
+    if (
+      progress !== undefined &&
+      progress !== null &&
+      (!Number.isFinite(progress) || progress < 0 || progress > 1)
+    ) {
       throw new BoardUsageError("--progress must be a number from 0 to 1");
     }
     const payload = {

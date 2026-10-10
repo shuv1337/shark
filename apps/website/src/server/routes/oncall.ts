@@ -34,7 +34,7 @@ import {
 import { onCallThroughout, upcomingShifts } from "../lib/oncall-schedule";
 import { agentAdmission } from "../lib/rate-windows";
 import { requireSameOriginOrNative } from "../lib/same-origin";
-import { hasRole, sendNotice } from "../lib/teams";
+import { errorClass, hasRole, sendNotice } from "../lib/teams";
 import {
   type AgentEnv,
   type AuthedEnv,
@@ -198,7 +198,7 @@ async function createOverride(actor: Actor, groupId: string, input: unknown): Pr
   if (!outcome.ok) return outcome.error;
   if (outcome.row.userId !== actor.id) {
     void notifyOverrideRecipient(actor, outcome.group, outcome.row).catch((error: unknown) =>
-      console.error("[oncall] Override notice failed", error),
+      console.error("[oncall] Override notice failed", errorClass(error)),
     );
   }
   return result({ group: await toGroupDto(outcome.group) }, 201);
@@ -276,7 +276,12 @@ async function createPage(
     origin,
     admit,
   });
-  return outcome.ok ? result(outcome.body, outcome.status) : failure(outcome.status, outcome.error);
+  if (outcome.ok) return result(outcome.body, outcome.status);
+  return failure(
+    outcome.status,
+    outcome.error,
+    outcome.status === 429 ? { retryAfterSeconds: 60 } : {},
+  );
 }
 
 async function getPage(actor: Actor, pageId: string): Promise<Outcome> {
@@ -367,7 +372,9 @@ export const oncallSessionRoute = new Hono<AuthedEnv>()
   )
   .post("/:groupId/pages", async (c) => {
     const actor = sessionActor(c);
-    return send(c, await createPage(actor, c.req.param("groupId"), await readJson(c), actor.name));
+    const outcome = await createPage(actor, c.req.param("groupId"), await readJson(c), actor.name);
+    if (outcome.status === 429) c.header("Retry-After", "60");
+    return send(c, outcome);
   });
 
 export const pagesSessionRoute = new Hono<AuthedEnv>()
@@ -518,9 +525,8 @@ export const oncallAgentRoute = new Hono<AgentEnv>()
         { requesterTokenId: token.id },
         agentAdmission(token, limits),
       );
-      if (outcome.status !== 429) return outcome;
-      c.header("Retry-After", "60");
-      return { status: 429, body: { ...(outcome.body as object), retryAfterSeconds: 60 } };
+      if (outcome.status === 429) c.header("Retry-After", "60");
+      return outcome;
     }),
   );
 
