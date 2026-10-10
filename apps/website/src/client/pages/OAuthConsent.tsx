@@ -5,7 +5,6 @@ import {
   OAUTH_OFFLINE_ACCESS_SCOPE,
 } from "@hark/contracts";
 import { useEffect, useMemo, useState } from "react";
-import { AppleButton } from "../components/AppleButton";
 import { Brand, PAGE_COLUMN } from "../components/SiteChrome";
 import { primaryButton, secondaryButton } from "../components/ui";
 import {
@@ -13,7 +12,6 @@ import {
   type OAuthClientInfo,
   oauthAuthClient,
   signedOAuthQuery,
-  signInForOAuth,
   submitOAuthConsent,
 } from "../lib/oauth-api";
 import { consentedScopes, initialConsentSelection, isHighImpactScope } from "../lib/oauth-consent";
@@ -62,7 +60,7 @@ function readRequest(): ConsentRequest | null {
 }
 
 /**
- * OAuth consent (and sign-in) page for MCP clients. The authorization
+ * OAuth consent page for MCP clients, served behind sign-in. The authorization
  * endpoint redirects here with a signed query; approving posts the scopes
  * the person left ticked and follows the redirect back to the client.
  */
@@ -147,15 +145,16 @@ export function OAuthConsent() {
               {isPending ? (
                 <p className="mt-6 text-[15px] text-ink-faint">Checking your session…</p>
               ) : !session ? (
-                <div className="mt-6">
-                  <p className="mb-5 text-[15px] leading-relaxed text-ink-muted">
-                    Sign in to choose what {clientName} may do with your SHark account. Signing in
-                    does not connect it.
-                  </p>
-                  <div className="flex flex-wrap gap-3">
-                    <AppleButton onClick={() => void signInForOAuth()} />
-                  </div>
-                </div>
+                <p className="mt-6 text-[15px] leading-relaxed text-ink-muted">
+                  Your session ended.{" "}
+                  <a
+                    className="text-ink underline decoration-line-strong underline-offset-2"
+                    href={`/login?next=${encodeURIComponent(`${window.location.pathname}${window.location.search}`)}`}
+                  >
+                    Sign in again
+                  </a>{" "}
+                  to continue.
+                </p>
               ) : done ? (
                 <div className="mt-6 rounded-2xl bg-surface-muted px-4 py-3 text-[15px] text-ink">
                   {done === "approved"
