@@ -168,8 +168,9 @@ export function returnAppToAdder(
 
 /**
  * Removes a member and everything that only made sense while they belonged:
- * their sign-in state for the team's apps (so no further pass is issued),
- * their place in on-call rotations, and their overrides.
+ * the apps they added (which go back to them, as when a team is deleted),
+ * their sign-in state for the team's other apps (so no further pass is
+ * issued), their place in on-call rotations, and their overrides.
  */
 export function removeMember(teamId: string, userId: string): boolean {
   return db.transaction((tx) => {
@@ -179,6 +180,12 @@ export function removeMember(teamId: string, userId: string): boolean {
       .returning({ userId: teamMember.userId })
       .all();
     if (removed.length === 0) return false;
+    const added = tx
+      .select()
+      .from(app)
+      .where(and(eq(app.teamId, teamId), eq(app.userId, userId)))
+      .all();
+    for (const row of added) returnAppToAdder(tx, row);
     const teamApps = tx.select({ id: app.id }).from(app).where(eq(app.teamId, teamId));
     tx.delete(appMemberState)
       .where(and(eq(appMemberState.userId, userId), inArray(appMemberState.appId, teamApps)))

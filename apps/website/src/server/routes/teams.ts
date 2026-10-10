@@ -20,7 +20,7 @@ import { type Context, Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { db } from "../db";
 import { app, oncallGroup, team, teamInvite, teamMember, user as userTable } from "../db/schema";
-import { env } from "../env";
+import { env, normalizeEmail } from "../env";
 import { selectAppsWithJoins, toAppDto } from "../lib/apps";
 import { newId } from "../lib/id";
 import { checkRotation, listTeamPages, toGroupDto } from "../lib/oncall";
@@ -264,7 +264,7 @@ async function createInvite(actor: Actor, teamId: string, input: unknown): Promi
       id: newId("tinv"),
       teamId,
       codeHash: hashTeamInviteCode(code),
-      email: parsed.data.email?.toLowerCase() ?? null,
+      email: parsed.data.email ? normalizeEmail(parsed.data.email) : null,
       role: parsed.data.role,
       invitedByUserId: actor.id,
       invitedByName: actor.name,
@@ -333,6 +333,9 @@ async function openInvite(code: string) {
 async function acceptInvite(actor: Actor, code: string): Promise<Outcome> {
   const found = await openInvite(code);
   if (!found) return failure(404, "This invite is invalid, used, or expired");
+  if (found.invite.email && normalizeEmail(actor.email) !== normalizeEmail(found.invite.email)) {
+    return failure(403, "This invite is for a different account");
+  }
   const existing = await membership(found.team.id, actor.id);
   if (existing) {
     const body: TeamJoinResponse = {

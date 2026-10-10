@@ -9,6 +9,7 @@ import type {
   TeamJoinResponse,
   TeamMemberDto,
 } from "@hark/contracts";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 process.env.NODE_ENV = "test";
@@ -73,6 +74,7 @@ let schema: typeof import("../db/schema");
 const TEAMS_TOKEN = `hark_${"t".repeat(43)}`;
 const NO_TEAMS_TOKEN = `hark_${"u".repeat(43)}`;
 const APPS_ONLY_TOKEN = `hark_${"v".repeat(43)}`;
+const BEA_APPS_TOKEN = `hark_${"w".repeat(43)}`;
 
 function as(userId: string | null) {
   authState.userId = userId;
@@ -155,6 +157,15 @@ beforeAll(async () => {
       name: "Apps bot",
       tokenHash: hashApiToken(APPS_ONLY_TOKEN),
       prefix: "hark_vvvvvvv",
+      scopes: ["apps:read", "apps:write"],
+      createdAt: now,
+    },
+    {
+      id: "tok_bea_apps",
+      userId: "user_b",
+      name: "Bea apps bot",
+      tokenHash: hashApiToken(BEA_APPS_TOKEN),
+      prefix: "hark_wwwwwww",
       scopes: ["apps:read", "apps:write"],
       createdAt: now,
     },
@@ -255,6 +266,23 @@ describe("teams and invites", () => {
       sourceName: "SHark Teams",
       url: `shark://join/${created.code}`,
     });
+  });
+
+  it("lets only the invited account accept an invite addressed to an email", async () => {
+    const team = await createTeam("Addressed");
+    const created = await invite(team.id, { email: "User_C@Example.com" });
+    expect(created.invite.email).toBe("user_c@example.com");
+
+    as("user_b");
+    const wrong = await call("POST", `/api/team-invites/${created.code}/accept`);
+    expect(wrong.status).toBe(403);
+    expect(await wrong.json()).toMatchObject({ error: "This invite is for a different account" });
+    // The refusal does not spend the invite.
+    as(null);
+    expect((await call("GET", `/api/team-invites/${created.code}`)).status).toBe(200);
+
+    const joined = await join("user_c", created.code);
+    expect(joined).toMatchObject({ joined: true, team: { id: team.id, memberCount: 2 } });
   });
 
   it("enforces roles and transfers ownership", async () => {
@@ -397,6 +425,81 @@ describe("team apps", () => {
     expect(returned.consentedAt).not.toBeNull();
   });
 
+  it("gives a leaving member back the apps they added, with their own sign-in state", async () => {
+    const team = await createTeam("Leavers");
+    await join("user_b", (await invite(team.id)).code);
+    const now = new Date();
+    await db.insert(schema.app).values({
+      id: "app_leaver_0001",
+      userId: "user_b",
+      teamId: team.id,
+      name: "Bea's tool",
+      url: "https://bea-tool.example.com/",
+      origin: "https://bea-tool.example.com",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.appMemberState).values([
+      {
+        appId: "app_leaver_0001",
+        userId: "user_b",
+        shareEmail: true,
+        consentedAt: now,
+        updatedAt: now,
+      },
+      { appId: "app_leaver_0001", userId: "user_a", consentedAt: now, updatedAt: now },
+    ]);
+
+    as("user_b");
+    expect((await call("POST", `/api/teams/${team.id}/leave`)).status).toBe(200);
+    const returned = (
+      (await (await call("GET", "/api/apps/app_leaver_0001")).json()) as { app: AppDto }
+    ).app;
+    expect(returned).toMatchObject({ team: null, shareEmail: true });
+    expect(returned.consentedAt).not.toBeNull();
+
+    as("user_a");
+    expect((await call("GET", "/api/apps/app_leaver_0001")).status).toBe(404);
+    const teamApps = (await (await call("GET", `/api/teams/${team.id}/apps`)).json()) as {
+      apps: AppDto[];
+    };
+    expect(teamApps.apps).toEqual([]);
+    const leftover = await db
+      .select()
+      .from(schema.appMemberState)
+      .where(eq(schema.appMemberState.appId, "app_leaver_0001"));
+    expect(leftover).toEqual([]);
+  });
+
+  it("shows the registering token's name only to the member who added the app", async () => {
+    const team = await createTeam("Token names");
+    await join("user_b", (await invite(team.id)).code);
+    const created = await call(
+      "POST",
+      "/api/agent/apps",
+      { name: "Metrics", url: "https://metrics.example.com/", teamId: team.id },
+      TEAMS_TOKEN,
+    );
+    expect(created.status).toBe(201);
+    const { app: createdApp } = (await created.json()) as { app: AppDto };
+    expect(createdApp.createdBy).toBe("Team bot");
+
+    as("user_a");
+    expect(
+      ((await (await call("GET", `/api/apps/${createdApp.id}`)).json()) as { app: AppDto }).app
+        .createdBy,
+    ).toBe("Team bot");
+    as("user_b");
+    const asMember = (
+      (await (await call("GET", `/api/apps/${createdApp.id}`)).json()) as { app: AppDto }
+    ).app;
+    expect(asMember.createdBy).toBeNull();
+    const listed = (await (await call("GET", `/api/teams/${team.id}/apps`)).json()) as {
+      apps: AppDto[];
+    };
+    expect(listed.apps.map((entry) => entry.createdBy)).toEqual([null]);
+  });
+
   it("lets agents create team apps and list teams, scope-checked", async () => {
     const team = await createTeam("Agents");
     const listed = await call("GET", "/api/agent/teams", undefined, TEAMS_TOKEN);
@@ -471,6 +574,59 @@ describe("team apps", () => {
     expect(await shared.json()).toMatchObject({ required: ["apps:write", "teams:write"] });
     await settle();
     expect(sent).toHaveLength(0);
+  });
+
+  it("lets an apps:write token move its owner's app back out of a team without teams:write", async () => {
+    const team = await createTeam("Unshare");
+    await join("user_b", (await invite(team.id)).code);
+    as("user_a");
+    const created = await call(
+      "POST",
+      "/api/agent/apps",
+      { name: "Wiki", url: "https://wiki.example.com/", teamId: team.id },
+      TEAMS_TOKEN,
+    );
+    const { app: teamApp } = (await created.json()) as { app: AppDto };
+    await settle();
+    sent.length = 0;
+
+    const readOnly = await call(
+      "POST",
+      `/api/agent/apps/${teamApp.id}/share`,
+      { teamId: null },
+      NO_TEAMS_TOKEN,
+    );
+    expect(readOnly.status).toBe(403);
+    expect(await readOnly.json()).toMatchObject({ required: ["apps:write"] });
+
+    // Ownership still applies: a member cannot pull someone else's app out.
+    const notOwner = await call(
+      "POST",
+      `/api/agent/apps/${teamApp.id}/share`,
+      { teamId: null },
+      BEA_APPS_TOKEN,
+    );
+    expect(notOwner.status).toBe(403);
+
+    const unshared = await call(
+      "POST",
+      `/api/agent/apps/${teamApp.id}/share`,
+      { teamId: null },
+      APPS_ONLY_TOKEN,
+    );
+    expect(unshared.status).toBe(200);
+    expect(((await unshared.json()) as { app: AppDto }).app.team).toBeNull();
+    await settle();
+    expect(sent).toHaveLength(0);
+
+    // Malformed bodies are not treated as an un-share.
+    const malformed = await call(
+      "POST",
+      `/api/agent/apps/${teamApp.id}/share`,
+      { teamId: null, extra: true },
+      APPS_ONLY_TOKEN,
+    );
+    expect(malformed.status).toBe(403);
   });
 
   it("caps how many notices one sender can push per minute", async () => {

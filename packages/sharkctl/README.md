@@ -150,8 +150,9 @@ sign in again (`sharkctl auth login`).
 `apps create --team <team_id>` adds the app to a team instead, and `apps share <app_id>
 (--team <team_id> | --personal) [--no-notify]` moves an app you added into a team or back to your
 own apps. Other members are notified (unless `--no-notify`) and each approves sign-in on their own
-phone; their SHark pass then carries `team_id` and `team_role`. Both commands also require the
-`teams:write` scope.
+phone; their SHark pass then carries `team_id` and `team_role`. Adding an app to a team also
+requires the `teams:write` scope; `apps share --personal` notifies nobody and needs only
+`apps:write`.
 
 ## teams
 
@@ -160,9 +161,10 @@ Teams share web apps and on-call groups (scopes `teams:read` and `teams:write`).
 read; `teams rename`, `teams delete` (owner), and `teams leave` manage it. `teams role <team_id>
 <user_id> <owner|admin|member>` changes a role (`owner` transfers ownership; the previous owner
 becomes an admin), and `teams remove-member <team_id> <user_id>` removes someone, which also stops
-their sign-in to the team's apps and drops them from rotations. `teams invite <team_id> [--email
-<email>] [--role member|admin]` returns a 7-day join link (`code` and `url`); a SHark user with that
-email also gets a push. Accepting is human-only, in the app or on the website, and the joining
+their sign-in to the team's apps and drops them from rotations; apps that member added go back to
+their own apps. `teams invite <team_id> [--email <email>] [--role member|admin]` returns a 7-day
+join link (`code` and `url`). With `--email`, only the account with that email (case-insensitive)
+can accept, and a SHark user with it also gets a push. Accepting is human-only, in the app or on the website, and the joining
 account must still pass the server's email allowlist. `teams invites` and
 `teams revoke-invite <team_id> <invite_id>` manage links. SHark has no seat billing, so team size
 is not limited.

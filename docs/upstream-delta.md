@@ -134,7 +134,13 @@ Deliberate merge resolutions:
   the webhook and agent per-minute windows, count against the account window, and each group
   accepts at most 10 new pages a minute. Sharing an app (or creating one with `teamId`) from an
   agent token also needs `teams:write` and the agent budget, and each person can trigger at most
-  10 team notices a minute. Request logs redact `/join/:code` and `/api/team-invites/:code`.
+  10 team notices a minute; moving an app back out of a team notifies nobody and needs only
+  `apps:write`. Request logs redact `/join/:code` and `/api/team-invites/:code`.
+- Team follow-ups: an invite created with an email can only be accepted by the account with that
+  email (case-insensitive). A member who leaves or is removed gets back the apps they added, as when
+  a team is deleted. An app's registering token name (`createdBy`) is shown only to the member who
+  added it. `/apps/enter` accepts passes from consented current members of a team-shared SHark-origin
+  app, not just its adder.
 
 ## MCP server integration, 2026-10-09
 

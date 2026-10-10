@@ -394,8 +394,14 @@ export const appsAgentRoute = new Hono<AgentEnv>()
     if (!(await revokeAppConsent(userId, c.req.param("id")))) return c.json(NOT_FOUND, 404);
     return c.json({ app: await visibleAppDto(userId, c.req.param("id")) });
   })
-  // Sharing notifies every other member, so it needs team scope and the agent budget.
-  .post("/:id/share", requireScopes("apps:write", "teams:write"), async (c) => {
+  // Sharing notifies every other member, so it needs team scope and the agent
+  // budget. Moving an app back to your own apps notifies nobody.
+  .post("/:id/share", requireScopes("apps:write"), async (c) => {
+    const input = await readJson(c);
+    const unshare = appShareSchema.safeParse(input).data?.teamId === null;
+    if (!unshare && !c.get("apiToken").scopes.includes("teams:write")) {
+      return c.json({ error: "Insufficient scope", required: ["apps:write", "teams:write"] }, 403);
+    }
     const actor = await agentActor(c);
     if (!actor) return c.json({ error: "Account not found" }, 404);
     const limited = await enforceAgentRateLimit(c.get("apiToken"), actor);
@@ -403,7 +409,7 @@ export const appsAgentRoute = new Hono<AgentEnv>()
       c.header("Retry-After", "60");
       return c.json(limited, 429);
     }
-    return send(c, await shareApp(actor, c.req.param("id"), await readJson(c)));
+    return send(c, await shareApp(actor, c.req.param("id"), input));
   })
   .delete("/:id", requireScopes("apps:write"), async (c) => {
     const outcome = await deleteVisibleApp(c.get("apiToken").userId, c.req.param("id"));
