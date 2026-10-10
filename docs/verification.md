@@ -5,6 +5,40 @@ logs. Unchecked release evidence keeps the goal active.
 
 ## Source baseline
 
+- 2026-10-10: production was promoted from `20e14e1` to
+  `6dcb7367936a8d43b5772baf5b667767fb180c8e` (auth and MCP OAuth follow-ups #111, MCP OAuth
+  end-to-end test #112, teams follow-ups #110, callback SSRF pinning #117, on-call overrides and
+  atomic rate windows #114) at image digest
+  `sha256:d56a3c61033d3814e3f7a3cb303079b435ad0eff68b13a02c546abbc53307d82` from publisher run
+  `38027629316`. A first `shark-deploy` attempt was killed when its operator session ended. It had
+  already stopped the `20e14e1` container, and because it was killed by a signal, its rollback trap
+  never ran. The new image never started, so the database stayed at schema 0025. Production was
+  down from about 05:31 to 05:35 UTC. A re-run of `shark-deploy`, detached from the SSH session,
+  verified the pre-deploy encrypted Restic snapshot
+  `0bbc347db385ff9a5749a99995fd54350868070a1f38fbfe0f224c8fd151c50c` in `repos/shark-prod`. That
+  snapshot holds the schema-0025 database a `20e14e1` rollback needs. The running image ID and the
+  provenance record match the digest. Startup applied migration 0026 (`1791602325119`), for 27
+  recorded migrations. The new `agent_notification_retry` table and its 3 indexes exist, and
+  `agent_notification` gained `claim_id` and `claimed_at`. Integrity is `ok` with no foreign-key
+  violations. The deploy changed no helpers or Compose definition. All four installed helpers and
+  `/etc/shark/compose.yaml` hash-match `main`. The container has `TRUSTED_FORWARDED_FOR_HOPS=1` and
+  no `TRUSTED_CLIENT_IP_HEADER`. Post-deploy checks:
+  - Health returned 200 with only `{"ok":true}`. The container was healthy with 0 restarts and
+    logged no errors.
+  - Anonymous `/`, `/docs`, `/privacy`, `/terms`, `/dashboard`, `/cli/authorize`,
+    `/dashboard/teams/x`, and `/join/x` returned 401. `/robots.txt`, `/sitemap.xml`, and `/pricing`
+    returned 404, and `/sw.js` returned 200 JavaScript.
+  - An unknown team invite code returned 404. The access log recorded the probes as `/join/:code`
+    and `/api/team-invites/:code`.
+  - `/mcp` returned 401 with no token and with a forged one, with a challenge that points to the
+    protected-resource metadata.
+  - The four OAuth discovery documents returned 200 without `watch:*` or `macos:*` scopes.
+  - Empty requests to `/api/auth/oauth2/register` and `/api/auth/oauth2/public-client-prelogin`
+    returned 400. Each of `/api/auth/oauth2/token`, `/revoke`, and `/introspect` returned 400 for
+    an empty form and 415 for JSON.
+  - Not yet done for `6dcb736`: a test notification, signed-in dashboard access, and the macOS
+    companion check.
+
 - 2026-10-09: production was promoted from `e405b22` to
   `20e14e1a49c8cb8187e92c56c26dc7f8c6473208` (upstream teams/on-call #96, MCP server with OAuth
   #97, board skill guidance #95) at image digest
