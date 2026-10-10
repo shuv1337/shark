@@ -18,7 +18,9 @@ changes.
 - One fixed self-hosted entitlement enables multiple devices, routing, interactions, and Live
   Activities. Abuse limits are 300 requests per service per minute and 1,500 per account per minute.
 - Only `/api/health` is anonymously readable. Human-facing pages, docs exports, assets, and source
-  links require an admitted session.
+  links require an admitted session. The exceptions are machine-facing and return no account
+  content: public signing keys (`/.well-known/jwks.json`), the MCP OAuth endpoints, and the team
+  invite preview. They are listed with what each one exposes in the teams and MCP sections below.
 - Production uses the `shark-prod` deployment, attested immutable GHCR digests,
   1Password-fed secrets, exact-schema SQLite checkpoint validation, encrypted Restic snapshots,
   and operator promotion with no GitHub VM credential.
@@ -134,7 +136,21 @@ Deliberate merge resolutions:
   the webhook and agent per-minute windows, count against the account window, and each group
   accepts at most 10 new pages a minute. Sharing an app (or creating one with `teamId`) from an
   agent token also needs `teams:write` and the agent budget, and each person can trigger at most
-  10 team notices a minute. Request logs redact `/join/:code` and `/api/team-invites/:code`.
+  10 team notices a minute; moving an app back out of a team notifies nobody and needs only
+  `apps:write`. Request logs redact `/join/:code` and `/api/team-invites/:code`.
+- Team follow-ups: an invite created with an email can only be accepted by the account with that
+  email (case-insensitive). A member who leaves or is removed gets back the apps they added, as when
+  a team is deleted. An app's registering token name (`createdBy`) is shown only to the member who
+  added it. `/apps/enter` accepts passes from consented current members of a team-shared SHark-origin
+  app, not just its adder.
+- Anonymous exception to the private origin: `GET /api/team-invites/:code` returns an invite
+  preview without a session, so the join page can show what the invite is for before Apple
+  sign-in. It returns the team name, the inviter's display name, the offered role, the team's
+  member count, and the invite's expiry. It returns no email addresses, member list, or team ID.
+  An unknown, used, or expired code returns 404. Responses are `no-store` and limited to 30 a
+  minute per client IP and 600 a minute overall. The code is the secret: without it nothing is
+  returned, and with it a person learns only what they need to decide whether to join. Accepting
+  still requires an allowlisted session (`POST /api/team-invites/:code/accept`).
 
 ## MCP server integration, 2026-10-09
 
@@ -150,18 +166,74 @@ Deliberate merge resolutions:
 - Consent is Apple-only and served behind `requireAuth`, so a signed-out visitor goes through
   `/login`. Sessions are already restricted to allowlisted accounts, and `/mcp` re-checks the
   owner's allowlist on every call, so removing an email stops its clients immediately.
+- The consent page leaves high-impact scopes (`OAUTH_HIGH_IMPACT_SCOPES`) unticked, but
+  `OAUTH_DEFAULT_SCOPES` still requests them, and Better Auth skips consent only when the stored
+  consent covers every requested scope. Leaving them unticked therefore shows consent again on each
+  re-authorization: at least every 30 days when the refresh token expires, and whenever the client
+  re-registers.
 - The Apple Watch and Mac companion scopes (`watch:*`, `macos:*`) are never OAuth scopes: they can
   answer prompts. Board scopes are grantable, and every board route has an MCP tool.
-- Intentional anonymous exceptions: `/.well-known/oauth-protected-resource[/mcp]`,
-  `/.well-known/oauth-authorization-server[/api/auth]`, and Better Auth's dynamic client
-  registration. Registration grants nothing without an allowlisted user's consent.
+- Intentional anonymous exceptions, all of which return no account content:
+  - Discovery documents: `/.well-known/oauth-protected-resource[/mcp]` and
+    `/.well-known/oauth-authorization-server[/api/auth]`.
+  - Dynamic client registration (`POST /api/auth/oauth2/register`), rate-limited to 5 a minute
+    per client IP. Registration grants nothing without an allowlisted user's consent.
+  - `POST /api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, and `/api/auth/oauth2/introspect`.
+    They take no session; a client authenticates with its client ID plus a PKCE-bound code, a
+    refresh token, or the token being revoked or introspected.
+  - `POST /api/auth/oauth2/public-client-prelogin`, which the consent page uses to show the
+    requesting client's registered name, URI, logo, policy links, and contacts. It requires a
+    validly signed authorize query (`oauth_query`), which anyone can obtain by starting an
+    authorization. Better Auth 1.6.25 doesn't bind the body's `client_id` to that query, so a
+    caller can read the same public registration fields for any client whose random ID it already
+    knows. Those fields include the registered `contacts`, which can contain email addresses.
+
+  `docs/operations.md` lists the response each one should give in its manual checks.
+  `routes/mcp-oauth.integration.test.ts` runs the whole flow through the real Better Auth
+  handler: registration, S256 PKCE, consent, code exchange and reuse, `/mcp`, refresh rotation
+  and reuse detection, and revocation.
 - `/api/oauth/clients` mutations require a same-origin request, like the other session routes.
 - Better Auth rate limits read the client IP the app resolves from `TRUSTED_CLIENT_IP_HEADER` or
   `TRUSTED_FORWARDED_FOR_HOPS` (production: one exe.dev hop) per `docs/operations.md`. An hourly
   sweeper deletes expired OAuth tokens and day-old anonymous clients that were never connected,
-  and offboarding deletes the user's OAuth tokens and consents.
+  and offboarding deletes the user's OAuth tokens, consents, and unexchanged authorization codes.
 - The MCP server name is `shark`; access and refresh token prefixes stay `hark_mat_` and
   `hark_mrt_` as protocol identifiers.
+- MCP tools flatten each agent route's request body into tool arguments, so `board_ask` accepts
+  `callback.url` and `callback.token` (`boardCallbackSchema` in `packages/contracts/src/board.ts`).
+  An MCP client with `board:write` can therefore make the server POST an ask's resolution to a URL
+  it chooses, exactly as an agent token can, and webhook interaction callbacks
+  (`response.callback.url`) do the same for webhook holders. This is a deliberate capability. No
+  human answer is needed: an agent can create an ask with `push: "none"` and cancel it. Both
+  callback types go through `lib/outbound.ts`. `publicHttpsUrlSchema` still rejects non-HTTPS
+  URLs, `localhost`, `.local`, and literal private addresses at write time, but only as an early
+  error. On every delivery attempt, retries included, the helper repeats that check and resolves
+  every A and AAAA record. It refuses the attempt if any record is loopback, private, link-local
+  (including `169.254.169.254`), CGNAT, unique-local, multicast, unspecified, `0.0.0.0/8`,
+  benchmarking, documentation, or another reserved range. IPv4-mapped and IPv4-compatible IPv6
+  are always refused, and NAT64 (`64:ff9b::/96`) and 6to4 are judged by their embedded IPv4
+  address. It then connects to an IP it validated, trying the remaining validated records in order
+  only when a connect is refused or the host or network is unreachable, with TLS SNI, certificate
+  verification, and `Host` still using the original hostname, so DNS rebinding can't change the
+  address between the check and the connect.
+  Redirects aren't followed, requests time out after 10 seconds overall, response bodies are
+  discarded, and the connection is closed once the status arrives. Any HTTPS port is allowed. A
+  blocked destination fails at once without retrying. The caller sees only the delivery status and
+  a coarse `callback.lastError` (`blocked_destination`, `timeout`, `network_error`,
+  `internal_error` for a row that couldn't be prepared, or `HTTP <status>`), never the underlying
+  error text. Network-level egress filtering on the VM would be further defense in depth.
+- Dependency footprint: `@modelcontextprotocol/sdk` is a production dependency of
+  `@hark/website`. Per `pnpm-lock.yaml` it brings about 90 transitive packages, 54 of which
+  nothing else in the website's production tree uses. They include `express@5`, `body-parser`,
+  `qs`, `router`, `send`, `serve-static`, `cors`, `express-rate-limit`, `eventsource`,
+  `cross-spawn`, `ajv`, and `ajv-formats`. SHark serves MCP through Hono with the SDK's
+  web-standard transport, so none of the Express stack runs. The esbuild server bundle includes
+  only the SDK's server and JSON-schema code (`ajv`, `ajv-formats`, `fast-uri`,
+  `json-schema-traverse`, `zod-to-json-schema`, `content-type`). The runtime image installs only
+  `@hark/website-runtime` (`better-sqlite3`, `expo-server-sdk`). Dependency and security reviews
+  should still count the full set, because an advisory against it is reported against the
+  lockfile and a future import could bundle it. Recheck with
+  `pnpm --filter @hark/website why express` and an esbuild metafile.
 
 ## CLI and compatibility names
 

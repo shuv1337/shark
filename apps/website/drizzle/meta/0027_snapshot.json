@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "64719bfa-ad84-4bca-abce-48b4d9fc3f64",
-  "prevId": "17a66072-345c-491c-b094-c7ce5992ffbe",
+  "id": "2e165fa8-f799-4794-bc45-23d8b600d9e1",
+  "prevId": "64719bfa-ad84-4bca-abce-48b4d9fc3f64",
   "tables": {
     "account": {
       "name": "account",
@@ -5545,6 +5545,14 @@
           "autoincrement": false,
           "default": 0
         },
+        "delivery_status": {
+          "name": "delivery_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'pending'"
+        },
         "notified_at": {
           "name": "notified_at",
           "type": "integer",
@@ -5573,6 +5581,14 @@
           "name": "oncall_page_recipient_user_idx",
           "columns": [
             "user_id",
+            "notified_at"
+          ],
+          "isUnique": false
+        },
+        "oncall_page_recipient_delivery_idx": {
+          "name": "oncall_page_recipient_delivery_idx",
+          "columns": [
+            "delivery_status",
             "notified_at"
           ],
           "isUnique": false

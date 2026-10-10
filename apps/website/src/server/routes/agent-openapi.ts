@@ -400,7 +400,11 @@ const schemas: Record<string, JsonSchema> = {
         object({
           status: { enum: ["pending", "retrying", "delivered", "failed"] },
           attempts: int,
-          lastError: nullableStr,
+          lastError: {
+            ...nullableStr,
+            description:
+              "`blocked_destination`, `timeout`, `network_error`, `internal_error`, or `HTTP <status>`. Rows from older releases may hold free text.",
+          },
           deliveredAt: nullableDateTime,
         }),
       ],
@@ -947,12 +951,12 @@ export const agentOperations: Record<string, Partial<Record<AgentMethod, AgentOp
   "/apps/{id}/share": {
     post: {
       summary: "Move an app into a team, or (teamId null) back to your own apps",
-      scopes: ["apps:write", "teams:write"],
+      scopes: ["apps:write"],
       params: [idParam()],
       request: appShareSchema,
       response: wrap("app", ref("App")),
       description:
-        "Only the person who added the app can move it. Other members are notified unless `notify` is false, and each approves sign-in for themselves.",
+        "Only the person who added the app can move it. Moving it into a team also requires `teams:write`; other members are notified unless `notify` is false, and each approves sign-in for themselves. Moving it back (`teamId: null`) notifies nobody and needs only `apps:write`.",
     },
   },
   "/teams": {
@@ -1028,7 +1032,7 @@ export const agentOperations: Record<string, Partial<Record<AgentMethod, AgentOp
       status: 201,
       response: ref("TeamInviteCreated"),
       description:
-        "Returns 402 with code `seat_limit` when the team needs the paid team plan for another seat. Accepting an invite is human-only: there is no agent route for it.",
+        "SHark never limits seats, so the 402 `seat_limit` response is not returned. With `email`, only the account with that address (case-insensitive) can accept. Accepting an invite is human-only: there is no agent route for it.",
     },
   },
   "/teams/{id}/invites/{inviteId}": {
@@ -1114,12 +1118,15 @@ export const agentOperations: Record<string, Partial<Record<AgentMethod, AgentOp
   },
   "/oncall/{groupId}/overrides": {
     post: {
-      summary: "Put someone on call for a window (admins: anyone; members: themselves)",
+      summary:
+        "Put someone on call for a window (admins: any window; members: only time they are on call for)",
       scopes: ["oncall:write"],
       params: [idParam("groupId")],
       request: oncallOverrideCreateSchema,
       status: 201,
       response: wrap("group", ref("OncallGroup")),
+      description:
+        "Returns 409 when a later-starting override partly covers the window; split the override around it.",
     },
   },
   "/oncall/{groupId}/overrides/{overrideId}": {

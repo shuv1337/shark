@@ -5,7 +5,7 @@ import {
   type WithdrawEventResponse,
   webhookRequestSchema,
 } from "@hark/contracts";
-import { and, count, desc, eq, gt, gte, inArray, isNull, or } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, isNull, or } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { db } from "../db";
 import {
@@ -13,8 +13,6 @@ import {
   event,
   inboxItem,
   interaction,
-  liveActivity,
-  liveActivityOperation,
   macosDevice,
   service as serviceTable,
   user as userTable,
@@ -27,8 +25,7 @@ import { checkNotificationAllowance, getBilling, trackNotification } from "../li
 import { newId } from "../lib/id";
 import { syncInboxForUser } from "../lib/inbox";
 import { notificationEventTag } from "../lib/notification-withdrawal";
-import { pagesCreatedSince } from "../lib/oncall";
-import { resolveProjectForDelivery } from "../lib/projects";
+import { type ProjectResolution, resolveProject } from "../lib/projects";
 import {
   buildInteractionPushMessages,
   buildPushMessages,
@@ -36,6 +33,12 @@ import {
   sendPushFanout,
   sendWithdrawalFanout,
 } from "../lib/push";
+import {
+  RATE_LIMIT_ERRORS,
+  type RateWindow,
+  webhookAdmission,
+  webhookWindowLimit,
+} from "../lib/rate-windows";
 import {
   encryptCallbackToken,
   generateInteractionResponseToken,
@@ -89,59 +92,12 @@ function replayResponse(row: EventRow): {
   };
 }
 
-/**
- * Per-minute service and account windows for webhook deliveries. Pages count
- * against both windows, so `oncall` webhooks share the same budget.
- */
-async function rateLimitedResponse(
+function limitedResponse(
   c: Context,
   svc: typeof serviceTable.$inferSelect,
   billing: BillingDto,
-): Promise<Response | null> {
-  const since = new Date(Date.now() - 60_000);
-  const [
-    [serviceUsage],
-    servicePageUsage,
-    [accountEventUsage],
-    [accountInteractionUsage],
-    [accountActivityUsage],
-    accountPageUsage,
-  ] = await Promise.all([
-    db
-      .select({ value: count() })
-      .from(event)
-      .where(and(eq(event.serviceId, svc.id), gte(event.createdAt, since))),
-    pagesCreatedSince({ serviceId: svc.id }, since),
-    db
-      .select({ value: count() })
-      .from(event)
-      .innerJoin(serviceTable, eq(event.serviceId, serviceTable.id))
-      .where(and(eq(serviceTable.userId, svc.userId), gte(event.createdAt, since))),
-    db
-      .select({ value: count() })
-      .from(interaction)
-      .where(and(eq(interaction.userId, svc.userId), gte(interaction.createdAt, since))),
-    db
-      .select({ value: count() })
-      .from(liveActivityOperation)
-      .innerJoin(liveActivity, eq(liveActivity.id, liveActivityOperation.activityId))
-      .where(and(eq(liveActivity.userId, svc.userId), gte(liveActivityOperation.createdAt, since))),
-    pagesCreatedSince({ userId: svc.userId }, since),
-  ]);
-
-  let outcome: "service" | "account" | null = null;
-  if ((serviceUsage?.value ?? 0) + servicePageUsage >= billing.limits.servicePerMinute) {
-    outcome = "service";
-  } else if (
-    (accountEventUsage?.value ?? 0) +
-      (accountInteractionUsage?.value ?? 0) +
-      (accountActivityUsage?.value ?? 0) +
-      accountPageUsage >=
-    billing.limits.accountPerMinute
-  ) {
-    outcome = "account";
-  }
-  if (!outcome) return null;
+  outcome: RateWindow,
+): Response {
   c.header("Retry-After", "60");
   track({
     name: "webhook_rate_limited",
@@ -151,13 +107,24 @@ async function rateLimitedResponse(
     outcome,
   });
   return c.json<WebhookResponse>(
-    {
-      ok: false,
-      error: outcome === "service" ? "Service rate limit exceeded" : "Account rate limit exceeded",
-      retryAfterSeconds: 60,
-    },
+    { ok: false, error: RATE_LIMIT_ERRORS[outcome], retryAfterSeconds: 60 },
     429,
   );
+}
+
+/**
+ * Per-minute service and account windows for webhook deliveries. Pages count
+ * against both windows, so `oncall` webhooks share the same budget. This early
+ * check rejects before any side effect; the delivery repeats it atomically
+ * with the insert that records the event or page.
+ */
+function rateLimitedResponse(
+  c: Context,
+  svc: typeof serviceTable.$inferSelect,
+  billing: BillingDto,
+): Response | null {
+  const outcome = webhookWindowLimit(db, svc, billing.limits);
+  return outcome ? limitedResponse(c, svc, billing, outcome) : null;
 }
 
 export const hooksRoute = new Hono()
@@ -200,7 +167,8 @@ export const hooksRoute = new Hono()
           400,
         );
       }
-      const limited = await rateLimitedResponse(c, svc, await getBilling(owner, true));
+      const billing = await getBilling(owner, true);
+      const limited = rateLimitedResponse(c, svc, billing);
       if (limited) return limited;
       // Pages merge on their dedup key, so an Idempotency-Key retry folds into
       // the open page instead of paging again.
@@ -216,7 +184,11 @@ export const hooksRoute = new Hono()
         },
         svc.title,
         { serviceId: svc.id },
+        webhookAdmission(svc, billing.limits),
       );
+      if (!paged.ok && "refused" in paged && paged.refused) {
+        return limitedResponse(c, svc, billing, paged.refused);
+      }
       if (!paged.ok) {
         if (paged.status === 429) c.header("Retry-After", "60");
         return c.json<WebhookResponse>(
@@ -337,7 +309,9 @@ export const hooksRoute = new Hono()
       targetedMacosDevices = selectedMacos.filter((registeredDevice) => registeredDevice.active);
     }
 
-    const limited = await rateLimitedResponse(c, svc, billing);
+    // With an Idempotency-Key, a raced twin may already hold the capacity; the
+    // admission transaction replays it first, so skip the early check.
+    const limited = idempotencyKey ? null : rateLimitedResponse(c, svc, billing);
     if (limited) return limited;
 
     if (!(await checkNotificationAllowance(svc.userId))) {
@@ -360,9 +334,6 @@ export const hooksRoute = new Hono()
       if (parsed.data.url) resolved.url = parsed.data.url;
       else delete resolved.url;
     }
-    const projectResolution = parsed.data.project
-      ? await resolveProjectForDelivery(svc.userId, parsed.data.project)
-      : { projectId: null };
     const eventId = newId("evt");
     const eventValues: typeof event.$inferInsert = {
       id: eventId,
@@ -377,14 +348,39 @@ export const hooksRoute = new Hono()
       idempotencyKey: idempotencyKey ?? null,
       requestHash: idempotencyKey ? requestHash : null,
       appId: parsed.data.appId ?? null,
-      projectId: projectResolution.projectId,
+      projectId: null,
       summary: parsed.data.summary ?? null,
       bodyFormat: parsed.data.bodyFormat ?? null,
       createdAt: new Date(),
     };
 
+    let admitted:
+      | { existing: typeof event.$inferSelect }
+      | { refused: "service" | "account" }
+      | { refused: null; projectResolution: ProjectResolution };
     try {
-      await db.insert(event).values(eventValues);
+      // Synchronous, so concurrent deliveries cannot all pass the windows, and
+      // a refused or rolled-back delivery creates no project. A raced
+      // idempotent twin replays before admission rather than being refused.
+      admitted = db.transaction((tx) => {
+        if (idempotencyKey) {
+          const existing = tx
+            .select()
+            .from(event)
+            .where(and(eq(event.serviceId, svc.id), eq(event.idempotencyKey, idempotencyKey)))
+            .get();
+          if (existing) return { existing };
+        }
+        const refused = webhookWindowLimit(tx, svc, billing.limits);
+        if (refused) return { refused };
+        const projectResolution = parsed.data.project
+          ? resolveProject(tx, svc.userId, parsed.data.project)
+          : { projectId: null };
+        tx.insert(event)
+          .values({ ...eventValues, projectId: projectResolution.projectId })
+          .run();
+        return { refused: null, projectResolution };
+      });
     } catch (error) {
       if (idempotencyKey) {
         const [existing] = await db
@@ -399,6 +395,18 @@ export const hooksRoute = new Hono()
       }
       throw error;
     }
+    if ("existing" in admitted) {
+      if (admitted.existing.requestHash !== requestHash) {
+        return c.json<WebhookResponse>(
+          { ok: false, error: "Idempotency-Key was already used with a different payload" },
+          409,
+        );
+      }
+      const replay = replayResponse(admitted.existing);
+      return c.json(replay.body, replay.status);
+    }
+    if (admitted.refused) return limitedResponse(c, svc, billing, admitted.refused);
+    const { projectResolution } = admitted;
 
     let devices: (typeof device.$inferSelect)[];
     let webSubscriptions: (typeof webPushSubscription.$inferSelect)[];

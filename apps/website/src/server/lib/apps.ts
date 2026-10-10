@@ -65,8 +65,9 @@ export function toAppDto(
 ): AppDto {
   const { app: value } = row;
   const teamApp = value.teamId !== null;
-  // A project belongs to the member who filed the app; others see no project.
-  const ownProject = value.userId === viewerId;
+  // The project and registering token belong to the member who filed the app;
+  // token names can describe their machines, so other members see neither.
+  const adder = value.userId === viewerId;
   const sharing = teamApp
     ? {
         shareName: row.state?.shareName ?? true,
@@ -86,10 +87,10 @@ export function toAppDto(
     origin: value.origin,
     iconUrl: value.iconUrl,
     url: value.url,
-    projectId: ownProject ? value.projectId : null,
-    projectName: ownProject && value.projectId ? row.projectName : null,
+    projectId: adder ? value.projectId : null,
+    projectName: adder && value.projectId ? row.projectName : null,
     ...sharing,
-    createdBy: row.createdBy ?? null,
+    createdBy: adder ? (row.createdBy ?? null) : null,
     createdAt: value.createdAt.toISOString(),
     updatedAt: value.updatedAt.toISOString(),
     team: teamApp && value.teamId ? { id: value.teamId, name: row.teamName ?? "" } : null,

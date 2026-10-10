@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   account,
@@ -17,6 +17,7 @@ import {
   service,
   session,
   user,
+  verification,
 } from "../db/schema";
 import { normalizeEmail } from "../env";
 import { revokeAppleGrantsForUser } from "./apple";
@@ -31,6 +32,7 @@ export interface OffboardingResult {
   pageCredentials: number;
   oauthTokens: number;
   oauthConsents: number;
+  authorizationCodes: number;
 }
 
 function revokedCredential(): string {
@@ -161,6 +163,15 @@ export function offboardPersistedAccess(userId: string): OffboardingResult {
       .delete(oauthConsent)
       .where(eq(oauthConsent.userId, userId))
       .run().changes;
+    // Unexchanged authorization codes are Better Auth verification rows whose
+    // JSON value names the user. Other verification values may not be JSON, and
+    // SQLite does not promise to short-circuit AND, so json_valid gates the read.
+    const authorizationCodes = tx
+      .delete(verification)
+      .where(
+        sql`case when json_valid(${verification.value}) then json_extract(${verification.value}, '$.type') = 'authorization_code' and json_extract(${verification.value}, '$.userId') = ${userId} else 0 end`,
+      )
+      .run().changes;
 
     return {
       sessions: deletedSessions.length,
@@ -172,6 +183,7 @@ export function offboardPersistedAccess(userId: string): OffboardingResult {
       pageCredentials: pageCredentials.length,
       oauthTokens: oauthAccess + oauthRefresh,
       oauthConsents,
+      authorizationCodes,
     };
   });
 }

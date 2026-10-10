@@ -316,7 +316,7 @@ export const DOC_CONTENT: DocSection[] = [
           },
           {
             kind: "p",
-            text: "The per-minute counters use a rolling 60-second window and are shared across notifications, interactive responses, and Live Activity operations. A limited request returns `429` with a `Retry-After: 60` header and `retryAfterSeconds` in the body. Notifications are not metered monthly.",
+            text: "The per-minute counters use a rolling 60-second window and are shared across webhook notifications, agent notifications (including board ask pushes and their retries), interactive responses, on-call pages, and Live Activity operations. The per-service limit also bounds each agent token. A limited request returns `429` with a `Retry-After: 60` header and `retryAfterSeconds` in the body. Notifications are not metered monthly.",
           },
         ],
       },
@@ -507,7 +507,7 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
         blocks: [
           {
             kind: "p",
-            text: "When a callback is configured, SHark POSTs the answer to your URL with `Authorization: Bearer <callback.token>`, `Content-Type: application/json`, and a compatibility `Hark-Callbacks/1` user agent. Redirects are not followed and the request times out after 10 seconds.",
+            text: "When a callback is configured, SHark POSTs the answer to your URL with `Authorization: Bearer <callback.token>`, `Content-Type: application/json`, and a compatibility `Hark-Callbacks/1` user agent. The URL must use HTTPS; any port is allowed, and `443` is used when none is given. Redirects are not followed, the request times out after 10 seconds, and the response body is discarded: SHark closes the connection as soon as it has the status. Every address the callback hostname resolves to must be public; a name that resolves to a private, loopback, link-local, or reserved address is refused without retrying.",
           },
           {
             kind: "code",
@@ -1207,7 +1207,7 @@ sharkctl apps remove app_...`,
                 name: "member",
                 type: "role",
                 detail:
-                  "Uses and adds team apps, raises and acknowledges pages, and schedules overrides for themselves.",
+                  "Uses and adds team apps, raises and acknowledges pages, and hands off their own on-call time with overrides.",
               },
             ],
           },
@@ -1222,7 +1222,7 @@ sharkctl apps remove app_...`,
         blocks: [
           {
             kind: "p",
-            text: "Owners and admins create invite links. Each link joins one person, expires after seven days, and can be revoked. Add an email to also push the invite to an existing SHark user with that address.",
+            text: "Owners and admins create invite links. Each link joins one person, expires after seven days, and can be revoked. Add an email to limit the invite to the account with that address (case-insensitive); an existing SHark user with it also gets a push.",
           },
           {
             kind: "code",
@@ -1275,7 +1275,7 @@ sharkctl apps remove app_...`,
           },
           {
             kind: "p",
-            text: "Without `startsAt`, the first member is on call from the latest handoff. Overrides put someone on call for a window (covering a shift, a holiday) and replace the rotation while they last; any member can schedule one for themselves. Each group lists its current shift and the next few.",
+            text: "Without `startsAt`, the first member is on call from the latest handoff. Overrides put someone on call for a window (covering a shift, a holiday) and replace the rotation while they last. Owners and admins can schedule anyone for any window; a member can only hand off time they are already on call for, to anyone in the team, starting no earlier than now. Where overrides overlap, the one that starts last wins, and the newest wins among overrides that start together. An override that a later-starting override would partly cover is refused with `409`; split it around that override. Each group lists its current shift and the next few.",
           },
         ],
       },
@@ -1571,7 +1571,7 @@ sharkctl apps remove app_...`,
             items: [
               "Your client calls the server, gets `401` with a `resource_metadata` pointer, and registers itself with SHark (dynamic client registration).",
               "Your browser opens SHark's consent page. Sign in with Apple if needed; the email allowlist still applies.",
-              "Review what the client asks for, untick anything you do not want, and approve. SHark remembers your answer for that client and set of permissions.",
+              "Review what the client asks for, untick anything you do not want, and approve. High-impact permissions (managing webhook services, devices, web apps, tokens, teams, and on-call, which can page people) start unticked; tick them only if the client needs them. SHark remembers your answer for that client and set of permissions.",
               "The client receives a one-hour access token for `/mcp`, plus a refresh token if you left Stay connected ticked.",
             ],
           },
