@@ -90,8 +90,9 @@ for the operator; comparisons are trimmed and case-insensitive, but aliases and 
 never inferred. The Apple provider subject remains the stable account identity.
 
 Removing an email from `ALLOWED_EMAILS` blocks new and existing browser sessions, API tokens,
-webhooks, interaction credentials, device authorization, and Live Activity credentials on their
-next request. Then run the bundled offboarding command in the production image:
+webhooks, interaction credentials, device authorization, Live Activity credentials, and MCP OAuth
+access tokens on their next request; the OAuth token endpoint refuses refresh and code exchange with
+`invalid_grant`. Then run the bundled offboarding command in the production image:
 
 ```sh
 DEPLOY_GIT_SHA='<deployed-full-sha>' \

@@ -7,6 +7,7 @@ import { auth } from "./auth";
 import { env } from "./env";
 import { accessLog } from "./lib/access-log";
 import { trustedClientIp, withTrustedClientIp } from "./lib/client-ip";
+import { guardTokenResponse } from "./lib/oauth-token-admission";
 import { databaseIsReady } from "./lib/readiness";
 import { safeReturnPath } from "./lib/return-path";
 import { beginAppleWebSignIn } from "./lib/web-sign-in";
@@ -112,7 +113,10 @@ app.route("/", docsTextRoute);
 app.route("/", appPassJwksRoute);
 app.route("/", sshuvHandoffRoute);
 
-app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(withTrustedClientIp(c.req.raw)));
+app.on(["GET", "POST"], "/api/auth/*", async (c) => {
+  const request = withTrustedClientIp(c.req.raw);
+  return guardTokenResponse(request, await auth.handler(request));
+});
 // OAuth discovery for the MCP server, and the server itself. Tool calls are
 // dispatched through the agent routes below as the caller's grant token.
 app.route("/", oauthWellKnownRoute);

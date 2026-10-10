@@ -20,6 +20,7 @@ import {
   OAUTH_REFRESH_TOKEN_PREFIX,
   OAUTH_REFRESH_TOKEN_TTL_SECONDS,
 } from "./lib/oauth";
+import { oauthTokenAdmission } from "./lib/oauth-token-admission";
 import { webViewSessionPlugin } from "./lib/web-view-session";
 
 /**
@@ -153,6 +154,7 @@ export const auth = betterAuth({
       silenceWarnings: { oauthAuthServerConfig: true },
     }),
     oauthDefaultScopes,
+    oauthTokenAdmission,
     webViewSessionPlugin(),
   ],
   trustedOrigins: [env.APP_URL, "https://appleid.apple.com", "shark://", "shark://*"],
