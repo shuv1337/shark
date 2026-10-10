@@ -498,6 +498,10 @@ export const oncallOverride = sqliteTable(
       .references(() => user.id, { onDelete: "cascade" }),
     startsAt: integer("starts_at", { mode: "timestamp_ms" }).notNull(),
     endsAt: integer("ends_at", { mode: "timestamp_ms" }).notNull(),
+    /** Null for overrides created before creators were recorded, or whose creator was deleted. */
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => [index("oncall_override_group_ends_idx").on(table.groupId, table.endsAt)],

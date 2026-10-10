@@ -245,6 +245,11 @@ function noticeRateLimited(senderUserId: string): boolean {
   return current.count > NOTICES_PER_SENDER_PER_MINUTE;
 }
 
+/** Forgets every sender's notice window (tests). */
+export function resetNoticeRates(): void {
+  noticeRates.clear();
+}
+
 export interface HarkNotice {
   /** The member whose action caused the notice; their budget is charged. */
   senderUserId: string;
