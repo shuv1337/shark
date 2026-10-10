@@ -20,7 +20,7 @@ import {
 } from "@hark/contracts";
 import { and, count, desc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { db } from "../db";
+import { db, type Executor } from "../db";
 import {
   apiToken,
   device,
@@ -43,7 +43,13 @@ import { checkNotificationAllowance, getBilling, trackNotification } from "../li
 import { newId } from "../lib/id";
 import { createLiveActivityInteractionCredential } from "../lib/live-activity-interaction";
 import { createLiveActivityRegistrationToken } from "../lib/live-activity-registration";
-import { agentWindowLimit, RATE_LIMIT_ERRORS } from "../lib/rate-windows";
+import {
+  agentAdmission,
+  agentWindowLimit,
+  RATE_LIMIT_ERRORS,
+  type RateAdmission,
+  type RateWindow,
+} from "../lib/rate-windows";
 import { decryptLiveActivityToken } from "../lib/token";
 import {
   type AgentEnv,
@@ -807,20 +813,18 @@ export async function findBlockingDeliveries(
   return occupied.filter(live);
 }
 
+export type ReplacementPlan = { activity: ActivityRow; deliveries: DeliveryRow[] }[];
+export type ReplacedDelivery = { ending: ActivityRow; delivery: DeliveryRow };
+
 /**
- * Implicitly ends the blocking deliveries so a `replace: true` start can take
- * the device slot: each blocked device receives a silent end push with the
- * blocking activity's current state and immediate dismissal, the deliveries
- * are marked ended, and a blocking activity with no remaining live deliveries
- * becomes terminal. These ends are intentionally unmetered and create no
- * liveActivityOperation rows; only the surrounding start is billed.
- * Returns the number of distinct blocking activities affected.
+ * Collects what a `replace: true` start implicitly ends: the blocking
+ * deliveries, grouped by activity, plus every live delivery of `alsoEnd`.
+ * Only reads; {@link endReplaced} ends them.
  */
-export async function replaceBlockingDeliveries(
+export async function planReplacement(
   blockers: BlockingDelivery[],
-  now: Date,
   alsoEnd?: ActivityRow,
-): Promise<number> {
+): Promise<ReplacementPlan> {
   const byActivity = new Map<string, { activity: ActivityRow; deliveries: DeliveryRow[] }>();
   const seenDeliveries = new Set<string>();
   const add = (activity: ActivityRow, delivery?: DeliveryRow) => {
@@ -848,39 +852,60 @@ export async function replaceBlockingDeliveries(
       );
     for (const delivery of keyedDeliveries) add(alsoEnd, delivery);
   }
-  for (const { activity, deliveries } of byActivity.values()) {
+  return [...byActivity.values()];
+}
+
+/**
+ * Implicitly ends the planned deliveries so a `replace: true` start can take
+ * the device slot, and makes a blocking activity with no remaining live
+ * deliveries terminal. Synchronous, so it runs in the start's admission
+ * transaction and a refused start ends nothing. A delivery is released even
+ * if its end push later fails, matching how a rejected explicit end still
+ * frees the device; its update token is cleared so later operations on a
+ * surviving multi-device activity cannot resurrect it. These ends are
+ * intentionally unmetered and create no liveActivityOperation rows; only the
+ * surrounding start counts. Returns the deliveries this call ended, for
+ * {@link sendReplacementEnds} once the transaction commits.
+ */
+export function endReplaced(tx: Executor, plan: ReplacementPlan, now: Date): ReplacedDelivery[] {
+  const ended: ReplacedDelivery[] = [];
+  for (const { activity, deliveries } of plan) {
     const ending: ActivityRow = {
       ...activity,
       sequence: activity.sequence + 1,
       apnsTimestamp: Math.max(Math.floor(now.getTime() / 1000), activity.apnsTimestamp + 1),
       dismissalAt: now,
     };
-    await Promise.all(
-      deliveries.map(async (delivery) => {
-        const result = await sendDeliveryEvent(ending, delivery, "end");
-        // The delivery is released even when the push fails, matching how a
-        // rejected explicit end still frees the device. The update token is
-        // cleared so later operations on a surviving multi-device activity
-        // cannot resurrect this delivery.
-        await db
-          .update(liveActivityDelivery)
-          .set({
-            status: "ended",
-            lastEvent: "end",
-            lastSequence: ending.sequence,
-            lastApnsStatus: result.status || null,
-            lastApnsReason: result.reason,
-            lastApnsId: result.apnsId,
-            lastAttemptAt: now,
-            updatedAt: now,
-            endedAt: now,
-            updateTokenCiphertext: null,
-            updateTokenUpdatedAt: null,
-          })
-          .where(eq(liveActivityDelivery.id, delivery.id));
-      }),
-    );
-    const [remaining] = await db
+    if (deliveries.length > 0) {
+      const released = tx
+        .update(liveActivityDelivery)
+        .set({
+          status: "ended",
+          lastEvent: "end",
+          lastSequence: ending.sequence,
+          lastAttemptAt: now,
+          updatedAt: now,
+          endedAt: now,
+          updateTokenCiphertext: null,
+          updateTokenUpdatedAt: null,
+        })
+        .where(
+          and(
+            inArray(
+              liveActivityDelivery.id,
+              deliveries.map((delivery) => delivery.id),
+            ),
+            inArray(liveActivityDelivery.status, ["pending", "accepted", "active"]),
+          ),
+        )
+        .returning({ id: liveActivityDelivery.id })
+        .all();
+      const releasedIds = new Set(released.map((row) => row.id));
+      for (const delivery of deliveries) {
+        if (releasedIds.has(delivery.id)) ended.push({ ending, delivery });
+      }
+    }
+    const remaining = tx
       .select({ value: count() })
       .from(liveActivityDelivery)
       .where(
@@ -888,10 +913,10 @@ export async function replaceBlockingDeliveries(
           eq(liveActivityDelivery.activityId, activity.id),
           inArray(liveActivityDelivery.status, ["pending", "accepted", "active"]),
         ),
-      );
+      )
+      .get();
     if ((remaining?.value ?? 0) === 0) {
-      await db
-        .update(liveActivity)
+      tx.update(liveActivity)
         .set({
           status: "ended",
           sequence: ending.sequence,
@@ -906,10 +931,33 @@ export async function replaceBlockingDeliveries(
             eq(liveActivity.sequence, activity.sequence),
             inArray(liveActivity.status, ["starting", "active", "partial"]),
           ),
-        );
+        )
+        .run();
     }
   }
-  return byActivity.size;
+  return ended;
+}
+
+/**
+ * Sends each released delivery a silent end push with its activity's state and
+ * immediate dismissal, and records the APNs outcome. The in-memory delivery
+ * still carries the update token {@link endReplaced} cleared.
+ */
+export async function sendReplacementEnds(ended: ReplacedDelivery[], now: Date): Promise<void> {
+  await Promise.all(
+    ended.map(async ({ ending, delivery }) => {
+      const result = await sendDeliveryEvent(ending, delivery, "end");
+      await db
+        .update(liveActivityDelivery)
+        .set({
+          lastApnsStatus: result.status || null,
+          lastApnsReason: result.reason,
+          lastApnsId: result.apnsId,
+          lastAttemptAt: now,
+        })
+        .where(eq(liveActivityDelivery.id, delivery.id));
+    }),
+  );
 }
 
 /**
@@ -983,6 +1031,74 @@ export function trackActivityOutcome(
     outcome,
     metadata: { event: name.replace("live_activity_", ""), targets },
   });
+}
+
+export type AdmittedMutation =
+  /** A twin holding the same Idempotency-Key got there first, or the insert raced it. */
+  | { raced: unknown }
+  | { refused: RateWindow }
+  /** Undefined when the sequence compare-and-swap lost. */
+  | { row: ActivityRow | undefined };
+
+/**
+ * Applies an update or end in one synchronous transaction: a raced twin with
+ * the same Idempotency-Key replays instead of being refused, then the rate
+ * windows admit the operation, then the activity sequence is compared and
+ * swapped and the counted operation row recorded. A refused or conflicting
+ * mutation changes nothing and sends nothing.
+ */
+export function admitLiveActivityMutation(input: {
+  current: ActivityRow;
+  set: Omit<Partial<typeof liveActivity.$inferInsert>, "sequence">;
+  operation: {
+    id: string;
+    event: "update" | "end";
+    props: LiveActivityProps;
+    idempotencyKey: string | null;
+    requestHash: string | null;
+    createdAt: Date;
+  };
+  requester: ActivityRequester;
+  admit: RateAdmission;
+}): AdmittedMutation {
+  const { current, operation, requester } = input;
+  const requesterMatch =
+    requester.requesterTokenId !== undefined
+      ? eq(liveActivityOperation.requesterTokenId, requester.requesterTokenId)
+      : eq(liveActivityOperation.requesterServiceId, requester.requesterServiceId);
+  try {
+    return db.transaction((tx): AdmittedMutation => {
+      if (operation.idempotencyKey) {
+        const twin = tx
+          .select({ id: liveActivityOperation.id })
+          .from(liveActivityOperation)
+          .where(and(requesterMatch, eq(liveActivityOperation.idempotencyKey, operation.idempotencyKey)))
+          .get();
+        if (twin) return { raced: null };
+      }
+      const refused = input.admit(tx);
+      if (refused) return { refused };
+      const row = tx
+        .update(liveActivity)
+        .set({ ...input.set, sequence: current.sequence + 1 })
+        .where(
+          and(
+            eq(liveActivity.id, current.id),
+            eq(liveActivity.sequence, current.sequence),
+            inArray(liveActivity.status, ["starting", "active", "partial"]),
+          ),
+        )
+        .returning()
+        .get();
+      if (!row) return { row: undefined };
+      tx.insert(liveActivityOperation)
+        .values({ ...operation, ...requester, activityId: row.id, sequence: row.sequence })
+        .run();
+      return { row };
+    });
+  } catch (error) {
+    return { raced: error };
+  }
 }
 
 async function operationReplay(
@@ -1082,7 +1198,9 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
     if (parsed.data.deviceIds && !billing.features.deviceRouting) {
       return c.json({ error: "Device routing is unavailable" }, 402);
     }
-    const limited = await enforceAgentRateLimit(token, owner);
+    // With an Idempotency-Key, a raced twin may already hold the capacity; the
+    // admission transaction replays it first, so skip the early check.
+    const limited = key ? null : agentRateLimit(token, billing.limits);
     if (limited) {
       c.header("Retry-After", "60");
       return c.json(limited, 429);
@@ -1122,7 +1240,6 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       targets.map((target) => target.id),
       now,
     );
-    let replaced = 0;
     const firstBlocker = blockers[0];
     if (firstBlocker && !parsed.data.replace) {
       return c.json(
@@ -1151,9 +1268,8 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
         409,
       );
     }
-    if (parsed.data.replace && (firstBlocker || keyed)) {
-      replaced = await replaceBlockingDeliveries(blockers, now, keyed);
-    }
+    const replacement =
+      parsed.data.replace && (firstBlocker || keyed) ? await planReplacement(blockers, keyed) : [];
 
     const apnsTimestamp = Math.floor(now.getTime() / 1000);
     const activityId = newId("act");
@@ -1192,9 +1308,66 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       createdAt: now,
       updatedAt: now,
     };
-    let row: ActivityRow | undefined;
+    const operationId = newId("lao");
+    let created:
+      | { existing: ActivityRow }
+      | { refused: RateWindow }
+      | { row: ActivityRow; deliveries: DeliveryRow[]; ended: ReplacedDelivery[] };
     try {
-      [row] = await db.insert(liveActivity).values(values).returning();
+      // Synchronous, so concurrent starts cannot all pass the agent windows,
+      // and a refused start ends no blocking activity and sends nothing.
+      created = db.transaction((tx) => {
+        if (key) {
+          const existing = tx
+            .select()
+            .from(liveActivity)
+            .where(
+              and(
+                eq(liveActivity.requesterTokenId, token.id),
+                eq(liveActivity.idempotencyKey, key),
+              ),
+            )
+            .get();
+          if (existing) return { existing };
+        }
+        const refused = agentWindowLimit(tx, token, billing.limits);
+        if (refused) return { refused };
+        const ended = endReplaced(tx, replacement, now);
+        const row = tx.insert(liveActivity).values(values).returning().get();
+        tx.insert(liveActivityOperation)
+          .values({
+            id: operationId,
+            activityId,
+            requesterTokenId: token.id,
+            event: "start",
+            props,
+            sequence: row.sequence,
+            idempotencyKey: key ?? null,
+            requestHash: key ? requestHash : null,
+            createdAt: now,
+          })
+          .run();
+        const deliveries =
+          targets.length === 0
+            ? []
+            : tx
+                .insert(liveActivityDelivery)
+                .values(
+                  targets.map((target) => ({
+                    id: newId("lad"),
+                    activityId,
+                    deviceId: target.id,
+                    status: "pending",
+                    environment: target.liveActivityTokenEnvironment as "sandbox" | "production",
+                    schemaVersion: LIVE_ACTIVITY_SCHEMA_VERSION,
+                    createdAt: now,
+                    updatedAt: now,
+                  })),
+                )
+                .returning()
+                .all();
+        return { row, deliveries, ended };
+      });
     } catch (error) {
       if (key) {
         const [existing] = await db
@@ -1253,38 +1426,25 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       }
       throw error;
     }
-    if (!row) return c.json({ error: "Failed to create Live Activity" }, 500);
-    const createdActivityId = row.id;
-    const operationId = newId("lao");
-    await db.insert(liveActivityOperation).values({
-      id: operationId,
-      activityId: row.id,
-      requesterTokenId: token.id,
-      event: "start",
-      props,
-      sequence: row.sequence,
-      idempotencyKey: key ?? null,
-      requestHash: key ? requestHash : null,
-      createdAt: now,
-    });
-    const deliveries =
-      targets.length === 0
-        ? []
-        : await db
-            .insert(liveActivityDelivery)
-            .values(
-              targets.map((target) => ({
-                id: newId("lad"),
-                activityId: createdActivityId,
-                deviceId: target.id,
-                status: "pending",
-                environment: target.liveActivityTokenEnvironment as "sandbox" | "production",
-                schemaVersion: LIVE_ACTIVITY_SCHEMA_VERSION,
-                createdAt: now,
-                updatedAt: now,
-              })),
-            )
-            .returning();
+    if ("existing" in created) {
+      const { existing } = created;
+      if (existing.requestHash !== requestHash) {
+        return c.json({ error: "Idempotency-Key was already used with a different payload" }, 409);
+      }
+      return c.json<LiveActivityMutationResponse>({
+        activity: toLiveActivityDto(await expireLiveActivity(existing)),
+        accepted: existing.acceptedCount,
+        failed: existing.failedCount,
+        idempotent: true,
+      });
+    }
+    if ("refused" in created) {
+      c.header("Retry-After", "60");
+      return c.json({ error: RATE_LIMIT_ERRORS[created.refused], retryAfterSeconds: 60 }, 429);
+    }
+    const { deliveries } = created;
+    let row = created.row;
+    await sendReplacementEnds(created.ended, now);
     const result = await dispatchLiveActivity(row, deliveries, operationId, "start", {
       requesterTokenId: token.id,
     });
@@ -1306,7 +1466,7 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
         activity: toLiveActivityDto(row),
         accepted: result.accepted,
         failed: result.failed,
-        ...(parsed.data.replace ? { replaced } : {}),
+        ...(parsed.data.replace ? { replaced: replacement.length } : {}),
         ...(result.accepted === 0
           ? {
               message:
@@ -1362,7 +1522,9 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       .where(eq(userTable.id, token.userId))
       .limit(1);
     if (!owner) return c.json({ error: "Account not found" }, 404);
-    const limited = await enforceAgentRateLimit(token, owner);
+    const { limits } = await getBilling(owner, true);
+    // A raced Idempotency-Key twin replays in the admission transaction instead.
+    const limited = key ? null : agentRateLimit(token, limits);
     if (limited) {
       c.header("Retry-After", "60");
       return c.json(limited, 429);
@@ -1401,53 +1563,34 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       Math.min(now.getTime() + staleAfterSeconds * 1000, current.expiresAt.getTime()),
     );
     const operationId = newId("lao");
-    let row: ActivityRow | undefined;
-    try {
-      row = db.transaction((tx) => {
-        const updated = tx
-          .update(liveActivity)
-          .set({
-            props,
-            sequence: current.sequence + 1,
-            apnsTimestamp,
-            updatedAt: now,
-            staleAt,
-          })
-          .where(
-            and(
-              eq(liveActivity.id, current.id),
-              eq(liveActivity.sequence, current.sequence),
-              inArray(liveActivity.status, ["starting", "active", "partial"]),
-            ),
-          )
-          .returning()
-          .get();
-        if (!updated) return undefined;
-        tx.insert(liveActivityOperation)
-          .values({
-            id: operationId,
-            activityId: updated.id,
-            requesterTokenId: token.id,
-            event: "update",
-            props,
-            sequence: updated.sequence,
-            idempotencyKey: key ?? null,
-            requestHash: key ? requestHash : null,
-            createdAt: now,
-          })
-          .run();
-        return updated;
-      });
-    } catch (error) {
+    const mutation = admitLiveActivityMutation({
+      current,
+      set: { props, apnsTimestamp, updatedAt: now, staleAt },
+      operation: {
+        id: operationId,
+        event: "update",
+        props,
+        idempotencyKey: key ?? null,
+        requestHash: key ? requestHash : null,
+        createdAt: now,
+      },
+      requester: { requesterTokenId: token.id },
+      admit: agentAdmission(token, limits),
+    });
+    if ("raced" in mutation) {
       const raced = await operationReplay(token.id, key, requestHash);
       if (raced?.conflict) {
         return c.json({ error: "Idempotency-Key was already used with a different payload" }, 409);
       }
-      if (raced && !raced.conflict) {
-        return c.json<LiveActivityMutationResponse>(await idempotentMutationResponse(raced));
-      }
-      throw error;
+      if (raced) return c.json<LiveActivityMutationResponse>(await idempotentMutationResponse(raced));
+      if (mutation.raced) throw mutation.raced;
+      return c.json({ error: "Sequence conflict" }, 409);
     }
+    if ("refused" in mutation) {
+      c.header("Retry-After", "60");
+      return c.json({ error: RATE_LIMIT_ERRORS[mutation.refused], retryAfterSeconds: 60 }, 429);
+    }
+    const { row } = mutation;
     if (!row) return c.json({ error: "Sequence conflict" }, 409);
     // A failed sibling is not part of the live fanout. Retrying it would keep a
     // partial activity partial after every later update the remaining devices accept.
@@ -1535,7 +1678,9 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       .where(eq(userTable.id, token.userId))
       .limit(1);
     if (!owner) return c.json({ error: "Account not found" }, 404);
-    const limited = await enforceAgentRateLimit(token, owner);
+    const { limits } = await getBilling(owner, true);
+    // A raced Idempotency-Key twin replays in the admission transaction instead.
+    const limited = key ? null : agentRateLimit(token, limits);
     if (limited) {
       c.header("Retry-After", "60");
       return c.json(limited, 429);
@@ -1561,55 +1706,41 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
     if (parsed.data.progress === null) delete nextProps.progress;
     const props = liveActivityPropsSchema.parse(nextProps);
     const operationId = newId("lao");
-    let row: ActivityRow | undefined;
-    try {
-      row = db.transaction((tx) => {
-        const updated = tx
-          .update(liveActivity)
-          .set({
-            props,
-            status: "ended",
-            sequence: current.sequence + 1,
-            apnsTimestamp,
-            dismissalAt: new Date(now.getTime() + parsed.data.dismissAfterSeconds * 1000),
-            updatedAt: now,
-            endedAt: now,
-          })
-          .where(
-            and(
-              eq(liveActivity.id, current.id),
-              eq(liveActivity.sequence, current.sequence),
-              inArray(liveActivity.status, ["starting", "active", "partial"]),
-            ),
-          )
-          .returning()
-          .get();
-        if (!updated) return undefined;
-        tx.insert(liveActivityOperation)
-          .values({
-            id: operationId,
-            activityId: updated.id,
-            requesterTokenId: token.id,
-            event: "end",
-            props,
-            sequence: updated.sequence,
-            idempotencyKey: key ?? null,
-            requestHash: key ? requestHash : null,
-            createdAt: now,
-          })
-          .run();
-        return updated;
-      });
-    } catch (error) {
+    const mutation = admitLiveActivityMutation({
+      current,
+      set: {
+        props,
+        status: "ended",
+        apnsTimestamp,
+        dismissalAt: new Date(now.getTime() + parsed.data.dismissAfterSeconds * 1000),
+        updatedAt: now,
+        endedAt: now,
+      },
+      operation: {
+        id: operationId,
+        event: "end",
+        props,
+        idempotencyKey: key ?? null,
+        requestHash: key ? requestHash : null,
+        createdAt: now,
+      },
+      requester: { requesterTokenId: token.id },
+      admit: agentAdmission(token, limits),
+    });
+    if ("raced" in mutation) {
       const raced = await operationReplay(token.id, key, requestHash);
       if (raced?.conflict) {
         return c.json({ error: "Idempotency-Key was already used with a different payload" }, 409);
       }
-      if (raced && !raced.conflict) {
-        return c.json<LiveActivityMutationResponse>(await idempotentMutationResponse(raced));
-      }
-      throw error;
+      if (raced) return c.json<LiveActivityMutationResponse>(await idempotentMutationResponse(raced));
+      if (mutation.raced) throw mutation.raced;
+      return c.json({ error: "Sequence conflict" }, 409);
     }
+    if ("refused" in mutation) {
+      c.header("Retry-After", "60");
+      return c.json({ error: RATE_LIMIT_ERRORS[mutation.refused], retryAfterSeconds: 60 }, 429);
+    }
+    const { row } = mutation;
     if (!row) return c.json({ error: "Sequence conflict" }, 409);
     // Same live fanout as update. A failed delivery has no token coming and keeps its reason.
     const deliveries = await db

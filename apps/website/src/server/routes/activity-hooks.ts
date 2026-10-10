@@ -11,7 +11,7 @@ import {
   liveActivityUpdateSchema,
 } from "@hark/contracts";
 import { and, desc, eq, inArray, or } from "drizzle-orm";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { db } from "../db";
 import {
   device,
@@ -24,17 +24,27 @@ import {
 import { isEmailAllowed } from "../lib/admission";
 import { checkNotificationAllowance, getBilling, trackNotification } from "../lib/billing";
 import { newId } from "../lib/id";
-import { RATE_LIMIT_ERRORS, webhookWindowLimit } from "../lib/rate-windows";
+import {
+  RATE_LIMIT_ERRORS,
+  type RateWindow,
+  webhookAdmission,
+  webhookWindowLimit,
+} from "../lib/rate-windows";
 import { hashWebhookToken } from "../lib/token";
 import {
   type ActivityRow,
+  type AdmittedMutation,
+  admitLiveActivityMutation,
   dispatchLiveActivity,
+  endReplaced,
   expireLiveActivity,
   findBlockingDeliveries,
   invalidLiveActivityBody,
   liveKeyedActivity,
   operationUpdateTokenPending,
-  replaceBlockingDeliveries,
+  planReplacement,
+  type ReplacedDelivery,
+  sendReplacementEnds,
   terminalLiveActivityConflict,
   toLiveActivityDto,
   trackActivityOutcome,
@@ -115,14 +125,17 @@ async function operationReplay(serviceId: string, key: string | undefined, reque
 
 /**
  * The webhook service and account windows from `rate-windows.ts`, the same
- * definition `/hooks` deliveries use. Live Activity operations are recorded
- * after APNs dispatch begins, so this check is not atomic with the insert;
- * concurrent operations can overshoot a window by the number in flight.
+ * definition `/hooks` deliveries use. This early check is advisory; each
+ * operation repeats it with {@link webhookAdmission} in the transaction that
+ * records the operation row.
  */
-async function enforceRateLimit(service: ServiceRow, owner: UserRow) {
-  const billing = await getBilling(owner, true);
-  const refused = webhookWindowLimit(db, service, billing.limits);
-  return refused ? { error: RATE_LIMIT_ERRORS[refused], retryAfterSeconds: 60 as const } : null;
+function rateLimited(service: ServiceRow, limits: Parameters<typeof webhookWindowLimit>[2]) {
+  const refused = webhookWindowLimit(db, service, limits);
+  return refused ? refusal(refused) : null;
+}
+
+function refusal(window: RateWindow) {
+  return { ok: false as const, error: RATE_LIMIT_ERRORS[window], retryAfterSeconds: 60 as const };
 }
 
 function pendingTokenAck(result: { updateTokenPending: boolean }) {
@@ -208,6 +221,44 @@ async function eligibleDevices(
   };
 }
 
+/** Answers an update or end the admission transaction did not apply. */
+async function unadmitted(
+  c: Context,
+  mutation: AdmittedMutation,
+  serviceId: string,
+  key: string | undefined,
+  requestHash: string,
+) {
+  if ("refused" in mutation) {
+    c.header("Retry-After", "60");
+    return c.json(refusal(mutation.refused), 429);
+  }
+  if ("raced" in mutation) {
+    const raced = await operationReplay(serviceId, key, requestHash);
+    if (raced?.conflict) {
+      return c.json(
+        { ok: false, error: "Idempotency-Key was already used with a different payload" },
+        409,
+      );
+    }
+    if (raced) {
+      return c.json(
+        response(
+          raced.row,
+          {
+            accepted: raced.operation.acceptedCount,
+            failed: raced.operation.failedCount,
+            errors: [],
+          },
+          { idempotent: true, ...(await idempotentAck(raced.operation)) },
+        ),
+      );
+    }
+    if (mutation.raced) throw mutation.raced;
+  }
+  return c.json({ ok: false, error: "Sequence conflict" }, 409);
+}
+
 async function deliveriesFor(activityId: string): Promise<DeliveryRow[]> {
   return db
     .select()
@@ -267,10 +318,12 @@ export const activityHooksRoute = new Hono()
     if (billing.plan !== "pro") {
       return c.json({ ok: false, error: "Live Activities are unavailable" }, 402);
     }
-    const limited = await enforceRateLimit(service, owner);
+    // With an Idempotency-Key, a raced twin may already hold the capacity; the
+    // admission transaction replays it first, so skip the early check.
+    const limited = key ? null : rateLimited(service, billing.limits);
     if (limited) {
       c.header("Retry-After", "60");
-      return c.json({ ok: false, ...limited }, 429);
+      return c.json(limited, 429);
     }
     if (!(await checkNotificationAllowance(service.userId))) {
       return c.json({ ok: false, error: "Monthly notification limit reached" }, 429);
@@ -285,7 +338,6 @@ export const activityHooksRoute = new Hono()
       targets.map((target) => target.id),
       now,
     );
-    let replaced = 0;
     const firstBlocker = blockers[0];
     if (firstBlocker && !parsed.data.replace) {
       return c.json(
@@ -317,9 +369,8 @@ export const activityHooksRoute = new Hono()
         409,
       );
     }
-    if (parsed.data.replace && (firstBlocker || keyed)) {
-      replaced = await replaceBlockingDeliveries(blockers, now, keyed);
-    }
+    const replacement =
+      parsed.data.replace && (firstBlocker || keyed) ? await planReplacement(blockers, keyed) : [];
 
     const activityId = newId("act");
     const operationId = newId("lao");
@@ -340,9 +391,30 @@ export const activityHooksRoute = new Hono()
       accentColor: parsed.data.accentColor,
       style: parsed.data.style,
     };
-    let created: { row: ActivityRow; deliveries: DeliveryRow[] };
+    let created:
+      | { existing: ActivityRow }
+      | { refused: RateWindow }
+      | { row: ActivityRow; deliveries: DeliveryRow[]; ended: ReplacedDelivery[] };
     try {
+      // Synchronous, so concurrent starts cannot all pass the webhook windows,
+      // and a refused start ends no blocking activity and sends nothing.
       created = db.transaction((tx) => {
+        if (key) {
+          const existing = tx
+            .select()
+            .from(liveActivity)
+            .where(
+              and(
+                eq(liveActivity.requesterServiceId, service.id),
+                eq(liveActivity.idempotencyKey, key),
+              ),
+            )
+            .get();
+          if (existing) return { existing };
+        }
+        const refused = webhookAdmission(service, billing.limits)(tx);
+        if (refused) return { refused };
+        const ended = endReplaced(tx, replacement, now);
         const row = tx
           .insert(liveActivity)
           .values({
@@ -393,7 +465,7 @@ export const activityHooksRoute = new Hono()
             .returning()
             .get(),
         );
-        return { row, deliveries };
+        return { row, deliveries, ended };
       });
     } catch (error) {
       if (key) {
@@ -441,7 +513,22 @@ export const activityHooksRoute = new Hono()
       }
       throw error;
     }
+    if ("existing" in created) {
+      const { existing } = created;
+      if (existing.requestHash !== requestHash) {
+        return c.json(
+          { ok: false, error: "Idempotency-Key was already used with a different payload" },
+          409,
+        );
+      }
+      return c.json(response(await expireLiveActivity(existing), undefined, { idempotent: true }));
+    }
+    if ("refused" in created) {
+      c.header("Retry-After", "60");
+      return c.json(refusal(created.refused), 429);
+    }
 
+    await sendReplacementEnds(created.ended, now);
     const result = await dispatchLiveActivity(
       created.row,
       created.deliveries,
@@ -469,7 +556,7 @@ export const activityHooksRoute = new Hono()
     if (result.accepted > 0) await trackNotification(service.userId, operationId);
     return c.json(
       response(row ?? created.row, result, {
-        ...(parsed.data.replace ? { replaced } : {}),
+        ...(parsed.data.replace ? { replaced: replacement.length } : {}),
         ...(result.accepted === 0
           ? { message: "No Live Activity-capable iOS devices accepted the request." }
           : {}),
@@ -535,10 +622,12 @@ export const activityHooksRoute = new Hono()
     if (parsed.data.ifSequence !== undefined && parsed.data.ifSequence !== current.sequence) {
       return c.json({ ...response(current), ok: false, error: "Sequence conflict" }, 409);
     }
-    const limited = await enforceRateLimit(service, owner);
+    const { limits } = await getBilling(owner, true);
+    // A raced Idempotency-Key twin replays in the admission transaction instead.
+    const limited = key ? null : rateLimited(service, limits);
     if (limited) {
       c.header("Retry-After", "60");
-      return c.json({ ok: false, ...limited }, 429);
+      return c.json(limited, 429);
     }
     if (!(await checkNotificationAllowance(service.userId))) {
       return c.json({ ok: false, error: "Monthly notification limit reached" }, 429);
@@ -573,67 +662,29 @@ export const activityHooksRoute = new Hono()
       Math.min(now.getTime() + staleAfterSeconds * 1000, current.expiresAt.getTime()),
     );
     const operationId = newId("lao");
-    let row: ActivityRow | undefined;
-    try {
-      row = db.transaction((tx) => {
-        const updated = tx
-          .update(liveActivity)
-          .set({
-            props,
-            sequence: current.sequence + 1,
-            apnsTimestamp: Math.max(Math.floor(now.getTime() / 1000), current.apnsTimestamp + 1),
-            staleAt,
-            updatedAt: now,
-          })
-          .where(
-            and(
-              eq(liveActivity.id, current.id),
-              eq(liveActivity.sequence, current.sequence),
-              inArray(liveActivity.status, ["starting", "active", "partial"]),
-            ),
-          )
-          .returning()
-          .get();
-        if (!updated) return undefined;
-        tx.insert(liveActivityOperation)
-          .values({
-            id: operationId,
-            activityId: updated.id,
-            requesterServiceId: service.id,
-            event: "update",
-            sequence: updated.sequence,
-            props,
-            idempotencyKey: key ?? null,
-            requestHash: key ? requestHash : null,
-            createdAt: now,
-          })
-          .run();
-        return updated;
-      });
-    } catch (error) {
-      const raced = await operationReplay(service.id, key, requestHash);
-      if (raced?.conflict) {
-        return c.json(
-          { ok: false, error: "Idempotency-Key was already used with a different payload" },
-          409,
-        );
-      }
-      if (raced && !raced.conflict) {
-        return c.json(
-          response(
-            raced.row,
-            {
-              accepted: raced.operation.acceptedCount,
-              failed: raced.operation.failedCount,
-              errors: [],
-            },
-            { idempotent: true, ...(await idempotentAck(raced.operation)) },
-          ),
-        );
-      }
-      throw error;
+    const mutation = admitLiveActivityMutation({
+      current,
+      set: {
+        props,
+        apnsTimestamp: Math.max(Math.floor(now.getTime() / 1000), current.apnsTimestamp + 1),
+        staleAt,
+        updatedAt: now,
+      },
+      operation: {
+        id: operationId,
+        event: "update",
+        props,
+        idempotencyKey: key ?? null,
+        requestHash: key ? requestHash : null,
+        createdAt: now,
+      },
+      requester: { requesterServiceId: service.id },
+      admit: webhookAdmission(service, limits),
+    });
+    if ("raced" in mutation || "refused" in mutation || !mutation.row) {
+      return unadmitted(c, mutation, service.id, key, requestHash);
     }
-    if (!row) return c.json({ ok: false, error: "Sequence conflict" }, 409);
+    const row = mutation.row;
     const deliveries = await deliveriesFor(row.id);
     const result = await dispatchLiveActivity(row, deliveries, operationId, "update", {
       requesterServiceId: service.id,
@@ -722,10 +773,12 @@ export const activityHooksRoute = new Hono()
     if (parsed.data.ifSequence !== undefined && parsed.data.ifSequence !== current.sequence) {
       return c.json({ ...response(current), ok: false, error: "Sequence conflict" }, 409);
     }
-    const limited = await enforceRateLimit(service, owner);
+    const { limits } = await getBilling(owner, true);
+    // A raced Idempotency-Key twin replays in the admission transaction instead.
+    const limited = key ? null : rateLimited(service, limits);
     if (limited) {
       c.header("Retry-After", "60");
-      return c.json({ ok: false, ...limited }, 429);
+      return c.json(limited, 429);
     }
     const now = new Date();
     const previous = liveActivityPropsSchema.parse(current.props);
@@ -746,70 +799,31 @@ export const activityHooksRoute = new Hono()
     if (parsed.data.progress === null) delete nextProps.progress;
     const props = liveActivityPropsSchema.parse(nextProps);
     const operationId = newId("lao");
-    const dismissalAt = new Date(now.getTime() + parsed.data.dismissAfterSeconds * 1000);
-    let row: ActivityRow | undefined;
-    try {
-      row = db.transaction((tx) => {
-        const updated = tx
-          .update(liveActivity)
-          .set({
-            props,
-            status: "ended",
-            sequence: current.sequence + 1,
-            apnsTimestamp: Math.max(Math.floor(now.getTime() / 1000), current.apnsTimestamp + 1),
-            dismissalAt,
-            updatedAt: now,
-            endedAt: now,
-          })
-          .where(
-            and(
-              eq(liveActivity.id, current.id),
-              eq(liveActivity.sequence, current.sequence),
-              inArray(liveActivity.status, ["starting", "active", "partial"]),
-            ),
-          )
-          .returning()
-          .get();
-        if (!updated) return undefined;
-        tx.insert(liveActivityOperation)
-          .values({
-            id: operationId,
-            activityId: updated.id,
-            requesterServiceId: service.id,
-            event: "end",
-            sequence: updated.sequence,
-            props,
-            idempotencyKey: key ?? null,
-            requestHash: key ? requestHash : null,
-            createdAt: now,
-          })
-          .run();
-        return updated;
-      });
-    } catch (error) {
-      const raced = await operationReplay(service.id, key, requestHash);
-      if (raced?.conflict) {
-        return c.json(
-          { ok: false, error: "Idempotency-Key was already used with a different payload" },
-          409,
-        );
-      }
-      if (raced && !raced.conflict) {
-        return c.json(
-          response(
-            raced.row,
-            {
-              accepted: raced.operation.acceptedCount,
-              failed: raced.operation.failedCount,
-              errors: [],
-            },
-            { idempotent: true, ...(await idempotentAck(raced.operation)) },
-          ),
-        );
-      }
-      throw error;
+    const mutation = admitLiveActivityMutation({
+      current,
+      set: {
+        props,
+        status: "ended",
+        apnsTimestamp: Math.max(Math.floor(now.getTime() / 1000), current.apnsTimestamp + 1),
+        dismissalAt: new Date(now.getTime() + parsed.data.dismissAfterSeconds * 1000),
+        updatedAt: now,
+        endedAt: now,
+      },
+      operation: {
+        id: operationId,
+        event: "end",
+        props,
+        idempotencyKey: key ?? null,
+        requestHash: key ? requestHash : null,
+        createdAt: now,
+      },
+      requester: { requesterServiceId: service.id },
+      admit: webhookAdmission(service, limits),
+    });
+    if ("raced" in mutation || "refused" in mutation || !mutation.row) {
+      return unadmitted(c, mutation, service.id, key, requestHash);
     }
-    if (!row) return c.json({ ok: false, error: "Sequence conflict" }, 409);
+    const row = mutation.row;
     const deliveries = await deliveriesFor(row.id);
     const result = await dispatchLiveActivity(row, deliveries, operationId, "end", {
       requesterServiceId: service.id,
