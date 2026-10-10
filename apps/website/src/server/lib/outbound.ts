@@ -8,10 +8,11 @@ import { isPublicHttpsUrl } from "@hark/contracts";
  * Outbound POSTs to user-chosen URLs (board ask and interaction callbacks).
  *
  * The hostname is resolved once per attempt, every A/AAAA record must be a
- * public address, and the socket connects to that validated IP. TLS SNI,
- * certificate verification, and the Host header keep the original hostname,
- * so DNS rebinding can't swap the address between the check and the connect.
- * Redirects are never followed and responses are never read.
+ * public address, and the socket connects to one of those validated IPs. TLS
+ * SNI, certificate verification, and the Host header keep the original
+ * hostname, so DNS rebinding can't swap the address between the check and the
+ * connect. Redirects are never followed; the response body is discarded and the
+ * connection is closed as soon as the status arrives.
  */
 
 export type ResolvedAddress = { address: string; family: number };
@@ -24,27 +25,36 @@ export type RequestFn = (
 export type CallbackError = "blocked_destination" | "timeout" | "network_error" | `HTTP ${number}`;
 export type CallbackOutcome = { ok: true } | { ok: false; error: CallbackError };
 
-/** Swappable so tests never touch real DNS or sockets. */
-export const outbound: { resolve: Resolver; request: RequestFn } = {
-  resolve: (hostname) => lookup(hostname, { all: true, verbatim: true }),
+/** Swappable so tests never touch real DNS or sockets, or relax the address policy. */
+export const outbound: {
+  resolve: Resolver;
+  request: RequestFn;
+  isAllowedAddress: (address: string) => boolean;
+} = {
+  resolve: (hostname) => lookup(hostname, { all: true, order: "verbatim" }),
   request: httpsRequest,
+  isAllowedAddress: (address) => isPublicAddress(address),
 };
 
 export type PostOptions = {
   headers: Record<string, string>;
   body: string;
   timeoutMs?: number;
-  /** Test-only override for the address policy. */
-  isAllowedAddress?: (address: string) => boolean;
-  /** Test-only trust anchor for a local TLS server. */
-  ca?: string;
 };
 
 class BlockedDestinationError extends Error {}
 class TimeoutError extends Error {}
 
+/** Errors that mean no connection was made, so the next validated address is safe to try. */
+const CONNECT_ERRORS = new Set([
+  "ECONNREFUSED",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "EADDRNOTAVAIL",
+  "ETIMEDOUT",
+]);
+
 export async function postCallback(url: string, options: PostOptions): Promise<CallbackOutcome> {
-  const isAllowed = options.isAllowedAddress ?? isPublicAddress;
   const timeoutMs = options.timeoutMs ?? 10_000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new TimeoutError()), timeoutMs);
@@ -52,10 +62,23 @@ export async function postCallback(url: string, options: PostOptions): Promise<C
     if (!isPublicHttpsUrl(url)) return { ok: false, error: "blocked_destination" };
     const target = new URL(url);
     const hostname = target.hostname.replace(/^\[|\]$/g, "");
-    const pinned = await abortable(pinAddress(hostname, outbound.resolve, isAllowed), controller);
-    const status = await send(target, hostname, pinned, options, controller.signal);
-    if (status >= 200 && status < 300) return { ok: true };
-    return { ok: false, error: `HTTP ${status}` };
+    const records = await abortable(
+      pinAddresses(hostname, outbound.resolve, outbound.isAllowedAddress),
+      controller,
+    );
+    let status: number | undefined;
+    for (const [index, pinned] of records.entries()) {
+      try {
+        status = await send(target, hostname, pinned, options, controller.signal);
+        break;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        const last = index === records.length - 1;
+        if (last || controller.signal.aborted || !code || !CONNECT_ERRORS.has(code)) throw error;
+      }
+    }
+    if (status !== undefined && status >= 200 && status < 300) return { ok: true };
+    return { ok: false, error: `HTTP ${status ?? 0}` };
   } catch (error) {
     if (error instanceof BlockedDestinationError)
       return { ok: false, error: "blocked_destination" };
@@ -67,21 +90,21 @@ export async function postCallback(url: string, options: PostOptions): Promise<C
 }
 
 /**
- * Resolves `hostname` and returns the address to connect to. Rejects if any
- * record is disallowed, so a mixed public/private answer can't be used.
+ * Resolves `hostname` and returns the addresses to connect to, in resolver
+ * order. Rejects if any record is disallowed, so a mixed public/private answer
+ * can't be used.
  */
-export async function pinAddress(
+export async function pinAddresses(
   hostname: string,
   resolve: Resolver,
   isAllowed: (address: string) => boolean = isPublicAddress,
-): Promise<ResolvedAddress> {
+): Promise<ResolvedAddress[]> {
   const literal = isIP(hostname);
   const records = literal ? [{ address: hostname, family: literal }] : await resolve(hostname);
-  const [first] = records;
-  if (!first || records.some((record) => !isAllowed(record.address))) {
+  if (records.length === 0 || records.some((record) => !isAllowed(record.address))) {
     throw new BlockedDestinationError("blocked_destination");
   }
-  return first;
+  return records;
 }
 
 function send(
@@ -104,11 +127,12 @@ function send(
         headers: { ...options.headers, host: target.host, "content-length": String(body.length) },
         agent: false,
         signal,
-        ...(options.ca ? { ca: options.ca } : {}),
       },
       (response) => {
-        response.resume();
         resolve(response.statusCode ?? 0);
+        // Only the status matters; a receiver that never ends its body must not hold the socket.
+        response.on("error", () => undefined);
+        req.destroy();
       },
     );
     req.on("error", reject);
@@ -127,31 +151,41 @@ function abortable<T>(promise: Promise<T>, controller: AbortController): Promise
   });
 }
 
-const BLOCKED_IPV4: ReadonlyArray<readonly [string, number]> = [
-  ["0.0.0.0", 8], // "this network", includes unspecified
-  ["10.0.0.0", 8],
-  ["100.64.0.0", 10], // CGNAT
-  ["127.0.0.0", 8],
-  ["169.254.0.0", 16], // link-local, cloud metadata
-  ["172.16.0.0", 12],
-  ["192.0.0.0", 24], // IETF protocol assignments
-  ["192.0.2.0", 24], // TEST-NET-1
-  ["192.88.99.0", 24], // 6to4 relay anycast
-  ["192.168.0.0", 16],
-  ["198.18.0.0", 15], // benchmarking
-  ["198.51.100.0", 24], // TEST-NET-2
-  ["203.0.113.0", 24], // TEST-NET-3
-  ["224.0.0.0", 4], // multicast
-  ["240.0.0.0", 4], // reserved, includes broadcast
-];
+type Prefix = readonly [Uint8Array, number];
 
-const BLOCKED_IPV6: ReadonlyArray<readonly [string, number]> = [
-  ["64:ff9b:1::", 48], // local-use NAT64
-  ["100::", 64], // discard-only
-  ["2001::", 23], // IETF protocol assignments: Teredo, benchmarking, ORCHID
-  ["2001:db8::", 32], // documentation
-  ["3fff::", 20], // documentation
-];
+const BLOCKED_IPV4: ReadonlyArray<Prefix> = (
+  [
+    ["0.0.0.0", 8], // "this network", includes unspecified
+    ["10.0.0.0", 8],
+    ["100.64.0.0", 10], // CGNAT
+    ["127.0.0.0", 8],
+    ["169.254.0.0", 16], // link-local, cloud metadata
+    ["172.16.0.0", 12],
+    ["192.0.0.0", 24], // IETF protocol assignments
+    ["192.0.2.0", 24], // TEST-NET-1
+    ["192.88.99.0", 24], // 6to4 relay anycast
+    ["192.168.0.0", 16],
+    ["198.18.0.0", 15], // benchmarking
+    ["198.51.100.0", 24], // TEST-NET-2
+    ["203.0.113.0", 24], // TEST-NET-3
+    ["224.0.0.0", 4], // multicast
+    ["240.0.0.0", 4], // reserved, includes broadcast
+  ] as const
+).map(([prefix, bits]) => [ipv4Bytes(prefix), bits] as const);
+
+// Ranges inside global unicast 2000::/3 that still aren't public. Ranges
+// outside it (local-use NAT64 64:ff9b:1::/48, discard 100::/64, SRv6 SIDs
+// 5f00::/16, and the rest) are already refused by the 2000::/3 check.
+const BLOCKED_IPV6: ReadonlyArray<Prefix> = (
+  [
+    ["2001::", 23], // IETF protocol assignments: Teredo, benchmarking, ORCHID
+    ["2001:db8::", 32], // documentation
+    ["3fff::", 20], // documentation
+  ] as const
+).map(([prefix, bits]) => [ipv6Bytes(prefix) as Uint8Array, bits] as const);
+
+const NAT64 = ipv6Bytes("64:ff9b::") as Uint8Array;
+const SIX_TO_FOUR = ipv6Bytes("2002::") as Uint8Array;
 
 /** True only for globally routable unicast addresses. */
 export function isPublicAddress(address: string): boolean {
@@ -161,22 +195,16 @@ export function isPublicAddress(address: string): boolean {
   const bytes = ipv6Bytes(address);
   if (!bytes) return false;
   // NAT64 well-known prefix and 6to4 embed an IPv4 address; judge that instead.
-  if (matches(bytes, ipv6Bytes("64:ff9b::") as Uint8Array, 96)) {
-    return isPublicIpv4(bytes.subarray(12, 16));
-  }
-  if (matches(bytes, ipv6Bytes("2002::") as Uint8Array, 16)) {
-    return isPublicIpv4(bytes.subarray(2, 6));
-  }
+  if (matches(bytes, NAT64, 96)) return isPublicIpv4(bytes.subarray(12, 16));
+  if (matches(bytes, SIX_TO_FOUR, 16)) return isPublicIpv4(bytes.subarray(2, 6));
   // Only global unicast 2000::/3 is public. Everything else, including ::,
   // ::1, IPv4-mapped/compatible ::/8, fc00::/7, fe80::/10, and ff00::/8, is not.
   if ((bytes[0] as number) >> 5 !== 0b001) return false;
-  return !BLOCKED_IPV6.some(([prefix, bits]) =>
-    matches(bytes, ipv6Bytes(prefix) as Uint8Array, bits),
-  );
+  return !BLOCKED_IPV6.some(([prefix, bits]) => matches(bytes, prefix, bits));
 }
 
 function isPublicIpv4(bytes: Uint8Array): boolean {
-  return !BLOCKED_IPV4.some(([prefix, bits]) => matches(bytes, ipv4Bytes(prefix), bits));
+  return !BLOCKED_IPV4.some(([prefix, bits]) => matches(bytes, prefix, bits));
 }
 
 function matches(bytes: Uint8Array, prefix: Uint8Array, bits: number): boolean {

@@ -229,7 +229,11 @@ function stubCallbackTransport(address = "93.184.216.34") {
     options: RequestOptions,
     onResponse: (response: IncomingMessage) => void,
   ) => {
-    const req = new EventEmitter() as EventEmitter & { end: (body: Buffer) => void };
+    const req = new EventEmitter() as EventEmitter & {
+      end: (body: Buffer) => void;
+      destroy: () => void;
+    };
+    req.destroy = () => undefined;
     req.end = (body) => {
       const headers = options.headers as Record<string, string>;
       callbacks.calls.push({
@@ -237,9 +241,8 @@ function stubCallbackTransport(address = "93.184.216.34") {
         authorization: headers.authorization ?? null,
         body: JSON.parse(body.toString()) as Record<string, unknown>,
       });
-      queueMicrotask(() =>
-        onResponse({ statusCode: callbacks.status, resume() {} } as IncomingMessage),
-      );
+      const response = Object.assign(new EventEmitter(), { statusCode: callbacks.status });
+      queueMicrotask(() => onResponse(response as unknown as IncomingMessage));
     };
     return req as unknown as ClientRequest;
   }) as RequestFn);
@@ -773,6 +776,37 @@ describe("expiry and callbacks", () => {
       ask: { callback: { status: string; lastError: string } };
     };
     expect(read.ask.callback).toMatchObject({ status: "failed", lastError: "blocked_destination" });
+  });
+
+  it("records a row that can't be prepared and still delivers the rows after it", async () => {
+    stubCallbackTransport();
+    callbacks.status = 204;
+    const callback = { url: "https://grok.example/routine", token: "k".repeat(32) };
+    const bad = await createAsk({ key: "fm:bad-row", push: "none", callback });
+    const good = await createAsk({ key: "fm:good-row", push: "none", callback });
+    await db
+      .update(schema.boardAsk)
+      .set({ callbackTokenCiphertext: "synthetic-corrupt-ciphertext" })
+      .where(eq(schema.boardAsk.id, bad.body.ask.id));
+    await agent("/asks/fm:bad-row/cancel", FM, { method: "POST", body: JSON.stringify({}) });
+    await agent("/asks/fm:good-row/cancel", FM, { method: "POST", body: JSON.stringify({}) });
+
+    await expect(boardCallbacks.deliverBoardCallbacks()).resolves.toBeUndefined();
+    const [badRow] = await db
+      .select()
+      .from(schema.boardAsk)
+      .where(eq(schema.boardAsk.id, bad.body.ask.id));
+    expect(badRow).toMatchObject({
+      callbackStatus: "retrying",
+      callbackAttempts: 1,
+      callbackLastError: "internal_error",
+    });
+    const [goodRow] = await db
+      .select()
+      .from(schema.boardAsk)
+      .where(eq(schema.boardAsk.id, good.body.ask.id));
+    expect(goodRow).toMatchObject({ callbackStatus: "delivered", callbackAttempts: 1 });
+    expect(callbacks.calls.map((call) => call.body.askId)).toEqual([good.body.ask.id]);
   });
 
   it("re-resolves on each retry and stops once the name rebinds to a private address", async () => {

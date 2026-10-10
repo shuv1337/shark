@@ -400,7 +400,11 @@ const schemas: Record<string, JsonSchema> = {
         object({
           status: { enum: ["pending", "retrying", "delivered", "failed"] },
           attempts: int,
-          lastError: nullableStr,
+          lastError: {
+            ...nullableStr,
+            description:
+              "`blocked_destination`, `timeout`, `network_error`, `internal_error`, or `HTTP <status>`. Rows from older releases may hold free text.",
+          },
           deliveredAt: nullableDateTime,
         }),
       ],

@@ -150,9 +150,10 @@ function stubCallbackTransport(address = "93.184.216.34", status = 204) {
     _options: RequestOptions,
     onResponse: (response: IncomingMessage) => void,
   ) => {
-    const req = new EventEmitter() as EventEmitter & { end: () => void };
-    req.end = () =>
-      queueMicrotask(() => onResponse({ statusCode: status, resume() {} } as IncomingMessage));
+    const req = new EventEmitter() as EventEmitter & { end: () => void; destroy: () => void };
+    const response = Object.assign(new EventEmitter(), { statusCode: status });
+    req.end = () => queueMicrotask(() => onResponse(response as unknown as IncomingMessage));
+    req.destroy = () => undefined;
     return req as unknown as ClientRequest;
   }) as RequestFn);
 }
@@ -491,6 +492,73 @@ describe("POST /hooks/:token", () => {
       callbackLastError: "blocked_destination",
     });
     expect(callbackRequest).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it("records an interaction callback row that can't be prepared and keeps delivering", async () => {
+    const { eq } = await import("drizzle-orm");
+    const { deliverInteractionCallbacks } = await import("../lib/interaction-callbacks");
+    const callbackRequest = stubCallbackTransport();
+    const ids: string[] = [];
+    for (const correlationId of ["deploy-bad-row", "deploy-good-row"]) {
+      billingTestState.pro = true;
+      sent.length = 0;
+      const created = await post(TOKEN, {
+        body: "Deploy staging?",
+        deviceIds: ["dev_1"],
+        response: {
+          type: "approval",
+          correlationId,
+          expiresInSeconds: 900,
+          callback: {
+            url: "https://ci.example.com/hark-response",
+            token: "private-callback-token",
+          },
+        },
+      });
+      billingTestState.pro = false;
+      expect(created.status).toBe(200);
+      const data = sent[0]?.data as { interactionId: string } | undefined;
+      if (!data) throw new Error("Expected a sent notification");
+      ids.push(data.interactionId);
+    }
+    const [badId, goodId] = ids as [string, string];
+    await db
+      .update(schema.interaction)
+      .set({
+        status: "approved",
+        response: "approve",
+        callbackStatus: "pending",
+        callbackNextAttemptAt: new Date(0),
+      })
+      .where(eq(schema.interaction.id, goodId));
+    await db
+      .update(schema.interaction)
+      .set({
+        status: "approved",
+        response: "approve",
+        callbackStatus: "pending",
+        callbackNextAttemptAt: new Date(0),
+        callbackTokenCiphertext: "synthetic-corrupt-ciphertext",
+      })
+      .where(eq(schema.interaction.id, badId));
+
+    await expect(deliverInteractionCallbacks()).resolves.toBeUndefined();
+    const [badRow] = await db
+      .select()
+      .from(schema.interaction)
+      .where(eq(schema.interaction.id, badId));
+    expect(badRow).toMatchObject({
+      callbackStatus: "retrying",
+      callbackAttempts: 1,
+      callbackLastError: "internal_error",
+    });
+    const [goodRow] = await db
+      .select()
+      .from(schema.interaction)
+      .where(eq(schema.interaction.id, goodId));
+    expect(goodRow).toMatchObject({ callbackStatus: "delivered", callbackAttempts: 1 });
+    expect(callbackRequest).toHaveBeenCalledOnce();
     vi.restoreAllMocks();
   });
 

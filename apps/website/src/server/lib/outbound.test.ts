@@ -2,15 +2,21 @@ import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import type { ClientRequest, IncomingMessage } from "node:http";
-import { createServer, type RequestOptions, type Server } from "node:https";
+import {
+  createServer,
+  request as httpsRequest,
+  type RequestOptions,
+  type Server,
+} from "node:https";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { checkServerIdentity } from "node:tls";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   isPublicAddress,
   outbound,
-  pinAddress,
+  pinAddresses,
   postCallback,
   type RequestFn,
   type ResolvedAddress,
@@ -53,6 +59,7 @@ const BLOCKED = [
   "64:ff9b::169.254.169.254",
   "64:ff9b:1::1",
   "100::1",
+  "5f00::1",
   "2001::1",
   "2001:2::1",
   "2001:db8::1",
@@ -69,13 +76,21 @@ const BLOCKED = [
 
 type Captured = { options: RequestOptions; body: string };
 
-function fakeRequest(status: number | null, captured: Captured[] = []): RequestFn {
+type FakeReq = EventEmitter & { end: (body: Buffer) => void; destroy: () => void };
+
+/** `status` is an HTTP status, null to hang, or an errno code to fail before any response. */
+function fakeRequest(status: number | string | null, captured: Captured[] = []): RequestFn {
   return ((options: RequestOptions, onResponse: (response: IncomingMessage) => void) => {
-    const req = new EventEmitter() as EventEmitter & { end: (body: Buffer) => void };
+    const req = new EventEmitter() as FakeReq;
+    req.destroy = () => undefined;
     req.end = (body) => {
       captured.push({ options, body: body.toString() });
-      if (status !== null) {
-        queueMicrotask(() => onResponse({ statusCode: status, resume() {} } as IncomingMessage));
+      if (typeof status === "number") {
+        const response = Object.assign(new EventEmitter(), { statusCode: status });
+        queueMicrotask(() => onResponse(response as unknown as IncomingMessage));
+      } else if (typeof status === "string") {
+        const error = Object.assign(new Error(`connect ${status}`), { code: status });
+        queueMicrotask(() => req.emit("error", error));
       }
     };
     options.signal?.addEventListener("abort", () => req.emit("error", new Error("aborted")));
@@ -213,6 +228,9 @@ describe("postCallback", () => {
     }) as RequestFn);
     expect(await post()).toEqual({ ok: false, error: "network_error" });
 
+    vi.spyOn(outbound, "request").mockImplementation(fakeRequest("ECONNREFUSED"));
+    expect(await post()).toEqual({ ok: false, error: "network_error" });
+
     vi.spyOn(outbound, "request").mockImplementation(fakeRequest(302));
     expect(await post()).toEqual({ ok: false, error: "HTTP 302" });
   });
@@ -234,15 +252,73 @@ describe("postCallback", () => {
   });
 });
 
-describe("pinAddress", () => {
-  it("returns the first record only when every record is allowed", async () => {
+describe("postCallback dual-stack failover", () => {
+  it("tries the next validated address in resolver order when a connect fails", async () => {
+    vi.spyOn(outbound, "resolve").mockImplementation(resolvesTo(PUBLIC_V6, PUBLIC_V4));
+    const captured: Captured[] = [];
+    let calls = 0;
+    vi.spyOn(outbound, "request").mockImplementation(((options, onResponse) =>
+      fakeRequest(calls++ === 0 ? "ENETUNREACH" : 204, captured)(
+        options,
+        onResponse,
+      )) as RequestFn);
+    expect(await post()).toEqual({ ok: true });
+    expect(captured.map((call) => [call.options.host, call.options.family])).toEqual([
+      [PUBLIC_V6, 6],
+      [PUBLIC_V4, 4],
+    ]);
+    expect(captured.every((call) => call.options.servername === "callback.example.test")).toBe(
+      true,
+    );
+  });
+
+  it("stops at the first HTTP status or non-connect error", async () => {
+    vi.spyOn(outbound, "resolve").mockImplementation(resolvesTo(PUBLIC_V6, PUBLIC_V4));
+    const captured: Captured[] = [];
+    vi.spyOn(outbound, "request").mockImplementation(fakeRequest(503, captured));
+    expect(await post()).toEqual({ ok: false, error: "HTTP 503" });
+    expect(captured).toHaveLength(1);
+
+    captured.length = 0;
+    vi.spyOn(outbound, "request").mockImplementation(fakeRequest("ECONNRESET", captured));
+    expect(await post()).toEqual({ ok: false, error: "network_error" });
+    expect(captured).toHaveLength(1);
+  });
+
+  it("reports the last connect error when every address fails", async () => {
+    vi.spyOn(outbound, "resolve").mockImplementation(resolvesTo(PUBLIC_V6, PUBLIC_V4));
+    const captured: Captured[] = [];
+    vi.spyOn(outbound, "request").mockImplementation(fakeRequest("ECONNREFUSED", captured));
+    expect(await post()).toEqual({ ok: false, error: "network_error" });
+    expect(captured).toHaveLength(2);
+  });
+
+  it("does not fail over once the overall deadline has passed", async () => {
+    vi.spyOn(outbound, "resolve").mockImplementation(resolvesTo(PUBLIC_V6, PUBLIC_V4));
+    const captured: Captured[] = [];
+    vi.spyOn(outbound, "request").mockImplementation(fakeRequest(null, captured));
+    const outcome = await postCallback("https://callback.example.test/hook", {
+      headers: {},
+      body: "{}",
+      timeoutMs: 30,
+    });
+    expect(outcome).toEqual({ ok: false, error: "timeout" });
+    expect(captured).toHaveLength(1);
+  });
+});
+
+describe("pinAddresses", () => {
+  it("returns every record, in order, only when every record is allowed", async () => {
     await expect(
-      pinAddress("callback.example.test", resolvesTo(PUBLIC_V4, PUBLIC_V6)),
-    ).resolves.toEqual({ address: PUBLIC_V4, family: 4 });
+      pinAddresses("callback.example.test", resolvesTo(PUBLIC_V4, PUBLIC_V6)),
+    ).resolves.toEqual([
+      { address: PUBLIC_V4, family: 4 },
+      { address: PUBLIC_V6, family: 6 },
+    ]);
     await expect(
-      pinAddress("callback.example.test", resolvesTo(PUBLIC_V6, "::ffff:10.0.0.1")),
+      pinAddresses("callback.example.test", resolvesTo(PUBLIC_V6, "::ffff:10.0.0.1")),
     ).rejects.toThrow("blocked_destination");
-    await expect(pinAddress("callback.example.test", resolvesTo())).rejects.toThrow(
+    await expect(pinAddresses("callback.example.test", resolvesTo())).rejects.toThrow(
       "blocked_destination",
     );
   });
@@ -257,8 +333,14 @@ function hasOpenssl() {
   }
 }
 
-describe.runIf(hasOpenssl())("postCallback against a local TLS server", () => {
+const opensslAvailable = hasOpenssl();
+if (!opensslAvailable && process.env.CI) {
+  throw new Error("openssl is required in CI for the local TLS server tests");
+}
+
+describe.runIf(opensslAvailable)("postCallback against a local TLS server", () => {
   const HOST = "callback.example.test";
+  const LITERAL = PUBLIC_V4;
   let dir: string;
   let cert: string;
   let server: Server;
@@ -270,6 +352,7 @@ describe.runIf(hasOpenssl())("postCallback against a local TLS server", () => {
     body: string;
   }> = [];
   let respond: (res: import("node:http").ServerResponse) => void = (res) => res.end();
+  let lastSocket: import("node:net").Socket | undefined;
 
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), "shark-outbound-"));
@@ -286,7 +369,7 @@ describe.runIf(hasOpenssl())("postCallback against a local TLS server", () => {
         "-subj",
         `/CN=${HOST}`,
         "-addext",
-        `subjectAltName=DNS:${HOST}`,
+        `subjectAltName=DNS:${HOST},IP:${LITERAL}`,
         "-keyout",
         join(dir, "key.pem"),
         "-out",
@@ -297,6 +380,7 @@ describe.runIf(hasOpenssl())("postCallback against a local TLS server", () => {
     cert = readFileSync(join(dir, "cert.pem"), "utf8");
     server = createServer({ key: readFileSync(join(dir, "key.pem")), cert }, (req, res) => {
       let body = "";
+      lastSocket = req.socket;
       req.on("data", (chunk) => {
         body += chunk;
       });
@@ -315,6 +399,7 @@ describe.runIf(hasOpenssl())("postCallback against a local TLS server", () => {
   });
 
   afterAll(async () => {
+    server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
     rmSync(dir, { recursive: true, force: true });
   });
@@ -322,16 +407,23 @@ describe.runIf(hasOpenssl())("postCallback against a local TLS server", () => {
   afterEach(() => {
     seen.length = 0;
     respond = (res) => res.end();
+    lastSocket = undefined;
   });
 
-  // Loopback is allowed only through the test override; the production policy blocks it.
-  const deliver = (hostname = HOST) =>
-    postCallback(`https://${hostname}:${port}/hook`, {
+  /** Trusts the test certificate; the production request function has no extra trust anchor. */
+  const trustingRequest = (overrides: RequestOptions = {}): RequestFn =>
+    ((options, onResponse) =>
+      httpsRequest({ ...options, ca: cert, ...overrides }, onResponse)) as RequestFn;
+
+  // Loopback is allowed only through the test seam; the production policy blocks it.
+  const deliver = (hostname = HOST) => {
+    vi.spyOn(outbound, "isAllowedAddress").mockImplementation((address) => address === "127.0.0.1");
+    vi.spyOn(outbound, "request").mockImplementation(trustingRequest());
+    return postCallback(`https://${hostname}:${port}/hook`, {
       headers: { "content-type": "application/json" },
       body: '{"type":"synthetic"}',
-      isAllowedAddress: (address) => address === "127.0.0.1",
-      ca: cert,
     });
+  };
 
   it("delivers to the pinned IP with the original hostname for SNI, certificate, and Host", async () => {
     vi.spyOn(outbound, "resolve").mockImplementation(resolvesTo("127.0.0.1"));
@@ -362,12 +454,71 @@ describe.runIf(hasOpenssl())("postCallback against a local TLS server", () => {
     expect(seen).toHaveLength(1);
   });
 
+  it("closes the connection once the status arrives, even if the body never ends", async () => {
+    vi.spyOn(outbound, "resolve").mockImplementation(resolvesTo("127.0.0.1"));
+    respond = (res) => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.write("partial body that never ends");
+    };
+    expect(await deliver()).toEqual({ ok: true });
+    const socket = lastSocket;
+    if (!socket) throw new Error("Expected a server-side socket");
+    if (!socket.destroyed) {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("server socket stayed open")), 1_000);
+        socket.once("close", () => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+    }
+    expect(socket.destroyed).toBe(true);
+  });
+
+  it("delivers to a public IP literal with certificate verification against that IP", async () => {
+    const resolve = vi.spyOn(outbound, "resolve");
+    const pinned: RequestOptions[] = [];
+    // The seam can't route a public IP to loopback, so redirect the socket and
+    // verify the certificate against the address postCallback chose.
+    vi.spyOn(outbound, "request").mockImplementation(((options: RequestOptions, onResponse) => {
+      pinned.push(options);
+      return trustingRequest({
+        host: "127.0.0.1",
+        family: 4,
+        checkServerIdentity: (_host, peer) => checkServerIdentity(String(options.host), peer),
+      })(options, onResponse);
+    }) as RequestFn);
+    respond = (res) => {
+      res.statusCode = 204;
+      res.end();
+    };
+    expect(
+      await postCallback(`https://${LITERAL}:${port}/hook`, {
+        headers: { "content-type": "application/json" },
+        body: '{"type":"synthetic"}',
+      }),
+    ).toEqual({ ok: true });
+    expect(resolve).not.toHaveBeenCalled();
+    expect(pinned).toEqual([
+      expect.objectContaining({ host: LITERAL, family: 4, servername: undefined }),
+    ]);
+    expect(pinned[0]?.headers).toMatchObject({ host: `${LITERAL}:${port}` });
+    expect(seen).toEqual([
+      {
+        servername: undefined,
+        host: `${LITERAL}:${port}`,
+        path: "/hook",
+        body: '{"type":"synthetic"}',
+      },
+    ]);
+  });
+
   it("never connects when the production policy sees loopback", async () => {
     vi.spyOn(outbound, "resolve").mockImplementation(resolvesTo("127.0.0.1"));
+    vi.spyOn(outbound, "request").mockImplementation(trustingRequest());
     const outcome = await postCallback(`https://${HOST}:${port}/hook`, {
       headers: {},
       body: "{}",
-      ca: cert,
     });
     expect(outcome).toEqual({ ok: false, error: "blocked_destination" });
     expect(seen).toHaveLength(0);
