@@ -41,23 +41,40 @@ registered clients older than a day that never gained a consent, token, or grant
 
 `SERVICE_RATE_LIMIT_PER_MINUTE` bounds each webhook service and each agent token (the requester
 window), and `ACCOUNT_RATE_LIMIT_PER_MINUTE` bounds an account's total, both over the last 60
-seconds of recorded work (`apps/website/src/server/lib/rate-windows.ts`). Each path checks the
-windows early, before any side effect. The paths that push to people then check again in the same
-synchronous better-sqlite3 transaction that inserts the counted row, so concurrent requests
-cannot overshoot: webhook notifications and pages, agent notifications, interactions, agent pages
-(`/api/agent/oncall/:id/pages` and `/api/agent/notifications` with `oncall`), and board ask
-pushes. Each on-call group also accepts at most 10 new pages a minute, enforced the same way. The
-guarantee assumes the deployed shape: one app process on one SQLite connection.
+seconds of recorded work. `apps/website/src/server/lib/rate-windows.ts` holds the one definition
+every surface uses:
+
+- Service window: the webhook service's events, Live Activity operations, and pages.
+- Requester window: the agent token's Live Activity operations, interactions, one-shot
+  notifications (including board ask pushes), and pages.
+- Account window: every event from the owner's services, every interaction, agent notification,
+  and page, and every Live Activity operation not tied to an interaction (the interaction already
+  counts).
+
+Each path checks the windows early to answer cheaply. The paths that push to people then check
+again in the same synchronous better-sqlite3 transaction that inserts the counted row, so
+concurrent requests cannot overshoot: webhook notifications and pages, agent notifications,
+interactions, agent pages (`/api/agent/oncall/:id/pages` and `/api/agent/notifications` with
+`oncall`), and board ask pushes. A project named by a webhook or agent notification is created in
+that transaction only after admission, so a refused notification leaves no project behind. A board
+push retry of a failed attempt is admitted in the same way and moves the notification's
+`createdAt` to the retry time so it counts again; the transaction also claims the attempt, so
+overlapping retries of one revision send one push (an attempt stuck in `processing` for two
+minutes is treated as abandoned and may be retried). Each on-call group also accepts at most 10 new
+pages a minute, enforced the same way. The guarantee assumes the deployed shape: one app process on
+one SQLite connection.
 
 Accepted residuals, which remain check-then-act and can be overshot by a concurrent burst:
 
-- Live Activity starts, updates, and ends, from agent tokens and activity webhooks. A start can
-  end blocking activities before its rows are inserted, so reserving capacity first would mean
-  moving those side effects into the transaction. These pushes reach only the owner's devices, each
-  device holds one active activity, and updates and ends compare-and-swap the activity sequence, so
-  a burst against one activity records one operation.
+- Live Activity starts, updates, and ends, from agent tokens and activity webhooks. They use the
+  same window definition, but a start can end blocking activities before its rows are inserted, so
+  reserving capacity first would mean moving those side effects into the transaction. These pushes
+  reach only the owner's devices, each device holds one active activity, and updates and ends
+  compare-and-swap the activity sequence, so a burst against one activity records one operation.
 - Agent app sharing and team app creation check the agent budget but record nothing it counts.
   Team notices have their own per-person cap.
+- A webhook notification with `response` is admitted as one event, then records its interaction
+  outside that transaction, so it adds two rows to the account window.
 
 ## Admission and identity
 
