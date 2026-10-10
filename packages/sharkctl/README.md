@@ -164,9 +164,9 @@ becomes an admin), and `teams remove-member <team_id> <user_id>` removes someone
 their sign-in to the team's apps and drops them from rotations; apps that member added go back to
 their own apps. `teams invite <team_id> [--email <email>] [--role member|admin]` returns a 7-day
 join link (`code` and `url`). With `--email`, only the account with that email (case-insensitive)
-can accept, and a SHark user with it also gets a push. Accepting is human-only, in the app or on the website, and the joining
-account must still pass the server's email allowlist. `teams invites` and
-`teams revoke-invite <team_id> <invite_id>` manage links. SHark has no seat billing, so team size
+can accept, and a SHark user with it also gets a push. Accepting is human-only, in the app or on
+the website, and the joining account must still pass the server's email allowlist. `teams invites`
+and `teams revoke-invite <team_id> <invite_id>` manage links. SHark has no seat billing, so team size
 is not limited.
 
 ## oncall and page

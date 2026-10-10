@@ -1222,7 +1222,7 @@ sharkctl apps remove app_...`,
         blocks: [
           {
             kind: "p",
-            text: "Owners and admins create invite links. Each link joins one person, expires after seven days, and can be revoked. Add an email to also push the invite to an existing SHark user with that address.",
+            text: "Owners and admins create invite links. Each link joins one person, expires after seven days, and can be revoked. Add an email to limit the invite to the account with that address (case-insensitive); an existing SHark user with it also gets a push.",
           },
           {
             kind: "code",
