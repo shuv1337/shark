@@ -58,9 +58,11 @@ logs. Unchecked release evidence keeps the goal active.
     ("docs(shark): make the board the default agent status surface", parent `e405b22`), the local
     working commit for #95 before it was squash-merged. It was never pushed. In the operator Mac's
     repository it survives only under `refs/jj/keep/e43f4329c5e11b93e855493401efb38b86a4a8ee` and
-    one T3 checkpoint ref, and no other commit in any ref has that file. The merged #95
+    the T3 checkpoint commit `97d46e1`, whose `skills/shark/SKILL.md` is the same blob
+    (`d810dd7626504c194cc3b9877e57accf87587c4a`, same digest). No commit other than `e43f432` and
+    `97d46e1` in any ref has that file. The merged #95
     (`20e14e1a49c8cb8187e92c56c26dc7f8c6473208`) ships a different `SKILL.md` (SHA-256
-    `257ec4b3736da465e7ae11b373d7bc0d2d198f871f72897203ec01bf2ab0ee14`), and so does each host's
+    `f2830ede7c1740f825889e9762191db8cf797c0aec57d1e0acf74f933f991011`), and so does each host's
     previous bundle revision (`e405b22` ships SHA-256
     `683ef5edb09b5e7b0a4af2795e3ab4989a55b895f5b45c2687a0419fa4363034`, and `25e1649` ships
     `c96e5e045c4651ee2e59f5ebc00207777c336d99f8ab8cc9a059d9f90333cc00`). The installed copy
