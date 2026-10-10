@@ -529,7 +529,17 @@ const schemas: Record<string, JsonSchema> = {
       current: { anyOf: [ref("OncallShift"), { type: "null" }] },
       upcoming: arrayOf(ref("OncallShift")),
       overrides: arrayOf(
-        object({ id: str, person: ref("OncallPerson"), startsAt: dateTime, endsAt: dateTime }),
+        object({
+          id: str,
+          person: ref("OncallPerson"),
+          startsAt: dateTime,
+          endsAt: dateTime,
+          createdBy: {
+            anyOf: [ref("OncallPerson"), { type: "null" }],
+            description:
+              "Who scheduled the override; null when it predates creator tracking or the creator was deleted.",
+          },
+        }),
       ),
       openPageCount: int,
       createdAt: dateTime,
@@ -1126,12 +1136,13 @@ export const agentOperations: Record<string, Partial<Record<AgentMethod, AgentOp
       status: 201,
       response: wrap("group", ref("OncallGroup")),
       description:
-        "Returns 409 when a later-starting override partly covers the window; split the override around it.",
+        "Returns 409 when a later-starting override partly covers the window; split the override around it. When the override names someone other than the caller, that person gets a SHark notice.",
     },
   },
   "/oncall/{groupId}/overrides/{overrideId}": {
     delete: {
-      summary: "Remove an override",
+      summary:
+        "Remove an override (admins and owners: any; members: overrides naming them or that they created)",
       scopes: ["oncall:write"],
       params: [idParam("groupId"), idParam("overrideId")],
       response: wrap("group", ref("OncallGroup")),

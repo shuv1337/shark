@@ -1275,7 +1275,7 @@ sharkctl apps remove app_...`,
           },
           {
             kind: "p",
-            text: "Without `startsAt`, the first member is on call from the latest handoff. Overrides put someone on call for a window (covering a shift, a holiday) and replace the rotation while they last. Owners and admins can schedule anyone for any window; a member can only hand off time they are already on call for, to anyone in the team, starting no earlier than now. Where overrides overlap, the one that starts last wins, and the newest wins among overrides that start together. An override that a later-starting override would partly cover is refused with `409`; split it around that override. Each group lists its current shift and the next few.",
+            text: "Without `startsAt`, the first member is on call from the latest handoff. Overrides put someone on call for a window (covering a shift, a holiday) and replace the rotation while they last. Owners and admins can schedule anyone for any window; a member can only hand off time they are already on call for, to anyone in the team, starting no earlier than now. Where overrides overlap, the one that starts last wins, and the newest wins among overrides that start together. An override that a later-starting override would partly cover is refused with `409`; split it around that override, so an accepted override is always in force. When an override names someone other than its creator, that person gets a SHark notice (subject to the creator's notice cap). Each override records who created it; owners and admins can remove any override, and a member can remove one that names them or that they created. Each group lists its current shift and the next few.",
           },
         ],
       },

@@ -180,7 +180,9 @@ default escalation (next person after 5 minutes, the whole group 10 minutes late
 keeping the rest. `oncall override <group_id> --user <user_id> --starts-at <iso> --ends-at <iso>`
 puts someone on call for a window (members can only hand off time they are on call for, from now
 on; a window partly covered by a later-starting override is refused, so split it around that) and
-`oncall remove-override <group_id> <override_id>` removes it.
+tells them with a SHark notice when they are not you. `oncall remove-override <group_id>
+<override_id>` removes it (admins and owners: any override; members: one that names them or that
+they created).
 `oncall list --team <team_id>`, `oncall get <group_id>`, and `oncall me` show current and upcoming
 shifts.
 

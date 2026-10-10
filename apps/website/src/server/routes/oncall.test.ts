@@ -4,7 +4,7 @@ import type {
   OncallPageDto,
   OncallShiftDto,
 } from "@hark/contracts";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 process.env.NODE_ENV = "test";
 process.env.DATABASE_URL = ":memory:";
@@ -498,10 +498,7 @@ describe("override permissions", () => {
     expect(handoff.status).toBe(201);
     const overrideId = ((await handoff.json()) as { group: OncallGroupDto }).group.overrides?.[0]
       ?.id;
-    // The time is Cal's now, so Ben cannot remove her override or give it away.
-    expect((await call("DELETE", `/api/oncall/${group.id}/overrides/${overrideId}`)).status).toBe(
-      403,
-    );
+    // The time is Cal's now, so Ben cannot give it away again.
     expect((await override(group.id, "user_a", benStart + HOUR, benStart + 2 * HOUR)).status).toBe(
       403,
     );
@@ -513,6 +510,163 @@ describe("override permissions", () => {
     expect((await override(group.id, "user_a", benStart + HOUR, benStart + 2 * HOUR)).status).toBe(
       201,
     );
+  });
+
+  it("records who created each override and lets the creator remove it", async () => {
+    const group = await createGroup("Creator");
+    const [benStart] = benShift(group);
+    as("user_b");
+    const mistake = await override(group.id, "user_c", benStart + HOUR, benStart + 3 * HOUR);
+    expect(mistake.status).toBe(201);
+    const [handoff] = ((await mistake.json()) as { group: OncallGroupDto }).group.overrides ?? [];
+    expect(handoff).toMatchObject({
+      person: { userId: "user_c", name: "Cal" },
+      createdBy: { userId: "user_b", name: "Ben" },
+    });
+
+    // Cal passes the second hour on to Ana; Ben neither holds nor created that one.
+    as("user_c");
+    const passed = await override(group.id, "user_a", benStart + 2 * HOUR, benStart + 3 * HOUR);
+    expect(passed.status).toBe(201);
+    const onward = ((await passed.json()) as { group: OncallGroupDto }).group.overrides?.find(
+      (row) => row.person.userId === "user_a",
+    );
+    expect(onward?.createdBy?.userId).toBe("user_c");
+
+    as("user_b");
+    const foreign = await call("DELETE", `/api/oncall/${group.id}/overrides/${onward?.id}`);
+    expect(foreign.status).toBe(403);
+    const removed = await call("DELETE", `/api/oncall/${group.id}/overrides/${handoff?.id}`);
+    expect(removed.status).toBe(200);
+    const after = ((await removed.json()) as { group: OncallGroupDto }).group;
+    expect(after.overrides?.map((row) => [row.person.userId, row.createdBy?.userId])).toEqual([
+      ["user_a", "user_c"],
+    ]);
+  });
+
+  it("shows no creator for legacy overrides and leaves their removal to the holder and admins", async () => {
+    const group = await createGroup("Legacy");
+    const [benStart] = benShift(group);
+    await db.insert(schema.oncallOverride).values({
+      id: "ovr_legacy_synthetic",
+      groupId: group.id,
+      userId: "user_c",
+      startsAt: new Date(benStart),
+      endsAt: new Date(benStart + HOUR),
+      createdAt: new Date(),
+    });
+    as("user_b");
+    const listed = (await (await call("GET", `/api/oncall/${group.id}`)).json()) as {
+      group: OncallGroupDto;
+    };
+    expect(listed.group.overrides?.[0]).toMatchObject({
+      id: "ovr_legacy_synthetic",
+      createdBy: null,
+    });
+    const path = `/api/oncall/${group.id}/overrides/ovr_legacy_synthetic`;
+    expect((await call("DELETE", path)).status).toBe(403);
+    as("user_c");
+    expect((await call("DELETE", path)).status).toBe(200);
+  });
+
+  it("forgets the creator when their account is deleted", async () => {
+    const { eq } = await import("drizzle-orm");
+    const group = await createGroup("Departed");
+    const [benStart] = benShift(group);
+    const now = new Date();
+    await db.insert(schema.user).values({
+      id: "user_gone",
+      name: "Gone",
+      email: "user_gone@example.com",
+      emailVerified: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.oncallOverride).values({
+      id: "ovr_departed_synthetic",
+      groupId: group.id,
+      userId: "user_c",
+      startsAt: new Date(benStart),
+      endsAt: new Date(benStart + HOUR),
+      createdByUserId: "user_gone",
+      createdAt: now,
+    });
+    await db.delete(schema.user).where(eq(schema.user.id, "user_gone"));
+    const [row] = await db
+      .select()
+      .from(schema.oncallOverride)
+      .where(eq(schema.oncallOverride.id, "ovr_departed_synthetic"));
+    expect(row?.userId).toBe("user_c");
+    expect(row?.createdByUserId).toBeNull();
+  });
+});
+
+describe("override notices", () => {
+  const HOUR = 3_600_000;
+  const override = (groupId: string, userId: string, startsAt: number, endsAt: number) =>
+    call("POST", `/api/oncall/${groupId}/overrides`, {
+      userId,
+      startsAt: new Date(startsAt).toISOString(),
+      endsAt: new Date(endsAt).toISOString(),
+    });
+  const benStart = (group: OncallGroupDto) => Date.parse(group.upcoming[1]?.startsAt ?? "");
+
+  beforeEach(async () => {
+    (await import("../lib/teams")).resetNoticeRates();
+  });
+
+  it("tells the recipient when a member hands them part of a shift", async () => {
+    const group = await createGroup("Notice handoff");
+    const start = benStart(group);
+    as("user_b");
+    expect((await override(group.id, "user_c", start + HOUR, start + 3 * HOUR)).status).toBe(201);
+    await settle();
+    expect(pushesTo("user_b")).toHaveLength(0);
+    expect(pushesTo("user_c")).toHaveLength(1);
+    expect(pushesTo("user_c")[0]).toMatchObject({
+      title: "Ben put you on call for Notice handoff",
+      body: expect.stringMatching(/^You're on call from .+ until .+\.$/),
+      data: { url: "shark://oncall" },
+    });
+    as("user_c");
+    const inbox = (await (await call("GET", "/api/inbox/notifications")).json()) as {
+      items: Array<{ title: string; sourceName: string }>;
+    };
+    expect(inbox.items[0]).toMatchObject({
+      title: "Ben put you on call for Notice handoff",
+      sourceName: "Notice handoff",
+    });
+  });
+
+  it("tells the recipient of an admin override but not someone naming themselves", async () => {
+    const group = await createGroup("Notice admin");
+    const start = benStart(group);
+    as("user_a");
+    expect((await override(group.id, "user_c", start, start + HOUR)).status).toBe(201);
+    expect((await override(group.id, "user_a", start + HOUR, start + 2 * HOUR)).status).toBe(201);
+    as("user_b");
+    expect((await override(group.id, "user_b", start + 2 * HOUR, start + 3 * HOUR)).status).toBe(
+      201,
+    );
+    await settle();
+    expect(pushesTo("user_c").map((message) => message.title)).toEqual([
+      "Ana put you on call for Notice admin",
+    ]);
+    expect(pushesTo("user_a")).toHaveLength(0);
+    expect(pushesTo("user_b")).toHaveLength(0);
+  });
+
+  it("holds override notices to the sender's notice cap", async () => {
+    const { NOTICES_PER_SENDER_PER_MINUTE } = await import("../lib/teams");
+    const group = await createGroup("Notice cap");
+    const start = benStart(group);
+    as("user_a");
+    for (let index = 0; index <= NOTICES_PER_SENDER_PER_MINUTE; index += 1) {
+      const from = start + index * HOUR;
+      expect((await override(group.id, "user_c", from, from + HOUR)).status).toBe(201);
+    }
+    await settle();
+    expect(pushesTo("user_c")).toHaveLength(NOTICES_PER_SENDER_PER_MINUTE);
   });
 });
 
