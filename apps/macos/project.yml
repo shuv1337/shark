@@ -25,6 +25,9 @@ targets:
       - path: Resources
     info:
       path: Resources/Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
     entitlements:
       path: Resources/SHarkMac.entitlements
       properties:
@@ -33,7 +36,7 @@ targets:
         com.apple.security.network.client: true
     settings:
       base:
-        MARKETING_VERSION: 1.0.0
+        MARKETING_VERSION: 0.6.0
         CURRENT_PROJECT_VERSION: 1
     scheme:
       testTargets:

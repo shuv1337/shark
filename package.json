@@ -1,7 +1,7 @@
 {
   "name": "hark",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.6.0",
   "license": "PolyForm-Noncommercial-1.0.0",
   "packageManager": "pnpm@11.10.0",
   "engines": {
@@ -17,7 +17,8 @@
     "macos:generate": "cd apps/macos && xcodegen generate",
     "macos:test": "cd apps/macos && xcodebuild -project SHarkMac.xcodeproj -scheme SHarkMac -destination 'platform=macOS' -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO test",
     "brand:generate": "node scripts/generate-brand-assets.mjs",
-    "brand:check": "node scripts/generate-brand-assets.mjs --check && node scripts/check-fork-boundaries.mjs"
+    "brand:check": "node scripts/generate-brand-assets.mjs --check && node scripts/check-fork-boundaries.mjs",
+    "version:check": "node --test scripts/check-versions.test.mjs && node scripts/check-versions.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.5",
