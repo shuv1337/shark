@@ -1072,7 +1072,9 @@ export function admitLiveActivityMutation(input: {
         const twin = tx
           .select({ id: liveActivityOperation.id })
           .from(liveActivityOperation)
-          .where(and(requesterMatch, eq(liveActivityOperation.idempotencyKey, operation.idempotencyKey)))
+          .where(
+            and(requesterMatch, eq(liveActivityOperation.idempotencyKey, operation.idempotencyKey)),
+          )
           .get();
         if (twin) return { raced: null };
       }
@@ -1582,7 +1584,8 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       if (raced?.conflict) {
         return c.json({ error: "Idempotency-Key was already used with a different payload" }, 409);
       }
-      if (raced) return c.json<LiveActivityMutationResponse>(await idempotentMutationResponse(raced));
+      if (raced)
+        return c.json<LiveActivityMutationResponse>(await idempotentMutationResponse(raced));
       if (mutation.raced) throw mutation.raced;
       return c.json({ error: "Sequence conflict" }, 409);
     }
@@ -1732,7 +1735,8 @@ export const activitiesAgentRoute = new Hono<AgentEnv>()
       if (raced?.conflict) {
         return c.json({ error: "Idempotency-Key was already used with a different payload" }, 409);
       }
-      if (raced) return c.json<LiveActivityMutationResponse>(await idempotentMutationResponse(raced));
+      if (raced)
+        return c.json<LiveActivityMutationResponse>(await idempotentMutationResponse(raced));
       if (mutation.raced) throw mutation.raced;
       return c.json({ error: "Sequence conflict" }, 409);
     }

@@ -350,7 +350,9 @@ describe("Live Activity agent routes", () => {
       .where(eq(schema.device.userId, "activity_user_1"));
     billingState.serviceRate = 3;
     const responses = await Promise.all(
-      Array.from({ length: 12 }, (_, index) => start({ title: `Run ${index}`, status: "Starting" })),
+      Array.from({ length: 12 }, (_, index) =>
+        start({ title: `Run ${index}`, status: "Starting" }),
+      ),
     );
     const admitted = responses.filter((response) => response.status === 201);
     const limited = responses.filter((response) => response.status === 429);

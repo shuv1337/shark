@@ -764,7 +764,11 @@ describe("Live Activity webhook routes", () => {
     expect(refused.status).toBe(429);
     expect(apnsCalls).toHaveLength(0);
     expect(
-      db.select().from(schema.liveActivity).where(eq(schema.liveActivity.id, first.activityId)).get(),
+      db
+        .select()
+        .from(schema.liveActivity)
+        .where(eq(schema.liveActivity.id, first.activityId))
+        .get(),
     ).toMatchObject({ status: "active" });
   });
 
