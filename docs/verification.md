@@ -6,36 +6,46 @@ logs. Unchecked release evidence keeps the goal active.
 ## Source baseline
 
 - 2026-10-10: host CLI, broker, and skill install of SHark 1.0.0 from
-  `dfe3a27f5ff04df9183db2768b2ebe3e959dcd7a` (#132, unified product version) on shuvbot (macOS,
-  launchd `dev.shuv.shark.broker`) and shuvdev (Linux, user systemd `sharkd.service`). The
+  `dfe3a27f5ff04df9183db2768b2ebe3e959dcd7a` (#132, unified product version) on the operator Mac
+  (launchd `dev.shuv.shark.broker`) and the Linux host (user systemd `sharkd.service`). The
   production service was not touched.
-  - Tarballs were packed on shuvbot from a clean detached checkout of the merge commit with
-    `pnpm install --frozen-lockfile`, then copied to shuvdev and checked by hash:
-    `sharkctl-1.0.0.tgz` (`e41320ce1d8806773a61f11d3cd01b27d2a738a1e5c6642141e4c285918367a4`) and
-    `hark-shark-broker-1.0.0.tgz`
-    (`abb99d08aeff75999c30538f569a5e957190dd01debfed1a91efaac01e251298`).
+  - Tarballs were packed on the operator Mac from a clean detached checkout of the merge commit
+    with pnpm 11.10.0: `pnpm install --frozen-lockfile` at the root, then `pnpm pack` in
+    `packages/sharkctl` and `packages/shark-broker`. They were copied to the Linux host and checked
+    by hash: `sharkctl-1.0.0.tgz` (SHA-256
+    `e41320ce1d8806773a61f11d3cd01b27d2a738a1e5c6642141e4c285918367a4`) and
+    `hark-shark-broker-1.0.0.tgz` (SHA-256
+    `abb99d08aeff75999c30538f569a5e957190dd01debfed1a91efaac01e251298`). The retained copies of
+    both tarballs on the operator Mac still hash to these values, and repeating the same commands
+    in a new clean checkout of the merge commit reproduced both tarballs byte for byte.
   - Before the change, both hosts ran `sharkctl` 0.5.0 and `sharkd` 0.1.0, with healthy services,
-    empty `sharkd queue list`, and no status counts. shuvbot ran the
-    `~/.local/lib/shark-broker/e405b22180a47ab55bb4070d585017f979bc9553/` bundle, and shuvdev ran
-    `~/.local/lib/shark-broker/25e1649b18d1bac87b4475b74459ef3afd8537bb/`. Both are kept for
-    rollback.
+    empty `sharkd queue list`, and no status counts. The operator Mac ran the
+    `~/.local/lib/shark-broker/e405b22180a47ab55bb4070d585017f979bc9553/` bundle, and the Linux
+    host ran `~/.local/lib/shark-broker/25e1649b18d1bac87b4475b74459ef3afd8537bb/`. Both are kept
+    for rollback.
   - On each host, both tarballs were installed with `npm install` into
     `~/.local/lib/shark-broker/dfe3a27f5ff04df9183db2768b2ebe3e959dcd7a/`, the `~/.local/bin`
     `sharkctl` and `sharkd` links were moved to it, and `sharkd service install` was run again
-    without ambient `HARK_*` overrides. On shuvdev, `/usr/local/bin/sharkd` links to
+    without ambient `HARK_*` overrides. On the Linux host, `/usr/local/bin/sharkd` links to
     `~/.local/bin/sharkd`, so it follows the new bundle without a root change.
   - After the change, both hosts run `sharkctl` 1.0.0 and `sharkd` 1.0.0. `sharkd service status`
     reported installed, loaded, running, and healthy, with no last error class and no counts, and it
     still did about a minute later with the same PID. The launchd job and the systemd unit
-    reference only the new bundle, and shuvdev's unit is `active` with 0 restarts.
+    reference only the new bundle, and the Linux host's unit is `active` with 0 restarts.
   - `sharkctl auth status` reported authenticated, and `sharkctl interaction list` succeeded with
     no interactions, on both hosts. No notification or Live Activity was sent.
   - The skill at `~/.agents/skills/shark` was replaced with `skills/shark` from the merge commit on
-    both hosts. Its frontmatter shows `metadata.version: "1.0.0"`, and `SKILL.md` hashes to
-    `ce2671a15993c2604e6910240564318612acca63af9a4a746b0a8a64edd4e9da` on both. The previous copy
-    (`a5026a8588f6ecabbbb3b2c7b253eef1a5869ee75b77ebd73d6bf1c1f8e07012`) was moved to
-    `~/.agents/skills/shark.bak-20261010`. `~/.claude/skills/shark` still links to
-    `../../.agents/skills/shark`.
+    both hosts. Its frontmatter shows `metadata.version: "1.0.0"`, and `SKILL.md` has SHA-256
+    `ce2671a15993c2604e6910240564318612acca63af9a4a746b0a8a64edd4e9da` on both, which matches
+    `skills/shark/SKILL.md` at the merge commit. The previous copy (`SKILL.md` SHA-256
+    `a5026a8588f6ecabbbb3b2c7b253eef1a5869ee75b77ebd73d6bf1c1f8e07012`) was moved to
+    `~/.agents/skills/shark.bak-20261010`. That digest matches no committed
+    `skills/shark/SKILL.md`, so the installed copy did not come unmodified from either host's
+    previous bundle revision (`e405b22` ships SHA-256
+    `683ef5edb09b5e7b0a4af2795e3ab4989a55b895f5b45c2687a0419fa4363034`, and `25e1649` ships
+    `c96e5e045c4651ee2e59f5ebc00207777c336d99f8ab8cc9a059d9f90333cc00`). The backup is no longer
+    on the operator Mac, so its source cannot be traced further. `~/.claude/skills/shark` still
+    links to `../../.agents/skills/shark`.
 - 2026-10-10: production was promoted from `6dcb736` to
   `de5f9fe6da7a84d41da00d8dc30eb917bd822acd` (on-call override creator and recipient notice #126,
   atomic Live Activity and webhook-response admission #129, Web Push service allowlist with pinned
@@ -66,23 +76,25 @@ logs. Unchecked release evidence keeps the goal active.
     protected-resource metadata.
   - The four OAuth discovery documents returned 200 without `watch:*` or `macos:*` scopes.
   - Empty requests to `/api/auth/oauth2/register` and `/api/auth/oauth2/public-client-prelogin`
-    returned 400. Each of `/api/auth/oauth2/token`, `/revoke`, and `/introspect` returned 400 for
-    an empty form and 415 for JSON. Anonymous `POST /api/web-push/subscriptions` returned 401.
+    returned 400. Each of `/api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, and
+    `/api/auth/oauth2/introspect` returned 400 for an empty form and 415 for JSON. Anonymous
+    `POST /api/web-push/subscriptions` returned 401.
   - The 1Password CLI started a new `op daemon` during this deploy and left it running afterward,
     without the deploy lock. This appears to be normal CLI behavior, not a sign of a killed run.
-  - Not yet done for `de5f9fe`: a test notification, signed-in dashboard access, and the macOS
-    companion check.
+  - The test notification, signed-in dashboard access, and macOS companion check are recorded in
+    the operator checks that follow.
 - 2026-10-10: post-deploy operator checks for `de5f9fe`:
-  - One labeled test notification, "Post-deploy check de5f9fe" with title "SHark deploy check",
-    was sent at 06:45:16 UTC through the existing `sharkctl` login and returned exit 0. It was
-    accepted for 4 targets. SHark records only the total, but the active-target counts make that
-    2 iOS, 1 macOS, and 1 web. The second web subscription seen at `20e14e1` was already inactive
-    before this send.
+  - One labeled test notification was sent at 06:45:16 UTC through the existing `sharkctl` login
+    and returned exit 0. It was accepted for 4 targets. SHark records only the total, but the
+    active-target counts make that 2 iOS, 1 macOS, and 1 web. The second web subscription seen at
+    `20e14e1` was already inactive before this send.
   - The owner confirmed on iPhone that the notification arrived and shows status Accepted
     (Accepted 4), with a Created, Accepted, and Processing timeline.
-  - Since the deploy, the container logged no errors, warnings, or rejected receipts, and no Web
-    Push blocked-destination, resolve-failure, or timeout messages. It stayed healthy with 0
-    restarts.
+  - Since the deploy, the container logged no errors, warnings, or rejected receipts, and it stayed
+    healthy with 0 restarts. Web Push failures are stored on the delivery result, not logged, and a
+    failed target is not counted as accepted. Accepted 4 for the 4 targets means the web target
+    recorded none of "resolved to a blocked destination", "could not resolve its push service", "timed
+    out resolving its push service", or "timed out".
   - Web Push subscriptions were 1 active of 2 total both before and after the send, so nothing was
     pruned. iOS (2 active), macOS (1 active), and on-call overrides (0) were unchanged.
   - The existing signed-in dashboard session carried over the deploy. No fresh Apple passkey
@@ -92,7 +104,8 @@ logs. Unchecked release evidence keeps the goal active.
     and the "This browser" notifications section showed its normal "Enable notifications" state.
     The owner has no teams, so the on-call page and the "· added by" label could not be exercised.
   - The installed macOS companion (`dev.shuv.shark.macos`) has a stored keychain credential and 1
-    active registered device, and the app was running. The owner reported that it works.
+    active registered device, and the app was running. The owner reported that it works. Whether
+    its menu-bar inbox showed this send was not separately confirmed, so this check is partial.
 
 - 2026-10-10: production was promoted from `20e14e1` to
   `6dcb7367936a8d43b5772baf5b667767fb180c8e` (auth and MCP OAuth follow-ups #111, MCP OAuth
@@ -125,8 +138,8 @@ logs. Unchecked release evidence keeps the goal active.
     protected-resource metadata.
   - The four OAuth discovery documents returned 200 without `watch:*` or `macos:*` scopes.
   - Empty requests to `/api/auth/oauth2/register` and `/api/auth/oauth2/public-client-prelogin`
-    returned 400. Each of `/api/auth/oauth2/token`, `/revoke`, and `/introspect` returned 400 for
-    an empty form and 415 for JSON.
+    returned 400. Each of `/api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, and
+    `/api/auth/oauth2/introspect` returned 400 for an empty form and 415 for JSON.
   - Not yet done for `6dcb736`: a test notification, signed-in dashboard access, and the macOS
     companion check.
 
@@ -142,7 +155,9 @@ logs. Unchecked release evidence keeps the goal active.
   The rebuilt `agent_notification` table kept its row count and inbox triggers, with integrity `ok`
   and no foreign-key violations. After `deploy/test-helpers` passed, `/etc/shark/compose.yaml` and
   `/usr/local/sbin/shark-materialize-secrets` were reinstalled. Their only changes were the fixed
-  `APNS_MACOS_BUNDLE_ID` and `TRUSTED_FORWARDED_FOR_HOPS=1`. Both kept their owners and modes and
+  `APNS_MACOS_BUNDLE_ID` in `compose.yaml` and `TRUSTED_FORWARDED_FOR_HOPS=1` in both. That diff is
+  the one from the `2896741` (#26) revision of both files, not from `e405b22`, so the installed
+  copies predated the macOS companion (#31). Both kept their owners and modes and
   hash-match `main`. The container has `TRUSTED_FORWARDED_FOR_HOPS=1` and no
   `TRUSTED_CLIENT_IP_HEADER`. Post-deploy checks:
   - Health returned 200 with only `{"ok":true}`. The container was healthy with 0 restarts.
@@ -160,8 +175,8 @@ logs. Unchecked release evidence keeps the goal active.
   - The local checkout fast-forwarded cleanly to `20e14e1`.
   - Empty requests to the anonymous OAuth endpoints returned validation errors, not content. Each of
     `/api/auth/oauth2/register` and `/api/auth/oauth2/public-client-prelogin` returned 400. Each
-    of `/api/auth/oauth2/token`, `/revoke`, and `/introspect` returned 400 for an empty form and
-    415 for JSON.
+    of `/api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, and `/api/auth/oauth2/introspect`
+    returned 400 for an empty form and 415 for JSON.
   - One labeled test notification sent through the existing `sharkctl` login returned exit 0. It was
     accepted for 5 targets: 2 iOS, 1 macOS, and 2 web. Afterward, the container logged no push
     errors or rejected receipts and still had 0 restarts.
