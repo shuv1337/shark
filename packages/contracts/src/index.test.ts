@@ -34,6 +34,7 @@ import {
   NOTIFICATION_BODY_MAX_CHARS,
   normalizeProjectName,
   OAUTH_DEFAULT_SCOPES,
+  OAUTH_HIGH_IMPACT_SCOPES,
   OAUTH_SCOPES,
   pushDataSchema,
   serviceCreateSchema,
@@ -923,5 +924,14 @@ describe("OAuth scopes", () => {
     expect(OAUTH_DEFAULT_SCOPES).not.toContain("tokens:manage");
     expect(OAUTH_DEFAULT_SCOPES).toContain("offline_access");
     expect(OAUTH_DEFAULT_SCOPES).toHaveLength(OAUTH_SCOPES.length - 1);
+  });
+
+  it("mark scopes that reach people or remove setup as high impact", () => {
+    for (const scope of OAUTH_HIGH_IMPACT_SCOPES) expect(OAUTH_SCOPES).toContain(scope);
+    expect(OAUTH_HIGH_IMPACT_SCOPES).toEqual(
+      expect.arrayContaining(["oncall:write", "teams:write", "services:write", "devices:write"]),
+    );
+    expect(OAUTH_HIGH_IMPACT_SCOPES).not.toContain("offline_access");
+    expect(OAUTH_HIGH_IMPACT_SCOPES).not.toContain("notifications:send");
   });
 });
