@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 const ORIGIN = "http://localhost:5173";
 const USER = { id: "user_e2e", email: "e2e-operator@example.com" };
@@ -187,7 +187,7 @@ async function rawToken(pairs: Array<[string, string]>) {
   return {
     status: response.status,
     headers: response.headers,
-    body: (await response.json()) as Record<string, unknown>,
+    body: (await response.json().catch(() => ({}))) as Record<string, unknown>,
   };
 }
 
@@ -551,6 +551,60 @@ describe("MCP OAuth end to end", () => {
     ]);
     expect(rotated.status, String(rotated.body.error_description)).toBe(200);
     expect(await mcpStatus(String(rotated.body.access_token))).toBe(MCP_REACHED);
+  });
+
+  it("answers an unreadable or failing token request with an uncacheable error", async () => {
+    const { clientId, verifier, code } = await codeFor("Broken Body Client");
+    const headers = { "content-type": "application/x-www-form-urlencoded" };
+
+    const failingBody = (extra: Record<string, string>) =>
+      new Request(`${ORIGIN}/api/auth/oauth2/token`, {
+        method: "POST",
+        headers: { ...headers, ...extra },
+        body: new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.error(new Error("synthetic body failure"));
+          },
+        }),
+        // @ts-expect-error Node requires duplex for stream bodies; lib.dom lacks the option.
+        duplex: "half",
+      });
+
+    // With a Content-Length the body-limit middleware passes the stream through, so the
+    // resource check is what reads it; a stream that fails is refused, not passed on.
+    const unreadable = await app.request(failingBody({ "content-length": "64" }));
+    expect(unreadable.status).toBe(400);
+    expect(await unreadable.json()).toMatchObject({ error: "invalid_request" });
+    expectUncacheable(unreadable.headers, "unreadable body");
+
+    // Without one the middleware reads the body first and the failure reaches app.onError.
+    const upstream = await app.request(failingBody({}));
+    expect(upstream.status).toBe(500);
+    expect(await upstream.json()).toMatchObject({ error: "server_error" });
+    expectUncacheable(upstream.headers, "middleware failure");
+
+    // The body-size limit's own rejection is uncacheable too.
+    const oversized = await rawToken([
+      ["grant_type", "authorization_code"],
+      ["code", "x".repeat(70 * 1024)],
+    ]);
+    expect(oversized.status).toBe(413);
+    expectUncacheable(oversized.headers, "oversized");
+
+    // Better Auth throwing instead of answering still yields a token error response.
+    const handler = vi.spyOn(auth, "handler").mockRejectedValueOnce(new Error("synthetic"));
+    try {
+      const failed = await rawToken([["grant_type", "authorization_code"]]);
+      expect(failed.status).toBe(500);
+      expect(failed.body).toMatchObject({ error: "server_error" });
+      expectUncacheable(failed.headers, "thrown");
+    } finally {
+      handler.mockRestore();
+    }
+
+    // Neither failure spent the code.
+    const exchanged = await exchange(clientId, code, verifier);
+    expect(exchanged.status, String(exchanged.body.error_description)).toBe(200);
   });
 
   it("denying consent sends access_denied and no code", async () => {

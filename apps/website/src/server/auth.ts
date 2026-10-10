@@ -64,11 +64,16 @@ export const TOKEN_RESPONSE_HEADERS = { "Cache-Control": "no-store", Pragma: "no
  */
 const BOUND_GRANT_TYPES = new Set(["authorization_code", "refresh_token"]);
 
-function invalidTarget(description: string): Response {
+/** An RFC 6749 §5.2 token error response. */
+export function tokenErrorResponse(status: number, error: string, description: string): Response {
   return Response.json(
-    { error: "invalid_target", error_description: description },
-    { status: 400, headers: TOKEN_RESPONSE_HEADERS },
+    { error, error_description: description },
+    { status, headers: TOKEN_RESPONSE_HEADERS },
   );
+}
+
+function invalidTarget(description: string): Response {
+  return tokenErrorResponse(400, "invalid_target", description);
 }
 
 const oauthResourceBinding = {
@@ -79,7 +84,15 @@ const oauthResourceBinding = {
     const contentType = request.headers.get("content-type") ?? "";
     // Anything else is refused by the endpoint's media-type check (415).
     if (!contentType.toLowerCase().startsWith("application/x-www-form-urlencoded")) return;
-    const form = new URLSearchParams(await request.clone().text());
+    let form: URLSearchParams;
+    try {
+      form = new URLSearchParams(await request.clone().text());
+    } catch {
+      // A body that cannot be read cannot be checked, so it never reaches the endpoint.
+      return {
+        response: tokenErrorResponse(400, "invalid_request", "the request body could not be read"),
+      };
+    }
     if (!BOUND_GRANT_TYPES.has(form.get("grant_type") ?? "")) return;
     const expected = mcpResourceUrl();
     const resources = form.getAll("resource");

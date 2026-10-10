@@ -197,7 +197,9 @@ Deliberate merge resolutions:
     reads the raw form in `onRequest` because RFC 8707 lets `resource` repeat and every value
     must be acceptable, while better-call's form parser keeps only the last one.
     Better Auth adds `Cache-Control: no-store` and `Pragma: no-cache` only to successful token
-    responses, so `app.ts` adds them to every `/api/auth/oauth2/token` response (RFC 6749 §5.2). Every access token `/mcp` accepts was therefore
+    responses, so `app.ts` adds them to every `/api/auth/oauth2/token` response (RFC 6749 §5.2),
+    including the 413 body-limit rejection and the 500 `server_error` it answers when the handler
+    or a middleware throws; a request body the plugin cannot read is 400 `invalid_request`. Every access token `/mcp` accepts was therefore
     requested for `/mcp`; tokens issued before this rule expire within their one-hour TTL. MCP
     (2025-06-18) requires clients to send `resource`; current Claude Code and OpenCode do through
     the TypeScript SDK (which sends it once it has read the protected resource metadata `/mcp`
