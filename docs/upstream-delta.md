@@ -159,7 +159,7 @@ Deliberate merge resolutions:
 - Better Auth rate limits read the client IP the app resolves from `TRUSTED_CLIENT_IP_HEADER` or
   `TRUSTED_FORWARDED_FOR_HOPS` (production: one exe.dev hop) per `docs/operations.md`. An hourly
   sweeper deletes expired OAuth tokens and day-old anonymous clients that were never connected,
-  and offboarding deletes the user's OAuth tokens and consents.
+  and offboarding deletes the user's OAuth tokens, consents, and unexchanged authorization codes.
 - The MCP server name is `shark`; access and refresh token prefixes stay `hark_mat_` and
   `hark_mrt_` as protocol identifiers.
 
