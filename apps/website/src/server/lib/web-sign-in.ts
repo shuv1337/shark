@@ -1,3 +1,5 @@
+import { CLIENT_IP_HEADER } from "./client-ip";
+
 const APPLE_AUTH_ORIGIN = "https://appleid.apple.com";
 
 type AuthHandler = (request: Request) => Promise<Response>;
@@ -12,20 +14,25 @@ function unavailable(): Response {
 /**
  * Starts Better Auth's Apple flow without publishing a signed-out HTML page.
  * The callback is fixed and the provider URL is allowlisted to prevent this
- * protocol bootstrap from becoming an open redirect.
+ * protocol bootstrap from becoming an open redirect. `clientIp` is the caller's
+ * trusted client IP (see client-ip.ts); Better Auth keys its `/sign-in/*` rate
+ * limit on it, so without it every caller shares one bucket.
  */
 export async function beginAppleWebSignIn(
   authHandler: AuthHandler,
   appUrl: string,
   callbackURL = "/dashboard",
+  clientIp: string | null = null,
 ): Promise<Response> {
+  const requestHeaders = new Headers({
+    "Content-Type": "application/json",
+    Origin: appUrl,
+  });
+  if (clientIp) requestHeaders.set(CLIENT_IP_HEADER, clientIp);
   const response = await authHandler(
     new Request(new URL("/api/auth/sign-in/social", appUrl), {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Origin: appUrl,
-      },
+      headers: requestHeaders,
       body: JSON.stringify({
         provider: "apple",
         callbackURL,
