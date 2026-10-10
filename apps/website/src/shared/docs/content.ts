@@ -507,7 +507,7 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
         blocks: [
           {
             kind: "p",
-            text: "When a callback is configured, SHark POSTs the answer to your URL with `Authorization: Bearer <callback.token>`, `Content-Type: application/json`, and a compatibility `Hark-Callbacks/1` user agent. Redirects are not followed and the request times out after 10 seconds.",
+            text: "When a callback is configured, SHark POSTs the answer to your URL with `Authorization: Bearer <callback.token>`, `Content-Type: application/json`, and a compatibility `Hark-Callbacks/1` user agent. Redirects are not followed and the request times out after 10 seconds. Every address the callback hostname resolves to must be public; a name that resolves to a private, loopback, link-local, or reserved address is refused without retrying.",
           },
           {
             kind: "code",

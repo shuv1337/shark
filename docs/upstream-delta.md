@@ -191,14 +191,23 @@ Deliberate merge resolutions:
 - MCP tools flatten each agent route's request body into tool arguments, so `board_ask` accepts
   `callback.url` and `callback.token` (`boardCallbackSchema` in `packages/contracts/src/board.ts`).
   An MCP client with `board:write` can therefore make the server POST an ask's resolution to a URL
-  it chooses, exactly as an agent token can. This is a deliberate capability, with the same guards
-  as the agent API. `isPublicHttpsUrl` is checked when the ask is written and again before each
-  delivery in `lib/board-callbacks.ts`. It rejects non-HTTPS URLs, `localhost`, `.local`, and
-  literal private, loopback, link-local, CGNAT, and IPv4-mapped addresses. Delivery uses
-  `redirect: "manual"`, so a redirect can't send it to another host, and a 10-second timeout. The
-  caller sees only the delivery status, the HTTP status code, or a short error, never the response
-  body. The check is on the URL's hostname only: it doesn't resolve DNS, so a public name that
-  resolves to a private address isn't blocked.
+  it chooses, exactly as an agent token can, and webhook interaction callbacks
+  (`response.callback.url`) do the same for webhook holders. This is a deliberate capability. No
+  human answer is needed: an agent can create an ask with `push: "none"` and cancel it. Both
+  callback types go through `lib/outbound.ts`. `publicHttpsUrlSchema` still rejects non-HTTPS
+  URLs, `localhost`, `.local`, and literal private addresses at write time, but only as an early
+  error. On every delivery attempt, retries included, the helper repeats that check and resolves
+  every A and AAAA record. It refuses the attempt if any record is loopback, private, link-local
+  (including `169.254.169.254`), CGNAT, unique-local, multicast, unspecified, `0.0.0.0/8`,
+  benchmarking, documentation, or another reserved range. IPv4-mapped and IPv4-compatible IPv6
+  are always refused, and NAT64 (`64:ff9b::/96`) and 6to4 are judged by their embedded IPv4
+  address. It then connects to the IP it validated, with TLS SNI, certificate verification, and
+  `Host` still using the original hostname, so DNS rebinding can't change the address between the
+  check and the connect. Redirects aren't followed, requests time out after 10 seconds, and
+  response bodies are never read. A blocked destination fails at once without retrying. The caller
+  sees only the delivery status and a coarse `callback.lastError` (`blocked_destination`,
+  `timeout`, `network_error`, or `HTTP <status>`), never the underlying error text. Network-level
+  egress filtering on the VM would be further defense in depth.
 - Dependency footprint: `@modelcontextprotocol/sdk` is a production dependency of
   `@hark/website`. Per `pnpm-lock.yaml` it brings about 90 transitive packages, 54 of which
   nothing else in the website's production tree uses. They include `express@5`, `body-parser`,

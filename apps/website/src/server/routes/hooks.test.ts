@@ -1,4 +1,8 @@
+import { EventEmitter } from "node:events";
+import type { ClientRequest, IncomingMessage } from "node:http";
+import type { RequestOptions } from "node:https";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { outbound, type RequestFn } from "../lib/outbound";
 
 process.env.NODE_ENV = "test";
 process.env.DATABASE_URL = ":memory:";
@@ -138,6 +142,20 @@ beforeAll(async () => {
     updatedAt: now,
   });
 });
+
+/** Synthetic DNS and socket so callback delivery never leaves the process. */
+function stubCallbackTransport(address = "93.184.216.34", status = 204) {
+  vi.spyOn(outbound, "resolve").mockImplementation(async () => [{ address, family: 4 }]);
+  return vi.spyOn(outbound, "request").mockImplementation(((
+    _options: RequestOptions,
+    onResponse: (response: IncomingMessage) => void,
+  ) => {
+    const req = new EventEmitter() as EventEmitter & { end: () => void };
+    req.end = () =>
+      queueMicrotask(() => onResponse({ statusCode: status, resume() {} } as IncomingMessage));
+    return req as unknown as ClientRequest;
+  }) as RequestFn);
+}
 
 async function post(token: string, body: unknown, idempotencyKey?: string) {
   return app.request(`/hooks/${token}`, {
@@ -377,9 +395,7 @@ describe("POST /hooks/:token", () => {
     };
     expect(data.avatarUrl).toBe("https://example.com/ci.png");
 
-    const callbackFetch = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response(null, { status: 204 }));
+    const callbackRequest = stubCallbackTransport();
     const response = await app.request(`/api/interaction-responses/${data.interactionId}/respond`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -390,15 +406,19 @@ describe("POST /hooks/:token", () => {
       }),
     });
     expect(response.status).toBe(200);
-    await vi.waitFor(() => expect(callbackFetch).toHaveBeenCalledOnce());
-    const callbackCall = callbackFetch.mock.calls[0];
-    if (!callbackCall) throw new Error("Expected callback request");
-    if (!callbackCall[1]) throw new Error("Expected callback request options");
-    expect(callbackCall[0]).toBe("https://ci.example.com/hark-response");
-    expect((callbackCall[1].headers as Record<string, string>).authorization).toBe(
-      "Bearer private-callback-token",
-    );
-    callbackFetch.mockRestore();
+    await vi.waitFor(() => expect(callbackRequest).toHaveBeenCalledOnce());
+    const callbackOptions = callbackRequest.mock.calls[0]?.[0];
+    if (!callbackOptions) throw new Error("Expected callback request");
+    expect(callbackOptions).toMatchObject({
+      host: "93.184.216.34",
+      path: "/hark-response",
+      servername: "ci.example.com",
+    });
+    expect(callbackOptions.headers).toMatchObject({
+      host: "ci.example.com",
+      authorization: "Bearer private-callback-token",
+    });
+    vi.restoreAllMocks();
     const status = await app.request(`/hooks/${TOKEN}/events/${createdBody.eventId}`);
     expect(await status.json()).toMatchObject({
       ok: true,
@@ -407,6 +427,71 @@ describe("POST /hooks/:token", () => {
         response: { status: "approved", action: "approve", correlationId: "deploy-184" },
       },
     });
+  });
+
+  it("re-validates interaction callback destinations at delivery", async () => {
+    const { eq } = await import("drizzle-orm");
+    const { deliverInteractionCallbacks } = await import("../lib/interaction-callbacks");
+    billingTestState.pro = true;
+    sent.length = 0;
+    const created = await post(TOKEN, {
+      body: "Deploy staging?",
+      deviceIds: ["dev_1"],
+      response: {
+        type: "approval",
+        correlationId: "deploy-185",
+        expiresInSeconds: 900,
+        callback: { url: "https://ci.example.com/hark-response", token: "private-callback-token" },
+      },
+    });
+    billingTestState.pro = false;
+    expect(created.status).toBe(200);
+    const data = sent[0]?.data as { interactionId: string; responseToken: string };
+
+    // The name now resolves to the metadata address; the write-time check passed.
+    const callbackRequest = stubCallbackTransport("169.254.169.254");
+    const response = await app.request(`/api/interaction-responses/${data.interactionId}/respond`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "deny",
+        deviceId: "dev_1",
+        responseToken: data.responseToken,
+      }),
+    });
+    expect(response.status).toBe(200);
+    await deliverInteractionCallbacks();
+    const [row] = await db
+      .select()
+      .from(schema.interaction)
+      .where(eq(schema.interaction.id, data.interactionId));
+    expect(row).toMatchObject({
+      callbackStatus: "failed",
+      callbackAttempts: 1,
+      callbackLastError: "blocked_destination",
+    });
+
+    // A literal private URL stored by an older path is refused without resolving.
+    await db
+      .update(schema.interaction)
+      .set({
+        callbackUrl: "https://10.0.0.9/hook",
+        callbackStatus: "pending",
+        callbackAttempts: 0,
+        callbackNextAttemptAt: new Date(0),
+      })
+      .where(eq(schema.interaction.id, data.interactionId));
+    await deliverInteractionCallbacks();
+    const [literal] = await db
+      .select()
+      .from(schema.interaction)
+      .where(eq(schema.interaction.id, data.interactionId));
+    expect(literal).toMatchObject({
+      callbackStatus: "failed",
+      callbackLastError: "blocked_destination",
+    });
+    expect(callbackRequest).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
   });
 
   it("requires Pro for webhook responses", async () => {
