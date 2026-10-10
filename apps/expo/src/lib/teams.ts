@@ -74,6 +74,15 @@ export function roleLabel(role: TeamRole): string {
   return role === "owner" ? "Owner" : role === "admin" ? "Admin" : "Member";
 }
 
+/** The invite code to preview once auth has resolved to a signed-in session. */
+export function teamInvitePreviewCode(
+  code: string,
+  sessionPending: boolean,
+  hasSession: boolean,
+): string | null {
+  return code.length > 0 && !sessionPending && hasSession ? code : null;
+}
+
 export function canManageTeam(role: TeamRole | undefined): boolean {
   return role === "owner" || role === "admin";
 }
