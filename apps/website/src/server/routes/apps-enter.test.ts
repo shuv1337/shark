@@ -30,18 +30,31 @@ let app: typeof import("../app")["app"];
 let issueAppPass: typeof import("../lib/app-pass")["issueAppPass"];
 
 const USER = { id: "user_1", name: "Cap", email: "test@example.com" };
+const MEMBER = { id: "user_member", name: "Mo", email: "member@example.com" };
+const UNCONSENTED = { id: "user_unconsented", name: "Una", email: "unconsented@example.com" };
+const OUTSIDER = { id: "user_outsider", name: "Ozzy", email: "outsider@example.com" };
+const REMOVED = { id: "user_removed", name: "Rem", email: "removed@example.com" };
+type Person = typeof USER;
+
+let removeMember: typeof import("../lib/teams")["removeMember"];
 
 beforeAll(async () => {
   ({ app } = await import("../app"));
   ({ issueAppPass } = await import("../lib/app-pass"));
+  ({ removeMember } = await import("../lib/teams"));
   const { db } = await import("../db");
   const schema = await import("../db/schema");
   const { runMigrations } = await import("../db/migrate");
   runMigrations();
   const now = new Date();
-  await db
-    .insert(schema.user)
-    .values({ ...USER, emailVerified: true, createdAt: now, updatedAt: now });
+  await db.insert(schema.user).values(
+    [USER, MEMBER, UNCONSENTED, OUTSIDER, REMOVED].map((person) => ({
+      ...person,
+      emailVerified: true,
+      createdAt: now,
+      updatedAt: now,
+    })),
+  );
   const base = {
     userId: USER.id,
     shareName: true,
@@ -75,6 +88,36 @@ beforeAll(async () => {
       consentedAt: null,
     },
   ]);
+
+  // A team app on SHark's origin: consent lives in each member's state row.
+  await db
+    .insert(schema.team)
+    .values({ id: "team_1", name: "Crew", createdAt: now, updatedAt: now });
+  await db.insert(schema.teamMember).values(
+    [USER, MEMBER, UNCONSENTED, REMOVED].map((person) => ({
+      teamId: "team_1",
+      userId: person.id,
+      role: person === USER ? "owner" : "member",
+      joinedAt: now,
+    })),
+  );
+  await db.insert(schema.app).values({
+    ...base,
+    id: "app_teamboard",
+    name: "Team board",
+    url: "https://shark.example/board?team=1",
+    origin: "https://shark.example",
+    teamId: "team_1",
+    consentedAt: null,
+  });
+  await db.insert(schema.appMemberState).values([
+    { appId: "app_teamboard", userId: USER.id, consentedAt: now, updatedAt: now },
+    { appId: "app_teamboard", userId: MEMBER.id, consentedAt: now, updatedAt: now },
+    { appId: "app_teamboard", userId: UNCONSENTED.id, consentedAt: null, updatedAt: now },
+    { appId: "app_teamboard", userId: REMOVED.id, consentedAt: now, updatedAt: now },
+    // Consent left over from before a membership ended must not count.
+    { appId: "app_teamboard", userId: OUTSIDER.id, consentedAt: now, updatedAt: now },
+  ]);
 });
 
 beforeEach(() => {
@@ -94,13 +137,19 @@ const UNSAFE_NEXT = [
   "/foo/%2e%2e//evil.example",
 ];
 
-async function pass(appId: string, origin = "https://shark.example"): Promise<string> {
+async function pass(
+  appId: string,
+  origin = "https://shark.example",
+  user: Person = USER,
+): Promise<string> {
   const issued = await issueAppPass({
-    user: USER,
+    user,
     app: { id: appId, origin, shareName: true, shareEmail: false },
   });
   return issued.token;
 }
+
+const teamPass = (user: Person) => pass("app_teamboard", "https://shark.example", user);
 
 async function enter(
   fields: Record<string, string>,
@@ -180,6 +229,31 @@ describe("POST /apps/enter", () => {
       { origin: "null" },
     );
     expect(forged.status).toBe(403);
+  });
+});
+
+describe("POST /apps/enter for a team app", () => {
+  it("opens a session for the adder and for a consented member, as themselves", async () => {
+    for (const person of [USER, MEMBER]) {
+      const response = await enter({ pass: await teamPass(person), next: "/board" });
+      expect(response.status).toBe(303);
+    }
+    expect(sessions).toEqual([USER.id, MEMBER.id]);
+  });
+
+  it("refuses a member who has not approved sign-in and a non-member", async () => {
+    for (const person of [UNCONSENTED, OUTSIDER]) {
+      expect((await enter({ pass: await teamPass(person) })).status).toBe(401);
+    }
+    expect(sessions).toEqual([]);
+  });
+
+  it("refuses a member once they are removed, even with a pass issued before", async () => {
+    const issuedWhileMember = await teamPass(REMOVED);
+    expect(removeMember("team_1", REMOVED.id)).toBe(true);
+    expect((await enter({ pass: issuedWhileMember })).status).toBe(401);
+    expect((await enter({ pass: await teamPass(REMOVED) })).status).toBe(401);
+    expect(sessions).toEqual([]);
   });
 });
 
