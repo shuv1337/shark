@@ -212,13 +212,15 @@ Deliberate merge resolutions:
   (including `169.254.169.254`), CGNAT, unique-local, multicast, unspecified, `0.0.0.0/8`,
   benchmarking, documentation, or another reserved range. IPv4-mapped and IPv4-compatible IPv6
   are always refused, and NAT64 (`64:ff9b::/96`) and 6to4 are judged by their embedded IPv4
-  address. It then connects to the IP it validated, with TLS SNI, certificate verification, and
-  `Host` still using the original hostname, so DNS rebinding can't change the address between the
-  check and the connect. Redirects aren't followed, requests time out after 10 seconds, and
-  response bodies are never read. A blocked destination fails at once without retrying. The caller
-  sees only the delivery status and a coarse `callback.lastError` (`blocked_destination`,
-  `timeout`, `network_error`, or `HTTP <status>`), never the underlying error text. Network-level
-  egress filtering on the VM would be further defense in depth.
+  address. It then connects to an IP it validated, trying the remaining validated records in order
+  only when a connect fails, with TLS SNI, certificate verification, and `Host` still using the
+  original hostname, so DNS rebinding can't change the address between the check and the connect.
+  Redirects aren't followed, requests time out after 10 seconds overall, response bodies are
+  discarded, and the connection is closed once the status arrives. Any HTTPS port is allowed. A
+  blocked destination fails at once without retrying. The caller sees only the delivery status and
+  a coarse `callback.lastError` (`blocked_destination`, `timeout`, `network_error`,
+  `internal_error` for a row that couldn't be prepared, or `HTTP <status>`), never the underlying
+  error text. Network-level egress filtering on the VM would be further defense in depth.
 - Dependency footprint: `@modelcontextprotocol/sdk` is a production dependency of
   `@hark/website`. Per `pnpm-lock.yaml` it brings about 90 transitive packages, 54 of which
   nothing else in the website's production tree uses. They include `express@5`, `body-parser`,
