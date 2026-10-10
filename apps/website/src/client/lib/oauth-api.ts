@@ -3,9 +3,8 @@ import type { OAuthClientGrantListResponse } from "@hark/contracts";
 import { createAuthClient } from "better-auth/react";
 
 /**
- * Better Auth client with the OAuth provider plugin. On the consent page it
- * attaches the signed authorization query (`oauth_query`) to sign-in and
- * consent requests, so signing in resumes the MCP client's authorization.
+ * Better Auth client with the OAuth provider plugin, used by the consent page
+ * for its session. The page is served behind sign-in, so it never starts one.
  */
 export const oauthAuthClient = createAuthClient({ plugins: [oauthProviderClient()] });
 
@@ -82,15 +81,6 @@ export async function submitOAuthConsent(
   if (!url) throw new Error("The authorization server did not return a redirect");
   return url;
 }
-
-/** Signs in and comes back to this consent page, resuming the authorization. */
-export function signInForOAuth(): Promise<unknown> {
-  return oauthAuthClient.signIn.social({
-    provider: "apple",
-    callbackURL: `${window.location.pathname}${window.location.search}`,
-  });
-}
-
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, { credentials: "include", ...init });
   const data = (await response.json().catch(() => ({ error: "Request failed" }))) as T & {

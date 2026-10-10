@@ -6,7 +6,7 @@ import { HTTPException } from "hono/http-exception";
 import { auth } from "./auth";
 import { env } from "./env";
 import { accessLog } from "./lib/access-log";
-import { withTrustedClientIp } from "./lib/client-ip";
+import { trustedClientIp, withTrustedClientIp } from "./lib/client-ip";
 import { databaseIsReady } from "./lib/readiness";
 import { safeReturnPath } from "./lib/return-path";
 import { beginAppleWebSignIn } from "./lib/web-sign-in";
@@ -68,7 +68,12 @@ app.get("/api/health", (c) =>
   databaseIsReady() ? c.json({ ok: true }) : c.json({ ok: false }, 503),
 );
 app.get("/login", (c) =>
-  beginAppleWebSignIn(auth.handler, env.APP_URL, safeReturnPath(c.req.query("next"), env.APP_URL)),
+  beginAppleWebSignIn(
+    auth.handler,
+    env.APP_URL,
+    safeReturnPath(c.req.query("next"), env.APP_URL),
+    trustedClientIp((name) => c.req.header(name)),
+  ),
 );
 // The iPhone web view trades a pass for its own browser session; see web-view-session.ts.
 app.post("/apps/enter", async (c) => {

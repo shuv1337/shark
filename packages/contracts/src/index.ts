@@ -990,6 +990,20 @@ export const OAUTH_DEFAULT_SCOPES: readonly OAuthScope[] = OAUTH_SCOPES.filter(
   (scope) => scope !== "tokens:manage",
 );
 
+/**
+ * Scopes that reach other people or remove and rewire account setup. The
+ * consent page leaves them unticked, even when requested, so a person grants
+ * them only by choosing to.
+ */
+export const OAUTH_HIGH_IMPACT_SCOPES = [
+  "services:write",
+  "devices:write",
+  "apps:write",
+  "tokens:manage",
+  "teams:write",
+  "oncall:write",
+] as const satisfies readonly OAuthScope[];
+
 /** A connected MCP/OAuth client as shown in the dashboard. */
 export interface OAuthClientGrantDto {
   clientId: string;
