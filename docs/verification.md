@@ -41,6 +41,27 @@ logs. Unchecked release evidence keeps the goal active.
     without the deploy lock. This appears to be normal CLI behavior, not a sign of a killed run.
   - Not yet done for `de5f9fe`: a test notification, signed-in dashboard access, and the macOS
     companion check.
+- 2026-10-10: post-deploy operator checks for `de5f9fe`:
+  - One labeled test notification, "Post-deploy check de5f9fe" with title "SHark deploy check",
+    was sent at 06:45:16 UTC through the existing `sharkctl` login and returned exit 0. It was
+    accepted for 4 targets. SHark records only the total, but the active-target counts make that
+    2 iOS, 1 macOS, and 1 web. The second web subscription seen at `20e14e1` was already inactive
+    before this send.
+  - The owner confirmed on iPhone that the notification arrived and shows status Accepted
+    (Accepted 4), with a Created, Accepted, and Processing timeline.
+  - Since the deploy, the container logged no errors, warnings, or rejected receipts, and no Web
+    Push blocked-destination, resolve-failure, or timeout messages. It stayed healthy with 0
+    restarts.
+  - Web Push subscriptions were 1 active of 2 total both before and after the send, so nothing was
+    pruned. iOS (2 active), macOS (1 active), and on-call overrides (0) were unchanged.
+  - The existing signed-in dashboard session carried over the deploy. No fresh Apple passkey
+    sign-in was performed for this deploy. A fresh reload made 14 successful requests with 0 page
+    errors. All 9 of its API requests (inbox, devices, events, activities, services, teams, OAuth
+    clients, API tokens, and session) returned 200. The test notification appeared in the inbox,
+    and the "This browser" notifications section showed its normal "Enable notifications" state.
+    The owner has no teams, so the on-call page and the "· added by" label could not be exercised.
+  - The installed macOS companion (`dev.shuv.shark.macos`) has a stored keychain credential and 1
+    active registered device, and the app was running. The owner reported that it works.
 
 - 2026-10-10: production was promoted from `20e14e1` to
   `6dcb7367936a8d43b5772baf5b667767fb180c8e` (auth and MCP OAuth follow-ups #111, MCP OAuth
