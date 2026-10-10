@@ -59,11 +59,36 @@ refuses to initialize a missing repository.
 Run `deploy/test-helpers` before installing updated helpers.
 
 To promote, copy the full source SHA and image digest from a green production-publisher run, log
-into exe.dev with the existing operator identity, and run:
+into exe.dev with the existing operator identity, and start the helper detached from the SSH
+session, so that a dropped connection or a closing agent session cannot interrupt it:
 
 ```sh
-/usr/local/sbin/shark-deploy <40-character-main-SHA> <sha256:image-digest>
+setsid nohup /usr/local/sbin/shark-deploy <40-character-main-SHA> <sha256:image-digest> \
+  >"$HOME/shark-deploy-<short-sha>.log" 2>&1 </dev/null &
 ```
+
+Follow `~/shark-deploy-<short-sha>.log` until it prints `Deployed SHark <sha> at <digest>` or an
+error. Do not run the helper in the foreground of an SSH session. Its first line names its PID. Under
+`setsid` that PID also leads the helper's process group. To abort a detached run, send
+`kill -TERM -- -<PID>`. `nohup` makes the helper ignore `SIGHUP`, so a hangup has no effect on a
+detached run. Never use `SIGKILL`.
+
+Once the helper has started to stop the current container, it restarts the previous release on any
+exit before the new release is recorded in `current`. That covers a failed step or check, `SIGINT`,
+and `SIGTERM`. The rollback first waits for any pending stop, then starts the previous image. A
+`SIGHUP` restarts the previous release only until the new container has been started. That case
+only arises for an attached run. After that point a hangup leaves the new release running but
+unrecorded, because the new release may already have migrated the database. A hangup while the
+new `compose up` is still in flight keeps the new release only if the service container is already
+running the new image, and otherwise restarts the previous release. Verify it, then
+re-run the helper for that SHA or roll back manually. Rollback output is appended to
+`/home/exedev/shark/rollback.log`, or goes to the helper's stderr if that file cannot be opened. A
+failed rollback prints `Rollback FAILED` to stderr. A first deploy has no previous release, so a
+failure there says so and restarts nothing. An automatic rollback after the new container
+has started does not restore the pre-deploy database. Follow `docs/operations.md` when its
+migrations are incompatible. `SIGKILL`, a VM reboot, or a lost Docker daemon still cannot be
+handled, so a detached run remains required. The 1Password CLI runs with `OP_CACHE=false`, so the
+helpers leave no background `op daemon` behind.
 
 The helper:
 
@@ -72,7 +97,8 @@ The helper:
    `refs/heads/main`, the selected SHA, and a GitHub-hosted runner;
 3. anonymously pulls and confirms the exact digest;
 4. refreshes application secrets through the scoped 1Password service account;
-5. stops the current container and verifies an exact-schema SQLite checkpoint copy;
+5. arms the rollback, stops the current container, and verifies an exact-schema SQLite checkpoint
+   copy;
 6. requires a verified encrypted Restic snapshot before replacing an existing deployment;
 7. starts Compose with the exact digest, verifies readiness and the private HTTP boundary; and
 8. proves the running image ID and records SHA, digest, image ID, backup ID, and timestamp.

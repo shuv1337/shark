@@ -161,11 +161,18 @@ The selected replacement is a split publish/promote boundary:
 2. Make that GHCR package public. It contains no secrets or private source, and public GHCR images
    can be pulled without placing a registry credential on the VM.
 3. Record the full SHA and `sha256:` digest from the green workflow.
-4. Through the existing operator exe.dev identity, invoke:
+4. Through the existing operator exe.dev identity, invoke the helper detached from the SSH session
+   (an attached run killed by a dropped session caused a production outage before the helper armed
+   its rollback for signals):
 
    ```sh
-   /usr/local/sbin/shark-deploy <full-main-sha> <sha256:image-digest>
+   setsid nohup /usr/local/sbin/shark-deploy <full-main-sha> <sha256:image-digest> \
+     >"$HOME/shark-deploy-<short-sha>.log" 2>&1 </dev/null &
    ```
+
+   Follow the log until the helper reports success or an error. To abort, send
+   `kill -TERM -- -<PID>` using the PID from the log's first line; a detached run ignores `SIGHUP`.
+   See `deploy/README.md` for the rollback behavior.
 
 The host helper must verify repository, signer workflow, `refs/heads/main`, source SHA, hosted
 runner, and digest before it materializes secrets or touches the current service. GitHub stores no

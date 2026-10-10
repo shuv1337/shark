@@ -11,18 +11,20 @@ if [[ "$#" -ne 2 || ! "$deploy_sha" =~ ^[0-9a-f]{40}$ ||
   exit 64
 fi
 
-for command in curl docker flock gh install jq; do
+for command in cmp curl docker flock gh install jq; do
   command -v "$command" >/dev/null || {
     echo "Required command is unavailable: $command" >&2
     exit 69
   }
 done
 
-deploy_root="/home/exedev/shark"
-compose_file="/etc/shark/compose.yaml"
+deploy_root="${SHARK_DEPLOY_ROOT:-/home/exedev/shark}"
+compose_file="${SHARK_COMPOSE_FILE:-/etc/shark/compose.yaml}"
+helper_root="${SHARK_HELPER_ROOT:-/usr/local/sbin}"
 runtime_env="$deploy_root/.env"
 provenance_root="$deploy_root/provenance"
 lock_file="$deploy_root/deploy.lock"
+rollback_log="$deploy_root/rollback.log"
 image="ghcr.io/shuv1337/shark@$image_digest"
 
 if [[ ! -f "$compose_file" || -L "$compose_file" ]]; then
@@ -30,12 +32,123 @@ if [[ ! -f "$compose_file" || -L "$compose_file" ]]; then
   exit 78
 fi
 
+compose=(docker compose --project-name shark --env-file "$runtime_env" --file "$compose_file")
+previous_sha=""
+previous_image=""
+current_file="$deploy_root/current"
+provenance_file="$provenance_root/$deploy_sha.json"
+provenance_written=0
+
+# Stop before starting: a compose client killed mid-stop leaves dockerd finishing that stop, and a
+# bare `up` would see the draining container as running and return before the daemon kills it.
+rollback_previous() {
+  if [[ "$previous_sha" =~ ^[0-9a-f]{40}$ &&
+    "$previous_image" =~ ^ghcr\.io/shuv1337/shark@sha256:[0-9a-f]{64}$ ]]; then
+    local status=0
+    DEPLOY_GIT_SHA="$previous_sha" SHARK_IMAGE="$previous_image" "${compose[@]}" stop ||
+      status=$?
+    DEPLOY_GIT_SHA="$previous_sha" SHARK_IMAGE="$previous_image" "${compose[@]}" up --detach ||
+      status=$?
+    return "$status"
+  fi
+}
+
+restart_previous_release() {
+  if [[ -z "$previous_image" ]]; then
+    echo "Deploy did not finish, and there is no previous release to restart." >&2
+    return
+  fi
+  echo "Deploy did not finish; restarting the previous release (log: $rollback_log)." >&2
+  local status=0
+  if { : >>"$rollback_log"; } 2>/dev/null; then
+    rollback_previous >>"$rollback_log" 2>&1 || status=$?
+  else
+    echo "Cannot append to $rollback_log; rollback output follows." >&2
+    rollback_previous >&2 || status=$?
+  fi
+  if ((status != 0)); then
+    echo "Rollback FAILED (status $status); see $rollback_log. The previous release may be down." >&2
+  fi
+}
+
+# The new record carries this run's deployed_at, so in practice `current` matches it only after
+# the rename. An earlier record could match only if it was written in the same second for the same
+# SHA, image, and backup ID, and the deploy lock plus a full deploy run sit between the two.
+release_recorded() {
+  ((provenance_written)) && cmp -s "$provenance_file" "$current_file"
+}
+
+new_release_running() {
+  local container_id running_image_id expected_image_id
+  container_id="$(DEPLOY_GIT_SHA="$deploy_sha" SHARK_IMAGE="$image" \
+    "${compose[@]}" ps --quiet --status running shark)" || return 1
+  [[ "$container_id" =~ ^[[:alnum:]_.-]+$ ]] || return 1
+  running_image_id="$(docker inspect --format '{{.Image}}' "$container_id")" || return 1
+  expected_image_id="$(docker image inspect --format '{{.Id}}' "$image")" || return 1
+  [[ -n "$expected_image_id" && "$running_image_id" == "$expected_image_id" ]]
+}
+
+backup_stage=""
+volume_backup=""
+cleanup() {
+  if [[ -n "$volume_backup" ]]; then
+    docker run --rm --volume shark-data:/data "$image" \
+      rm -f "$volume_backup" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$backup_stage" ]]; then
+    rm -rf "$backup_stage"
+  fi
+}
+
+# An SSH hangup or kill delivers HUP/TERM, which never fires an ERR trap, so every exit path
+# funnels through one EXIT handler. Once the previous container may be stopping, a failure,
+# SIGINT, or SIGTERM before the new release is recorded restarts the previous release. A SIGHUP
+# after the new release has started leaves it running, because its migrations may already have
+# changed the schema; only an explicit SIGINT/SIGTERM or a failed check rolls that back. Docker can
+# start the new container before `compose up` returns, and bash runs the trap only once that client
+# exits, so a SIGHUP while the new `up` is in flight checks what is actually running.
+# SIGKILL still cannot be handled.
+rollback_armed=0
+new_release_issued=0
+new_release_up=0
+deploy_complete=0
+exit_signal=""
+hangup_after_new_release_started() {
+  [[ "$exit_signal" == HUP ]] || return 1
+  ((new_release_up)) && return 0
+  ((new_release_issued)) && new_release_running
+}
+on_exit() {
+  local status=$?
+  trap '' HUP INT TERM PIPE
+  set +e
+  if ((rollback_armed && !deploy_complete)); then
+    if release_recorded; then
+      echo "SHark $deploy_sha was recorded as current before the exit; leaving it running." >&2
+    elif hangup_after_new_release_started; then
+      echo "Hangup after SHark $deploy_sha started; leaving it running but unrecorded." >&2
+      echo "Verify it, then rerun shark-deploy for this SHA or roll back manually." >&2
+    else
+      restart_previous_release
+    fi
+  elif ((!rollback_armed)) && [[ -n "$exit_signal" ]]; then
+    echo "Interrupted by SIG$exit_signal before the running release was touched." >&2
+  fi
+  cleanup
+  exit "$status"
+}
+trap on_exit EXIT
+trap 'trap "" HUP INT TERM PIPE; exit_signal=HUP; exit 129' HUP
+trap 'trap "" HUP INT TERM PIPE; exit_signal=INT; exit 130' INT
+trap 'trap "" HUP INT TERM PIPE; exit_signal=TERM; exit 143' TERM
+
 install -d -m 700 "$deploy_root" "$provenance_root"
 exec 9>"$lock_file"
 flock -n 9 || {
   echo "Another SHark deployment is active." >&2
   exit 75
 }
+echo "shark-deploy PID $$; abort with SIGTERM, not SIGKILL."
 
 # Fetch the attestation from the public OCI package so the VM needs neither a
 # GitHub shell credential nor a registry credential.
@@ -57,41 +170,21 @@ if [[ "$resolved_digest" != "$image" ]]; then
   exit 70
 fi
 
-/usr/local/sbin/shark-materialize-secrets "$runtime_env.new"
+"$helper_root/shark-materialize-secrets" "$runtime_env.new"
 chmod 600 "$runtime_env.new"
 mv "$runtime_env.new" "$runtime_env"
 
-compose=(docker compose --project-name shark --env-file "$runtime_env" --file "$compose_file")
-previous_sha=""
-previous_image=""
-current_file="$deploy_root/current"
 if [[ -f "$current_file" ]]; then
   previous_sha="$(jq -er '.git_sha' "$current_file")"
   previous_image="$(jq -er '.image' "$current_file")"
 fi
 
-rollback_previous() {
-  if [[ "$previous_sha" =~ ^[0-9a-f]{40}$ &&
-    "$previous_image" =~ ^ghcr\.io/shuv1337/shark@sha256:[0-9a-f]{64}$ ]]; then
-    DEPLOY_GIT_SHA="$previous_sha" SHARK_IMAGE="$previous_image" "${compose[@]}" up --detach
-  fi
-}
-
+rollback_armed=1
 if [[ -n "$previous_image" ]]; then
   DEPLOY_GIT_SHA="$previous_sha" SHARK_IMAGE="$previous_image" "${compose[@]}" stop
 fi
-trap rollback_previous ERR
 
 backup_stage="$(mktemp -d "$deploy_root/backup.XXXXXXXX")"
-volume_backup=""
-cleanup() {
-  if [[ -n "$volume_backup" ]]; then
-    docker run --rm --volume shark-data:/data "$image" \
-      rm -f "$volume_backup" >/dev/null 2>&1 || true
-  fi
-  rm -rf "$backup_stage"
-}
-trap cleanup EXIT
 
 backup_id="none-first-deploy"
 if docker run --rm --volume shark-data:/data "$image" sh -c 'test -f /data/hark.sqlite'; then
@@ -107,13 +200,15 @@ if docker run --rm --volume shark-data:/data "$image" sh -c 'test -f /data/hark.
   docker cp "$copy_container:/data/backups/$backup_name" "$backup_stage/$backup_name"
   docker rm "$copy_container" >/dev/null
 
-  backup_id="$(/usr/local/sbin/shark-restic-backup "$backup_stage/$backup_name")"
+  backup_id="$("$helper_root/shark-restic-backup" "$backup_stage/$backup_name")"
   rm -f "$backup_stage/$backup_name"
   docker run --rm --volume shark-data:/data "$image" rm -f "$volume_backup" >/dev/null
   volume_backup=""
 fi
 
+new_release_issued=1
 DEPLOY_GIT_SHA="$deploy_sha" SHARK_IMAGE="$image" "${compose[@]}" up --detach
+new_release_up=1
 for _attempt in $(seq 1 30); do
   if curl --fail --silent http://127.0.0.1:8787/api/health >/dev/null; then
     break
@@ -148,7 +243,6 @@ for path in /robots.txt /sitemap.xml; do
   }
 done
 
-provenance_file="$provenance_root/$deploy_sha.json"
 current_new="$current_file.new"
 jq -n \
   --arg git_sha "$deploy_sha" \
@@ -158,10 +252,10 @@ jq -n \
   --arg deployed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   '{git_sha:$git_sha,image:$image,image_id:$image_id,backup_id:$backup_id,deployed_at:$deployed_at}' \
   >"$provenance_file"
+provenance_written=1
 chmod 600 "$provenance_file"
 cp "$provenance_file" "$current_new"
 mv "$current_new" "$current_file"
+deploy_complete=1
 
-trap - ERR
-trap cleanup EXIT
 echo "Deployed SHark $deploy_sha at $image_digest"
