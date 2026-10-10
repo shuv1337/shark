@@ -841,6 +841,174 @@ describe("work re-posts", () => {
   });
 });
 
+describe("waiting-ask links", () => {
+  const putWork = async (body: Record<string, unknown>, token = FM) => {
+    const response = await agent("/work", token, { method: "PUT", body: JSON.stringify(body) });
+    expect(response.status).toBeLessThan(300);
+    return ((await response.json()) as { work: { waitingAskId: string | null } }).work;
+  };
+  const stored = async (key: string) => {
+    const [row] = await db
+      .select()
+      .from(schema.boardWorkItem)
+      .where(eq(schema.boardWorkItem.workKey, key));
+    if (!row) throw new Error("missing synthetic work item");
+    return row;
+  };
+  /** A work item parked on a fresh open ask, the shape every case below starts from. */
+  const blockOn = async (workKey: string, askKey: string, askOverrides = {}) => {
+    const { body } = await createAsk({ key: askKey, ...askOverrides });
+    const work = await putWork({
+      key: workKey,
+      title: "Blocked on a question",
+      state: "blocked",
+      waitingAskKey: askKey,
+    });
+    expect(work.waitingAskId).toBe(body.ask.id);
+    return body.ask;
+  };
+  /** Writes a link the API would no longer create, standing in for a pre-fix row. */
+  const seedLink = async (
+    workKey: string,
+    askId: string,
+    owner: { userId: string; tokenId: string; agentLabel: string },
+  ) => {
+    const now = new Date();
+    await db.insert(schema.boardWorkItem).values({
+      id: `bwork_seed_${workKey.replace(/\W/g, "_")}`,
+      userId: owner.userId,
+      requesterTokenId: owner.tokenId,
+      agentLabel: owner.agentLabel,
+      workKey,
+      title: "Blocked on a question",
+      state: "blocked",
+      links: [],
+      waitingAskId: askId,
+      lastHeartbeatAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+  };
+
+  it("drops the link when the captain answers, and leaves the state to the agent", async () => {
+    const ask = await blockOn("fm:link:answered", "fm:link:answered:ask");
+    const answered = await session(`/asks/${ask.id}/answer`, {
+      method: "POST",
+      body: JSON.stringify({ digest: ask.digest, optionId: "ship" }),
+    });
+    expect(answered.status).toBe(200);
+    expect(await stored("fm:link:answered")).toMatchObject({
+      waitingAskId: null,
+      state: "blocked",
+    });
+  });
+
+  it("drops the link when the captain dismisses the ask", async () => {
+    const ask = await blockOn("fm:link:dismissed", "fm:link:dismissed:ask");
+    const dismissed = await session(`/asks/${ask.id}/dismiss`, {
+      method: "POST",
+      body: JSON.stringify({ digest: ask.digest, reason: "Not needed" }),
+    });
+    expect(dismissed.status).toBe(200);
+    expect(await stored("fm:link:dismissed")).toMatchObject({
+      waitingAskId: null,
+      state: "blocked",
+    });
+  });
+
+  it("clears every item on the account that pointed at the ask, and nobody else's", async () => {
+    const ask = await blockOn("fm:link:first", "fm:link:shared:ask");
+    // A second item on the same ask, and a third from another token on the same account.
+    expect(
+      (
+        await putWork({
+          key: "fm:link:second",
+          title: "Also blocked",
+          state: "blocked",
+          waitingAskKey: "fm:link:shared:ask",
+        })
+      ).waitingAskId,
+    ).toBe(ask.id);
+    expect(
+      (
+        await putWork(
+          {
+            key: "bro:link:third",
+            title: "Blocked too",
+            state: "blocked",
+            waitingAskKey: "fm:link:shared:ask",
+          },
+          BRO,
+        )
+      ).waitingAskId,
+    ).toBe(ask.id);
+    // Another account's row cannot be created through the API, so seed it to pin the user filter.
+    await seedLink("other:link:foreign", ask.id, {
+      userId: "other",
+      tokenId: "tok_other",
+      agentLabel: "Stranger",
+    });
+
+    const answered = await session(`/asks/${ask.id}/answer`, {
+      method: "POST",
+      body: JSON.stringify({ digest: ask.digest, optionId: "ship" }),
+    });
+    expect(answered.status).toBe(200);
+    for (const key of ["fm:link:first", "fm:link:second", "bro:link:third"]) {
+      expect(await stored(key), key).toMatchObject({ waitingAskId: null, state: "blocked" });
+    }
+    expect(await stored("other:link:foreign")).toMatchObject({ waitingAskId: ask.id });
+  });
+
+  it("drops a link stored before this shipped on the next heartbeat", async () => {
+    const { body } = await createAsk({ key: "fm:link:legacy:ask" });
+    const cancelled = await agent("/asks/fm:link:legacy:ask/cancel", FM, { method: "POST" });
+    expect(cancelled.status).toBe(200);
+    await seedLink("fm:link:legacy", body.ask.id, {
+      userId: "cap",
+      tokenId: "tok_fm",
+      agentLabel: "Firstmate (box)",
+    });
+    // A heartbeat that stays blocked and names no ask used to carry the dead id forward.
+    const beat = await putWork({ key: "fm:link:legacy", title: "Legacy", state: "blocked" });
+    expect(beat.waitingAskId).toBeNull();
+  });
+
+  it("drops the link when the agent cancels the ask", async () => {
+    await blockOn("fm:link:cancelled", "fm:link:cancelled:ask");
+    const cancelled = await agent("/asks/fm:link:cancelled:ask/cancel", FM, {
+      method: "POST",
+      body: JSON.stringify({ reason: "Decided in chat" }),
+    });
+    expect(cancelled.status).toBe(200);
+    expect(await stored("fm:link:cancelled")).toMatchObject({
+      waitingAskId: null,
+      state: "blocked",
+    });
+  });
+
+  it("drops the link when the sweep expires the ask", async () => {
+    await blockOn("fm:link:expired", "fm:link:expired:ask", { expiresInSeconds: 60 });
+    expect(await board.sweepExpiredAsks(new Date(Date.now() + 120_000))).toBe(1);
+    expect(await stored("fm:link:expired")).toMatchObject({ waitingAskId: null, state: "blocked" });
+  });
+
+  it("leaves a work item waiting on a different ask alone", async () => {
+    await blockOn("fm:link:other", "fm:link:other:ask");
+    const kept = await blockOn("fm:link:kept", "fm:link:kept:ask");
+    const cancelled = await agent("/asks/fm:link:other:ask/cancel", FM, {
+      method: "POST",
+      body: JSON.stringify({ reason: "Decided in chat" }),
+    });
+    expect(cancelled.status).toBe(200);
+    expect(await stored("fm:link:other")).toMatchObject({ waitingAskId: null });
+    expect(await stored("fm:link:kept")).toMatchObject({
+      waitingAskId: kept.id,
+      state: "blocked",
+    });
+  });
+});
+
 describe("expiry and callbacks", () => {
   it("expires due asks and delivers every terminal status to the callback with retries", async () => {
     stubCallbackTransport();
