@@ -217,7 +217,6 @@ export const api = {
   /** Public: works signed out. */
   previewTeamInvite: (code: string) =>
     request<TeamInvitePreviewDto>(`/api/team-invites/${encodeURIComponent(code)}`),
-  /** Fails with 402 `seat_limit` when the team needs more seats. */
   acceptTeamInvite: (code: string) =>
     request<TeamJoinResponse>(`/api/team-invites/${encodeURIComponent(code)}/accept`, {
       method: "POST",
