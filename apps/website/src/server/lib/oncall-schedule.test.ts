@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  activeOverride,
   currentShift,
   isValidTimeZone,
   nextInRotation,
   normalizeRotationStart,
+  onCallThroughout,
   type RotationConfig,
   rotationIndexAt,
   shiftStart,
@@ -148,6 +150,82 @@ describe("overrides", () => {
       endsAt: value.startsAt,
     };
     expect(currentShift(value, [early], iso("2026-03-02T00:00:00.000Z"))?.userId).toBe("dave");
+  });
+});
+
+describe("overlapping overrides", () => {
+  const value = rotation();
+  const long = {
+    id: "ovr_long",
+    userId: "dave",
+    startsAt: iso("2026-03-07T16:00:00.000Z"),
+    endsAt: iso("2026-03-08T00:00:00.000Z"),
+    createdAt: 1,
+  };
+  const nested = {
+    id: "ovr_nested",
+    userId: "erin",
+    startsAt: iso("2026-03-07T18:00:00.000Z"),
+    endsAt: iso("2026-03-07T20:00:00.000Z"),
+    createdAt: 0,
+  };
+  const orders = <T>(items: T[]): T[][] => [items, [...items].reverse()];
+
+  it("lets the later start win, then resumes the earlier override", () => {
+    for (const overrides of orders([long, nested])) {
+      expect(activeOverride(overrides, iso("2026-03-07T19:00:00.000Z"))?.id).toBe("ovr_nested");
+      expect(activeOverride(overrides, iso("2026-03-07T21:00:00.000Z"))?.id).toBe("ovr_long");
+      expect(
+        upcomingShifts(value, overrides, iso("2026-03-07T17:00:00.000Z"), 4).map((shift) => [
+          shift.userId,
+          shift.startsAt,
+          shift.endsAt,
+        ]),
+      ).toEqual([
+        ["dave", long.startsAt, nested.startsAt],
+        ["erin", nested.startsAt, nested.endsAt],
+        ["dave", nested.endsAt, long.endsAt],
+        ["bob", long.endsAt, iso("2026-03-08T13:00:00.000Z")],
+      ]);
+    }
+  });
+
+  it("breaks equal starts by the newest override, then by id, whatever the input order", () => {
+    const at = iso("2026-03-07T17:00:00.000Z");
+    const newer = { ...long, id: "ovr_a", userId: "erin", createdAt: 2 };
+    for (const overrides of orders([long, newer])) {
+      expect(activeOverride(overrides, at)?.id).toBe("ovr_a");
+    }
+    const twin = { ...long, id: "ovr_z", userId: "erin" };
+    for (const overrides of orders([long, twin])) {
+      expect(activeOverride(overrides, at)?.id).toBe("ovr_z");
+    }
+  });
+});
+
+describe("onCallThroughout", () => {
+  const value = rotation();
+  const bobStart = iso("2026-03-07T14:00:00.000Z");
+  const bobEnd = iso("2026-03-08T13:00:00.000Z");
+
+  it("accepts windows inside the person's shifts, including ones an override gave them", () => {
+    expect(onCallThroughout(value, [], "bob", bobStart, bobEnd)).toBe(true);
+    expect(onCallThroughout(value, [], "bob", bobStart + 3_600_000, bobEnd - 3_600_000)).toBe(true);
+    const toDave = { userId: "dave", startsAt: bobStart, endsAt: bobEnd };
+    expect(onCallThroughout(value, [toDave], "dave", bobStart, bobEnd)).toBe(true);
+    expect(onCallThroughout(value, [toDave], "bob", bobStart, bobStart + 60_000)).toBe(false);
+    const solo = rotation({ memberIds: ["bob"] });
+    expect(onCallThroughout(solo, [], "bob", bobStart, bobStart + 5 * 86_400_000)).toBe(true);
+  });
+
+  it("rejects windows that reach into someone else's time", () => {
+    expect(onCallThroughout(value, [], "bob", bobStart - 60_000, bobEnd)).toBe(false);
+    expect(onCallThroughout(value, [], "bob", bobStart, bobEnd + 60_000)).toBe(false);
+    expect(onCallThroughout(value, [], "carol", bobStart, bobStart + 60_000)).toBe(false);
+    const cover = { userId: "dave", startsAt: bobStart + 3_600_000, endsAt: bobStart + 7_200_000 };
+    expect(onCallThroughout(value, [cover], "bob", bobStart, bobEnd)).toBe(false);
+    const early = rotation({ startsAt: bobEnd });
+    expect(onCallThroughout(early, [], "alice", bobStart, bobEnd + 60_000)).toBe(false);
   });
 });
 

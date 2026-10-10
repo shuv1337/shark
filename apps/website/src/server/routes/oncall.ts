@@ -5,7 +5,7 @@ import {
   oncallPageCreateSchema,
   oncallPageResolveSchema,
 } from "@hark/contracts";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, gt } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db";
@@ -19,6 +19,7 @@ import {
   memberGroup,
   memberPage,
   openPagesFor,
+  overrideWindows,
   pageRecipientByToken,
   people,
   type RaisePageInput,
@@ -29,7 +30,7 @@ import {
   toGroupDto,
   toPageDto,
 } from "../lib/oncall";
-import { upcomingShifts } from "../lib/oncall-schedule";
+import { onCallThroughout, upcomingShifts } from "../lib/oncall-schedule";
 import { hasRole } from "../lib/teams";
 import {
   type AgentEnv,
@@ -50,6 +51,10 @@ const failure = (status: Outcome["status"], error: string, extra: object = {}): 
 const GROUP_NOT_FOUND = failure(404, "On-call group not found");
 const PAGE_NOT_FOUND = failure(404, "Page not found");
 const FORBIDDEN_ADMIN = failure(403, "Only team owners and admins can change on-call groups");
+const FORBIDDEN_HANDOFF = failure(
+  403,
+  "Members can only hand off time they are on call for; ask a team owner or admin to schedule other time",
+);
 const MAX_OVERRIDE_MS = 90 * 86_400_000;
 
 // ---------------------------------------------------------------------------
@@ -97,15 +102,16 @@ async function deleteGroup(actor: Actor, groupId: string): Promise<Outcome> {
   return result({ ok: true });
 }
 
-/** Admins schedule anyone; any member can schedule themselves (e.g. covering a shift). */
+/**
+ * Team owners and admins schedule anyone for any window. A member can only
+ * hand off time they are already on call for (by the rotation or an earlier
+ * override) to any team member, so a member never displaces someone else.
+ */
 async function createOverride(actor: Actor, groupId: string, input: unknown): Promise<Outcome> {
   const found = await memberGroup(groupId, actor.id);
   if (!found) return GROUP_NOT_FOUND;
   const parsed = oncallOverrideCreateSchema.safeParse(input);
   if (!parsed.success) return failure(400, "Invalid override", { issues: parsed.error.issues });
-  if (parsed.data.userId !== actor.id && !hasRole(found.role as "member", "admin")) {
-    return failure(403, "Only team owners and admins can schedule someone else");
-  }
   const [target] = await db
     .select({ userId: teamMember.userId })
     .from(teamMember)
@@ -119,14 +125,39 @@ async function createOverride(actor: Actor, groupId: string, input: unknown): Pr
   if (endsAt <= startsAt) return failure(400, "endsAt must be after startsAt");
   if (endsAt <= Date.now()) return failure(400, "endsAt must be in the future");
   if (endsAt - startsAt > MAX_OVERRIDE_MS) return failure(400, "Overrides last at most 90 days");
-  await db.insert(oncallOverride).values({
-    id: newId("ovr"),
-    groupId,
-    userId: parsed.data.userId,
-    startsAt: new Date(startsAt),
-    endsAt: new Date(endsAt),
-    createdAt: new Date(),
+  const admin = hasRole(found.role as "member", "admin");
+  const now = Date.now();
+  // Synchronous, so two concurrent handoffs cannot both give away the same time.
+  const inserted = db.transaction((tx) => {
+    if (!admin) {
+      const rows = tx
+        .select()
+        .from(oncallOverride)
+        .where(and(eq(oncallOverride.groupId, groupId), gt(oncallOverride.endsAt, new Date(now))))
+        .all();
+      // Only the part still to come decides who is paged.
+      const scheduled = onCallThroughout(
+        rotationOf(found.group),
+        overrideWindows(rows),
+        actor.id,
+        Math.max(startsAt, now),
+        endsAt,
+      );
+      if (!scheduled) return false;
+    }
+    tx.insert(oncallOverride)
+      .values({
+        id: newId("ovr"),
+        groupId,
+        userId: parsed.data.userId,
+        startsAt: new Date(startsAt),
+        endsAt: new Date(endsAt),
+        createdAt: new Date(now),
+      })
+      .run();
+    return true;
   });
+  if (!inserted) return FORBIDDEN_HANDOFF;
   return result({ group: await toGroupDto(found.group) }, 201);
 }
 
@@ -204,14 +235,7 @@ async function myOncall(actor: Actor): Promise<Outcome> {
       .select()
       .from(oncallOverride)
       .where(eq(oncallOverride.groupId, group.id));
-    const windows = overrides
-      .filter((row) => row.endsAt.getTime() > now)
-      .map((row) => ({
-        id: row.id,
-        userId: row.userId,
-        startsAt: row.startsAt.getTime(),
-        endsAt: row.endsAt.getTime(),
-      }));
+    const windows = overrideWindows(overrides.filter((row) => row.endsAt.getTime() > now));
     for (const shift of upcomingShifts(rotationOf(group), windows, now, 10)) {
       if (shift.userId !== actor.id) continue;
       shifts.push({

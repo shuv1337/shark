@@ -237,10 +237,21 @@ describe("on-call groups", () => {
       { afterMinutes: 10, target: "group" },
     ]);
 
-    // Members may cover a shift themselves; the override replaces the rotation.
-    as("user_c");
+    // A member cannot take over the current shift; an admin can put them on
+    // call, and the override replaces the rotation.
     const start = new Date(Date.now() - 60_000).toISOString();
     const end = new Date(Date.now() + 3_600_000).toISOString();
+    as("user_c");
+    expect(
+      (
+        await call("POST", `/api/oncall/${group.id}/overrides`, {
+          userId: "user_c",
+          startsAt: start,
+          endsAt: end,
+        })
+      ).status,
+    ).toBe(403);
+    as("user_a");
     const covered = await call("POST", `/api/oncall/${group.id}/overrides`, {
       userId: "user_c",
       startsAt: start,
@@ -251,16 +262,8 @@ describe("on-call groups", () => {
     expect(coveredGroup.current).toMatchObject({ person: { userId: "user_c" }, override: true });
     const overrideId = coveredGroup.overrides?.[0]?.id;
     expect(coveredGroup.current?.overrideId).toBe(overrideId);
-    expect(
-      (
-        await call("POST", `/api/oncall/${group.id}/overrides`, {
-          userId: "user_b",
-          startsAt: start,
-          endsAt: end,
-        })
-      ).status,
-    ).toBe(403);
 
+    as("user_c");
     const me = (await (await call("GET", "/api/oncall/me")).json()) as {
       shifts: Array<OncallShiftDto & { groupId: string; teamName: string }>;
     };
@@ -270,6 +273,138 @@ describe("on-call groups", () => {
     expect(((await removed.json()) as { group: OncallGroupDto }).group.current?.person.userId).toBe(
       "user_a",
     );
+  });
+});
+
+describe("override permissions", () => {
+  const HOUR = 3_600_000;
+  const HANDOFF_ONLY =
+    "Members can only hand off time they are on call for; ask a team owner or admin to schedule other time";
+  const override = (groupId: string, userId: string, startsAt: number, endsAt: number) =>
+    call("POST", `/api/oncall/${groupId}/overrides`, {
+      userId,
+      startsAt: new Date(startsAt).toISOString(),
+      endsAt: new Date(endsAt).toISOString(),
+    });
+  /** Ben's rotation shift, the one after Ana's current shift. */
+  function benShift(group: OncallGroupDto): [number, number] {
+    const shift = group.upcoming[1];
+    expect(shift?.person.userId).toBe("user_b");
+    return [Date.parse(shift?.startsAt ?? ""), Date.parse(shift?.endsAt ?? "")];
+  }
+  const people = (group: OncallGroupDto) =>
+    group.upcoming.map((shift) => [shift.person.userId, shift.override]);
+
+  it("lets owners and admins schedule anyone over anyone's shift", async () => {
+    const { eq, and } = await import("drizzle-orm");
+    const group = await createGroup("Admin cover");
+    const [benStart, benEnd] = benShift(group);
+    as("user_a");
+    const owner = await override(group.id, "user_c", benStart, benEnd + HOUR);
+    expect(owner.status).toBe(201);
+    expect(people(((await owner.json()) as { group: OncallGroupDto }).group).slice(0, 3)).toEqual([
+      ["user_a", false],
+      ["user_c", true],
+      ["user_c", false],
+    ]);
+
+    const role = and(eq(schema.teamMember.teamId, TEAM_ID), eq(schema.teamMember.userId, "user_b"));
+    await db.update(schema.teamMember).set({ role: "admin" }).where(role);
+    try {
+      as("user_b");
+      const admin = await override(group.id, "user_b", Date.now() - 60_000, Date.now() + HOUR);
+      expect(admin.status).toBe(201);
+      expect(((await admin.json()) as { group: OncallGroupDto }).group.current).toMatchObject({
+        person: { userId: "user_b" },
+        override: true,
+      });
+    } finally {
+      await db.update(schema.teamMember).set({ role: "member" }).where(role);
+    }
+  });
+
+  it("lets a member hand off part of their own shift, and the recipient hand it on", async () => {
+    const group = await createGroup("Handoff");
+    const [benStart, benEnd] = benShift(group);
+    as("user_b");
+    const from = benStart + HOUR;
+    const handoff = await override(group.id, "user_c", from, from + 2 * HOUR);
+    expect(handoff.status).toBe(201);
+    const after = ((await handoff.json()) as { group: OncallGroupDto }).group;
+    expect(people(after).slice(1, 4)).toEqual([
+      ["user_b", false],
+      ["user_c", true],
+      ["user_b", false],
+    ]);
+    expect(after.upcoming[3]?.endsAt).toBe(new Date(benEnd).toISOString());
+
+    // That time is Cal's now: Ben cannot give it away twice, but Cal can pass it on.
+    expect((await override(group.id, "user_a", from, from + HOUR)).status).toBe(403);
+    as("user_c");
+    expect((await override(group.id, "user_a", from + HOUR, from + 2 * HOUR)).status).toBe(201);
+  });
+
+  it("refuses a member taking over someone else's shift", async () => {
+    const group = await createGroup("Takeover");
+    const [benStart, benEnd] = benShift(group);
+    as("user_c");
+    const takeover = await override(group.id, "user_c", benStart, benEnd);
+    expect(takeover.status).toBe(403);
+    expect(await takeover.json()).toEqual({ error: HANDOFF_ONLY });
+    // Nor give someone else's shift to a third person.
+    expect((await override(group.id, "user_a", benStart, benStart + HOUR)).status).toBe(403);
+    // Nor take over Ana's current shift.
+    expect(
+      (await override(group.id, "user_c", Date.now() - 60_000, Date.now() + HOUR)).status,
+    ).toBe(403);
+    as("user_a");
+    const unchanged = (await (await call("GET", `/api/oncall/${group.id}`)).json()) as {
+      group: OncallGroupDto;
+    };
+    expect(unchanged.group.overrides).toEqual([]);
+  });
+
+  it("refuses a member override that reaches past their shift", async () => {
+    const group = await createGroup("Overreach");
+    const [benStart, benEnd] = benShift(group);
+    as("user_b");
+    const longer = await override(group.id, "user_c", benStart, benEnd + HOUR);
+    expect(longer.status).toBe(403);
+    expect(await longer.json()).toEqual({ error: HANDOFF_ONLY });
+    expect((await override(group.id, "user_b", benStart - HOUR, benEnd)).status).toBe(403);
+    expect((await override(group.id, "user_b", benStart, benEnd + HOUR)).status).toBe(403);
+    expect((await override(group.id, "user_c", benStart, benEnd)).status).toBe(201);
+  });
+
+  it("gives away the same time once under concurrent handoffs", async () => {
+    const group = await createGroup("Double handoff");
+    const [benStart, benEnd] = benShift(group);
+    as("user_b");
+    const responses = await Promise.all(
+      ["user_a", "user_c", "user_a", "user_c", "user_a"].map((userId) =>
+        override(group.id, userId, benStart, benEnd),
+      ),
+    );
+    expect(responses.map((response) => response.status).sort()).toEqual([201, 403, 403, 403, 403]);
+  });
+
+  it("resolves overlapping overrides by the later start and resumes the longer one", async () => {
+    const group = await createGroup("Layered");
+    const [benStart] = benShift(group);
+    as("user_a");
+    const longEnd = benStart + 5 * HOUR;
+    expect((await override(group.id, "user_c", benStart + HOUR, longEnd)).status).toBe(201);
+    const nested = await override(group.id, "user_a", benStart + 2 * HOUR, benStart + 3 * HOUR);
+    expect(nested.status).toBe(201);
+    const layered = ((await nested.json()) as { group: OncallGroupDto }).group;
+    expect(people(layered)).toEqual([
+      ["user_a", false],
+      ["user_b", false],
+      ["user_c", true],
+      ["user_a", true],
+      ["user_c", true],
+    ]);
+    expect(layered.upcoming[4]?.endsAt).toBe(new Date(longEnd).toISOString());
   });
 });
 

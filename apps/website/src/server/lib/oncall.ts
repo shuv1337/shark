@@ -46,6 +46,7 @@ import {
   isValidTimeZone,
   nextInRotation,
   normalizeRotationStart,
+  type OverrideWindow,
   type RotationConfig,
   type Shift,
   upcomingShifts,
@@ -102,12 +103,15 @@ async function activeOverrides(groupId: string, now: number) {
     .orderBy(asc(oncallOverride.startsAt), asc(oncallOverride.id));
 }
 
-function overrideWindows(rows: Array<typeof oncallOverride.$inferSelect>) {
+export function overrideWindows(
+  rows: Array<typeof oncallOverride.$inferSelect>,
+): OverrideWindow[] {
   return rows.map((row) => ({
     id: row.id,
     userId: row.userId,
     startsAt: row.startsAt.getTime(),
     endsAt: row.endsAt.getTime(),
+    createdAt: row.createdAt.getTime(),
   }));
 }
 

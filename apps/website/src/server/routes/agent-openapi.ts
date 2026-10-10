@@ -1114,7 +1114,8 @@ export const agentOperations: Record<string, Partial<Record<AgentMethod, AgentOp
   },
   "/oncall/{groupId}/overrides": {
     post: {
-      summary: "Put someone on call for a window (admins: anyone; members: themselves)",
+      summary:
+        "Put someone on call for a window (admins: any window; members: only time they are on call for)",
       scopes: ["oncall:write"],
       params: [idParam("groupId")],
       request: oncallOverrideCreateSchema,
