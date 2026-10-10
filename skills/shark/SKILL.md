@@ -578,7 +578,9 @@ sharkctl pages resolve page_XXXX --note "Rolled back"
   themselves, and the app's passes then carry `team_id` and `team_role`.
 - `page` notifies whoever is on call now, then escalates until someone acknowledges.
   Acknowledging and escalating are human-only; agents can raise, read, and resolve pages. Use a
-  stable `--dedup-key` for repeating alerts so they merge into the open page.
+  stable `--dedup-key` for repeating alerts so they merge into the open page. A `page` that exits
+  `7` was created but no push was accepted yet; SHark keeps escalating and retrying it, so do not
+  raise it again.
 
 ## Create and Wire a Webhook Service
 

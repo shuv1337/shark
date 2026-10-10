@@ -268,6 +268,12 @@ export default function PageDetailScreen() {
                     : "Nobody yet"
                 }
               />
+              {page.undelivered && page.undelivered.length > 0 ? (
+                <MetaRow
+                  label="Not reached"
+                  value={page.undelivered.map((person) => person.name).join(", ")}
+                />
+              ) : null}
               <MetaRow label="Status" value={escalationLabel(page)} />
             </View>
 

@@ -170,7 +170,7 @@ function pageProgress(page: OncallPageDto): string {
   const undelivered = page.undelivered ?? [];
   const notified =
     undelivered.length > 0
-      ? `${paged} · could not reach ${undelivered.map((person) => person.name).join(", ")}, retrying`
+      ? `${paged} · not reached yet: ${undelivered.map((person) => person.name).join(", ")}`
       : paged;
   return page.nextEscalationAt
     ? `${notified} · escalates ${relativeFuture(page.nextEscalationAt)}`

@@ -194,7 +194,7 @@ function GroupCard({
           ? "Merged into the open test page."
           : notified
             ? `Test page sent to ${notified}. Acknowledge it from the iPhone or below.`
-            : `Could not reach ${unreached}'s iPhone yet. SHark keeps paging until it is delivered or acknowledged.`,
+            : `Could not reach ${unreached}'s iPhone yet. Escalation continues, and SHark retries the push for a day unless it is acknowledged.`,
       );
       onPaged();
     } catch (err) {

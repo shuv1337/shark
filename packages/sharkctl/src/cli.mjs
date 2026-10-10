@@ -658,7 +658,11 @@ function formatApp(app) {
   return `${app.id}  ${app.name}  ${app.url}`;
 }
 
-/** A page that reached nobody exits 7 like an undelivered notify; merged repeats exit 0. */
+/**
+ * A page no push was accepted for yet exits 7 like an undelivered notify; the
+ * page still exists and the server keeps escalating and retrying it. Merged
+ * repeats exit 0.
+ */
 function pageExitCode(body) {
   return body.accepted === 0 && !body.deduplicated ? 7 : 0;
 }
