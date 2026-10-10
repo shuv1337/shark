@@ -44,6 +44,7 @@ import {
   operationUpdateTokenPending,
   planReplacement,
   type ReplacedDelivery,
+  ReplacementConflictError,
   sendReplacementEnds,
   terminalLiveActivityConflict,
   toLiveActivityDto,
@@ -482,6 +483,22 @@ export const activityHooksRoute = new Hono()
         if (existing?.requestHash === requestHash) {
           return c.json(response(existing, undefined, { idempotent: true }));
         }
+        if (existing) {
+          return c.json(
+            { ok: false, error: "Idempotency-Key was already used with a different payload" },
+            409,
+          );
+        }
+      }
+      if (error instanceof ReplacementConflictError) {
+        return c.json(
+          {
+            ok: false,
+            error: "A replaced Live Activity changed during the start; retry",
+            code: "ACTIVE_ACTIVITY_CONFLICT",
+          },
+          409,
+        );
       }
       const raced = await findBlockingDeliveries(
         targets.map((target) => target.id),

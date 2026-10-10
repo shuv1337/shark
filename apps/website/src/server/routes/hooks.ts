@@ -196,6 +196,7 @@ export const hooksRoute = new Hono()
             ok: false,
             error: paged.error,
             ...("issues" in paged ? { issues: paged.issues } : {}),
+            ...(paged.status === 429 ? { retryAfterSeconds: 60 } : {}),
           },
           paged.status,
         );

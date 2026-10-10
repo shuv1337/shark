@@ -567,6 +567,11 @@ describe("MCP tools", () => {
       ]),
     );
 
+    const forged = await app.request("/api/oauth/clients/claude", {
+      method: "DELETE",
+      headers: { origin: "https://evil.example" },
+    });
+    expect(forged.status).toBe(403);
     const revoked = await app.request("/api/oauth/clients/claude", { method: "DELETE" });
     expect(revoked.status).toBe(200);
     for (const token of [FULL, NO_TEAMS]) {

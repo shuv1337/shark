@@ -76,7 +76,8 @@ export async function syncInboxForUser(userId: string): Promise<void> {
     )
     select
       'ibox:agent_notification:' || n.id, n.user_id, 'agent_notification', n.id,
-      'notification', t.name, n.image_url, n.title, n.body, n.image_url, n.url,
+      'notification', coalesce(n.source_name, t.name, n.title), n.image_url, n.title, n.body,
+      n.image_url, n.url,
       n.status,
       case when n.status = 'accepted' then 'Accepted'
            when n.status = 'partial' then 'Partially accepted'
@@ -87,7 +88,7 @@ export async function syncInboxForUser(userId: string): Promise<void> {
            else 'Processing' end,
       n.accepted_count, n.failed_count, 0, n.created_at, n.created_at
     from agent_notification n
-    inner join api_token t on t.id = n.requester_token_id
+    left join api_token t on t.id = n.requester_token_id
     where n.user_id = ${userId}
     on conflict(entity_type, entity_id) do update set
       status = excluded.status,

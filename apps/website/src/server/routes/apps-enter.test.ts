@@ -39,11 +39,12 @@ const PEER = { id: "user_peer", name: "Pip", email: "peer@example.com" };
 type Person = typeof USER;
 
 let removeMember: typeof import("../lib/teams")["removeMember"];
+let returnAppToAdder: typeof import("../lib/teams")["returnAppToAdder"];
 
 beforeAll(async () => {
   ({ app } = await import("../app"));
   ({ issueAppPass } = await import("../lib/app-pass"));
-  ({ removeMember } = await import("../lib/teams"));
+  ({ removeMember, returnAppToAdder } = await import("../lib/teams"));
   const { db } = await import("../db");
   const schema = await import("../db/schema");
   const { runMigrations } = await import("../db/migrate");
@@ -305,6 +306,21 @@ describe("POST /apps/enter for a team app", () => {
     expect((await enter({ pass: issuedWhileMember })).status).toBe(401);
     expect((await enter({ pass: await teamPass(REMOVED) })).status).toBe(401);
     expect(sessions).toEqual([]);
+
+    // The refused pass is spent, so rejoining and approving again before it expires does not
+    // revive it.
+    const { db } = await import("../db");
+    const schema = await import("../db/schema");
+    const now = new Date();
+    await db
+      .insert(schema.teamMember)
+      .values({ teamId: "team_1", userId: REMOVED.id, role: "member", joinedAt: now });
+    await db
+      .insert(schema.appMemberState)
+      .values({ appId: "app_teamboard", userId: REMOVED.id, consentedAt: now, updatedAt: now });
+    expect((await enter({ pass: issuedWhileMember })).status).toBe(401);
+    expect((await enter({ pass: await teamPass(REMOVED), next: "/board" })).status).toBe(303);
+    expect(sessions).toEqual([REMOVED.id]);
   });
 
   it("refuses a pass for another team's app, even with consent left over", async () => {
@@ -330,13 +346,17 @@ describe("POST /apps/enter for a team app", () => {
     const added = (user: Person) => pass("app_addedapp", "https://shark.example", user);
     const adderBefore = await added(ADDER);
     const peerBefore = await added(PEER);
+    const [stale] = await db.select().from(schema.app).where(eq(schema.app.id, "app_addedapp"));
 
     expect(removeMember("team_2", ADDER.id)).toBe(true);
+    // An unshare that loaded the app before the leave committed must not write that row back.
+    if (stale) db.transaction((tx) => returnAppToAdder(tx, stale));
     const [row] = await db
-      .select({ teamId: schema.app.teamId })
+      .select({ teamId: schema.app.teamId, consentedAt: schema.app.consentedAt })
       .from(schema.app)
       .where(eq(schema.app.id, "app_addedapp"));
     expect(row?.teamId).toBeNull();
+    expect(row?.consentedAt).not.toBeNull();
 
     expect((await enter({ pass: peerBefore })).status).toBe(401);
     expect((await enter({ pass: await added(PEER) })).status).toBe(401);

@@ -1,58 +1,38 @@
 import { z } from "zod";
+import { isIpv4Literal, isPublicAddress } from "./ip";
+
+/** Special-use names that only ever resolve on the local host or network. */
+const LOCAL_NAME_SUFFIXES = ["localhost", "local", "internal", "home.arpa"];
 
 export function isPublicHttpsUrl(value: string): boolean {
+  let url: URL;
   try {
-    const url = new URL(value);
-    if (url.protocol !== "https:") return false;
-
-    const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-    if (
-      hostname === "localhost" ||
-      hostname.endsWith(".localhost") ||
-      hostname.endsWith(".local")
-    ) {
-      return false;
-    }
-
-    const ipv4 = hostname.split(".").map(Number);
-    if (
-      ipv4.length === 4 &&
-      ipv4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
-    ) {
-      const [a, b] = ipv4;
-      if (
-        a === 0 ||
-        a === 10 ||
-        a === 127 ||
-        (a === 169 && b === 254) ||
-        (a === 172 && b !== undefined && b >= 16 && b <= 31) ||
-        (a === 192 && b === 168) ||
-        // Carrier-grade NAT and IETF protocol assignments reach internal hosts too.
-        (a === 100 && b !== undefined && b >= 64 && b <= 127) ||
-        (a === 192 && b === 0) ||
-        (a === 198 && b !== undefined && (b === 18 || b === 19)) ||
-        a === 224 ||
-        a === 255
-      ) {
-        return false;
-      }
-    }
-
-    if (
-      hostname === "::1" ||
-      hostname.startsWith("fc") ||
-      hostname.startsWith("fd") ||
-      hostname.startsWith("fe80:") ||
-      // IPv4-mapped IPv6 (::ffff:127.0.0.1) otherwise bypasses the checks above.
-      hostname.startsWith("::ffff:")
-    ) {
-      return false;
-    }
-
-    return true;
+    url = new URL(value);
   } catch {
     return false;
   }
+  if (url.protocol !== "https:") return false;
+
+  // WHATWG URL already rewrites decimal, octal, and hex IPv4 spellings to dotted decimal
+  // and compresses IPv6. Trailing dots are the absolute form of the same DNS name.
+  const hostname = url.hostname.toLowerCase().replace(/\.+$/, "");
+  if (hostname.startsWith("[")) return isPublicAddress(hostname.slice(1, -1));
+  if (isIpv4Literal(hostname)) return isPublicAddress(hostname);
+  // A single-label name resolves through local search domains, never the public DNS.
+  if (!hostname.includes(".")) return false;
+  return !LOCAL_NAME_SUFFIXES.some(
+    (suffix) => hostname === suffix || hostname.endsWith(`.${suffix}`),
+  );
+}
+
+/**
+ * The normalized href of a public HTTPS URL without credentials, else null. Use it before
+ * rendering a URL someone else supplied, so a loose spelling never reaches the page as-is.
+ */
+export function publicHttpsHref(value: string | null | undefined): string | null {
+  if (!value || !isPublicHttpsUrl(value)) return null;
+  const url = new URL(value);
+  return url.username || url.password ? null : url.href;
 }
 
 /**
@@ -78,11 +58,21 @@ export function isKnownWebPushEndpoint(value: string): boolean {
   if (url.protocol !== "https:" || url.username || url.password) return false;
   // WHATWG URL already normalizes an explicit :443 on https to "".
   if (url.port !== "") return false;
-  const hostname = url.hostname.toLowerCase();
-  return WEB_PUSH_SERVICE_HOSTS.some((pattern) =>
-    pattern.startsWith("*.") ? hostname.endsWith(pattern.slice(1)) : hostname === pattern,
-  );
+  // One trailing dot is the absolute form of the same name; `..` is not a hostname.
+  const hostname = url.hostname.toLowerCase().replace(/(?<!\.)\.$/, "");
+  return WEB_PUSH_SERVICE_HOSTS.some((pattern) => {
+    if (!pattern.startsWith("*.")) return hostname === pattern;
+    const suffix = pattern.slice(1);
+    if (!hostname.endsWith(suffix)) return false;
+    const labels = hostname.slice(0, -suffix.length).split(".");
+    return (
+      labels.every((label) => DNS_LABEL.test(label)) &&
+      !(labels.length === 4 && labels.every((label) => /^\d+$/.test(label)))
+    );
+  });
 }
+
+const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export const publicHttpsUrlSchema = z
   .url()

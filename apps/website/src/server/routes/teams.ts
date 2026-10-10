@@ -24,6 +24,7 @@ import { env, normalizeEmail } from "../env";
 import { selectAppsWithJoins, toAppDto } from "../lib/apps";
 import { newId } from "../lib/id";
 import { checkRotation, listTeamPages, toGroupDto } from "../lib/oncall";
+import { requireSameOriginOrNative } from "../lib/same-origin";
 import {
   createTeamBillingPortal,
   createTeamCheckout,
@@ -34,6 +35,7 @@ import {
 import {
   billingCustomer,
   deleteTeam,
+  errorClass,
   hasRole,
   listMembers,
   listTeams,
@@ -288,7 +290,9 @@ async function createInvite(actor: Actor, teamId: string, input: unknown): Promi
         sourceName: "SHark Teams",
         url: `shark://join/${code}`,
         conversationKey: `team-${teamId}`,
-      }).catch((error: unknown) => console.error("[teams] Invite notice failed", error));
+      }).catch((error: unknown) =>
+        console.error("[teams] Invite notice failed", errorClass(error)),
+      );
     }
   }
   const body: TeamInviteCreateResponse = { invite: toInviteDto(row), code, url: inviteUrl(code) };
@@ -508,6 +512,7 @@ function sessionActor(c: Context<AuthedEnv>): Actor {
 
 export const teamsSessionRoute = new Hono<AuthedEnv>()
   .use("*", requireAuth)
+  .use("*", requireSameOriginOrNative)
   .get("/", async (c) => c.json({ teams: await listTeams(c.get("user").id) }))
   .post("/", async (c) => send(c, await createTeam(sessionActor(c), await readJson(c))))
   .get("/:id", async (c) => send(c, await getTeam(sessionActor(c), c.req.param("id"))))
@@ -552,8 +557,10 @@ export const teamsSessionRoute = new Hono<AuthedEnv>()
     send(c, await teamPages(sessionActor(c), c.req.param("id"), (name) => c.req.query(name))),
   );
 
-/** Invite preview (public) and acceptance (session only: joining is a human decision). */
+/** Invite preview and acceptance, both session only: joining is a human decision. */
 export const teamInvitesRoute = new Hono<AuthedEnv>()
+  .use("*", requireAuth)
+  .use("*", requireSameOriginOrNative)
   .get("/:code", async (c) => {
     if (previewLimited(requestKey(c))) {
       c.header("Retry-After", "60");
@@ -570,7 +577,7 @@ export const teamInvitesRoute = new Hono<AuthedEnv>()
       expiresAt: found.invite.expiresAt.toISOString(),
     });
   })
-  .post("/:code/accept", requireAuth, async (c) =>
+  .post("/:code/accept", async (c) =>
     send(c, await acceptInvite(sessionActor(c), c.req.param("code"))),
   );
 

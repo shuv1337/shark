@@ -95,7 +95,7 @@ export function NoteCard({ note }: { note: BoardNoteDto }) {
   return (
     <article className="rounded-2xl border border-line bg-surface p-4 shadow-xs">
       <header className="flex items-center gap-1.5 text-[11px] text-ink-faint">
-        <AgentChip agent={note.agent} display={null} />
+        <AgentChip agent={note.agent} display={note.agentDisplay} />
         <time className="ml-auto" dateTime={note.updatedAt}>
           {relativeTime(note.updatedAt)}
         </time>

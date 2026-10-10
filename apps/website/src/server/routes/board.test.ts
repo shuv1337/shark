@@ -678,6 +678,169 @@ describe("work, notes, done", () => {
   });
 });
 
+describe("work re-posts", () => {
+  type Work = {
+    statusLabel: string | null;
+    detail: string | null;
+    progress: number | null;
+    links: Array<{ url: string }>;
+    host: string | null;
+    waitingAskId: string | null;
+    heartbeatTtlSeconds: number;
+    agentDisplay: string | null;
+  };
+  const put = async (body: Record<string, unknown>) => {
+    const response = await agent("/work", FM, { method: "PUT", body: JSON.stringify(body) });
+    expect(response.status).toBeLessThan(300);
+    return ((await response.json()) as { work: Work }).work;
+  };
+
+  it("keeps omitted fields on a heartbeat and clears only what is sent as null or []", async () => {
+    const { body: asked } = await createAsk({ key: "fm:keep:ask" });
+    const base = { key: "fm:keep", title: "Keep fields" };
+    const first = await put({
+      ...base,
+      state: "in_flight",
+      statusLabel: "Building",
+      detail: "Step 2 of 3",
+      progress: 0.6,
+      links: [{ kind: "pr", url: "https://github.com/x/y/pull/9" }],
+      host: "synthetic-host",
+      waitingAskKey: "fm:keep:ask",
+      heartbeatTtlSeconds: 600,
+    });
+    expect(first.waitingAskId).toBe(asked.ask.id);
+
+    const blocked = await put({ ...base, state: "blocked" });
+    expect(blocked).toMatchObject({
+      statusLabel: "Building",
+      detail: "Step 2 of 3",
+      progress: 0.6,
+      links: [{ url: "https://github.com/x/y/pull/9" }],
+      host: "synthetic-host",
+      waitingAskId: asked.ask.id,
+      heartbeatTtlSeconds: 600,
+    });
+
+    const cleared = await put({
+      ...base,
+      state: "in_flight",
+      statusLabel: null,
+      detail: null,
+      progress: null,
+      links: [],
+      host: null,
+      waitingAskKey: null,
+    });
+    expect(cleared).toMatchObject({
+      statusLabel: null,
+      detail: null,
+      progress: null,
+      links: [],
+      host: null,
+      waitingAskId: null,
+      heartbeatTtlSeconds: 600,
+    });
+
+    const created = await put({ key: "fm:fresh", title: "Fresh", state: "queued" });
+    expect(created).toMatchObject({ links: [], progress: null, heartbeatTtlSeconds: 21_600 });
+  });
+
+  it("keeps both of two concurrent partial heartbeats", async () => {
+    const base = { key: "fm:concurrent-keep", title: "Concurrent", state: "in_flight" };
+    await put({ ...base, detail: "old", progress: 0.1 });
+    await Promise.all([put({ ...base, detail: "new" }), put({ ...base, progress: 0.9 })]);
+    expect(await put(base)).toMatchObject({ detail: "new", progress: 0.9 });
+  });
+
+  it("serializes a done with a heartbeat that races it", async () => {
+    const [token] = await db.select().from(schema.apiToken).where(eq(schema.apiToken.id, "tok_fm"));
+    if (!token) throw new Error("missing synthetic token");
+    const pr = { kind: "pr", url: "https://github.com/x/y/pull/7" } as const;
+    const ci = { kind: "other", url: "https://ci.example.com/run/7" } as const;
+    const release = { kind: "doc", url: "https://releases.example.com/7" } as const;
+    // Land the heartbeat at several points while the done is in progress.
+    for (let ticks = 0; ticks < 8; ticks++) {
+      const key = `fm:done-race:${ticks}`;
+      await board.upsertWork(token, { key, title: "Race", state: "in_flight", links: [pr] });
+      const done = board.markDone(token, {
+        key,
+        verb: "merged",
+        outcome: "done",
+        links: [release],
+      });
+      for (let i = 0; i < ticks; i++) await Promise.resolve();
+      const beat = await board.upsertWork(token, {
+        key,
+        title: "Race",
+        state: "review",
+        links: [pr, ci],
+      });
+      expect((await done).ok && beat.ok).toBe(true);
+      const [row] = await db
+        .select()
+        .from(schema.boardWorkItem)
+        .where(eq(schema.boardWorkItem.workKey, key));
+      // Either serial order is fine; a done built from the pre-heartbeat snapshot is not.
+      if (row?.completedAt) {
+        expect(
+          row.links.map((link) => link.url),
+          `ticks=${ticks}`,
+        ).toEqual([pr.url, ci.url, release.url]);
+      } else {
+        expect(row, `ticks=${ticks}`).toMatchObject({ state: "review", links: [pr, ci] });
+      }
+    }
+  });
+
+  it("clears agentDisplay with null and restores the default TTL with null", async () => {
+    const base = { key: "fm:nullable", title: "Nullable", state: "queued" };
+    await put({ ...base, agentDisplay: "Synthetic Harness", heartbeatTtlSeconds: 600 });
+    expect(await put(base)).toMatchObject({
+      agentDisplay: "Synthetic Harness",
+      heartbeatTtlSeconds: 600,
+    });
+    expect(await put({ ...base, agentDisplay: null, heartbeatTtlSeconds: null })).toMatchObject({
+      agentDisplay: null,
+      heartbeatTtlSeconds: 21_600,
+    });
+  });
+
+  it("refuses an unknown waiting ask and drops the link once the work leaves blocked", async () => {
+    const base = { key: "fm:waiting", title: "Waiting" };
+    const unknown = await agent("/work", FM, {
+      method: "PUT",
+      body: JSON.stringify({ ...base, state: "blocked", waitingAskKey: "fm:waiting:none" }),
+    });
+    expect(unknown.status).toBe(400);
+
+    const { body: asked } = await createAsk({ key: "fm:waiting:ask" });
+    const blocked = await put({ ...base, state: "blocked", waitingAskKey: "fm:waiting:ask" });
+    expect(blocked.waitingAskId).toBe(asked.ask.id);
+    expect((await put({ ...base, state: "blocked" })).waitingAskId).toBe(asked.ask.id);
+    expect((await put({ ...base, state: "in_flight" })).waitingAskId).toBeNull();
+
+    const cancelled = await agent("/asks/fm:waiting:ask/cancel", FM, {
+      method: "POST",
+      body: JSON.stringify({ reason: "Decided in chat" }),
+    });
+    expect(cancelled.status).toBe(200);
+    const late = await put({ ...base, state: "blocked", waitingAskKey: "fm:waiting:ask" });
+    expect(late.waitingAskId).toBeNull();
+  });
+
+  it("shows the harness name a note was posted with", async () => {
+    const note = await agent("/notes", FM, {
+      method: "PUT",
+      body: JSON.stringify({ key: "fm:who", text: "Heads up", agentDisplay: "Synthetic Harness" }),
+    });
+    expect(note.status).toBe(201);
+    expect(((await note.json()) as { note: { agentDisplay: string } }).note.agentDisplay).toBe(
+      "Synthetic Harness",
+    );
+  });
+});
+
 describe("expiry and callbacks", () => {
   it("expires due asks and delivers every terminal status to the callback with retries", async () => {
     stubCallbackTransport();

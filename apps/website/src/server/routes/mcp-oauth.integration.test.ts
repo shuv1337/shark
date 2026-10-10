@@ -13,6 +13,7 @@ const FIXTURE_ENV = {
   APP_URL: ORIGIN,
   BETTER_AUTH_SECRET: "synthetic-e2e-auth-secret-not-real-0123456789",
   ALLOWED_EMAILS: USER.email,
+  TRUSTED_FORWARDED_FOR_HOPS: "1",
 } as const;
 const inheritedEnv = Object.fromEntries(
   Object.keys(FIXTURE_ENV).map((key) => [key, process.env[key]]),
@@ -209,6 +210,9 @@ async function connectClient(clientName: string) {
   return { clientId, tokens: exchanged.body as unknown as TokenSet };
 }
 
+/** A bearer that authenticates reaches the MCP transport, which refuses this bare request with 406. */
+const MCP_REACHED = 406;
+
 async function mcpStatus(accessToken: string): Promise<number> {
   const response = await app.request("/mcp", {
     method: "POST",
@@ -254,9 +258,15 @@ describe("MCP OAuth end to end", () => {
     });
   });
 
-  it("rate-limits anonymous client registration per client IP", async () => {
+  it("rate-limits anonymous client registration per trusted client IP", async () => {
     (await auth.$context).rateLimit.enabled = true;
-    const from = (ip: string) => registration("Flood", { "x-forwarded-for": ip });
+    // As in production, the edge appends the real address after whatever the client sent, and
+    // only that last hop is trusted, so a forged leftmost entry never gets its own bucket.
+    let forged = 0;
+    const from = (ip: string) => {
+      forged += 1;
+      return registration("Flood", { "x-forwarded-for": `203.0.113.${forged}, ${ip}` });
+    };
     for (let attempt = 0; attempt < 5; attempt += 1) {
       expect((await from("198.51.100.7")).status).toBe(200);
     }
@@ -290,15 +300,37 @@ describe("MCP OAuth end to end", () => {
         body: JSON.stringify(body),
       });
 
+    const bindingError = "client_id does not match the signed authorization request";
     const crossed = await prelogin({ client_id: clientB, oauth_query: queryA });
     expect(crossed.status).toBe(400);
-    expect(JSON.stringify(await crossed.json())).not.toContain("Prelogin B");
-    for (const body of [
-      { client_id: clientB },
-      { client_id: clientB, oauth_query: `${queryA}&client_id=${clientB}` },
-    ]) {
-      expect((await prelogin(body)).status).toBe(400);
-    }
+    const crossedBody = JSON.stringify(await crossed.json());
+    expect(crossedBody).not.toContain("Prelogin B");
+    expect(crossedBody).toContain(bindingError);
+    expect((await prelogin({ client_id: clientB })).status).toBe(400);
+
+    // Re-sign the way Better Auth does, so a second client_id passes the signature check and only
+    // the binding check can refuse it.
+    const { makeSignature } = await import("better-auth/crypto");
+    const resign = async (query: string) => {
+      const params = new URLSearchParams(query);
+      params.delete("sig");
+      const canonical = new URLSearchParams(
+        [...params.entries()].sort(([a, x], [b, y]) => (a < b ? -1 : a > b ? 1 : x < y ? -1 : 1)),
+      );
+      params.set("sig", await makeSignature(canonical.toString(), FIXTURE_ENV.BETTER_AUTH_SECRET));
+      return params.toString();
+    };
+    expect((await prelogin({ client_id: clientA, oauth_query: await resign(queryA) })).status).toBe(
+      200,
+    );
+    const doubled = await prelogin({
+      client_id: clientB,
+      oauth_query: await resign(`client_id=${encodeURIComponent(clientB)}&${queryA}`),
+    });
+    expect(doubled.status).toBe(400);
+    const doubledBody = JSON.stringify(await doubled.json());
+    expect(doubledBody).toContain(bindingError);
+    expect(doubledBody).not.toContain("Prelogin B");
 
     const own = await prelogin({ client_id: clientB, oauth_query: queryB });
     expect(own.status).toBe(200);
@@ -430,7 +462,7 @@ describe("MCP OAuth end to end", () => {
 
   it("returns 401 from /mcp once the access token is revoked", async () => {
     const { clientId, tokens } = await connectClient("Revoked Client");
-    expect(await mcpStatus(tokens.access_token)).not.toBe(401);
+    expect(await mcpStatus(tokens.access_token)).toBe(MCP_REACHED);
 
     const revoke = (value: string, hint: string) =>
       app.request("/api/auth/oauth2/revoke", {
@@ -451,7 +483,7 @@ describe("MCP OAuth end to end", () => {
 
   it("returns 401 from /mcp once the dashboard disconnects the client", async () => {
     const { clientId, tokens } = await connectClient("Dashboard Client");
-    expect(await mcpStatus(tokens.access_token)).not.toBe(401);
+    expect(await mcpStatus(tokens.access_token)).toBe(MCP_REACHED);
 
     const listed = await app.request("/api/oauth/clients", signedIn());
     expect(((await listed.json()) as { clients: unknown[] }).clients).toEqual(
@@ -470,7 +502,7 @@ describe("MCP OAuth end to end", () => {
 
   it("stops a connected client as soon as its owner leaves the allowlist", async () => {
     const { tokens } = await connectClient("Allowlist Client");
-    expect(await mcpStatus(tokens.access_token)).not.toBe(401);
+    expect(await mcpStatus(tokens.access_token)).toBe(MCP_REACHED);
 
     env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length, "someone-else@example.com");
     expect(await mcpStatus(tokens.access_token)).toBe(401);

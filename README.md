@@ -189,8 +189,9 @@ tokens, and refresh tokens when you allow "Stay connected". Registering a client
 without consent. Connected clients are listed on the dashboard, where **Disconnect** revokes them
 immediately; removing an account from the allowlist also stops its clients on the next call.
 
-OAuth scopes are the agent token scopes one to one, plus `offline_access`. A client that requests
-no scope gets everything except `tokens:manage`. There is one tool per agent API operation,
+OAuth scopes are the agent token scopes, minus the native companion scopes (`watch:*` and
+`macos:*`), plus `offline_access`. A client that requests no scope gets everything except
+`tokens:manage`. There is one tool per agent API operation,
 including the board, and each runs through the same handler, validation, and scope check as its
 `/api/agent` route. Human-only actions are never tools: answering prompts or board asks,
 acknowledging or escalating pages, accepting team invites, approving app sign-in, and creating

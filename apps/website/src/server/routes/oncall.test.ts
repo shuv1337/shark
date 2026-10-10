@@ -11,9 +11,10 @@ process.env.DATABASE_URL = ":memory:";
 
 const authState = vi.hoisted(() => ({ userId: "user_a" as string | null }));
 const sent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
-/** Expo send outcomes: each queued gate settles one send; otherwise `fail` decides. */
+/** Expo send outcomes: each queued gate settles one send; otherwise `fail` decides. `crash` throws. */
 const pushControl = vi.hoisted(() => ({
   fail: false,
+  crash: false,
   gates: [] as Array<Promise<"ok" | "fail">>,
 }));
 const NAMES: Record<string, string> = {
@@ -45,6 +46,7 @@ vi.mock("../auth", () => ({
 vi.mock("expo-server-sdk", () => {
   class Expo {
     chunkPushNotifications(messages: Array<Record<string, unknown>>) {
+      if (pushControl.crash) throw new Error("Synthetic push crash");
       return [messages];
     }
     async sendPushNotificationsAsync(messages: Array<Record<string, unknown>>) {
@@ -101,6 +103,7 @@ function responseTokenFor(userId: string): string {
 afterEach(() => {
   sent.length = 0;
   pushControl.fail = false;
+  pushControl.crash = false;
   pushControl.gates.length = 0;
   as("user_a");
 });
@@ -701,7 +704,7 @@ describe("override notices", () => {
     expect(pushesTo("user_c")[0]).toMatchObject({
       title: "Ben put you on call for Notice handoff",
       body: expect.stringMatching(/^You're on call from .+ until .+\.$/),
-      data: { url: "shark://oncall" },
+      data: { url: `shark://oncall?team=${TEAM_ID}` },
     });
     as("user_c");
     const inbox = (await (await call("GET", "/api/inbox/notifications")).json()) as {
@@ -711,6 +714,86 @@ describe("override notices", () => {
       title: "Ben put you on call for Notice handoff",
       sourceName: "Notice handoff",
     });
+    const eventId = (pushesTo("user_c")[0]?.data as { eventId?: string } | undefined)?.eventId;
+    expect(eventId).toMatch(/^anot/);
+    // Drop the row the insert trigger made so the read must backfill this token-less notice.
+    const { eq } = await import("drizzle-orm");
+    const inboxId = `ibox:agent_notification:${eventId}`;
+    await db.delete(schema.inboxItem).where(eq(schema.inboxItem.id, inboxId));
+    expect(
+      await db.select().from(schema.inboxItem).where(eq(schema.inboxItem.id, inboxId)),
+    ).toHaveLength(0);
+    const detail = await call(
+      "GET",
+      `/api/inbox/${encodeURIComponent(`ibox:agent_notification:${eventId}`)}`,
+    );
+    expect(detail.status).toBe(200);
+    expect(((await detail.json()) as { item: unknown }).item).toMatchObject({
+      title: "Ben put you on call for Notice handoff",
+      sourceName: "Notice handoff",
+      status: "accepted",
+    });
+    const durable = (await (await call("GET", "/api/inbox")).json()) as {
+      items: Array<{ id: string }>;
+    };
+    expect(durable.items.map((item) => item.id)).toContain(`ibox:agent_notification:${eventId}`);
+  });
+
+  it("still creates the override and records a failed notice when the push fails", async () => {
+    const group = await createGroup("Notice failure");
+    const start = benStart(group);
+    pushControl.fail = true;
+    as("user_b");
+    expect((await override(group.id, "user_c", start, start + HOUR)).status).toBe(201);
+    await settle();
+    const eventId = (pushesTo("user_c")[0]?.data as { eventId?: string } | undefined)?.eventId;
+    as("user_c");
+    const detail = (await (
+      await call("GET", `/api/inbox/${encodeURIComponent(`ibox:agent_notification:${eventId}`)}`)
+    ).json()) as { item: unknown };
+    expect(detail.item).toMatchObject({ status: "failed" });
+  });
+
+  it("still creates the override and records a failed notice when the push throws", async () => {
+    const group = await createGroup("Notice rejected");
+    const start = benStart(group);
+    pushControl.crash = true;
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      as("user_b");
+      const created = await override(group.id, "user_c", start, start + HOUR);
+      expect(created.status).toBe(201);
+      await settle();
+      expect(logged).toHaveBeenCalledWith("[teams] Notice push threw", "Error");
+      expect(JSON.stringify(logged.mock.calls)).not.toContain("Synthetic push crash");
+      const { desc, eq } = await import("drizzle-orm");
+      const [notice] = await db
+        .select()
+        .from(schema.agentNotification)
+        .where(eq(schema.agentNotification.userId, "user_c"))
+        .orderBy(desc(schema.agentNotification.createdAt))
+        .limit(1);
+      expect(notice).toMatchObject({
+        status: "failed",
+        acceptedCount: 0,
+        failedCount: 1,
+        error: "Push delivery failed",
+      });
+      as("user_c");
+      const item = (await (
+        await call(
+          "GET",
+          `/api/inbox/${encodeURIComponent(`ibox:agent_notification:${notice?.id}`)}`,
+        )
+      ).json()) as { item: unknown };
+      expect(item.item).toMatchObject({ status: "failed" });
+      const listed = (await (await call("GET", `/api/oncall/${group.id}`)).json()) as {
+        group: OncallGroupDto;
+      };
+      expect(listed.group.overrides?.map((row) => row.person.userId)).toEqual(["user_c"]);
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   it("tells the recipient of an admin override but not someone naming themselves", async () => {
@@ -1744,10 +1827,19 @@ describe("pages", () => {
     sent.length = 0;
     const limited = await page(group.id, { title: "One too many" });
     expect(limited.status).toBe(429);
-    expect(await limited.json()).toEqual({ error: "On-call page rate limit exceeded" });
+    expect(limited.headers.get("retry-after")).toBe("60");
+    expect(await limited.json()).toEqual({
+      error: "On-call page rate limit exceeded",
+      retryAfterSeconds: 60,
+    });
     const viaHook = await call("POST", `/hooks/${WEBHOOK}`, { body: "x", oncall: group.id });
     expect(viaHook.status).toBe(429);
     expect(viaHook.headers.get("retry-after")).toBe("60");
+    expect(await viaHook.json()).toEqual({
+      ok: false,
+      error: "On-call page rate limit exceeded",
+      retryAfterSeconds: 60,
+    });
     expect(sent).toHaveLength(0);
     const merged = await page(group.id, { title: "Alert 0", dedupKey: "k0" });
     expect(merged.status).toBe(200);
