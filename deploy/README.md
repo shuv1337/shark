@@ -87,8 +87,11 @@ failed rollback prints `Rollback FAILED` to stderr. A first deploy has no previo
 failure there says so and restarts nothing. An automatic rollback after the new container
 has started does not restore the pre-deploy database. Follow `docs/operations.md` when its
 migrations are incompatible. `SIGKILL`, a VM reboot, or a lost Docker daemon still cannot be
-handled, so a detached run remains required. The 1Password CLI runs with `OP_CACHE=false`, so the
-helpers leave no background `op daemon` behind.
+handled, so a detached run remains required. The 1Password CLI starts a background `op daemon`
+on every read, even with `OP_CACHE=false` (observed with CLI 2.35.0), so each helper stops the
+daemon it started when it exits and leaves any daemon that was already running alone. The local
+and public HTTP checks each carry a `curl --max-time`, so a request the server accepts but never
+answers fails the deploy and rolls back instead of stalling it.
 
 The helper:
 

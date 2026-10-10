@@ -209,13 +209,15 @@ fi
 new_release_issued=1
 DEPLOY_GIT_SHA="$deploy_sha" SHARK_IMAGE="$image" "${compose[@]}" up --detach
 new_release_up=1
+# Every check has a deadline, so a request the server accepts but never answers cannot stall the
+# deploy past its rollback window.
 for _attempt in $(seq 1 30); do
-  if curl --fail --silent http://127.0.0.1:8787/api/health >/dev/null; then
+  if curl --fail --silent --max-time 10 http://127.0.0.1:8787/api/health >/dev/null; then
     break
   fi
   sleep 2
 done
-curl --fail --silent http://127.0.0.1:8787/api/health >/dev/null
+curl --fail --silent --max-time 10 http://127.0.0.1:8787/api/health >/dev/null
 
 container_id="$(DEPLOY_GIT_SHA="$deploy_sha" SHARK_IMAGE="$image" "${compose[@]}" ps --quiet shark)"
 running_image_id="$(docker inspect --format '{{.Image}}' "$container_id")"
@@ -225,9 +227,9 @@ if [[ "$running_image_id" != "$expected_image_id" ]]; then
   exit 70
 fi
 
-curl --fail --silent https://shark.shuv.dev/api/health >/dev/null
+curl --fail --silent --max-time 20 https://shark.shuv.dev/api/health >/dev/null
 for path in / /docs /privacy /terms /dashboard /cli/authorize; do
-  status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 20 \
     "https://shark.shuv.dev${path}")"
   case "$status" in
     302|303|307|401) ;;
@@ -235,7 +237,7 @@ for path in / /docs /privacy /terms /dashboard /cli/authorize; do
   esac
 done
 for path in /robots.txt /sitemap.xml; do
-  status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 20 \
     "https://shark.shuv.dev${path}")"
   [[ "$status" == "404" ]] || {
     echo "Unexpected removed-surface status $status for $path" >&2
