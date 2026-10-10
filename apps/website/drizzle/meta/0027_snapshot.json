@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "2e165fa8-f799-4794-bc45-23d8b600d9e1",
+  "id": "fe75e0b2-bfec-4d50-89a5-cbffddb470f2",
   "prevId": "64719bfa-ad84-4bca-abce-48b4d9fc3f64",
   "tables": {
     "account": {
@@ -5553,6 +5553,21 @@
           "autoincrement": false,
           "default": "'pending'"
         },
+        "delivery_attempts": {
+          "name": "delivery_attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "notified_at": {
           "name": "notified_at",
           "type": "integer",
@@ -5589,7 +5604,7 @@
           "name": "oncall_page_recipient_delivery_idx",
           "columns": [
             "delivery_status",
-            "notified_at"
+            "next_attempt_at"
           ],
           "isUnique": false
         }

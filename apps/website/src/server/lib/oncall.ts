@@ -22,7 +22,6 @@ import {
   isNull,
   lt,
   lte,
-  ne,
   or,
   type SQL,
   sql,
@@ -65,13 +64,39 @@ const UPCOMING_SHIFTS = 5;
 /** New pages a group accepts per minute; duplicates that merge do not count. */
 export const PAGES_PER_GROUP_PER_MINUTE = 10;
 /**
- * How long an undelivered recipient of an open page waits before the worker
- * pages them again, and how long an attempt may stay in flight before it is
- * presumed lost (for example, the server restarted mid-send).
+ * First wait before the worker pages an undelivered recipient again. Each
+ * further retry waits twice as long, up to {@link UNDELIVERED_RETRY_MAX_MS}.
  */
 export const UNDELIVERED_RETRY_MS = 60_000;
+export const UNDELIVERED_RETRY_MAX_MS = 15 * 60_000;
+/** The worker stops retrying pages older than this; escalation steps still run. */
+export const UNDELIVERED_RETRY_MAX_AGE_MS = 24 * 3_600_000;
+/**
+ * How long an attempt may stay in flight before it is presumed lost (for
+ * example, the server restarted mid-send). Long enough that a slow Expo
+ * request is not mistaken for a lost one and paged twice.
+ */
+export const DELIVERY_STALE_MS = 5 * 60_000;
+/** Retries per worker pass, so a backlog after a deploy drains gradually. */
+export const RETRIES_PER_PASS = 10;
+/** Expo refusals that repeating the same page cannot fix. */
+const PERMANENT_PUSH_ERRORS = new Set([
+  "MessageTooBig",
+  "InvalidPayload",
+  "InvalidCredentials",
+  "MismatchSenderId",
+]);
 
-export type DeliveryStatus = "pending" | "delivered" | "failed" | "skipped";
+export type DeliveryStatus = "pending" | "delivered" | "failed" | "skipped" | "undeliverable";
+
+/** Wait before retry `attempts + 1`, with jitter so retries do not land together. */
+export function retryDelayMs(attempts: number, random = Math.random()): number {
+  const base = Math.min(
+    UNDELIVERED_RETRY_MS * 2 ** Math.max(0, attempts - 1),
+    UNDELIVERED_RETRY_MAX_MS,
+  );
+  return Math.round(base * (1 + 0.2 * random));
+}
 
 // ---------------------------------------------------------------------------
 // Groups and schedules
@@ -269,11 +294,10 @@ export async function toPageDtos(rows: PageRow[]): Promise<OncallPageDto[]> {
       .flatMap((row) => [row.acknowledgedByUserId, row.resolvedByUserId])
       .filter((id): id is string => typeof id === "string"),
   ]);
-  const recipientsOf = (pageId: string, delivered: boolean) =>
+  const recipientsOf = (pageId: string, statuses: readonly string[]) =>
     recipients
       .filter(
-        (recipient) =>
-          recipient.pageId === pageId && (recipient.deliveryStatus === "delivered") === delivered,
+        (recipient) => recipient.pageId === pageId && statuses.includes(recipient.deliveryStatus),
       )
       .map((recipient) => personOrUnknown(map, recipient.userId));
   return rows.map((row) => {
@@ -290,8 +314,8 @@ export async function toPageDtos(rows: PageRow[]): Promise<OncallPageDto[]> {
       status: row.status as OncallPageStatus,
       dedupKey: row.dedupKey,
       repeatCount: row.repeatCount,
-      notified: recipientsOf(row.id, true),
-      undelivered: recipientsOf(row.id, false),
+      notified: recipientsOf(row.id, ["delivered"]),
+      undelivered: recipientsOf(row.id, ["failed", "skipped", "undeliverable"]),
       escalationStep: row.escalationStep,
       nextEscalationAt: row.nextEscalationAt?.toISOString() ?? null,
       acknowledgedBy: row.acknowledgedByUserId
@@ -340,18 +364,50 @@ async function deactivateStale(tokens: string[]): Promise<void> {
   await db.update(device).set({ active: false }).where(inArray(device.expoPushToken, tokens));
 }
 
-/**
- * A recipient row whose push did not land may be paged again: it failed, it
- * was skipped, or its attempt has been in flight too long to still be live.
- */
-function redeliverable(now: number): SQL {
+/** An attempt that is still sending, not presumed lost. */
+function inFlight(now: number): SQL {
   return and(
-    ne(oncallPageRecipient.deliveryStatus, "delivered"),
-    or(
-      inArray(oncallPageRecipient.deliveryStatus, ["failed", "skipped"]),
-      lte(oncallPageRecipient.notifiedAt, new Date(now - UNDELIVERED_RETRY_MS)),
+    eq(oncallPageRecipient.deliveryStatus, "pending"),
+    gt(oncallPageRecipient.notifiedAt, new Date(now - DELIVERY_STALE_MS)),
+  ) as SQL;
+}
+
+/**
+ * Who an escalation step or a person may page again: anyone whose push did
+ * not land, including a permanent refusal, or whose attempt was lost.
+ */
+function redeliverableByStep(now: number): SQL {
+  return or(
+    inArray(oncallPageRecipient.deliveryStatus, ["failed", "skipped", "undeliverable"]),
+    and(
+      eq(oncallPageRecipient.deliveryStatus, "pending"),
+      lte(oncallPageRecipient.notifiedAt, new Date(now - DELIVERY_STALE_MS)),
     ),
   ) as SQL;
+}
+
+/** Who the worker retries on its own: a due failure or skip, or a lost attempt. */
+function dueForRetry(now: number): SQL {
+  return or(
+    and(
+      inArray(oncallPageRecipient.deliveryStatus, ["failed", "skipped"]),
+      lte(oncallPageRecipient.nextAttemptAt, new Date(now)),
+    ),
+    and(
+      eq(oncallPageRecipient.deliveryStatus, "pending"),
+      lte(oncallPageRecipient.notifiedAt, new Date(now - DELIVERY_STALE_MS)),
+    ),
+  ) as SQL;
+}
+
+function pageIsTriggered(pageId: string): SQL {
+  return inArray(
+    oncallPageRecipient.pageId,
+    db
+      .select({ id: oncallPage.id })
+      .from(oncallPage)
+      .where(and(eq(oncallPage.id, pageId), eq(oncallPage.status, "triggered"))),
+  );
 }
 
 /**
@@ -383,6 +439,7 @@ async function claimDelivery(
         step,
         responseTokenHash: hashPageResponseToken(responseToken),
         deliveryStatus: "pending",
+        deliveryAttempts: 1,
         notifiedAt: new Date(now),
       })
       .onConflictDoNothing()
@@ -392,52 +449,49 @@ async function claimDelivery(
   });
   if (outcome === "closed") return null;
   if (outcome === "inserted") return responseToken;
-  return reclaimDelivery(pageId, userId, now);
+  return reclaimDelivery(pageId, userId, now, redeliverableByStep(now));
 }
 
 /**
- * Claims another attempt for an existing undelivered recipient. With
- * `attemptedBefore`, only when their latest attempt started by then.
+ * Claims another attempt for an existing undelivered recipient matching
+ * `eligible`. A credential claimed by a lock-screen action in progress is
+ * never replaced, and a page closed meanwhile is not paged again.
  */
 async function reclaimDelivery(
   pageId: string,
   userId: string,
   now: number,
-  attemptedBefore?: Date,
+  eligible: SQL,
 ): Promise<string | null> {
   const responseToken = generatePageResponseToken();
-  const responseTokenHash = hashPageResponseToken(responseToken);
-  const at = new Date(now);
   const reclaimed = await db
     .update(oncallPageRecipient)
     .set({
-      responseTokenHash,
-      responseTokenUsedAt: null,
+      responseTokenHash: hashPageResponseToken(responseToken),
       acceptedCount: 0,
       deliveryStatus: "pending",
-      notifiedAt: at,
+      deliveryAttempts: sql`${oncallPageRecipient.deliveryAttempts} + 1`,
+      nextAttemptAt: null,
+      notifiedAt: new Date(now),
     })
     .where(
       and(
         eq(oncallPageRecipient.pageId, pageId),
         eq(oncallPageRecipient.userId, userId),
-        redeliverable(now),
-        // Atomic with the claim, so a page acknowledged or resolved meanwhile is not paged again.
-        inArray(
-          oncallPageRecipient.pageId,
-          db
-            .select({ id: oncallPage.id })
-            .from(oncallPage)
-            .where(and(eq(oncallPage.id, pageId), eq(oncallPage.status, "triggered"))),
-        ),
-        ...(attemptedBefore ? [lte(oncallPageRecipient.notifiedAt, attemptedBefore)] : []),
+        eligible,
+        isNull(oncallPageRecipient.responseTokenUsedAt),
+        pageIsTriggered(pageId),
       ),
     )
     .returning({ userId: oncallPageRecipient.userId });
   return reclaimed.length > 0 ? responseToken : null;
 }
 
-/** Sends one claimed attempt and records whether it was delivered. Returns pushes accepted. */
+/**
+ * Sends one claimed attempt and records the outcome. A failure or skip is
+ * scheduled for retry with backoff; a permanent refusal is not. Returns
+ * pushes accepted.
+ */
 async function deliver(
   page: PageRow,
   groupName: string,
@@ -448,40 +502,67 @@ async function deliver(
   let accepted = 0;
   let deliveryStatus: DeliveryStatus = "skipped";
   let staleTokens: string[] = [];
+  let retry = true;
   if (tokens.length > 0) {
     try {
-      const result = await sendPushMessages(
-        buildPagePushMessages({
-          to: tokens,
-          pageId: page.id,
-          teamId: page.teamId,
-          groupName,
-          title: page.title,
-          body: page.body ?? `${groupName}: paged by ${page.sourceName}`,
-          responseToken,
-          ...(page.url ? { url: page.url } : {}),
-          ...(page.appId ? { appId: page.appId } : {}),
-        }),
-      );
-      accepted = result.accepted;
-      staleTokens = result.staleTokens;
-      deliveryStatus = accepted > 0 ? "delivered" : "failed";
+      const messages = buildPagePushMessages({
+        to: tokens,
+        pageId: page.id,
+        teamId: page.teamId,
+        groupName,
+        title: page.title,
+        body: page.body ?? `${groupName}: paged by ${page.sourceName}`,
+        responseToken,
+        ...(page.url ? { url: page.url } : {}),
+        ...(page.appId ? { appId: page.appId } : {}),
+      });
+      const [current] = await db
+        .select({ status: oncallPage.status })
+        .from(oncallPage)
+        .where(eq(oncallPage.id, page.id))
+        .limit(1);
+      if (current?.status !== "triggered") {
+        // Closed since the claim; send nothing and leave nothing to retry.
+        retry = false;
+      } else {
+        const result = await sendPushMessages(messages);
+        accepted = result.accepted;
+        staleTokens = result.staleTokens;
+        const codes = result.errorCodes ?? [];
+        if (accepted > 0) deliveryStatus = "delivered";
+        else if (codes.length > 0 && codes.every((code) => PERMANENT_PUSH_ERRORS.has(code))) {
+          deliveryStatus = "undeliverable";
+          retry = false;
+        } else deliveryStatus = "failed";
+        if (accepted === 0) {
+          console.error("[oncall] Page push not accepted", { pageId: page.id, codes });
+        }
+      }
     } catch (error) {
       console.error("[oncall] Page push failed", error);
       deliveryStatus = "failed";
     }
   }
+  const hash = hashPageResponseToken(responseToken);
+  const attempt = and(
+    eq(oncallPageRecipient.pageId, page.id),
+    eq(oncallPageRecipient.userId, userId),
+    eq(oncallPageRecipient.responseTokenHash, hash),
+  );
   // Scoped to this attempt's credential so a slower, superseded attempt cannot overwrite a newer one.
+  const [row] = await db
+    .select({ attempts: oncallPageRecipient.deliveryAttempts })
+    .from(oncallPageRecipient)
+    .where(attempt)
+    .limit(1);
+  const nextAttemptAt =
+    deliveryStatus === "delivered" || !retry || !row
+      ? null
+      : new Date(Date.now() + retryDelayMs(row.attempts));
   await db
     .update(oncallPageRecipient)
-    .set({ acceptedCount: accepted, deliveryStatus })
-    .where(
-      and(
-        eq(oncallPageRecipient.pageId, page.id),
-        eq(oncallPageRecipient.userId, userId),
-        eq(oncallPageRecipient.responseTokenHash, hashPageResponseToken(responseToken)),
-      ),
-    );
+    .set({ acceptedCount: accepted, deliveryStatus, nextAttemptAt })
+    .where(attempt);
   await deactivateStale(staleTokens);
   return accepted;
 }
@@ -710,6 +791,20 @@ async function deliveredUserIds(pageId: string): Promise<Set<string>> {
   return new Set(rows.map((row) => row.userId));
 }
 
+async function allInFlight(pageId: string, userIds: string[], now: number): Promise<boolean> {
+  const [row] = await db
+    .select({ value: count() })
+    .from(oncallPageRecipient)
+    .where(
+      and(
+        eq(oncallPageRecipient.pageId, pageId),
+        inArray(oncallPageRecipient.userId, userIds),
+        inFlight(now),
+      ),
+    );
+  return (row?.value ?? 0) === userIds.length;
+}
+
 export type EscalateOutcome =
   | { ok: true; page: PageRow }
   | { ok: false; status: 404 | 409; error: string; page?: PageRow };
@@ -763,6 +858,24 @@ export async function escalatePage(pageId: string, manual: boolean): Promise<Esc
   }
   if (manual && targets.length === 0) {
     return { ok: false, status: 409, error: "Everyone in the group has already been paged", page };
+  }
+  if (targets.length > 0 && (await allInFlight(page.id, targets, now))) {
+    // Running the step now would page nobody; keep it for when those attempts settle.
+    if (manual) {
+      return { ok: false, status: 409, error: "This page is still being delivered", page };
+    }
+    const retryAt = new Date(now + 30_000);
+    await db
+      .update(oncallPage)
+      .set({ nextEscalationAt: retryAt })
+      .where(
+        and(
+          eq(oncallPage.id, page.id),
+          eq(oncallPage.status, "triggered"),
+          eq(oncallPage.escalationStep, stepIndex),
+        ),
+      );
+    return { ok: true, page: { ...page, nextEscalationAt: retryAt } };
   }
 
   // Claimed by step number, so the worker and a person cannot run a step twice.
@@ -997,13 +1110,14 @@ export async function openPagesFor(userId: string): Promise<OncallPageDto[]> {
 let running: Promise<void> | null = null;
 
 /**
- * Pages again every recipient of an open page whose push failed or was
- * skipped at least {@link UNDELIVERED_RETRY_MS} ago, until it is delivered
- * or the page is acknowledged or resolved. Escalation steps still run on
- * the group's schedule; this covers the time between and after them.
+ * Pages again recipients of open pages whose push failed or was skipped,
+ * once their backoff has passed, until it is delivered, the page is
+ * acknowledged or resolved, or the page is older than
+ * {@link UNDELIVERED_RETRY_MAX_AGE_MS}. Escalation steps still run on the
+ * group's schedule; this covers the time between and after them.
  */
 async function retryUndelivered(now: Date): Promise<void> {
-  const attemptedBefore = new Date(now.getTime() - UNDELIVERED_RETRY_MS);
+  const at = now.getTime();
   const due = await db
     .select({
       page: oncallPage,
@@ -1016,12 +1130,13 @@ async function retryUndelivered(now: Date): Promise<void> {
     .where(
       and(
         eq(oncallPage.status, "triggered"),
-        ne(oncallPageRecipient.deliveryStatus, "delivered"),
-        lte(oncallPageRecipient.notifiedAt, attemptedBefore),
+        gte(oncallPage.createdAt, new Date(at - UNDELIVERED_RETRY_MAX_AGE_MS)),
+        dueForRetry(at),
+        isNull(oncallPageRecipient.responseTokenUsedAt),
       ),
     )
     .orderBy(asc(oncallPageRecipient.notifiedAt))
-    .limit(50);
+    .limit(RETRIES_PER_PASS);
   const pageable = new Map<string, Set<string>>();
   for (const { page, groupName, userId } of due) {
     try {
@@ -1031,21 +1146,23 @@ async function retryUndelivered(now: Date): Promise<void> {
         pageable.set(page.teamId, team);
       }
       if (!team.has(userId)) {
-        // Not pageable now; push them to the back of the queue instead of retrying.
+        // Not pageable now; check again later instead of retrying.
         await db
           .update(oncallPageRecipient)
-          .set({ notifiedAt: now })
+          .set({
+            deliveryStatus: sql`case when ${oncallPageRecipient.deliveryStatus} = 'pending' then 'failed' else ${oncallPageRecipient.deliveryStatus} end`,
+            nextAttemptAt: new Date(at + UNDELIVERED_RETRY_MAX_MS),
+          })
           .where(
             and(
               eq(oncallPageRecipient.pageId, page.id),
               eq(oncallPageRecipient.userId, userId),
-              ne(oncallPageRecipient.deliveryStatus, "delivered"),
-              lte(oncallPageRecipient.notifiedAt, attemptedBefore),
+              dueForRetry(at),
             ),
           );
         continue;
       }
-      const responseToken = await reclaimDelivery(page.id, userId, Date.now(), attemptedBefore);
+      const responseToken = await reclaimDelivery(page.id, userId, Date.now(), dueForRetry(at));
       if (!responseToken) continue;
       const tokens = (await devicesOf([userId])).map((target) => target.token);
       const accepted = await deliver(page, groupName, userId, responseToken, tokens);

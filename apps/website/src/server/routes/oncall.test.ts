@@ -21,6 +21,10 @@ const failing = vi.hoisted(() => new Set<string>());
 const rejected = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 /** Runs once inside the next Expo send, to interleave work with a delivery in progress. */
 const duringSend = vi.hoisted(() => ({ run: null as null | (() => Promise<void>) }));
+/** Runs once while the next page push is built, after its attempt was claimed. */
+const duringBuild = vi.hoisted(() => ({ run: null as null | (() => void) }));
+/** Expo's ticket error for tokens in `failing`. */
+const failureCode = vi.hoisted(() => ({ value: "MessageRateExceeded" }));
 const NAMES: Record<string, string> = {
   user_a: "Ana",
   user_b: "Ben",
@@ -66,7 +70,7 @@ vi.mock("expo-server-sdk", () => {
           return {
             status: "error",
             message: "Expo is unavailable",
-            details: { error: "MessageRateExceeded" },
+            details: { error: failureCode.value },
           };
         }
         return outcome === "ok"
@@ -76,6 +80,19 @@ vi.mock("expo-server-sdk", () => {
     }
   }
   return { Expo, default: Expo };
+});
+
+vi.mock("../lib/push", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/push")>();
+  return {
+    ...actual,
+    buildPagePushMessages: (...args: Parameters<typeof actual.buildPagePushMessages>) => {
+      const interleaved = duringBuild.run;
+      duringBuild.run = null;
+      interleaved?.();
+      return actual.buildPagePushMessages(...args);
+    },
+  };
 });
 
 let app: typeof import("../app")["app"];
@@ -122,6 +139,8 @@ afterEach(() => {
   rejected.length = 0;
   failing.clear();
   duringSend.run = null;
+  duringBuild.run = null;
+  failureCode.value = "MessageRateExceeded";
   as("user_a");
 });
 
@@ -1767,13 +1786,25 @@ describe("undelivered pages", () => {
     return row;
   }
 
-  /** Makes the page's latest delivery attempts old enough for the worker to retry. */
-  async function ageAttempts(pageId: string) {
-    const { eq } = await import("drizzle-orm");
+  /**
+   * Makes the page's undelivered recipients due for the worker: past their
+   * backoff, and any attempt still pending old enough to be presumed lost.
+   */
+  async function ageAttempts(pageId: string, extraMs = 0) {
+    const { and, eq, inArray } = await import("drizzle-orm");
     await db
       .update(schema.oncallPageRecipient)
-      .set({ notifiedAt: new Date(Date.now() - oncall.UNDELIVERED_RETRY_MS - 1000) })
+      .set({ notifiedAt: new Date(Date.now() - oncall.DELIVERY_STALE_MS - 1000 - extraMs) })
       .where(eq(schema.oncallPageRecipient.pageId, pageId));
+    await db
+      .update(schema.oncallPageRecipient)
+      .set({ nextAttemptAt: new Date(Date.now() - 1000) })
+      .where(
+        and(
+          eq(schema.oncallPageRecipient.pageId, pageId),
+          inArray(schema.oncallPageRecipient.deliveryStatus, ["failed", "skipped"]),
+        ),
+      );
   }
 
   async function setDeviceActive(userId: string, active: boolean) {
@@ -1937,7 +1968,14 @@ describe("undelivered pages", () => {
         );
 
     await inFlight();
-    expect((await call("POST", `/api/pages/${created.page.id}/escalate`)).status).toBe(200);
+    // Every target is still sending, so neither a person nor the worker uses up the step.
+    const busy = await call("POST", `/api/pages/${created.page.id}/escalate`);
+    expect(busy.status).toBe(409);
+    expect(await busy.json()).toMatchObject({ error: "This page is still being delivered" });
+    await runDueEscalation(created.page.id);
+    const postponed = await pageDto(created.page.id);
+    expect(postponed.escalationStep).toBe(0);
+    expect(Date.parse(postponed.nextEscalationAt ?? "")).toBeGreaterThan(Date.now());
     expect(pushesTo("user_a")).toHaveLength(0);
 
     await ageAttempts(created.page.id);
@@ -1988,10 +2026,7 @@ describe("undelivered pages", () => {
     ).json()) as OncallPageCreateResponse;
     failing.clear();
     await ageAttempts(later.page.id);
-    await db
-      .update(schema.oncallPageRecipient)
-      .set({ notifiedAt: new Date(Date.now() - oncall.UNDELIVERED_RETRY_MS - 5000) })
-      .where(eq(schema.oncallPageRecipient.pageId, earlier.page.id));
+    await ageAttempts(earlier.page.id, 5000);
 
     // Both pages are selected; the later one is acknowledged while the earlier one is sent.
     duringSend.run = async () => {
@@ -2072,6 +2107,110 @@ describe("undelivered pages", () => {
         .delete(schema.teamMember)
         .where(and(eq(schema.teamMember.teamId, TEAM_ID), eq(schema.teamMember.userId, "user_d")));
     }
+  });
+
+  it("sends no retry when the same page is acknowledged after the retry was claimed", async () => {
+    const { eq } = await import("drizzle-orm");
+    const group = await createGroup("Solo ack in send window", [], ["user_a"]);
+    failing.add("ExponentPushToken[user_a]");
+    const created = (await (
+      await page(group.id, { title: "Send window" })
+    ).json()) as OncallPageCreateResponse;
+    failing.clear();
+    await ageAttempts(created.page.id);
+    // The worker has claimed the retry when this runs; the acknowledgement commits before the send.
+    duringBuild.run = () => {
+      db.update(schema.oncallPage)
+        .set({ status: "acknowledged", acknowledgedByUserId: "user_a", acknowledgedAt: new Date() })
+        .where(eq(schema.oncallPage.id, created.page.id))
+        .run();
+    };
+    await oncall.processDueEscalations();
+    expect(duringBuild.run).toBeNull();
+    expect(pushesTo("user_a")).toHaveLength(0);
+    expect(rejectedTo("user_a")).toHaveLength(1);
+    const row = await recipient(created.page.id, "user_a");
+    expect(row?.deliveryStatus).not.toBe("delivered");
+    expect(row?.nextAttemptAt).toBeNull();
+    await call("POST", `/api/pages/${created.page.id}/resolve`, {});
+  });
+
+  it("never replaces a credential claimed by a lock-screen action in progress", async () => {
+    const group = await createGroup("Solo claimed", [], ["user_a"]);
+    failing.add("ExponentPushToken[user_a]");
+    const created = (await (
+      await page(group.id, { title: "Claimed" })
+    ).json()) as OncallPageCreateResponse;
+    const presented = (rejectedTo("user_a")[0]?.data as { responseToken?: string } | undefined)
+      ?.responseToken as string;
+    expect(await oncall.claimPageResponseToken(created.page.id, "user_a", presented)).toBe(true);
+    const before = await recipient(created.page.id, "user_a");
+    failing.clear();
+    await ageAttempts(created.page.id);
+    await oncall.processDueEscalations();
+    expect(pushesTo("user_a")).toHaveLength(0);
+    expect((await recipient(created.page.id, "user_a"))?.responseTokenHash).toBe(
+      before?.responseTokenHash,
+    );
+
+    await oncall.releasePageResponseToken(created.page.id, "user_a", presented);
+    await oncall.processDueEscalations();
+    expect(pushesTo("user_a")).toHaveLength(1);
+    await call("POST", `/api/pages/${created.page.id}/resolve`, {});
+  });
+
+  it("stops worker retries after a permanent Expo refusal but lets escalation try again", async () => {
+    const group = await createGroup(
+      "Solo refused",
+      [{ afterMinutes: 30, target: "group" }],
+      ["user_a"],
+    );
+    failureCode.value = "InvalidCredentials";
+    failing.add("ExponentPushToken[user_a]");
+    const created = (await (
+      await page(group.id, { title: "Refused" })
+    ).json()) as OncallPageCreateResponse;
+    expect(created.page.undelivered?.map((person) => person.userId)).toEqual(["user_a"]);
+    expect(await recipient(created.page.id, "user_a")).toMatchObject({
+      deliveryStatus: "undeliverable",
+      nextAttemptAt: null,
+    });
+    failing.clear();
+    await ageAttempts(created.page.id);
+    await oncall.processDueEscalations();
+    expect(pushesTo("user_a")).toHaveLength(0);
+    expect(rejectedTo("user_a")).toHaveLength(1);
+
+    expect((await call("POST", `/api/pages/${created.page.id}/escalate`)).status).toBe(200);
+    expect(pushesTo("user_a")).toHaveLength(1);
+    await call("POST", `/api/pages/${created.page.id}/resolve`, {});
+  });
+
+  it("stops worker retries once the page is a day old", async () => {
+    const { eq } = await import("drizzle-orm");
+    const group = await createGroup("Solo stale page", [], ["user_a"]);
+    failing.add("ExponentPushToken[user_a]");
+    const created = (await (
+      await page(group.id, { title: "Old" })
+    ).json()) as OncallPageCreateResponse;
+    failing.clear();
+    await db
+      .update(schema.oncallPage)
+      .set({ createdAt: new Date(Date.now() - oncall.UNDELIVERED_RETRY_MAX_AGE_MS - 1000) })
+      .where(eq(schema.oncallPage.id, created.page.id));
+    await ageAttempts(created.page.id);
+    await oncall.processDueEscalations();
+    expect(pushesTo("user_a")).toHaveLength(0);
+    await call("POST", `/api/pages/${created.page.id}/resolve`, {});
+  });
+
+  it("backs off worker retries up to the cap with bounded jitter", () => {
+    expect(oncall.retryDelayMs(1, 0)).toBe(60_000);
+    expect(oncall.retryDelayMs(2, 0)).toBe(120_000);
+    expect(oncall.retryDelayMs(4, 0)).toBe(480_000);
+    expect(oncall.retryDelayMs(5, 0)).toBe(oncall.UNDELIVERED_RETRY_MAX_MS);
+    expect(oncall.retryDelayMs(40, 0)).toBe(oncall.UNDELIVERED_RETRY_MAX_MS);
+    expect(oncall.retryDelayMs(1, 1)).toBe(72_000);
   });
 
   it("stops retrying once the page is acknowledged", async () => {

@@ -67,6 +67,7 @@ describe("push delivery budgets", () => {
     expect(result).toEqual({
       accepted: 100,
       errors: ["Push payload metadata exceeds the 3328-byte budget", "Unregistered"],
+      errorCodes: ["MessageTooBig", "DeviceNotRegistered"],
       staleTokens: ["ExponentPushToken[stale]"],
       staleSubscriptionIds: [],
       staleMacosDeviceIds: [],
@@ -97,6 +98,7 @@ describe("push delivery budgets", () => {
     expect(result).toEqual({
       accepted: 0,
       errors: ["Push payload metadata exceeds the 3328-byte budget"],
+      errorCodes: ["MessageTooBig"],
       staleTokens: [],
       staleSubscriptionIds: [],
       staleMacosDeviceIds: [],

@@ -1798,9 +1798,10 @@ export interface OncallPageDto {
   /** People whose page reached a device so far, in order. */
   notified: OncallPersonDto[];
   /**
-   * People paged whose push failed or who had no active device; they are
-   * paged again until it is delivered or the page is acknowledged. Absent on
-   * older servers.
+   * People paged whose push was not accepted: it failed, they had no active
+   * device, or Expo refused it permanently. Attempts still sending are in
+   * neither list. Escalation steps can page them again, and the server
+   * retries failures with backoff for a day. Absent on older servers.
    */
   undelivered?: OncallPersonDto[];
   escalationStep: number;

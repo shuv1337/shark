@@ -236,6 +236,12 @@ export interface SendResult {
   staleSubscriptionIds: string[];
   /** Native macOS devices whose APNs capability token is no longer valid. */
   staleMacosDeviceIds: string[];
+  /**
+   * One code per Expo message that was not accepted: Expo's ticket error
+   * (for example `MessageRateExceeded`), `MessageTooBig` or `InvalidPayload`
+   * for a message refused before sending, or `RequestFailed`.
+   */
+  errorCodes?: string[];
 }
 
 export async function sendPushMessages(messages: ExpoPushMessage[]): Promise<SendResult> {
@@ -247,6 +253,8 @@ export async function sendPushMessages(messages: ExpoPushMessage[]): Promise<Sen
     staleSubscriptionIds: [],
     staleMacosDeviceIds: [],
   };
+  const errorCodes: string[] = [];
+  result.errorCodes = errorCodes;
 
   const previews: ExpoPushMessage[] = [];
   for (const message of messages) {
@@ -258,9 +266,9 @@ export async function sendPushMessages(messages: ExpoPushMessage[]): Promise<Sen
           fitPushMessage(typeof message.to === "string" ? message : { ...message, to }),
         );
       } catch (error) {
-        result.errors.push(
-          error instanceof PushPreviewTooLargeError ? error.message : "Invalid Expo push payload",
-        );
+        const tooLarge = error instanceof PushPreviewTooLargeError;
+        result.errors.push(tooLarge ? error.message : "Invalid Expo push payload");
+        errorCodes.push(tooLarge ? "MessageTooBig" : "InvalidPayload");
       }
     }
   }
@@ -271,6 +279,7 @@ export async function sendPushMessages(messages: ExpoPushMessage[]): Promise<Sen
       tickets = await expo.sendPushNotificationsAsync(chunk);
     } catch (error) {
       result.errors.push(error instanceof Error ? error.message : "Expo push request failed");
+      errorCodes.push(...chunk.map(() => "RequestFailed"));
       continue;
     }
     tickets.forEach((ticket, index) => {
@@ -279,6 +288,7 @@ export async function sendPushMessages(messages: ExpoPushMessage[]): Promise<Sen
         return;
       }
       result.errors.push(ticket.message ?? "Unknown push error");
+      errorCodes.push(ticket.details?.error ?? "Unknown");
       const to = chunk[index]?.to;
       if (ticket.details?.error === "DeviceNotRegistered" && typeof to === "string") {
         result.staleTokens.push(to);

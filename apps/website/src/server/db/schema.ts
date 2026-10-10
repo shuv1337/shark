@@ -578,10 +578,15 @@ export const oncallPageRecipient = sqliteTable(
     acceptedCount: integer("accepted_count").notNull().default(0),
     /**
      * `pending` while a push is in flight, then `delivered` (Expo accepted at
-     * least one push), `failed`, or `skipped` (no active device). Only
-     * `delivered` recipients count as paged; the rest are paged again.
+     * least one push), `failed`, `skipped` (no active device), or
+     * `undeliverable` (Expo refused it permanently). Only `delivered`
+     * recipients count as paged; the rest stay eligible for escalation steps.
      */
     deliveryStatus: text("delivery_status").notNull().default("pending"),
+    /** Delivery attempts started, including the first. */
+    deliveryAttempts: integer("delivery_attempts").notNull().default(0),
+    /** When the worker may next retry a `failed` or `skipped` recipient; null when none is due. */
+    nextAttemptAt: integer("next_attempt_at", { mode: "timestamp_ms" }),
     /** Start of the latest delivery attempt. */
     notifiedAt: integer("notified_at", { mode: "timestamp_ms" }).notNull(),
   },
@@ -589,7 +594,7 @@ export const oncallPageRecipient = sqliteTable(
     uniqueIndex("oncall_page_recipient_page_user_unique").on(table.pageId, table.userId),
     uniqueIndex("oncall_page_recipient_token_unique").on(table.responseTokenHash),
     index("oncall_page_recipient_user_idx").on(table.userId, table.notifiedAt),
-    index("oncall_page_recipient_delivery_idx").on(table.deliveryStatus, table.notifiedAt),
+    index("oncall_page_recipient_delivery_idx").on(table.deliveryStatus, table.nextAttemptAt),
   ],
 );
 
