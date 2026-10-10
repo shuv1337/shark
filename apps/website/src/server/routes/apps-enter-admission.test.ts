@@ -23,16 +23,14 @@ beforeAll(async () => {
   const { runMigrations } = await import("../db/migrate");
   runMigrations();
   const now = new Date();
-  await db
-    .insert(schema.user)
-    .values(
-      [OWNER, MEMBER].map((person) => ({
-        ...person,
-        emailVerified: true,
-        createdAt: now,
-        updatedAt: now,
-      })),
-    );
+  await db.insert(schema.user).values(
+    [OWNER, MEMBER].map((person) => ({
+      ...person,
+      emailVerified: true,
+      createdAt: now,
+      updatedAt: now,
+    })),
+  );
   await db
     .insert(schema.team)
     .values({ id: "team_1", name: "Crew", createdAt: now, updatedAt: now });
@@ -84,7 +82,7 @@ async function teamPass(user: Person): Promise<string> {
   return issued.token;
 }
 
-function enter(pass: string): Promise<Response> {
+async function enter(pass: string): Promise<Response> {
   return app.request("/apps/enter", {
     method: "POST",
     headers: {
