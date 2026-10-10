@@ -39,7 +39,7 @@ import {
   requireAuth,
   requireScopes,
 } from "../middleware";
-import { enforceAgentRateLimit } from "./activities";
+import { agentPageAdmission, enforceAgentRateLimit } from "./activities";
 import { type Actor, type Outcome, readJson, send, withAgent } from "./teams";
 
 const result = (body: unknown, status: 200 | 201 = 200): Outcome => ({ status, body });
@@ -183,6 +183,7 @@ async function createPage(
   input: unknown,
   sourceName: string,
   origin?: RaisePageInput["origin"],
+  admit?: RaisePageInput["admit"],
 ): Promise<Outcome> {
   const found = await memberGroup(groupId, actor.id);
   if (!found) return GROUP_NOT_FOUND;
@@ -194,6 +195,7 @@ async function createPage(
     creatorUserId: actor.id,
     sourceName,
     origin,
+    admit,
   });
   return outcome.ok ? result(outcome.body, outcome.status) : failure(outcome.status, outcome.error);
 }
@@ -420,15 +422,23 @@ export const oncallAgentRoute = new Hono<AgentEnv>()
   )
   .post("/:groupId/pages", requireScopes("oncall:write"), async (c) =>
     withAgent(c, async (actor) => {
-      const limited = await enforceAgentRateLimit(c.get("apiToken"), actor);
+      const token = c.get("apiToken");
+      const limited = await enforceAgentRateLimit(token, actor);
       if (limited) {
         c.header("Retry-After", "60");
         return { status: 429, body: limited };
       }
-      const token = c.get("apiToken");
-      return createPage(actor, c.req.param("groupId"), await readJson(c), token.name, {
-        requesterTokenId: token.id,
-      });
+      const outcome = await createPage(
+        actor,
+        c.req.param("groupId"),
+        await readJson(c),
+        token.name,
+        { requesterTokenId: token.id },
+        await agentPageAdmission(token, actor),
+      );
+      if (outcome.status !== 429) return outcome;
+      c.header("Retry-After", "60");
+      return { status: 429, body: { ...(outcome.body as object), retryAfterSeconds: 60 } };
     }),
   );
 
@@ -448,6 +458,7 @@ export async function raisePageFor(
   input: unknown,
   sourceName: string,
   origin: RaisePageInput["origin"],
+  admit?: RaisePageInput["admit"],
 ) {
   const found = await memberGroup(groupId, userId);
   if (!found) return { ok: false as const, status: 404 as const, error: "On-call group not found" };
@@ -466,5 +477,6 @@ export async function raisePageFor(
     creatorUserId: userId,
     sourceName,
     origin,
+    admit,
   });
 }

@@ -17,14 +17,12 @@ import {
   liveActivityStateDiagnostic,
   liveActivityUpdateSchema,
 } from "@hark/contracts";
-import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
 import {
-  agentNotification,
   apiToken,
   device,
-  event,
   interaction,
   liveActivity,
   liveActivityDelivery,
@@ -44,7 +42,8 @@ import { checkNotificationAllowance, getBilling, trackNotification } from "../li
 import { newId } from "../lib/id";
 import { createLiveActivityInteractionCredential } from "../lib/live-activity-interaction";
 import { createLiveActivityRegistrationToken } from "../lib/live-activity-registration";
-import { pagesCreatedSince } from "../lib/oncall";
+import type { Executor } from "../lib/oncall";
+import { agentWindowLimit } from "../lib/rate-windows";
 import { decryptLiveActivityToken } from "../lib/token";
 import {
   type AgentEnv,
@@ -214,98 +213,26 @@ async function ownedActivity(
  * Shared per-minute budget for the whole agent surface: Live Activity
  * operations, interactions, and one-shot agent notifications count against
  * the same per-token and per-account windows, mirroring how webhook events
- * share the service and account counters.
+ * share the service and account counters. On its own this is check-then-act;
+ * paths that record the counted row repeat the check with `agentWindowLimit`
+ * in the transaction that inserts it.
  */
 export async function enforceAgentRateLimit(
   token: AgentEnv["Variables"]["apiToken"],
   owner: AuthedEnv["Variables"]["user"],
 ): Promise<{ error: string; retryAfterSeconds: 60 } | null> {
   const billing = await getBilling(owner, true);
-  const since = new Date(Date.now() - 60_000);
-  const [
-    [tokenActivity],
-    [tokenInteractions],
-    [tokenNotifications],
-    tokenPages,
-    [accountActivity],
-    [accountInteractions],
-    [accountNotifications],
-    [webhooks],
-    accountPages,
-  ] = await Promise.all([
-    db
-      .select({ value: count() })
-      .from(liveActivityOperation)
-      .innerJoin(liveActivity, eq(liveActivity.id, liveActivityOperation.activityId))
-      .where(
-        and(
-          eq(liveActivityOperation.requesterTokenId, token.id),
-          gte(liveActivityOperation.createdAt, since),
-          isNull(liveActivity.interactionId),
-        ),
-      ),
-    db
-      .select({ value: count() })
-      .from(interaction)
-      .where(and(eq(interaction.requesterTokenId, token.id), gte(interaction.createdAt, since))),
-    db
-      .select({ value: count() })
-      .from(agentNotification)
-      .where(
-        and(
-          eq(agentNotification.requesterTokenId, token.id),
-          gte(agentNotification.createdAt, since),
-        ),
-      ),
-    pagesCreatedSince({ tokenId: token.id }, since),
-    db
-      .select({ value: count() })
-      .from(liveActivityOperation)
-      .innerJoin(liveActivity, eq(liveActivity.id, liveActivityOperation.activityId))
-      .where(
-        and(
-          eq(liveActivity.userId, token.userId),
-          gte(liveActivityOperation.createdAt, since),
-          isNull(liveActivity.interactionId),
-        ),
-      ),
-    db
-      .select({ value: count() })
-      .from(interaction)
-      .where(and(eq(interaction.userId, token.userId), gte(interaction.createdAt, since))),
-    db
-      .select({ value: count() })
-      .from(agentNotification)
-      .where(
-        and(eq(agentNotification.userId, token.userId), gte(agentNotification.createdAt, since)),
-      ),
-    db
-      .select({ value: count() })
-      .from(event)
-      .innerJoin(service, eq(event.serviceId, service.id))
-      .where(and(eq(service.userId, token.userId), gte(event.createdAt, since))),
-    pagesCreatedSince({ userId: token.userId }, since),
-  ]);
-  if (
-    (tokenActivity?.value ?? 0) +
-      (tokenInteractions?.value ?? 0) +
-      (tokenNotifications?.value ?? 0) +
-      tokenPages >=
-    billing.limits.servicePerMinute
-  ) {
-    return { error: "Requester rate limit exceeded", retryAfterSeconds: 60 };
-  }
-  if (
-    (accountActivity?.value ?? 0) +
-      (accountInteractions?.value ?? 0) +
-      (accountNotifications?.value ?? 0) +
-      (webhooks?.value ?? 0) +
-      accountPages >=
-    billing.limits.accountPerMinute
-  ) {
-    return { error: "Account rate limit exceeded", retryAfterSeconds: 60 };
-  }
-  return null;
+  const error = agentWindowLimit(db, token, billing.limits);
+  return error ? { error, retryAfterSeconds: 60 } : null;
+}
+
+/** `raisePage` admission holding the agent windows in the page's insert transaction. */
+export async function agentPageAdmission(
+  token: AgentEnv["Variables"]["apiToken"],
+  owner: AuthedEnv["Variables"]["user"],
+): Promise<(tx: Executor) => string | null> {
+  const { limits } = await getBilling(owner, true);
+  return (tx) => agentWindowLimit(tx, token, limits);
 }
 
 async function recordDelivery(

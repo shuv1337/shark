@@ -3,6 +3,7 @@ import {
   type AgentNotificationDto,
   type AgentNotificationWithdrawResponse,
   agentNotificationCreateSchema,
+  type BillingDto,
   type InboxInteractionDto,
   type InteractionDto,
   type InteractionKind,
@@ -41,6 +42,7 @@ import { notificationEventTag } from "../lib/notification-withdrawal";
 import { revokeOAuthGrant } from "../lib/oauth";
 import { resolveProjectForDelivery } from "../lib/projects";
 import { buildInteractionPushMessages, buildPushMessages, sendPushFanout } from "../lib/push";
+import { agentWindowLimit } from "../lib/rate-windows";
 import { hashInteractionResponseToken } from "../lib/token";
 import {
   type AgentEnv,
@@ -50,6 +52,7 @@ import {
   requireScopes,
 } from "../middleware";
 import {
+  agentPageAdmission,
   enforceAgentRateLimit,
   resolveInteractionLiveActivity,
   startInteractionLiveActivity,
@@ -224,18 +227,28 @@ function toNotificationDto(row: NotificationRow): AgentNotificationDto {
 type NotificationInsertOutcome =
   | { kind: "inserted"; row: NotificationRow }
   | { kind: "replayed"; row: NotificationRow }
-  | { kind: "conflict" };
+  | { kind: "conflict" }
+  | { kind: "limited"; error: string };
 
-/** Inserts and absorbs idempotency-key races the same way the interaction insert does. */
+/**
+ * Inserts after re-checking the agent windows in the same synchronous
+ * transaction, so concurrent requests cannot overshoot them, and absorbs
+ * idempotency-key races the same way the interaction insert does.
+ */
 async function insertAgentNotification(
-  tokenId: string,
+  token: { id: string; userId: string },
+  limits: BillingDto["limits"],
   requestHash: string,
   values: typeof agentNotification.$inferInsert,
 ): Promise<NotificationInsertOutcome> {
   try {
-    const [inserted] = await db.insert(agentNotification).values(values).returning();
-    if (!inserted) throw new Error("Failed to create agent notification");
-    return { kind: "inserted", row: inserted };
+    return db.transaction((tx): NotificationInsertOutcome => {
+      const limited = agentWindowLimit(tx, token, limits);
+      if (limited) return { kind: "limited", error: limited };
+      const inserted = tx.insert(agentNotification).values(values).returning().get();
+      if (!inserted) throw new Error("Failed to create agent notification");
+      return { kind: "inserted", row: inserted };
+    });
   } catch (error) {
     if (values.idempotencyKey) {
       const [existing] = await db
@@ -243,7 +256,7 @@ async function insertAgentNotification(
         .from(agentNotification)
         .where(
           and(
-            eq(agentNotification.requesterTokenId, tokenId),
+            eq(agentNotification.requesterTokenId, token.id),
             eq(agentNotification.idempotencyKey, values.idempotencyKey),
           ),
         )
@@ -392,9 +405,13 @@ export const agentRoute = new Hono<AgentEnv>()
         },
         token.name,
         { requesterTokenId: token.id },
+        await agentPageAdmission(token, pageOwner),
       );
       if (!paged.ok) {
-        if (paged.status === 429) c.header("Retry-After", "60");
+        if (paged.status === 429) {
+          c.header("Retry-After", "60");
+          return c.json({ error: paged.error, retryAfterSeconds: 60 }, 429);
+        }
         return c.json(
           { error: paged.error, ...("issues" in paged ? { issues: paged.issues } : {}) },
           paged.status,
@@ -499,7 +516,11 @@ export const agentRoute = new Hono<AgentEnv>()
 
     // Insert before sending so a raced duplicate replays the stored row
     // instead of double-pushing; accepted_count is settled after the send.
-    const outcome = await insertAgentNotification(token.id, requestHash, values);
+    const outcome = await insertAgentNotification(token, billing.limits, requestHash, values);
+    if (outcome.kind === "limited") {
+      c.header("Retry-After", "60");
+      return c.json({ error: outcome.error, retryAfterSeconds: 60 }, 429);
+    }
     if (outcome.kind === "replayed") {
       return c.json({
         notification: toNotificationDto(outcome.row),
@@ -907,9 +928,18 @@ export const agentRoute = new Hono<AgentEnv>()
     };
     let row: InteractionRow;
     try {
-      const [inserted] = await db.insert(interaction).values(values).returning();
-      if (!inserted) return c.json({ error: "Failed to create interaction" }, 500);
-      row = inserted;
+      // Synchronous, so concurrent requests cannot all pass the agent windows.
+      const inserted = db.transaction((tx) => {
+        const limited = agentWindowLimit(tx, token, billing.limits);
+        if (limited) return { limited };
+        return { row: tx.insert(interaction).values(values).returning().get() };
+      });
+      if ("limited" in inserted) {
+        c.header("Retry-After", "60");
+        return c.json({ error: inserted.limited, retryAfterSeconds: 60 }, 429);
+      }
+      if (!inserted.row) return c.json({ error: "Failed to create interaction" }, 500);
+      row = inserted.row;
     } catch (error) {
       if (idempotencyKey) {
         const [existing] = await db

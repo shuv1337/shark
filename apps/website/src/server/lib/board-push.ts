@@ -13,9 +13,10 @@ import {
 import { env } from "../env";
 import { enforceAgentRateLimit } from "../routes/activities";
 import { track } from "./analytics";
-import { checkNotificationAllowance } from "./billing";
+import { checkNotificationAllowance, getBilling } from "./billing";
 import { newId } from "./id";
 import { buildPushMessages, sendPushFanout } from "./push";
+import { agentWindowLimit } from "./rate-windows";
 
 type TokenRow = typeof apiToken.$inferSelect;
 
@@ -128,23 +129,33 @@ export async function sendBoardAskPush(
       .set({ title, body, url, appId, status: "processing", error: null })
       .where(eq(agentNotification.id, previous.id));
   } else {
-    await db.insert(agentNotification).values({
-      id: notificationId,
-      userId,
-      requesterTokenId,
-      title,
-      body,
-      imageUrl: null,
-      url,
-      status: "processing",
-      acceptedCount: 0,
-      failedCount: 0,
-      error: null,
-      idempotencyKey,
-      requestHash: null,
-      appId,
-      createdAt: new Date(),
+    const { limits } = await getBilling(owner, true);
+    // Synchronous, so concurrent revisions cannot all pass the agent windows.
+    const refused = db.transaction((tx) => {
+      const error = agentWindowLimit(tx, token, limits);
+      if (error) return error;
+      tx.insert(agentNotification)
+        .values({
+          id: notificationId,
+          userId,
+          requesterTokenId,
+          title,
+          body,
+          imageUrl: null,
+          url,
+          status: "processing",
+          acceptedCount: 0,
+          failedCount: 0,
+          error: null,
+          idempotencyKey,
+          requestHash: null,
+          appId,
+          createdAt: new Date(),
+        })
+        .run();
+      return null;
     });
+    if (refused) throw new BoardPushLimited(refused);
   }
 
   try {

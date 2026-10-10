@@ -63,22 +63,36 @@ const UPCOMING_SHIFTS = 5;
 /** New pages a group accepts per minute; duplicates that merge do not count. */
 export const PAGES_PER_GROUP_PER_MINUTE = 10;
 
-/** Pages raised since `since`; they share the account, service, and requester per-minute budgets. */
-export async function pagesCreatedSince(
+export type Executor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Pages raised since `since`; they share the account, service, and requester
+ * per-minute budgets. Synchronous, so it can run inside a write transaction.
+ */
+export function countPagesSince(
+  executor: Executor,
   by: { userId: string } | { serviceId: string } | { tokenId: string },
   since: Date,
-): Promise<number> {
+): number {
   const owner =
     "userId" in by
       ? eq(oncallPage.createdByUserId, by.userId)
       : "serviceId" in by
         ? eq(oncallPage.requesterServiceId, by.serviceId)
         : eq(oncallPage.requesterTokenId, by.tokenId);
-  const [row] = await db
+  const row = executor
     .select({ value: count() })
     .from(oncallPage)
-    .where(and(owner, gte(oncallPage.createdAt, since)));
+    .where(and(owner, gte(oncallPage.createdAt, since)))
+    .get();
   return row?.value ?? 0;
+}
+
+export async function pagesCreatedSince(
+  by: { userId: string } | { serviceId: string } | { tokenId: string },
+  since: Date,
+): Promise<number> {
+  return countPagesSince(db, by, since);
 }
 
 // ---------------------------------------------------------------------------
@@ -103,9 +117,7 @@ async function activeOverrides(groupId: string, now: number) {
     .orderBy(asc(oncallOverride.startsAt), asc(oncallOverride.id));
 }
 
-export function overrideWindows(
-  rows: Array<typeof oncallOverride.$inferSelect>,
-): OverrideWindow[] {
+export function overrideWindows(rows: Array<typeof oncallOverride.$inferSelect>): OverrideWindow[] {
   return rows.map((row) => ({
     id: row.id,
     userId: row.userId,
@@ -425,13 +437,17 @@ export interface RaisePageInput {
   sourceName: string;
   /** Webhook or API token that raised the page, whose rate window it counts against. */
   origin?: { serviceId?: string; requesterTokenId?: string };
+  /**
+   * Runs synchronously in the transaction that inserts a new page (never for
+   * a merge). Returning an error rejects the page with 429, so a per-minute
+   * window checked here cannot be overshot by concurrent requests.
+   */
+  admit?: (tx: Executor) => string | null;
 }
 
 export type RaisePageOutcome =
   | { ok: true; status: 200 | 201; body: OncallPageCreateResponse }
   | { ok: false; status: 400 | 429; error: string };
-
-type Executor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 function mergeDuplicate(
   executor: Executor,
@@ -466,6 +482,7 @@ export async function raisePage({
   creatorUserId,
   sourceName,
   origin,
+  admit,
 }: RaisePageInput): Promise<RaisePageOutcome> {
   let appId: string | null = null;
   if (input.appId) {
@@ -521,8 +538,9 @@ export async function raisePage({
     createdAt: new Date(now),
     updatedAt: new Date(now),
   };
-  // Synchronous, so concurrent requests cannot both pass the group cap, and a
-  // page with the same key raised meanwhile is merged instead of conflicting.
+  // Synchronous, so concurrent requests cannot both pass the group cap or the
+  // caller's windows, and a page with the same key raised meanwhile is merged
+  // instead of conflicting.
   const created = db.transaction((tx) => {
     if (input.dedupKey) {
       const existing = mergeDuplicate(tx, group, input.dedupKey);
@@ -535,16 +553,18 @@ export async function raisePage({
         and(eq(oncallPage.groupId, group.id), gte(oncallPage.createdAt, new Date(now - 60_000))),
       )
       .get();
-    if ((recent?.value ?? 0) >= PAGES_PER_GROUP_PER_MINUTE) return { kind: "limited" as const };
+    if ((recent?.value ?? 0) >= PAGES_PER_GROUP_PER_MINUTE) {
+      return { kind: "limited" as const, error: "On-call page rate limit exceeded" };
+    }
+    const refused = admit?.(tx);
+    if (refused) return { kind: "limited" as const, error: refused };
     return {
       kind: "created" as const,
       page: tx.insert(oncallPage).values(values).returning().get(),
     };
   });
   if (created.kind === "merged") return mergedOutcome(created.page);
-  if (created.kind === "limited") {
-    return { ok: false, status: 429, error: "On-call page rate limit exceeded" };
-  }
+  if (created.kind === "limited") return { ok: false, status: 429, error: created.error };
   const page = created.page;
   if (!page) throw new Error("Failed to create page");
 

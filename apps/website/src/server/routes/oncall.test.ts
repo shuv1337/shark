@@ -408,6 +408,232 @@ describe("override permissions", () => {
   });
 });
 
+describe("per-minute windows under concurrent requests", () => {
+  const BURST = 12;
+  const LIMIT = 3;
+  let serial = 0;
+
+  /** A fresh service and agent token, so each test starts with empty windows. */
+  async function freshCredentials(userId = "user_a") {
+    const { hashApiToken, hashWebhookToken } = await import("../lib/token");
+    serial += 1;
+    const now = new Date();
+    const webhook = `whk_burst_${serial}_${"0".repeat(28)}`;
+    const token = `hark_${String(serial).padStart(43, "b")}`;
+    await db.insert(schema.service).values({
+      id: `svc_burst_${serial}`,
+      userId,
+      title: `Burst ${serial}`,
+      tokenHash: hashWebhookToken(webhook),
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.apiToken).values({
+      id: `tok_burst_${serial}`,
+      userId,
+      name: `Burst bot ${serial}`,
+      tokenHash: hashApiToken(token),
+      prefix: token.slice(0, 12),
+      scopes: ["notifications:send", "interactions:create", "oncall:write"],
+      createdAt: now,
+    });
+    return { webhook, token, serviceId: `svc_burst_${serial}`, tokenId: `tok_burst_${serial}` };
+  }
+
+  async function withLimits<T>(
+    limits: { service?: number; account?: number },
+    run: () => Promise<T>,
+  ): Promise<T> {
+    const { env } = await import("../env");
+    const previous = [env.SERVICE_RATE_LIMIT_PER_MINUTE, env.ACCOUNT_RATE_LIMIT_PER_MINUTE];
+    if (limits.service !== undefined) env.SERVICE_RATE_LIMIT_PER_MINUTE = limits.service;
+    if (limits.account !== undefined) env.ACCOUNT_RATE_LIMIT_PER_MINUTE = limits.account;
+    try {
+      return await run();
+    } finally {
+      [env.SERVICE_RATE_LIMIT_PER_MINUTE, env.ACCOUNT_RATE_LIMIT_PER_MINUTE] = previous as [
+        number,
+        number,
+      ];
+    }
+  }
+
+  async function burst(request: (index: number) => Promise<Response>) {
+    const responses = await Promise.all(
+      Array.from({ length: BURST }, (_, index) => request(index)),
+    );
+    const limited = responses.filter((response) => response.status === 429);
+    for (const response of limited) expect(response.headers.get("retry-after")).toBe("60");
+    return {
+      passed: responses.filter((response) => response.status < 300).length,
+      limited: limited.length,
+      bodies: await Promise.all(limited.map((response) => response.json())),
+    };
+  }
+
+  it("holds a webhook's service window for notifications", async () => {
+    const { webhook, serviceId } = await freshCredentials();
+    const result = await withLimits({ service: LIMIT }, () =>
+      burst((index) => call("POST", `/hooks/${webhook}`, { body: `Burst ${index}` })),
+    );
+    expect(result).toMatchObject({ passed: LIMIT, limited: BURST - LIMIT });
+    expect(result.bodies[0]).toMatchObject({ error: "Service rate limit exceeded" });
+    expect(
+      (await db.select().from(schema.event)).filter((row) => row.serviceId === serviceId),
+    ).toHaveLength(LIMIT);
+  });
+
+  it("holds the account window for webhook notifications", async () => {
+    const now = new Date();
+    await db.insert(schema.user).values({
+      id: "user_burst",
+      name: "Burst",
+      email: "user_burst@example.com",
+      emailVerified: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.device).values({
+      id: "dev_user_burst",
+      userId: "user_burst",
+      expoPushToken: "ExponentPushToken[user_burst]",
+      createdAt: now,
+      lastSeenAt: now,
+    });
+    const first = await freshCredentials("user_burst");
+    const second = await freshCredentials("user_burst");
+    const result = await withLimits({ account: LIMIT }, () =>
+      burst((index) =>
+        call("POST", `/hooks/${index % 2 ? first.webhook : second.webhook}`, { body: "x" }),
+      ),
+    );
+    expect(result).toMatchObject({ passed: LIMIT, limited: BURST - LIMIT });
+    expect(result.bodies[0]).toMatchObject({ error: "Account rate limit exceeded" });
+    const stored = (await db.select().from(schema.event)).filter(
+      (row) => row.serviceId === first.serviceId || row.serviceId === second.serviceId,
+    );
+    expect(stored).toHaveLength(LIMIT);
+  });
+
+  it("holds a webhook's service window for pages", async () => {
+    const group = await createGroup("Burst hook");
+    const { webhook, serviceId } = await freshCredentials();
+    const result = await withLimits({ service: LIMIT }, () =>
+      burst((index) =>
+        call("POST", `/hooks/${webhook}`, { body: `Page ${index}`, oncall: group.id }),
+      ),
+    );
+    expect(result).toMatchObject({ passed: LIMIT, limited: BURST - LIMIT });
+    expect(result.bodies[0]).toMatchObject({ error: "Service rate limit exceeded" });
+    expect(
+      (await db.select().from(schema.oncallPage)).filter(
+        (row) => row.requesterServiceId === serviceId,
+      ),
+    ).toHaveLength(LIMIT);
+  });
+
+  it("holds a token's requester window for agent notifications", async () => {
+    const { token, tokenId } = await freshCredentials();
+    const result = await withLimits({ service: LIMIT }, () =>
+      burst((index) =>
+        call("POST", "/api/agent/notifications", { title: "Bot", body: `n${index}` }, token),
+      ),
+    );
+    expect(result).toMatchObject({ passed: LIMIT, limited: BURST - LIMIT });
+    expect(result.bodies[0]).toEqual({
+      error: "Requester rate limit exceeded",
+      retryAfterSeconds: 60,
+    });
+    expect(
+      (await db.select().from(schema.agentNotification)).filter(
+        (row) => row.requesterTokenId === tokenId,
+      ),
+    ).toHaveLength(LIMIT);
+  });
+
+  it("holds a token's requester window for interactions", async () => {
+    const { token, tokenId } = await freshCredentials();
+    const result = await withLimits({ service: LIMIT }, () =>
+      burst((index) =>
+        call(
+          "POST",
+          "/api/agent/interactions",
+          { title: "Deploy", prompt: `Ship ${index}?`, kind: "approval" },
+          token,
+        ),
+      ),
+    );
+    expect(result).toMatchObject({ passed: LIMIT, limited: BURST - LIMIT });
+    expect(result.bodies[0]).toMatchObject({ error: "Requester rate limit exceeded" });
+    expect(
+      (await db.select().from(schema.interaction)).filter(
+        (row) => row.requesterTokenId === tokenId,
+      ),
+    ).toHaveLength(LIMIT);
+  });
+
+  it("holds a token's requester window for board pushes", async () => {
+    const { eq } = await import("drizzle-orm");
+    const { BoardPushLimited, sendBoardAskPush } = await import("../lib/board-push");
+    const { tokenId } = await freshCredentials();
+    const [token] = await db.select().from(schema.apiToken).where(eq(schema.apiToken.id, tokenId));
+    if (!token) throw new Error("Missing token");
+    const outcomes = await withLimits({ service: LIMIT }, () =>
+      Promise.allSettled(
+        Array.from({ length: BURST }, (_, index) =>
+          sendBoardAskPush(
+            {
+              id: `ask_${tokenId}_${index}`,
+              revision: 1,
+              userId: "user_a",
+              title: `Ask ${index}`,
+              agentLabel: "Board bot",
+              agentDisplay: null,
+            } as typeof schema.boardAsk.$inferSelect,
+            token,
+          ),
+        ),
+      ),
+    );
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(LIMIT);
+    const rejected = outcomes.filter((outcome) => outcome.status === "rejected");
+    expect(rejected).toHaveLength(BURST - LIMIT);
+    for (const outcome of rejected) {
+      expect(outcome.reason).toBeInstanceOf(BoardPushLimited);
+      expect(outcome.reason.message).toBe("Requester rate limit exceeded");
+    }
+    expect(
+      (await db.select().from(schema.agentNotification)).filter(
+        (row) => row.requesterTokenId === tokenId,
+      ),
+    ).toHaveLength(LIMIT);
+  });
+
+  it("holds a token's requester window for agent pages on both routes", async () => {
+    const group = await createGroup("Burst agent");
+    const { token, tokenId } = await freshCredentials();
+    const result = await withLimits({ service: LIMIT }, () =>
+      burst((index) =>
+        index % 2
+          ? call("POST", `/api/agent/oncall/${group.id}/pages`, { title: `p${index}` }, token)
+          : call(
+              "POST",
+              "/api/agent/notifications",
+              { title: `p${index}`, body: "x", oncall: group.id },
+              token,
+            ),
+      ),
+    );
+    expect(result).toMatchObject({ passed: LIMIT, limited: BURST - LIMIT });
+    for (const body of result.bodies) {
+      expect(body).toEqual({ error: "Requester rate limit exceeded", retryAfterSeconds: 60 });
+    }
+    expect(
+      (await db.select().from(schema.oncallPage)).filter((row) => row.requesterTokenId === tokenId),
+    ).toHaveLength(LIMIT);
+  });
+});
+
 describe("pages", () => {
   it("pages the on-call person, merges duplicates, escalates, and lets the first acknowledgement win", async () => {
     const group = await createGroup("Escalating");

@@ -5,7 +5,7 @@ import {
   type WithdrawEventResponse,
   webhookRequestSchema,
 } from "@hark/contracts";
-import { and, count, desc, eq, gt, gte, inArray, isNull, or } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, isNull, or } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { db } from "../db";
 import {
@@ -13,8 +13,6 @@ import {
   event,
   inboxItem,
   interaction,
-  liveActivity,
-  liveActivityOperation,
   macosDevice,
   service as serviceTable,
   user as userTable,
@@ -27,7 +25,6 @@ import { checkNotificationAllowance, getBilling, trackNotification } from "../li
 import { newId } from "../lib/id";
 import { syncInboxForUser } from "../lib/inbox";
 import { notificationEventTag } from "../lib/notification-withdrawal";
-import { pagesCreatedSince } from "../lib/oncall";
 import { resolveProjectForDelivery } from "../lib/projects";
 import {
   buildInteractionPushMessages,
@@ -36,6 +33,7 @@ import {
   sendPushFanout,
   sendWithdrawalFanout,
 } from "../lib/push";
+import { RATE_LIMIT_ERRORS, webhookWindowLimit } from "../lib/rate-windows";
 import {
   encryptCallbackToken,
   generateInteractionResponseToken,
@@ -89,59 +87,12 @@ function replayResponse(row: EventRow): {
   };
 }
 
-/**
- * Per-minute service and account windows for webhook deliveries. Pages count
- * against both windows, so `oncall` webhooks share the same budget.
- */
-async function rateLimitedResponse(
+function limitedResponse(
   c: Context,
   svc: typeof serviceTable.$inferSelect,
   billing: BillingDto,
-): Promise<Response | null> {
-  const since = new Date(Date.now() - 60_000);
-  const [
-    [serviceUsage],
-    servicePageUsage,
-    [accountEventUsage],
-    [accountInteractionUsage],
-    [accountActivityUsage],
-    accountPageUsage,
-  ] = await Promise.all([
-    db
-      .select({ value: count() })
-      .from(event)
-      .where(and(eq(event.serviceId, svc.id), gte(event.createdAt, since))),
-    pagesCreatedSince({ serviceId: svc.id }, since),
-    db
-      .select({ value: count() })
-      .from(event)
-      .innerJoin(serviceTable, eq(event.serviceId, serviceTable.id))
-      .where(and(eq(serviceTable.userId, svc.userId), gte(event.createdAt, since))),
-    db
-      .select({ value: count() })
-      .from(interaction)
-      .where(and(eq(interaction.userId, svc.userId), gte(interaction.createdAt, since))),
-    db
-      .select({ value: count() })
-      .from(liveActivityOperation)
-      .innerJoin(liveActivity, eq(liveActivity.id, liveActivityOperation.activityId))
-      .where(and(eq(liveActivity.userId, svc.userId), gte(liveActivityOperation.createdAt, since))),
-    pagesCreatedSince({ userId: svc.userId }, since),
-  ]);
-
-  let outcome: "service" | "account" | null = null;
-  if ((serviceUsage?.value ?? 0) + servicePageUsage >= billing.limits.servicePerMinute) {
-    outcome = "service";
-  } else if (
-    (accountEventUsage?.value ?? 0) +
-      (accountInteractionUsage?.value ?? 0) +
-      (accountActivityUsage?.value ?? 0) +
-      accountPageUsage >=
-    billing.limits.accountPerMinute
-  ) {
-    outcome = "account";
-  }
-  if (!outcome) return null;
+  outcome: "service" | "account",
+): Response {
   c.header("Retry-After", "60");
   track({
     name: "webhook_rate_limited",
@@ -151,13 +102,24 @@ async function rateLimitedResponse(
     outcome,
   });
   return c.json<WebhookResponse>(
-    {
-      ok: false,
-      error: outcome === "service" ? "Service rate limit exceeded" : "Account rate limit exceeded",
-      retryAfterSeconds: 60,
-    },
+    { ok: false, error: RATE_LIMIT_ERRORS[outcome], retryAfterSeconds: 60 },
     429,
   );
+}
+
+/**
+ * Per-minute service and account windows for webhook deliveries. Pages count
+ * against both windows, so `oncall` webhooks share the same budget. This early
+ * check rejects before any side effect; the delivery repeats it atomically
+ * with the insert that records the event or page.
+ */
+function rateLimitedResponse(
+  c: Context,
+  svc: typeof serviceTable.$inferSelect,
+  billing: BillingDto,
+): Response | null {
+  const outcome = webhookWindowLimit(db, svc, billing.limits);
+  return outcome ? limitedResponse(c, svc, billing, outcome) : null;
 }
 
 export const hooksRoute = new Hono()
@@ -200,8 +162,10 @@ export const hooksRoute = new Hono()
           400,
         );
       }
-      const limited = await rateLimitedResponse(c, svc, await getBilling(owner, true));
+      const billing = await getBilling(owner, true);
+      const limited = rateLimitedResponse(c, svc, billing);
       if (limited) return limited;
+      const admission: { refused: "service" | "account" | null } = { refused: null };
       // Pages merge on their dedup key, so an Idempotency-Key retry folds into
       // the open page instead of paging again.
       const paged = await raisePageFor(
@@ -216,7 +180,12 @@ export const hooksRoute = new Hono()
         },
         svc.title,
         { serviceId: svc.id },
+        (tx) => {
+          admission.refused = webhookWindowLimit(tx, svc, billing.limits);
+          return admission.refused ? RATE_LIMIT_ERRORS[admission.refused] : null;
+        },
       );
+      if (admission.refused) return limitedResponse(c, svc, billing, admission.refused);
       if (!paged.ok) {
         if (paged.status === 429) c.header("Retry-After", "60");
         return c.json<WebhookResponse>(
@@ -337,7 +306,7 @@ export const hooksRoute = new Hono()
       targetedMacosDevices = selectedMacos.filter((registeredDevice) => registeredDevice.active);
     }
 
-    const limited = await rateLimitedResponse(c, svc, billing);
+    const limited = rateLimitedResponse(c, svc, billing);
     if (limited) return limited;
 
     if (!(await checkNotificationAllowance(svc.userId))) {
@@ -383,8 +352,14 @@ export const hooksRoute = new Hono()
       createdAt: new Date(),
     };
 
+    let refused: "service" | "account" | null;
     try {
-      await db.insert(event).values(eventValues);
+      // Synchronous, so concurrent deliveries cannot all pass the windows.
+      refused = db.transaction((tx) => {
+        const outcome = webhookWindowLimit(tx, svc, billing.limits);
+        if (!outcome) tx.insert(event).values(eventValues).run();
+        return outcome;
+      });
     } catch (error) {
       if (idempotencyKey) {
         const [existing] = await db
@@ -399,6 +374,7 @@ export const hooksRoute = new Hono()
       }
       throw error;
     }
+    if (refused) return limitedResponse(c, svc, billing, refused);
 
     let devices: (typeof device.$inferSelect)[];
     let webSubscriptions: (typeof webPushSubscription.$inferSelect)[];
