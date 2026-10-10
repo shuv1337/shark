@@ -9,13 +9,13 @@ import type {
   TeamJoinResponse,
   TeamMemberDto,
 } from "@hark/contracts";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 process.env.NODE_ENV = "test";
 process.env.DATABASE_URL = ":memory:";
 
 const authState = vi.hoisted(() => ({ userId: "user_a" as string | null }));
-const seatState = vi.hoisted(() => ({ paid: true }));
 const sent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 
 const NAMES: Record<string, string> = { user_a: "Ryan", user_b: "Bea", user_c: "Cam" };
@@ -39,20 +39,6 @@ vi.mock("../auth", () => ({
   },
 }));
 
-// Seats are unlimited without Autumn; this mock stands in for a configured
-// Autumn account so the free-seat limit can be exercised.
-vi.mock("../lib/team-billing", () => ({
-  teamBillingConfigured: () => true,
-  teamSeats: async (_team: unknown, used: number) =>
-    seatState.paid
-      ? { plan: "team", seats: { used, available: null, billable: Math.max(0, used - 1) } }
-      : { plan: "free", seats: { used, available: 1, billable: 0 } },
-  teamCanSeat: async (_team: unknown, next: number) => seatState.paid || next <= 1,
-  syncTeamSeats: async () => undefined,
-  createTeamCheckout: async (team: { id: string }) => `https://billing.example.com/${team.id}`,
-  createTeamBillingPortal: async () => "https://billing.example.com/portal",
-}));
-
 vi.mock("expo-server-sdk", () => {
   class Expo {
     chunkPushNotifications(messages: Array<Record<string, unknown>>) {
@@ -73,6 +59,7 @@ let schema: typeof import("../db/schema");
 const TEAMS_TOKEN = `hark_${"t".repeat(43)}`;
 const NO_TEAMS_TOKEN = `hark_${"u".repeat(43)}`;
 const APPS_ONLY_TOKEN = `hark_${"v".repeat(43)}`;
+const BEA_APPS_TOKEN = `hark_${"w".repeat(43)}`;
 
 function as(userId: string | null) {
   authState.userId = userId;
@@ -99,7 +86,6 @@ function claimsOf(token: string): AppPassClaims {
 
 afterEach(() => {
   sent.length = 0;
-  seatState.paid = true;
   as("user_a");
 });
 
@@ -158,6 +144,15 @@ beforeAll(async () => {
       scopes: ["apps:read", "apps:write"],
       createdAt: now,
     },
+    {
+      id: "tok_bea_apps",
+      userId: "user_b",
+      name: "Bea apps bot",
+      tokenHash: hashApiToken(BEA_APPS_TOKEN),
+      prefix: "hark_wwwwwww",
+      scopes: ["apps:read", "apps:write"],
+      createdAt: now,
+    },
   ]);
 });
 
@@ -183,7 +178,7 @@ async function join(userId: string, code: string): Promise<TeamJoinResponse> {
 describe("teams and invites", () => {
   it("creates a team owned by its creator and lets an invitee join through the link", async () => {
     const team = await createTeam("Acme");
-    expect(team).toMatchObject({ name: "Acme", role: "owner", memberCount: 1, plan: "team" });
+    expect(team).toMatchObject({ name: "Acme", role: "owner", memberCount: 1, plan: "free" });
     expect(team.id).toMatch(/^team_/);
 
     const created = await invite(team.id);
@@ -214,26 +209,27 @@ describe("teams and invites", () => {
     expect(listed.teams.map((entry) => [entry.name, entry.role])).toEqual([["Acme", "member"]]);
   });
 
-  it("requires the paid team plan for a second seat", async () => {
-    seatState.paid = false;
-    const team = await createTeam("Solo");
-    expect(team).toMatchObject({ plan: "free", seats: { used: 1, available: 1, billable: 0 } });
-    const response = await call("POST", `/api/teams/${team.id}/invites`, {});
-    expect(response.status).toBe(402);
-    expect(await response.json()).toMatchObject({ code: "seat_limit" });
-
-    // An invite created while paid still cannot be redeemed after downgrading.
-    seatState.paid = true;
-    const created = await invite(team.id);
-    seatState.paid = false;
-    as("user_b");
-    const accept = await call("POST", `/api/team-invites/${created.code}/accept`);
-    expect(accept.status).toBe(402);
-    expect(await accept.json()).toMatchObject({ code: "seat_limit" });
+  it("keeps every team on the free plan with unlimited seats and no billing", async () => {
+    const team = await createTeam("Unbilled");
+    expect(team).toMatchObject({ plan: "free", seats: { used: 1, available: null, billable: 0 } });
+    await join("user_b", (await invite(team.id)).code);
+    as("user_a");
+    await join("user_c", (await invite(team.id)).code);
 
     as("user_a");
-    const checkout = await call("POST", `/api/teams/${team.id}/billing/checkout`);
-    expect(await checkout.json()).toEqual({ url: `https://billing.example.com/${team.id}` });
+    const detail = (await (await call("GET", `/api/teams/${team.id}`)).json()) as {
+      team: TeamDto;
+    };
+    expect(detail.team).toMatchObject({
+      plan: "free",
+      memberCount: 3,
+      seats: { used: 3, available: null, billable: 0 },
+    });
+    for (const kind of ["checkout", "portal"]) {
+      const response = await call("POST", `/api/teams/${team.id}/billing/${kind}`);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: "Billing is not configured" });
+    }
   });
 
   it("pushes an invite to an existing user with that email and files it in their inbox", async () => {
@@ -255,6 +251,23 @@ describe("teams and invites", () => {
       sourceName: "SHark Teams",
       url: `shark://join/${created.code}`,
     });
+  });
+
+  it("lets only the invited account accept an invite addressed to an email", async () => {
+    const team = await createTeam("Addressed");
+    const created = await invite(team.id, { email: "User_C@Example.com" });
+    expect(created.invite.email).toBe("user_c@example.com");
+
+    as("user_b");
+    const wrong = await call("POST", `/api/team-invites/${created.code}/accept`);
+    expect(wrong.status).toBe(403);
+    expect(await wrong.json()).toMatchObject({ error: "This invite is for a different account" });
+    // The refusal does not spend the invite.
+    as(null);
+    expect((await call("GET", `/api/team-invites/${created.code}`)).status).toBe(200);
+
+    const joined = await join("user_c", created.code);
+    expect(joined).toMatchObject({ joined: true, team: { id: team.id, memberCount: 2 } });
   });
 
   it("enforces roles and transfers ownership", async () => {
@@ -397,6 +410,81 @@ describe("team apps", () => {
     expect(returned.consentedAt).not.toBeNull();
   });
 
+  it("gives a leaving member back the apps they added, with their own sign-in state", async () => {
+    const team = await createTeam("Leavers");
+    await join("user_b", (await invite(team.id)).code);
+    const now = new Date();
+    await db.insert(schema.app).values({
+      id: "app_leaver_0001",
+      userId: "user_b",
+      teamId: team.id,
+      name: "Bea's tool",
+      url: "https://bea-tool.example.com/",
+      origin: "https://bea-tool.example.com",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.appMemberState).values([
+      {
+        appId: "app_leaver_0001",
+        userId: "user_b",
+        shareEmail: true,
+        consentedAt: now,
+        updatedAt: now,
+      },
+      { appId: "app_leaver_0001", userId: "user_a", consentedAt: now, updatedAt: now },
+    ]);
+
+    as("user_b");
+    expect((await call("POST", `/api/teams/${team.id}/leave`)).status).toBe(200);
+    const returned = (
+      (await (await call("GET", "/api/apps/app_leaver_0001")).json()) as { app: AppDto }
+    ).app;
+    expect(returned).toMatchObject({ team: null, shareEmail: true });
+    expect(returned.consentedAt).not.toBeNull();
+
+    as("user_a");
+    expect((await call("GET", "/api/apps/app_leaver_0001")).status).toBe(404);
+    const teamApps = (await (await call("GET", `/api/teams/${team.id}/apps`)).json()) as {
+      apps: AppDto[];
+    };
+    expect(teamApps.apps).toEqual([]);
+    const leftover = await db
+      .select()
+      .from(schema.appMemberState)
+      .where(eq(schema.appMemberState.appId, "app_leaver_0001"));
+    expect(leftover).toEqual([]);
+  });
+
+  it("shows the registering token's name only to the member who added the app", async () => {
+    const team = await createTeam("Token names");
+    await join("user_b", (await invite(team.id)).code);
+    const created = await call(
+      "POST",
+      "/api/agent/apps",
+      { name: "Metrics", url: "https://metrics.example.com/", teamId: team.id },
+      TEAMS_TOKEN,
+    );
+    expect(created.status).toBe(201);
+    const { app: createdApp } = (await created.json()) as { app: AppDto };
+    expect(createdApp.createdBy).toBe("Team bot");
+
+    as("user_a");
+    expect(
+      ((await (await call("GET", `/api/apps/${createdApp.id}`)).json()) as { app: AppDto }).app
+        .createdBy,
+    ).toBe("Team bot");
+    as("user_b");
+    const asMember = (
+      (await (await call("GET", `/api/apps/${createdApp.id}`)).json()) as { app: AppDto }
+    ).app;
+    expect(asMember.createdBy).toBeNull();
+    const listed = (await (await call("GET", `/api/teams/${team.id}/apps`)).json()) as {
+      apps: AppDto[];
+    };
+    expect(listed.apps.map((entry) => entry.createdBy)).toEqual([null]);
+  });
+
   it("lets agents create team apps and list teams, scope-checked", async () => {
     const team = await createTeam("Agents");
     const listed = await call("GET", "/api/agent/teams", undefined, TEAMS_TOKEN);
@@ -471,6 +559,59 @@ describe("team apps", () => {
     expect(await shared.json()).toMatchObject({ required: ["apps:write", "teams:write"] });
     await settle();
     expect(sent).toHaveLength(0);
+  });
+
+  it("lets an apps:write token move its owner's app back out of a team without teams:write", async () => {
+    const team = await createTeam("Unshare");
+    await join("user_b", (await invite(team.id)).code);
+    as("user_a");
+    const created = await call(
+      "POST",
+      "/api/agent/apps",
+      { name: "Wiki", url: "https://wiki.example.com/", teamId: team.id },
+      TEAMS_TOKEN,
+    );
+    const { app: teamApp } = (await created.json()) as { app: AppDto };
+    await settle();
+    sent.length = 0;
+
+    const readOnly = await call(
+      "POST",
+      `/api/agent/apps/${teamApp.id}/share`,
+      { teamId: null },
+      NO_TEAMS_TOKEN,
+    );
+    expect(readOnly.status).toBe(403);
+    expect(await readOnly.json()).toMatchObject({ required: ["apps:write"] });
+
+    // Ownership still applies: a member cannot pull someone else's app out.
+    const notOwner = await call(
+      "POST",
+      `/api/agent/apps/${teamApp.id}/share`,
+      { teamId: null },
+      BEA_APPS_TOKEN,
+    );
+    expect(notOwner.status).toBe(403);
+
+    const unshared = await call(
+      "POST",
+      `/api/agent/apps/${teamApp.id}/share`,
+      { teamId: null },
+      APPS_ONLY_TOKEN,
+    );
+    expect(unshared.status).toBe(200);
+    expect(((await unshared.json()) as { app: AppDto }).app.team).toBeNull();
+    await settle();
+    expect(sent).toHaveLength(0);
+
+    // Malformed bodies are not treated as an un-share.
+    const malformed = await call(
+      "POST",
+      `/api/agent/apps/${teamApp.id}/share`,
+      { teamId: null, extra: true },
+      APPS_ONLY_TOKEN,
+    );
+    expect(malformed.status).toBe(403);
   });
 
   it("caps how many notices one sender can push per minute", async () => {
