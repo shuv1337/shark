@@ -764,6 +764,8 @@ export const agentOperations: Record<string, Partial<Record<AgentMethod, AgentOp
     },
     patch: {
       summary: "Update a webhook service's title, avatar, or tap URL",
+      description:
+        "Only supplied fields change. Omit a field to keep its current value; send null for imageUrl or url to clear it.",
       scopes: ["services:write"],
       params: [idParam()],
       request: serviceUpdateSchema,
