@@ -1,5 +1,4 @@
 import {
-  type BillingRedirectResponse,
   MAX_MEMBERS_PER_TEAM,
   MAX_ONCALL_GROUPS_PER_TEAM,
   MAX_TEAMS_PER_ACCOUNT,
@@ -24,7 +23,7 @@ import { selectAppsWithJoins, toAppDto } from "../lib/apps";
 import { newId } from "../lib/id";
 import { checkRotation, listTeamPages, toGroupDto } from "../lib/oncall";
 import { requireSameOriginOrNative } from "../lib/same-origin";
-import { createTeamBillingPortal, syncTeamSeats, teamBillingConfigured } from "../lib/team-billing";
+import { syncTeamSeats } from "../lib/team-billing";
 import {
   billingCustomer,
   deleteTeam,
@@ -342,8 +341,6 @@ async function acceptInvite(actor: Actor, code: string): Promise<Outcome> {
   if (members >= MAX_MEMBERS_PER_TEAM) {
     return failure(409, `This team is full (${MAX_MEMBERS_PER_TEAM} members)`);
   }
-  const customer = await billingCustomer(found.team);
-
   const now = new Date();
   const joined = db.transaction((tx) => {
     const claimed = tx
@@ -366,7 +363,7 @@ async function acceptInvite(actor: Actor, code: string): Promise<Outcome> {
     return true;
   });
   if (!joined) return failure(404, "This invite is invalid, used, or expired");
-  void syncTeamSeats(customer, members + 1);
+  void syncTeamSeats(await billingCustomer(found.team), members + 1);
   const body: TeamJoinResponse = {
     team: await toTeamDto(found.team, found.invite.role as TeamRole),
     joined: true,
@@ -440,21 +437,6 @@ async function teamPages(
   return listed.ok ? result(listed.body) : failure(400, listed.error);
 }
 
-async function billingPortal(actor: Actor, teamId: string): Promise<Outcome> {
-  const current = await membership(teamId, actor.id);
-  if (!current) return TEAM_NOT_FOUND;
-  if (!hasRole(current.role, "admin")) return FORBIDDEN_ADMIN;
-  if (!teamBillingConfigured()) return failure(503, "Billing is not configured");
-  const customer = await billingCustomer(current.team);
-  try {
-    const url = await createTeamBillingPortal(customer);
-    return result({ url } satisfies BillingRedirectResponse);
-  } catch (error) {
-    console.error("[team-billing] Could not open portal", error);
-    return failure(502, "Could not open billing portal");
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Public invite preview (rate limited; no session)
 // ---------------------------------------------------------------------------
@@ -519,9 +501,6 @@ export const teamsSessionRoute = new Hono<AuthedEnv>()
     send(c, await revokeInvite(sessionActor(c), c.req.param("id"), c.req.param("inviteId"))),
   )
   .get("/:id/apps", async (c) => send(c, await listTeamApps(sessionActor(c), c.req.param("id"))))
-  .post("/:id/billing/portal", async (c) =>
-    send(c, await billingPortal(sessionActor(c), c.req.param("id"))),
-  )
   .get("/:id/oncall", async (c) => send(c, await listGroups(sessionActor(c), c.req.param("id"))))
   .post("/:id/oncall", async (c) =>
     send(c, await createGroup(sessionActor(c), c.req.param("id"), await readJson(c))),

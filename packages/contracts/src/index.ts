@@ -1558,10 +1558,6 @@ export type TeamRole = z.infer<typeof teamRoleSchema>;
 export const TEAM_NAME_MAX_CHARS = 60 as const;
 export const MAX_TEAMS_PER_ACCOUNT = 20 as const;
 export const MAX_MEMBERS_PER_TEAM = 500 as const;
-/** Seats included without a paid team plan (the creator's own seat). */
-export const TEAM_FREE_SEATS = 1 as const;
-/** Monthly price per seat beyond the free one, in USD. */
-export const TEAM_SEAT_PRICE_MONTHLY = 5 as const;
 export const TEAM_INVITE_TTL_SECONDS = 604_800 as const;
 
 const singleLine = (value: string) =>
@@ -1596,9 +1592,9 @@ export interface TeamDto extends TeamSummaryDto {
   oncallGroupCount: number;
   seats: {
     used: number;
-    /** Seats covered without payment (TEAM_FREE_SEATS) plus paid seats. */
+    /** Seats included free plus paid seats; null means unlimited. */
     available: number | null;
-    /** Seats billed at TEAM_SEAT_PRICE_MONTHLY. */
+    /** Paid seats. */
     billable: number;
   };
   plan: "free" | "team";
