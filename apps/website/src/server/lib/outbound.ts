@@ -42,7 +42,7 @@ export type PostOptions = {
   timeoutMs?: number;
 };
 
-class BlockedDestinationError extends Error {}
+export class BlockedDestinationError extends Error {}
 class TimeoutError extends Error {}
 
 /**
@@ -63,7 +63,7 @@ export async function postCallback(url: string, options: PostOptions): Promise<C
     const hostname = target.hostname.replace(/^\[|\]$/g, "");
     const records = await abortable(
       pinAddresses(hostname, outbound.resolve, outbound.isAllowedAddress),
-      controller,
+      controller.signal,
     );
     let status: number | undefined;
     for (const [index, pinned] of records.entries()) {
@@ -139,13 +139,14 @@ function send(
   });
 }
 
-function abortable<T>(promise: Promise<T>, controller: AbortController): Promise<T> {
+/** Settles with `promise`, or rejects with the abort reason as soon as `signal` fires. */
+export function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
-    const onAbort = () => reject(controller.signal.reason);
-    if (controller.signal.aborted) return onAbort();
-    controller.signal.addEventListener("abort", onAbort, { once: true });
+    const onAbort = () => reject(signal.reason);
+    if (signal.aborted) return onAbort();
+    signal.addEventListener("abort", onAbort, { once: true });
     promise.then(resolve, reject).finally(() => {
-      controller.signal.removeEventListener("abort", onAbort);
+      signal.removeEventListener("abort", onAbort);
     });
   });
 }

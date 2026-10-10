@@ -26,6 +26,7 @@ vi.mock("./apns", async (importOriginal) => ({
   sendNotificationPush: delivery.macos,
 }));
 
+import { outbound } from "./outbound";
 import { sendPushFanout, sendPushMessages } from "./push";
 import { EXPO_MESSAGE_BYTE_BUDGET, pushJsonBytes } from "./push-preview";
 import { encryptMacosApnsToken, encryptWebPushSubscription } from "./token";
@@ -44,6 +45,7 @@ describe("push delivery budgets", () => {
       ),
     );
     delivery.web.mockReset().mockResolvedValue({ statusCode: 201 });
+    vi.spyOn(outbound, "resolve").mockResolvedValue([{ address: "142.250.0.10", family: 4 }]);
     delivery.macos.mockReset().mockResolvedValue({ accepted: true, reason: null });
   });
 
@@ -122,7 +124,7 @@ describe("push delivery budgets", () => {
           endpointHash: "synthetic-hash",
           subscriptionCiphertext: encryptWebPushSubscription(
             JSON.stringify({
-              endpoint: "https://push.example/send/synthetic",
+              endpoint: "https://fcm.googleapis.com/fcm/send/synthetic",
               keys: { p256dh: "synthetic", auth: "synthetic" },
             }),
           ),

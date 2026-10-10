@@ -44,6 +44,48 @@ const oauthDefaultScopes = {
   },
 } satisfies BetterAuthPlugin;
 
+const PRELOGIN_PATH = "/oauth2/public-client-prelogin";
+const PUBLIC_CLIENT_PATHS = new Set([PRELOGIN_PATH, "/oauth2/public-client"]);
+
+/**
+ * Better Auth 1.6.25 checks the prelogin's signed `oauth_query` but then
+ * returns whichever `client_id` the body names. Bind the two so a signed query
+ * only reveals its own client, and drop the registered `contacts` (which can
+ * hold email addresses) since the consent page never shows them.
+ */
+const oauthPublicClientHardening = {
+  id: "hark-oauth-public-client-hardening",
+  hooks: {
+    before: [
+      {
+        matcher: (ctx) => ctx.path === PRELOGIN_PATH && typeof ctx.body?.client_id === "string",
+        handler: createAuthMiddleware(async (ctx) => {
+          const query = ctx.body?.oauth_query;
+          const signed =
+            typeof query === "string" ? new URLSearchParams(query).getAll("client_id") : [];
+          if (signed.length !== 1 || signed[0] !== ctx.body?.client_id) {
+            throw new APIError("BAD_REQUEST", {
+              error: "invalid_request",
+              error_description: "client_id does not match the signed authorization request",
+            });
+          }
+        }),
+      },
+    ],
+    after: [
+      {
+        matcher: (ctx) => PUBLIC_CLIENT_PATHS.has(ctx.path ?? ""),
+        handler: createAuthMiddleware(async (ctx) => {
+          const returned = ctx.context.returned;
+          if (!returned || typeof returned !== "object" || !("client_id" in returned)) return;
+          const { contacts: _contacts, ...client } = returned as Record<string, unknown>;
+          return ctx.json(client);
+        }),
+      },
+    ],
+  },
+} satisfies BetterAuthPlugin;
+
 export const auth = betterAuth({
   appName: "SHark",
   baseURL: env.APP_URL,
@@ -153,6 +195,7 @@ export const auth = betterAuth({
       silenceWarnings: { oauthAuthServerConfig: true },
     }),
     oauthDefaultScopes,
+    oauthPublicClientHardening,
     webViewSessionPlugin(),
   ],
   trustedOrigins: [env.APP_URL, "https://appleid.apple.com", "shark://", "shark://*"],

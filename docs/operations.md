@@ -160,8 +160,10 @@ operator review:
     authenticate with a client ID, code, or token instead of a session. An empty form body returns
     400, and JSON returns 415.
   - `POST /api/auth/oauth2/public-client-prelogin` accepts JSON and verifies a signed
-    `oauth_query` instead of a session. An empty JSON body returns 400, and valid JSON with a
-    validly signed query returns 200 with the client's public registration fields.
+    `oauth_query` instead of a session. An empty JSON body returns 400, a `client_id` that
+    differs from the signed query's returns 400, and valid JSON with a validly signed query for
+    the same client returns 200 with the client's public registration fields, without
+    `contacts`.
   - `/mcp` without a valid bearer token returns 401 with a `WWW-Authenticate` challenge that points
     to the protected-resource metadata.
 - The team invite preview `GET /api/team-invites/:code` is intentionally anonymous so the join
@@ -177,7 +179,9 @@ operator review:
 - `/sw.js` returns 200 with JavaScript content, and a signed-in browser can enable, test, disable,
   and re-enable notifications without creating duplicate active subscriptions.
 - Web Push responses with an expired subscription status deactivate only that browser target; they
-  do not prevent delivery to healthy iPhone or browser targets.
+  do not prevent delivery to healthy iPhone or browser targets. A push service that resolves to a
+  non-public address, fails DNS, or doesn't finish resolution plus the request within 10 seconds
+  is reported as a delivery error for that target and leaves the subscription active.
 - A signed macOS app can complete device-code authorization, register its APNs token, refresh the
   server-backed inbox, and submit each approval/reply at most once. Private-preview mode must redact
   APNs alert content and omit notification actions.

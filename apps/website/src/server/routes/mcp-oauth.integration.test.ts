@@ -264,6 +264,86 @@ describe("MCP OAuth end to end", () => {
     expect((await from("198.51.100.8")).status).toBe(200);
   });
 
+  it("only shows a signed query's own client on the consent page, without contacts", async () => {
+    const response = await app.request("/api/auth/oauth2/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "Prelogin B",
+        redirect_uris: [REDIRECT_URI],
+        token_endpoint_auth_method: "none",
+        contacts: ["synthetic-owner@example.com"],
+      }),
+    });
+    const registered = (await response.json()) as { client_id: string; contacts?: string[] };
+    expect(response.status).toBe(200);
+    expect(registered.contacts).toEqual(["synthetic-owner@example.com"]);
+    const clientA = await register("Prelogin A");
+    const clientB = registered.client_id;
+    const queryA = await authorize(clientA, pkce().challenge);
+    const queryB = await authorize(clientB, pkce().challenge);
+
+    const prelogin = (body: Record<string, unknown>) =>
+      app.request("/api/auth/oauth2/public-client-prelogin", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: ORIGIN },
+        body: JSON.stringify(body),
+      });
+
+    const crossed = await prelogin({ client_id: clientB, oauth_query: queryA });
+    expect(crossed.status).toBe(400);
+    expect(JSON.stringify(await crossed.json())).not.toContain("Prelogin B");
+    for (const body of [
+      { client_id: clientB },
+      { client_id: clientB, oauth_query: `${queryA}&client_id=${clientB}` },
+    ]) {
+      expect((await prelogin(body)).status).toBe(400);
+    }
+
+    const own = await prelogin({ client_id: clientB, oauth_query: queryB });
+    expect(own.status).toBe(200);
+    const shown = (await own.json()) as Record<string, unknown>;
+    expect(shown).toMatchObject({ client_id: clientB, client_name: "Prelogin B" });
+    expect(shown).not.toHaveProperty("contacts");
+    expect(JSON.stringify(shown)).not.toContain("synthetic-owner@example.com");
+
+    const sessionView = await app.request(
+      `/api/auth/oauth2/public-client?client_id=${encodeURIComponent(clientB)}`,
+      signedIn(),
+    );
+    expect(sessionView.status).toBe(200);
+    const sessionShown = (await sessionView.json()) as Record<string, unknown>;
+    expect(sessionShown).toMatchObject({ client_id: clientB, client_name: "Prelogin B" });
+    expect(sessionShown).not.toHaveProperty("contacts");
+    expect(JSON.stringify(sessionShown)).not.toContain("synthetic-owner@example.com");
+  });
+
+  it("rejects malformed or unsigned prelogin requests without revealing the client", async () => {
+    const clientId = await register("Prelogin Malformed");
+    const query = await authorize(clientId, pkce().challenge);
+    const tampered = new URLSearchParams(query);
+    tampered.set("sig", `${tampered.get("sig")?.slice(0, -2)}AA`);
+    const scopeChanged = new URLSearchParams(query);
+    scopeChanged.set("scope", "teams:read teams:write");
+
+    for (const body of [
+      "{not json",
+      JSON.stringify({ client_id: 42, oauth_query: query }),
+      JSON.stringify({ client_id: clientId, oauth_query: 42 }),
+      JSON.stringify({ client_id: clientId, oauth_query: tampered.toString() }),
+      JSON.stringify({ client_id: clientId, oauth_query: scopeChanged.toString() }),
+    ]) {
+      const response = await app.request("/api/auth/oauth2/public-client-prelogin", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: ORIGIN },
+        body,
+      });
+      expect(response.status, body).toBeGreaterThanOrEqual(400);
+      expect(response.status, body).toBeLessThan(500);
+      expect(await response.text(), body).not.toContain("Prelogin Malformed");
+    }
+  });
+
   it("requires the PKCE verifier and spends a code on its first use", async () => {
     const { clientId, verifier, code } = await codeFor("PKCE Client");
 

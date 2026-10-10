@@ -182,11 +182,14 @@ Deliberate merge resolutions:
     They take no session; a client authenticates with its client ID plus a PKCE-bound code, a
     refresh token, or the token being revoked or introspected.
   - `POST /api/auth/oauth2/public-client-prelogin`, which the consent page uses to show the
-    requesting client's registered name, URI, logo, policy links, and contacts. It requires a
-    validly signed authorize query (`oauth_query`), which anyone can obtain by starting an
-    authorization. Better Auth 1.6.25 doesn't bind the body's `client_id` to that query, so a
-    caller can read the same public registration fields for any client whose random ID it already
-    knows. Those fields include the registered `contacts`, which can contain email addresses.
+    requesting client's registered name, URI, logo, and policy links. It requires a validly
+    signed authorize query (`oauth_query`), which anyone can obtain by starting an authorization.
+    Better Auth 1.6.25 doesn't bind the body's `client_id` to that query, so SHark's
+    `hark-oauth-public-client-hardening` plugin in `auth.ts` does: the request is rejected with
+    400 `invalid_request` unless the query carries exactly one `client_id` and it equals the
+    body's. The same plugin removes the registered `contacts`, which can contain email
+    addresses, from this response and from the session-only `GET /api/auth/oauth2/public-client`.
+    Drop the binding check if upstream adds its own.
 
   `docs/operations.md` lists the response each one should give in its manual checks.
   `routes/mcp-oauth.integration.test.ts` runs the whole flow through the real Better Auth
@@ -222,6 +225,21 @@ Deliberate merge resolutions:
   a coarse `callback.lastError` (`blocked_destination`, `timeout`, `network_error`,
   `internal_error` for a row that couldn't be prepared, or `HTTP <status>`), never the underlying
   error text. Network-level egress filtering on the VM would be further defense in depth.
+- Browser Web Push endpoints are another server-side POST to a URL the user supplies, so
+  `webPushSubscriptionSchema` only accepts HTTPS endpoints on the default port at the push
+  services production browsers use (`WEB_PUSH_SERVICE_HOSTS` in
+  `packages/contracts/src/url.ts`): `fcm.googleapis.com`, `updates.push.services.mozilla.com`,
+  `*.notify.windows.com`, and `*.push.apple.com`. Delivery repeats that check on every stored
+  row; a row that fails it is never sent and is deactivated like an expired subscription. An
+  allowlisted host is then resolved through `lib/outbound.ts` and refused, without deactivating
+  the row, if any record isn't public, and `web-push` gets an `https.Agent` whose `lookup`
+  returns only the validated records, so TLS and `Host` keep the hostname while the socket
+  can't be rebound. Each subscription gets one 10-second deadline (`WEB_PUSH_TIMEOUT_MS` in
+  `lib/web-push.ts`) covering both the DNS resolution and the push request, since `web-push`'s
+  own `timeout` only starts once its socket exists. Subscriptions on the same push host share one
+  resolution per fan-out. A blocked address, a resolver failure, or the deadline expiring is
+  reported as a delivery error and never deactivates the row. Removing or testing an existing subscription still accepts any HTTPS
+  endpoint, so a row stored before the allowlist can be deleted.
 - Dependency footprint: `@modelcontextprotocol/sdk` is a production dependency of
   `@hark/website`. Per `pnpm-lock.yaml` it brings about 90 transitive packages, 54 of which
   nothing else in the website's production tree uses. They include `express@5`, `body-parser`,
