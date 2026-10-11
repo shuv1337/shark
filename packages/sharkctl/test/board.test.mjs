@@ -187,6 +187,27 @@ test("board ask refuses a secret before any request and validates enums", async 
   }
 });
 
+test("board wait sends a tenth-of-a-second wait timeout and never asks past its deadline", async () => {
+  const { calls, restore } = mockFetch((call) => {
+    if (call.url.includes("/wait")) return Response.json({ ask: { status: "open" } });
+    return Response.json({ ask: { status: "open" } });
+  });
+  // Deadline at 0 ms; the first request is built at 1 ms and the second at 20 600 ms, after
+  // which the clock reaches the deadline.
+  const ticks = [0, 1, 20_600, 20_600, 30_000];
+  try {
+    const waited = await execute(["board", "wait", "--key", "fm:x", "--timeout", "30s"], env, {
+      now: () => (ticks.length > 1 ? ticks.shift() : ticks[0]),
+    });
+    assert.equal(waited.exitCode, 4);
+    assert.equal(waited.body.timedOut, true);
+    const timeouts = calls.map((call) => call.url.match(/\/wait\?timeout=([\d.]+)$/)?.[1]);
+    assert.deepEqual(timeouts, ["25", "9.4"]);
+  } finally {
+    restore();
+  }
+});
+
 test("board wait, get, answers, ack, cancel map to their routes and exit codes", async () => {
   const { calls, restore } = mockFetch((call) => {
     if (call.url.includes("/wait")) return Response.json({ ask: { status: "cancelled" } });
