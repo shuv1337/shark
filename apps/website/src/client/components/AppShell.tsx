@@ -1,21 +1,47 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { signOut, useSession } from "../lib/auth";
+import { type NavCounts, useNavCounts } from "../lib/counts";
 import { inEmbeddedWebView } from "../lib/platform";
 import { BrandWordmark } from "./BrandWordmark";
-import { IconBoard, IconChevronDown, IconDocs, IconInbox, IconSignOut, IconX } from "./icons";
-import { DOCS_COLUMN, PAGE_COLUMN } from "./SiteChrome";
+import {
+  IconBoard,
+  IconChevronDown,
+  IconDocs,
+  IconInbox,
+  IconSettings,
+  IconSignOut,
+  IconTeams,
+  IconX,
+} from "./icons";
+import { DOCS_COLUMN, PAGE_COLUMN, SETTINGS_COLUMN } from "./SiteChrome";
 import { focusRing, quietButton } from "./ui";
 
 /**
- * Primary navigation. Phase 1 replaces Inbox and Docs with Inbox, Teams and
- * Settings once `/dashboard` is split into pages; Docs then moves into the
- * account menu, where it already appears.
+ * The four primary destinations. Docs lives in the account menu, which is where
+ * a reference you read once belongs; it stays a shell route.
+ *
+ * `count` reads the live badge from the shared nav counts, and `countLabel`
+ * says what the number means for a screen reader, which cannot see that the
+ * pill sits next to "Board".
  */
 const NAV_ITEMS = [
-  { to: "/board", label: "Board", icon: IconBoard },
-  { to: "/dashboard", label: "Inbox", icon: IconInbox },
-  { to: "/docs", label: "Docs", icon: IconDocs },
+  {
+    to: "/board",
+    label: "Board",
+    icon: IconBoard,
+    count: (counts: NavCounts) => counts.boardWaiting,
+    countLabel: (count: number) => `${count} waiting on you`,
+  },
+  {
+    to: "/inbox",
+    label: "Inbox",
+    icon: IconInbox,
+    count: (counts: NavCounts) => counts.inboxAttention,
+    countLabel: (count: number) => `${count} unread or needing action`,
+  },
+  { to: "/teams", label: "Teams", icon: IconTeams, count: () => 0, countLabel: () => "" },
+  { to: "/settings", label: "Settings", icon: IconSettings, count: () => 0, countLabel: () => "" },
 ] as const;
 
 /** This deployment is one operator's own server: never a plan, never a quota. */
@@ -37,9 +63,14 @@ export function SelfHostedBadge() {
 export function AppShell() {
   const { pathname } = useLocation();
   if (inEmbeddedWebView()) return <Outlet />;
-  // The docs carry a sidebar, so their column is wider; the header matches it
-  // rather than leaving the brand mark floating left of the content.
-  const column = pathname.startsWith("/docs") ? DOCS_COLUMN : PAGE_COLUMN;
+  // The docs carry a sidebar and settings a section rail, so their columns are
+  // wider; the header matches whichever is underneath it rather than leaving
+  // the brand mark floating left of the content.
+  const column = pathname.startsWith("/docs")
+    ? DOCS_COLUMN
+    : pathname.startsWith("/settings")
+      ? SETTINGS_COLUMN
+      : PAGE_COLUMN;
   return (
     <div className="flex min-h-dvh flex-col">
       <AppHeader column={column} />
@@ -64,6 +95,7 @@ export function AppShell() {
  */
 export function AppHeader({ column = PAGE_COLUMN }: { column?: string }) {
   const { data: session } = useSession();
+  const counts = useNavCounts(Boolean(session));
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-paper/90 backdrop-blur">
       <div className={`${column} flex h-14 items-center gap-4 md:h-16`}>
@@ -77,21 +109,30 @@ export function AppHeader({ column = PAGE_COLUMN }: { column?: string }) {
 
         {session ? (
           <nav aria-label="Primary" className="ml-2 hidden items-center gap-1 md:flex">
-            {NAV_ITEMS.map((item) => (
-              <NavLink
-                className={({ isActive }) =>
-                  `rounded-full px-3 py-1.5 text-[15px] transition-colors ${focusRing} ${
-                    isActive
-                      ? "bg-accent-soft font-medium text-accent-text"
-                      : "text-ink-muted hover:bg-surface-hover hover:text-ink"
-                  }`
-                }
-                key={item.to}
-                to={item.to}
-              >
-                {item.label}
-              </NavLink>
-            ))}
+            {NAV_ITEMS.map((item) => {
+              const count = item.count(counts);
+              return (
+                <NavLink
+                  className={({ isActive }) =>
+                    `flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[15px] transition-colors ${focusRing} ${
+                      isActive
+                        ? "bg-accent-soft font-medium text-accent-text"
+                        : "text-ink-muted hover:bg-surface-hover hover:text-ink"
+                    }`
+                  }
+                  key={item.to}
+                  to={item.to}
+                >
+                  {item.label}
+                  {count > 0 ? (
+                    <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-accent px-1.5 text-[11px] font-semibold text-on-accent">
+                      {count > 99 ? "99+" : count}
+                      <span className="sr-only">, {item.countLabel(count)}</span>
+                    </span>
+                  ) : null}
+                </NavLink>
+              );
+            })}
           </nav>
         ) : null}
 
@@ -281,6 +322,7 @@ function Avatar({ email, image }: { email: string; image: string | null }) {
 /** Phone navigation: the same destinations as the header, thumb-reachable. */
 function TabBar() {
   const { data: session } = useSession();
+  const counts = useNavCounts(Boolean(session));
   if (!session) return null;
   return (
     <nav
@@ -288,21 +330,32 @@ function TabBar() {
       className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-paper/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
     >
       <ul className="mx-auto flex max-w-md items-stretch">
-        {NAV_ITEMS.map((item) => (
-          <li className="flex-1" key={item.to}>
-            <NavLink
-              className={({ isActive }) =>
-                `flex min-h-11 flex-col items-center justify-center gap-0.5 px-1 py-2 text-[11px] font-medium transition-colors ${focusRing} ${
-                  isActive ? "text-accent-text" : "text-ink-faint hover:text-ink-muted"
-                }`
-              }
-              to={item.to}
-            >
-              <item.icon className="size-6" />
-              {item.label}
-            </NavLink>
-          </li>
-        ))}
+        {NAV_ITEMS.map((item) => {
+          const count = item.count(counts);
+          return (
+            <li className="flex-1" key={item.to}>
+              <NavLink
+                className={({ isActive }) =>
+                  `flex min-h-11 flex-col items-center justify-center gap-0.5 px-1 py-2 text-[11px] font-medium transition-colors ${focusRing} ${
+                    isActive ? "text-accent-text" : "text-ink-faint hover:text-ink-muted"
+                  }`
+                }
+                to={item.to}
+              >
+                <span className="relative">
+                  <item.icon className="size-6" />
+                  {count > 0 ? (
+                    <span className="absolute -top-1 -right-2 inline-flex min-w-[18px] items-center justify-center rounded-full bg-accent px-1 text-[10px] leading-[18px] font-semibold text-on-accent">
+                      {count > 9 ? "9+" : count}
+                      <span className="sr-only">, {item.countLabel(count)}</span>
+                    </span>
+                  ) : null}
+                </span>
+                {item.label}
+              </NavLink>
+            </li>
+          );
+        })}
       </ul>
     </nav>
   );
