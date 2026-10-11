@@ -1,5 +1,5 @@
 import type { ApiTokenDto, DeviceDto, ServiceDto } from "@hark/contracts";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { SelfHostedBadge } from "../components/AppShell";
 import { BrowserNotifications } from "../components/BrowserNotifications";
@@ -11,6 +11,7 @@ import { SETTINGS_COLUMN } from "../components/SiteChrome";
 import { focusRing, secondaryButton } from "../components/ui";
 import { api } from "../lib/api";
 import { signOut, useSession } from "../lib/auth";
+import { activeSection, visibleSections } from "../lib/sectionSpy";
 
 /**
  * Settings sections, in the order they appear. The rail on `md+` is the
@@ -24,6 +25,15 @@ const SECTIONS = [
   { id: "services", label: "Services and API tokens" },
   { id: "mcp", label: "Connected MCP clients" },
 ] as const;
+
+const SECTION_IDS = SECTIONS.map((section) => section.id);
+
+/**
+ * The band that counts as "here": the strip just under the sticky header. A
+ * section is current from the moment its heading reaches that strip until the
+ * next one does.
+ */
+const SPY_BAND = "-20% 0px -70% 0px";
 
 export function Settings() {
   const { data: session, isPending } = useSession();
@@ -59,14 +69,58 @@ export function Settings() {
     if (session) void refresh();
   }, [session, isPending, navigate, refresh]);
 
-  // Every section renders its own heading and skeleton immediately, so a
-  // `/settings#devices` link can scroll as soon as the hash is known, before
-  // any of the data arrives.
+  const [visible, setVisible] = useState<string[]>([]);
+  // The hashes this page wrote itself, which must not be read back as a
+  // request to jump somewhere.
+  const authored = useRef<string | null>(null);
+
+  /*
+   * A link from outside — `/settings#devices` in a message, a bookmark, the
+   * rail — jumps straight there. Not smoothly: the reader asked for that
+   * section, and animating past four others on arrival is a show, not an
+   * orientation. Every section renders its heading and skeleton immediately,
+   * so the target exists before any data lands.
+   */
   useEffect(() => {
-    if (!hash) return;
-    const target = document.getElementById(hash.slice(1));
-    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const id = hash.slice(1);
+    if (!id || id === authored.current) return;
+    document.getElementById(id)?.scrollIntoView({ block: "start" });
   }, [hash]);
+
+  // Which section is actually on screen, rather than which one was last
+  // clicked: scrolling past a section marks it in the rail.
+  useEffect(() => {
+    // The sections only exist once the session has resolved and the page has
+    // rendered them, so this waits for it rather than observing nothing.
+    if (!session || typeof IntersectionObserver === "undefined") return;
+    const targets = SECTION_IDS.map((id) => document.getElementById(id)).filter(
+      (element): element is HTMLElement => element !== null,
+    );
+    if (targets.length === 0) return;
+    const observer = new IntersectionObserver(
+      (entries) => setVisible((current) => visibleSections(current, entries, SECTION_IDS)),
+      { rootMargin: SPY_BAND },
+    );
+    for (const target of targets) observer.observe(target);
+    return () => observer.disconnect();
+  }, [session]);
+
+  const active = activeSection(visible, hash.slice(1) || SECTIONS[0].id);
+
+  /*
+   * Keep the address on the section being read, so copying the URL copies
+   * where you are — replacing the entry rather than adding one, because
+   * scrolling is not navigation and Back must still leave Settings. Nothing
+   * is written until the observer has actually reported a section, so simply
+   * landing on `/settings` does not rewrite the address.
+   */
+  useEffect(() => {
+    if (visible.length === 0) return;
+    const next = `#${active}`;
+    if (hash === next) return;
+    authored.current = active;
+    navigate(`/settings${next}`, { replace: true });
+  }, [active, hash, navigate, visible]);
 
   if (isPending || !session) {
     return (
@@ -75,8 +129,6 @@ export function Settings() {
       </main>
     );
   }
-
-  const current = hash.slice(1) || SECTIONS[0].id;
 
   return (
     <main className={`${SETTINGS_COLUMN} flex-1 pt-10 pb-16`}>
@@ -91,9 +143,9 @@ export function Settings() {
             {SECTIONS.map((section) => (
               <li key={section.id}>
                 <Link
-                  aria-current={current === section.id ? "true" : undefined}
+                  aria-current={active === section.id ? "true" : undefined}
                   className={`block rounded-lg px-2.5 py-1.5 text-[13px] transition-colors ${focusRing} ${
-                    current === section.id
+                    active === section.id
                       ? "bg-accent-soft font-medium text-accent-text"
                       : "text-ink-muted hover:bg-surface-hover hover:text-ink"
                   }`}
