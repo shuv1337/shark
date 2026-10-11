@@ -68,6 +68,26 @@ logs. Unchecked release evidence keeps the goal active.
     `c96e5e045c4651ee2e59f5ebc00207777c336d99f8ab8cc9a059d9f90333cc00`). The installed copy
     therefore came from that unpublished working state, not from either bundle revision.
     `~/.claude/skills/shark` still links to `../../.agents/skills/shark`.
+- 2026-10-11: production was promoted from `2f79498` to
+  `6882c7d708d0564380ec83c13583cadf0d4be426` (#154, the `jmt17.google.com` push endpoint and a
+  recoverable refused browser subscription) at image digest
+  `sha256:90366534562a74ddc7f75c5853b631a78fcc11f853c65587287b07137c2bf042` from publisher run
+  `38174055682`. No helper, Compose, or migration change. `shark-deploy` ran detached at
+  20:56:26 UTC, verified pre-deploy snapshot
+  `e3a59712fa63cc4d65e116a97c29af1273c65abd0daf6562a8663a22e0007ee1`, and recorded the release at
+  `2026-10-11T20:58:10Z` with about 90 seconds of downtime, no `rollback.log`, no `op daemon`
+  left behind, a healthy container with 0 restarts and no logged errors or warnings, migrations
+  unchanged at 28 with integrity `ok`. Health, manifest, and service worker returned 200;
+  `/board`, `/settings`, and `/api/inbox/counts` 401; `/api/nope` 404. A labeled test
+  notification was accepted for 4 targets.
+  - Cause of the owner's report: the Linux Chromium subscription's endpoint host is
+    `jmt17.google.com`, a Google FCM front end that the #127 allowlist did not include. To
+    diagnose it, the two stored subscriptions were decrypted inside the container and only the
+    endpoint hostname, path length, key lengths, and `expirationTime` were printed (hosts
+    `web.push.apple.com`, active, and `jmt17.google.com`, inactive since 2026-10-07 21:05 UTC);
+    no capability URL or key left the container.
+  - Not yet checked: that the Linux browser's existing subscription registers on reload; the
+    owner reports this from the device.
 - 2026-10-11: production was promoted from `239f441` to
   `2f79498bc5c5b0be4c54fd99153b1155103e13f0` (web app shell, navigation, pages, and PWA: #147,
   #148, #149, #150, #151) at image digest
