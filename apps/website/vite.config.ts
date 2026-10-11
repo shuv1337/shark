@@ -41,6 +41,7 @@ function docsTextPlugin(): Plugin {
 export default defineConfig({
   plugins: [react(), tailwindcss(), docsTextPlugin()],
   build: {
+    manifest: true,
     outDir: "dist/client",
   },
   server: {

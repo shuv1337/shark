@@ -43,6 +43,16 @@ ${backgroundColor ? `<rect width="1254" height="1254" fill="${backgroundColor}"/
 </svg>`;
 }
 
+function insetMarkSvg(inset = 0.1) {
+  const size = 1254;
+  const offset = size * inset;
+  const markSize = size * (1 - inset * 2);
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}">
+<rect width="${size}" height="${size}" fill="${background}"/>
+<image x="${offset}" y="${offset}" width="${markSize}" height="${markSize}" href="${sourceMarkDataUrl}"/>
+</svg>`;
+}
+
 function croppedMarkSvg() {
   // Tighten only the website wordmark derivative around the shark silhouette.
   // Square icon and splash derivatives retain the original approved composition.
@@ -161,6 +171,10 @@ const favicon = opaquePng(render(sourceImageSvg({ source: sourceIconDataUrl }), 
 const mark = render(croppedMarkSvg(), 384).asPng();
 const splash = render(sourceImageSvg({ source: sourceMarkDataUrl }), 512).asPng();
 const ogImage = opaquePng(render(ogSvg, 1200));
+const pwaIcon192 = opaquePng(render(sourceImageSvg({ source: sourceIconDataUrl }), 192));
+const pwaIcon512 = opaquePng(render(sourceImageSvg({ source: sourceIconDataUrl }), 512));
+const pwaMaskable512 = opaquePng(render(insetMarkSvg(), 512));
+const appleTouchIcon = opaquePng(render(sourceImageSvg({ source: sourceIconDataUrl }), 180));
 
 const generated = new Map([
   ["apps/expo/assets/icon.png", icon],
@@ -168,6 +182,10 @@ const generated = new Map([
   ["apps/website/public/favicon.png", favicon],
   ["apps/website/public/app-store-icon.png", icon],
   ["apps/website/public/ogimage.png", ogImage],
+  ["apps/website/public/icons/icon-192.png", pwaIcon192],
+  ["apps/website/public/icons/icon-512.png", pwaIcon512],
+  ["apps/website/public/icons/icon-maskable-512.png", pwaMaskable512],
+  ["apps/website/public/apple-touch-icon.png", appleTouchIcon],
   ["apps/website/src/client/assets/shark-devil-mark.png", mark],
 ]);
 
