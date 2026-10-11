@@ -9,6 +9,156 @@ const PRECACHE_PATHS = new Set(PRECACHE);
  * Privacy rule: no authenticated JSON is ever cached. Only the build's exact
  * hashed asset allowlist and the four HTML shell documents may enter this cache.
  */
+
+function cacheKey(path) {
+  return new Request(path, { credentials: "same-origin" });
+}
+
+async function cacheHolds(cache, path) {
+  return Boolean(await cache.match(path));
+}
+
+async function shellCacheComplete(cache) {
+  if (!(await cacheHolds(cache, "/board"))) return false;
+  for (const path of PRECACHE) {
+    if (!(await cacheHolds(cache, path))) return false;
+  }
+  return true;
+}
+
+async function previousShellCacheNames() {
+  const names = await caches.keys();
+  return names.filter((name) => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME);
+}
+
+async function dropPreviousShellCaches() {
+  await Promise.all((await previousShellCacheNames()).map((name) => caches.delete(name)));
+}
+
+async function copyMissing(from, to) {
+  for (const path of [...PRECACHE, ...SHELL_DOCUMENTS]) {
+    if (await cacheHolds(to, path)) continue;
+    const hit = await from.match(path);
+    if (!hit?.ok) continue;
+    try {
+      await to.put(cacheKey(path), hit);
+    } catch {
+      // The previous cache still has the copy this one refused.
+    }
+  }
+}
+
+/*
+ * A signed-out install stores nothing: precache requests 401 and the failure is
+ * swallowed so push registration still succeeds. Dropping every other
+ * shark-shell cache then would delete the last offline copy. Keep those caches
+ * until this one holds /board and the precache, after copying whatever they
+ * still have so this worker can serve it.
+ */
+async function retainPreviousUntilComplete() {
+  const current = await caches.open(CACHE_NAME);
+  if (!(await shellCacheComplete(current))) {
+    const previous = (await previousShellCacheNames()).reverse();
+    for (const name of previous) await copyMissing(await caches.open(name), current);
+  }
+  if (await shellCacheComplete(current)) await dropPreviousShellCaches();
+}
+
+function shellDocument(pathname) {
+  if (SHELL_DOCUMENTS.includes(pathname)) return pathname;
+  if (pathname.startsWith("/board/")) return "/board";
+  if (pathname.startsWith("/inbox/")) return "/inbox";
+  if (pathname.startsWith("/teams/")) return "/teams";
+  return null;
+}
+
+function responsePath(response) {
+  try {
+    const url = new URL(response.url);
+    if (url.origin !== self.location.origin) return null;
+    return url.pathname;
+  } catch {
+    return null;
+  }
+}
+
+function contentType(response) {
+  try {
+    return (response.headers?.get("content-type") || "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function storableShell(response) {
+  if (!response?.ok || response.redirected) return false;
+  const path = responsePath(response);
+  if (!path || path === "/login" || path.startsWith("/login/")) return false;
+  return contentType(response).includes("text/html");
+}
+
+function storableAsset(response) {
+  if (!response?.ok || response.redirected) return false;
+  const path = responsePath(response);
+  if (path === null || path === "/login" || path.startsWith("/login/")) return false;
+  return !contentType(response).includes("text/html");
+}
+
+async function remember(path, response) {
+  const current = await caches.open(CACHE_NAME);
+  await current.put(cacheKey(path), response);
+  if (await shellCacheComplete(current)) await dropPreviousShellCaches();
+}
+
+async function matchPrevious(path) {
+  for (const name of (await previousShellCacheNames()).reverse()) {
+    const hit = await (await caches.open(name)).match(path);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+async function matchAny(path) {
+  if (!path) return undefined;
+  const current = await caches.open(CACHE_NAME);
+  return (await current.match(path)) || matchPrevious(path);
+}
+
+async function respondWithAsset(path, request) {
+  const cached = await matchAny(path);
+  if (cached) return cached;
+  const response = await fetch(request);
+  if (storableAsset(response)) {
+    try {
+      await remember(path, response.clone());
+    } catch {
+      // The page still needs the response when the cache refuses it.
+    }
+  }
+  return response;
+}
+
+async function respondWithNavigation(pathname, request) {
+  try {
+    const response = await fetch(request);
+    const shell = shellDocument(pathname);
+    if (shell && storableShell(response)) {
+      try {
+        await remember(shell, response.clone());
+      } catch {
+        // The page still loads; the next visit can try again.
+      }
+    }
+    return response;
+  } catch {
+    const shell =
+      (await matchAny(pathname)) ||
+      (await matchAny(shellDocument(pathname))) ||
+      (await matchAny("/board"));
+    return shell || offlineResponse();
+  }
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (cache) => {
@@ -26,15 +176,10 @@ self.addEventListener("install", (event) => {
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches
-      .keys()
-      .then((names) =>
-        Promise.all(
-          names
-            .filter((name) => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME)
-            .map((name) => caches.delete(name)),
-        ),
-      )
+    retainPreviousUntilComplete()
+      .catch(() => {
+        // A cache failure must not keep the new push handlers from taking over.
+      })
       .then(() => clients.claim()),
   );
 });
@@ -56,12 +201,7 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) return;
 
   if (url.pathname.startsWith("/assets/") && PRECACHE_PATHS.has(url.pathname)) {
-    event.respondWith(
-      caches
-        .open(CACHE_NAME)
-        .then((cache) => cache.match(request))
-        .then((cached) => cached || fetch(request)),
-    );
+    event.respondWith(respondWithAsset(url.pathname, request));
     return;
   }
 
@@ -72,13 +212,7 @@ self.addEventListener("fetch", (event) => {
   if (networkOnlyNavigation) return;
 
   if (request.mode === "navigate") {
-    event.respondWith(
-      fetch(request).catch(async () => {
-        const cache = await caches.open(CACHE_NAME);
-        const shell = (await cache.match(url.pathname)) || (await cache.match("/board"));
-        return shell || offlineResponse();
-      }),
-    );
+    event.respondWith(respondWithNavigation(url.pathname, request));
   }
 });
 
