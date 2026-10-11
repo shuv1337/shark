@@ -68,6 +68,62 @@ logs. Unchecked release evidence keeps the goal active.
     `c96e5e045c4651ee2e59f5ebc00207777c336d99f8ab8cc9a059d9f90333cc00`). The installed copy
     therefore came from that unpublished working state, not from either bundle revision.
     `~/.claude/skills/shark` still links to `../../.agents/skills/shark`.
+- 2026-10-11: production was promoted from `4b68efc` to
+  `239f44129b2df16d384ea6b629df14d880432565` (#145, the `/mcp` resource-binding runtime fix) at
+  image digest `sha256:189877bcab70232f9c4764b85f289dff5d7067e1ec0a23249acbfa5471da5a8a` from
+  publisher run `38125396094`. No helper, Compose, or migration change. `shark-deploy` ran
+  detached at 08:39:17 UTC, verified pre-deploy snapshot
+  `aaa409aac4646f54b2d097c3d2173a4f20767f951aed238407c64df7856d76b0`, and recorded the release at
+  `2026-10-11T08:41:03Z`; the loopback probe saw 93 non-200 seconds (08:39:27 to 08:41:00). The
+  running image ID matches the digest, the container is healthy with 0 restarts, migrations are
+  unchanged at 28 with integrity `ok` and no foreign-key violations, no `rollback.log` exists, and
+  no `op daemon` was left behind. Post-deploy checks, on the VM and through
+  `https://shark.shuv.dev`:
+  - **The #141 binding is now enforced.** A code exchange without `resource`, and a refresh
+    naming `https://attacker.example/mcp` together with the canonical resource, each returned
+    `400 {"error":"invalid_target",…}` with `Cache-Control: no-store` and `Pragma: no-cache`. A
+    code exchange naming `https://shark.shuv.dev/mcp` reached the endpoint and returned `401
+    invalid_grant` for the fake code. JSON returned 415, an empty form 400, and `/mcp` with a
+    forged bearer 401 with the protected-resource challenge.
+  - The usual anonymous checks held: 401 for `/`, `/docs`, `/dashboard`, `/cli/authorize`,
+    `/join/x`, and `/api/team-invites/<unknown>`; 404 for `/robots.txt`, `/sitemap.xml`, and
+    `/pricing`; `/sw.js` 200 JavaScript; the four OAuth discovery documents 200 without `watch:*`
+    or `macos:*`; `register` and `public-client-prelogin` 400 on an empty body; `revoke` and
+    `introspect` 400 for an empty form and 415 for JSON; anonymous web-push subscription 401.
+  - A labeled test notification at 08:41:36 UTC was accepted for 4 targets. Signed-in dashboard
+    access, on-device delivery, and the macOS companion were not re-checked.
+  - The container logged one `WARN` from Better Auth's rate limiter: the loopback probes carry no
+    forwarded client IP, so it fell back to a shared per-path bucket for them. Real traffic
+    arrives through exe.dev with the one trusted hop, so this only reflects the probes.
+- 2026-10-11: production was promoted from `6b59406` to
+  `4b68efc27f8a88f5d49548b9451fff9d2f88edc4` (deploy helper follow-ups #143, `/mcp` resource
+  binding #141, board waiting-ask links #138, dashboard partial updates #142, seat-limit removal
+  #137, regression tests #139, `sharkctl` wait flake #144, ledger #140) at image digest
+  `sha256:d83a4cf8348f1bf84fa8b7f06431fb1bcc77639c4c501b514d537e8a1aa7f5d6` from publisher run
+  `38124292600`. Before the deploy, `deploy/test-helpers` passed locally at `4b68efc`, and
+  `shark-deploy`, `shark-materialize-secrets`, and `shark-restic-backup` were installed from
+  `main` root-owned with hashes checked on both ends; `shark-backup` and `compose.yaml` were
+  unchanged. `shark-deploy` ran detached at 08:20:36 UTC, verified pre-deploy snapshot
+  `0bd15ff37bbe1f3ee3e0356fef3984194381487c09e9bbd1024faa32561a9450`, and recorded the release at
+  `2026-10-11T08:22:18Z`; the loopback probe saw 88 non-200 seconds (08:20:46 to 08:22:14). The
+  running image ID matches the digest, the container was healthy with 0 restarts and logged no
+  errors or warnings, migrations are unchanged at 28 with integrity `ok` and no foreign-key
+  violations, and no `rollback.log` exists. **The #143 helpers left no `op daemon` behind**, the
+  first deploy on this VM for which that holds. The anonymous checks listed under `239f441` all
+  held, the removed `POST /api/teams/:id/billing/checkout` answered 401 anonymously, a board
+  heartbeat through the new server succeeded, and a labeled test notification at 08:28:25 UTC was
+  accepted for 4 targets.
+  - **Finding: the #141 `/mcp` resource requirement was not in effect on this image.** A code
+    exchange without `resource` returned the endpoint's own `401 invalid_grant`, and a refresh
+    with a foreign plus canonical `resource` reached the endpoint, through the public URL as well
+    as loopback. The hook ran and built its refusal, but better-call only honors a hook's response
+    when it is `instanceof` the global `Response`, and `@hono/node-server`'s `serve()` replaces
+    that global with a lightweight class whose inherited `Response.json` still returns the
+    original one. `app.request()` under vitest never swaps the global, so every #141 test passed.
+    The endpoint's `validAudiences` check still refused a wrong `resource`, so nothing was weaker
+    than before #141; the new requirement that `resource` be present was simply not applied for
+    the 18 minutes until `239f441` replaced it. Fixed in #145 with a test that runs the real Node
+    server.
 - 2026-10-10: production was promoted from `de5f9fe` to
   `6b594067d00aeab5f61e0097b4a9b98dd42be66b` (signal-safe `shark-deploy` rollback #134, Cursor
   review code fixes #136, ledger corrections #135) at image digest
