@@ -116,7 +116,7 @@ self.addEventListener("push", (event) => {
     icon: "/app-store-icon.png",
     badge: "/favicon.png",
     data: {
-      url: typeof payload.url === "string" ? payload.url : "/dashboard",
+      url: typeof payload.url === "string" ? payload.url : "/inbox",
       ...(typeof payload.eventId === "string" ? { eventId: payload.eventId } : {}),
     },
   };
@@ -145,12 +145,14 @@ async function withdrawPresentedNotifications(payload) {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
-  let target = new URL("/dashboard", self.location.origin);
+  // A notification with no URL of its own opens the inbox, where its own
+  // record is. `/dashboard` still redirects, so older payloads keep working.
+  let target = new URL("/inbox", self.location.origin);
   try {
-    const candidate = new URL(event.notification.data?.url || "/dashboard", self.location.origin);
+    const candidate = new URL(event.notification.data?.url || "/inbox", self.location.origin);
     if (candidate.protocol === "https:" || candidate.protocol === "http:") target = candidate;
   } catch {
-    // Keep the safe dashboard fallback.
+    // Keep the safe inbox fallback.
   }
 
   event.waitUntil(

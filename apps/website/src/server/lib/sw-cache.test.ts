@@ -33,6 +33,8 @@ function harness() {
   };
   const fetchMock = vi.fn();
   const skipWaiting = vi.fn().mockResolvedValue(undefined);
+  const shown: Array<[string, Record<string, unknown>]> = [];
+  const opened: string[] = [];
   class WorkerRequest {
     url: string;
 
@@ -45,10 +47,19 @@ function harness() {
       addEventListener: (name: string, listener: (event: Record<string, unknown>) => void) =>
         listeners.set(name, listener),
       location: { origin: "https://shark.example" },
-      registration: { showNotification: vi.fn(), getNotifications: vi.fn() },
+      registration: {
+        showNotification: vi.fn((title: string, options: Record<string, unknown>) => {
+          shown.push([title, options]);
+        }),
+        getNotifications: vi.fn(),
+      },
       skipWaiting,
     },
-    clients: { matchAll: vi.fn(), claim: vi.fn(), openWindow: vi.fn() },
+    clients: {
+      matchAll: vi.fn().mockResolvedValue([]),
+      claim: vi.fn(),
+      openWindow: vi.fn((url: string) => opened.push(url)),
+    },
     caches,
     fetch: fetchMock,
     Request: WorkerRequest,
@@ -68,12 +79,21 @@ function harness() {
     return responsePromise;
   }
 
+  async function dispatch(name: string, event: Record<string, unknown>) {
+    const pending: Promise<unknown>[] = [];
+    listeners.get(name)?.({ ...event, waitUntil: (p: Promise<unknown>) => pending.push(p) });
+    await Promise.all(pending);
+  }
+
   return {
     cache,
     caches,
     fetchMock,
     listeners,
     skipWaiting,
+    shown,
+    opened,
+    dispatch,
     dispatchFetch,
     removeShells: () => {
       shells.clear();
@@ -152,5 +172,44 @@ describe("service worker cache boundary", () => {
     });
     await Promise.all(pending);
     expect(worker.skipWaiting).toHaveBeenCalledOnce();
+  });
+});
+
+/**
+ * A push with no URL of its own, and a tap on a notification that carries
+ * none, both open the inbox: that is where the notification's own record is.
+ * `/dashboard` was the old default and still redirects there, so nothing that
+ * was sent before this change breaks.
+ */
+describe("service worker notification routing", () => {
+  it("defaults a push payload's URL to the inbox", async () => {
+    const worker = harness();
+    await worker.dispatch("push", { data: { json: () => ({ title: "SHark", body: "Hi" }) } });
+    expect(worker.shown).toHaveLength(1);
+    expect(worker.shown[0]?.[1].data).toMatchObject({ url: "/inbox" });
+  });
+
+  it("keeps a URL the payload supplies", async () => {
+    const worker = harness();
+    await worker.dispatch("push", {
+      data: { json: () => ({ title: "SHark", url: "/board/ask/bask_1" }) },
+    });
+    expect(worker.shown[0]?.[1].data).toMatchObject({ url: "/board/ask/bask_1" });
+  });
+
+  it("opens the inbox when a tapped notification carries no URL", async () => {
+    const worker = harness();
+    await worker.dispatch("notificationclick", {
+      notification: { close: vi.fn(), data: {} },
+    });
+    expect(worker.opened).toEqual(["https://shark.example/inbox"]);
+  });
+
+  it("still opens an old /dashboard deep link, which the app redirects", async () => {
+    const worker = harness();
+    await worker.dispatch("notificationclick", {
+      notification: { close: vi.fn(), data: { url: "/dashboard" } },
+    });
+    expect(worker.opened).toEqual(["https://shark.example/dashboard"]);
   });
 });

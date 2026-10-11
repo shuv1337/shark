@@ -612,7 +612,7 @@ export const agentRoute = new Hono<AgentEnv>()
       webPayload: {
         title: parsed.data.title,
         body: parsed.data.summary ?? parsed.data.body,
-        url: parsed.data.url ?? "/dashboard",
+        url: parsed.data.url ?? "/inbox",
         ...(parsed.data.imageUrl ? { imageUrl: parsed.data.imageUrl } : {}),
         eventId: notificationId,
         tag: notificationEventTag(notificationId),
@@ -1077,7 +1077,7 @@ export const agentRoute = new Hono<AgentEnv>()
       webPayload: {
         title: parsed.data.title,
         body: parsed.data.prompt,
-        url: parsed.data.url ?? "/dashboard",
+        url: parsed.data.url ?? "/inbox",
         ...(parsed.data.imageUrl ? { imageUrl: parsed.data.imageUrl } : {}),
         tag: `interaction-${row.id}`,
       },

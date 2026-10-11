@@ -713,7 +713,7 @@ describe("interactions", () => {
           payload: {
             title: "Desktop approval",
             body: "Review the deploy in SHark",
-            url: "/dashboard",
+            url: "/inbox",
             tag: expect.stringMatching(/^interaction-int_/),
           },
         },
@@ -1425,7 +1425,7 @@ describe("agent notifications", () => {
           payload: {
             title: "Desktop bot",
             body: "Deploy finished",
-            url: "/dashboard",
+            url: "/inbox",
             eventId: deliveredBody.notification.id,
             tag: notificationEventTag(deliveredBody.notification.id),
           },
