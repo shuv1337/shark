@@ -8,6 +8,9 @@ export const PAGE_COLUMN = "mx-auto w-full max-w-3xl px-6";
 /** The docs run wider, to fit their sidebar; the shell's header follows suit. */
 export const DOCS_COLUMN = "mx-auto w-full max-w-6xl px-6";
 
+/** Settings runs wider than a page column to fit its section rail on `md+`. */
+export const SETTINGS_COLUMN = "mx-auto w-full max-w-5xl px-6";
+
 /**
  * Brand mark for the few pages outside the app shell that still need one. The
  * shell draws its own, linked to the board; this one goes to the board too so

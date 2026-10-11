@@ -1,0 +1,176 @@
+// @vitest-environment happy-dom
+import type { InboxDetailDto, InboxItemDto } from "@hark/contracts";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { MemoryRouter, Route, Routes } from "react-router";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { api } from "../lib/api";
+import { resetNavCounts } from "../lib/counts";
+import { Inbox } from "./Inbox";
+
+const session = { user: { id: "usr_synthetic", email: "operator@example.test", image: null } };
+
+vi.mock("../lib/auth", () => ({
+  useSession: () => ({ data: session, isPending: false }),
+  signOut: vi.fn(async () => {}),
+  signInWithApple: vi.fn(),
+}));
+
+vi.mock("../lib/api", () => ({
+  ApiRequestError: class extends Error {},
+  api: {
+    listInbox: vi.fn(),
+    getInboxItem: vi.fn(),
+    markInboxItemRead: vi.fn(),
+    listLiveActivities: vi.fn(),
+    listEvents: vi.fn(),
+  },
+}));
+
+const item: InboxItemDto = {
+  id: "ibox:interaction:int_1",
+  kind: "interaction",
+  sourceName: "Deploy Agent",
+  sourceImageUrl: null,
+  title: "Production approval",
+  body: "Approve the reviewed release after the checks pass.",
+  imageUrl: null,
+  url: null,
+  status: "pending",
+  result: null,
+  accepted: 1,
+  failed: 0,
+  needsAction: true,
+  readAt: null,
+  occurredAt: "2026-07-30T19:00:00.000Z",
+  updatedAt: "2026-07-30T19:00:00.000Z",
+  action: {
+    interactionId: "int_1",
+    kind: "approval",
+    choices: ["approve", "deny"],
+    actionDigest: "a".repeat(64),
+    primaryLabel: "Approve",
+    secondaryLabel: "Deny",
+    expiresAt: "2026-07-30T20:00:00.000Z",
+  },
+};
+
+const detail: InboxDetailDto = {
+  item,
+  events: [
+    {
+      id: "event_1",
+      kind: "created",
+      detail: "Accepted by one device.",
+      result: "Pending",
+      accepted: 1,
+      failed: 0,
+      occurredAt: item.occurredAt,
+    },
+  ],
+};
+
+describe("inbox pages", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  const mount = async (path: string) => {
+    await act(async () =>
+      root.render(
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>
+            <Route element={<Inbox />} path="/inbox" />
+            <Route element={<Inbox />} path="/inbox/:id" />
+          </Routes>
+        </MemoryRouter>,
+      ),
+    );
+  };
+  const click = async (element: Element | null | undefined) => {
+    if (!element) throw new Error("Nothing to click");
+    await act(async () => (element as HTMLElement).click());
+  };
+  const row = () => container.querySelector(`a[href='/inbox/${encodeURIComponent(item.id)}']`);
+  const back = () =>
+    [...container.querySelectorAll("button")].find((node) => node.textContent?.trim() === "Inbox");
+
+  beforeEach(() => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    resetNavCounts();
+    vi.mocked(api.listInbox)
+      .mockReset()
+      .mockResolvedValue({ items: [item], nextCursor: null, unresolvedCount: 1 });
+    vi.mocked(api.getInboxItem).mockReset().mockResolvedValue(detail);
+    vi.mocked(api.markInboxItemRead).mockReset().mockResolvedValue({ ok: true });
+    vi.mocked(api.listLiveActivities).mockReset().mockResolvedValue({ activities: [] });
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+  });
+
+  it("lists items with the filters and the Activity view", async () => {
+    await mount("/inbox");
+    expect(container.textContent).toContain("Production approval");
+    for (const label of ["All", "Needs action", "Active", "Failed", "Notifications", "Activity"]) {
+      expect([...container.querySelectorAll("button")].map((node) => node.textContent)).toContain(
+        label,
+      );
+    }
+  });
+
+  it("swaps the list for the delivery log on the Activity filter", async () => {
+    vi.mocked(api.listEvents).mockResolvedValue({ events: [] });
+    await mount("/inbox");
+    await click(
+      [...container.querySelectorAll("button")].find((node) => node.textContent === "Activity"),
+    );
+    expect(api.listEvents).toHaveBeenCalled();
+    expect(container.textContent).toContain("Latest webhook delivery attempts");
+    expect(container.textContent).not.toContain("Production approval");
+  });
+
+  it("opens an item as its own page and marks it read", async () => {
+    await mount("/inbox");
+    await click(row());
+
+    expect(api.getInboxItem).toHaveBeenCalledWith(item.id);
+    expect(api.markInboxItemRead).toHaveBeenCalledWith(item.id);
+    expect(container.textContent).toContain("Timeline");
+    expect(container.textContent).toContain("Accepted by one device.");
+    expect(container.textContent).toContain("Needs your response");
+    // The detail replaces the list rather than floating over it.
+    expect(row()).toBeNull();
+  });
+
+  it("goes back to the list it came from", async () => {
+    await mount("/inbox");
+    await click(row());
+    await click(back());
+
+    expect(container.textContent).toContain("Production approval");
+    expect(row()).not.toBeNull();
+  });
+
+  it("opens a deep-linked item, and its back link lands on the inbox", async () => {
+    await mount(`/inbox/${encodeURIComponent(item.id)}`);
+    expect(api.getInboxItem).toHaveBeenCalledWith(item.id);
+    expect(container.textContent).toContain("Production approval");
+
+    // Nothing to pop: a push deep link is the first entry in the history.
+    await click(back());
+    expect(row()).not.toBeNull();
+  });
+
+  it("names the problem when an item cannot be loaded", async () => {
+    vi.mocked(api.getInboxItem).mockRejectedValue(new Error("Item not found"));
+    await mount(`/inbox/${encodeURIComponent(item.id)}`);
+    expect(container.textContent).toContain("This notification is not available");
+    expect(container.textContent).toContain("Item not found");
+  });
+});

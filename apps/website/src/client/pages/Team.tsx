@@ -36,7 +36,7 @@ type LoadState =
   | { kind: "error"; message: string }
   | { kind: "ready"; team: TeamDto; members: TeamMemberDto[] };
 
-/** `/dashboard/teams/:teamId`: members, seats, on-call groups and pages for one team. */
+/** `/teams/:teamId`: members, seats, on-call groups and pages for one team. */
 export function TeamPage() {
   const { teamId = "" } = useParams();
   const { data: session, isPending } = useSession();
@@ -78,9 +78,9 @@ export function TeamPage() {
 
   return (
     <main className={`${PAGE_COLUMN} flex-1 pt-6 pb-16`}>
-      <Link className={`${quietButton} mb-5 -ml-3`} to="/dashboard">
+      <Link className={`${quietButton} mb-5 -ml-3`} to="/teams">
         <IconChevronDown className="size-4 rotate-90" />
-        Inbox
+        Teams
       </Link>
 
       {state.kind === "loading" ? (
@@ -96,8 +96,8 @@ export function TeamPage() {
             It may have been deleted, or you're no longer a member. Ask a team admin for a new
             invite.
           </p>
-          <Link className={`${primaryButton} mt-6`} to="/dashboard">
-            Back to dashboard
+          <Link className={`${primaryButton} mt-6`} to="/teams">
+            Back to your teams
           </Link>
         </div>
       ) : null}
@@ -161,10 +161,7 @@ export function TeamPage() {
 
           <TeamApps teamId={state.team.id} />
 
-          <LeaveOrDelete
-            onLeft={() => navigate("/dashboard", { replace: true })}
-            team={state.team}
-          />
+          <LeaveOrDelete onLeft={() => navigate("/teams", { replace: true })} team={state.team} />
 
           {renaming ? (
             <RenameModal
@@ -213,15 +210,7 @@ function TeamApps({ teamId }: { teamId: string }) {
       <SectionHeading
         id="team-apps-heading"
         title="Apps"
-        description={
-          <>
-            Everyone on the team can open these in SHark, signed in as themselves. Share one from{" "}
-            <Link className="hark-link" to="/dashboard">
-              your apps
-            </Link>
-            .
-          </>
-        }
+        description="Everyone on the team can open these in SHark, signed in as themselves. An agent can add one straight to the team."
       />
       {apps === null ? (
         <SkeletonList label="Loading team apps" rowClassName="h-14" rows={2} />

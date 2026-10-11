@@ -23,7 +23,7 @@ export function NotFound() {
           <Link className={primaryButton} to="/board">
             Go to the board
           </Link>
-          <Link className={`${secondaryButton} h-11`} to="/dashboard">
+          <Link className={`${secondaryButton} h-11`} to="/inbox">
             Open your inbox
           </Link>
         </div>
