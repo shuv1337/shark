@@ -316,7 +316,9 @@ export function Segmented<T extends string>({
 }) {
   const name = useId();
   return (
-    <fieldset className="inline-flex rounded-full border border-line bg-panel p-0.5 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent">
+    // `min-w-0` clears the UA `min-inline-size: min-content` on fieldset, which
+    // would otherwise let a long option set widen the page on a phone.
+    <fieldset className="inline-flex min-w-0 max-w-full rounded-full border border-line bg-panel p-0.5 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent">
       <legend className="sr-only">{label}</legend>
       {options.map((option) => (
         <label

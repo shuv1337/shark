@@ -65,6 +65,18 @@ describe("app shell", () => {
     expect(currentLabels(shellAt("/dashboard/teams/team_synthetic"))).toEqual(["Inbox", "Inbox"]);
   });
 
+  /**
+   * One header per page. A second wordmark means a page kept its own header
+   * after moving inside the shell, which is what every page did before.
+   */
+  it("renders exactly one brand wordmark", () => {
+    for (const path of ["/board", "/dashboard", "/dashboard/teams/team_synthetic"]) {
+      const host = document.createElement("div");
+      host.innerHTML = shellAt(path);
+      expect(host.querySelectorAll("[src*='shark-devil-mark']")).toHaveLength(1);
+    }
+  });
+
   it("renders the page alone inside the SHark iPhone web view", () => {
     Object.defineProperty(window, "hark", { configurable: true, value: {} });
     const html = shellAt("/board");

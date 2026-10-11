@@ -181,7 +181,14 @@ export function InboxPanel() {
         </div>
       </div>
 
-      <fieldset className="mt-5 flex gap-2 overflow-x-auto pb-1">
+      {/*
+       * `min-w-0` is load-bearing: the UA stylesheet gives `fieldset` a
+       * `min-inline-size: min-content`, which `overflow-x-auto` alone cannot
+       * clear. Without it the chips set a min-content floor on the whole
+       * page, widening the layout viewport until the fixed tab bar overhangs
+       * the screen on a phone.
+       */}
+      <fieldset className="mt-5 flex min-w-0 gap-2 overflow-x-auto pb-1">
         <legend className="sr-only">Inbox filters</legend>
         {INBOX_FILTERS.map((value) => {
           const selected = value === filter;
