@@ -19,11 +19,19 @@ export function Inlines({ source }: { source: string }) {
         </code>,
       );
     } else if (node.kind === "link") {
+      /*
+       * A link off this origin — the repository on GitHub, a spec — opens in a
+       * new tab. In an installed app there is no browser chrome to come back
+       * with, so following one in place would strand the operator outside
+       * SHark with no way back to the board.
+       */
+      const external = /^https?:\/\//i.test(node.href);
       nodes.push(
         <a
           className="text-accent-text underline decoration-line underline-offset-2 hover:decoration-current"
           href={node.href}
           key={offset}
+          {...(external ? { target: "_blank", rel: "noreferrer" } : {})}
         >
           {node.text}
         </a>,
