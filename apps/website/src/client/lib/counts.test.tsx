@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "./api";
 import {
   COUNTS_POLL_INTERVAL_MS,
+  clearNavCounts,
   publishBoardWaiting,
   refreshInboxCounts,
   resetNavCounts,
@@ -161,5 +162,94 @@ describe("navigation counts", () => {
     vi.mocked(api.getInboxCounts).mockRejectedValue(new Error("offline"));
     await act(async () => refreshInboxCounts());
     expect(shown()).toBe("7/0/1");
+  });
+});
+
+/**
+ * The number on the installed app's icon. It is the sum of the two things
+ * waiting on the operator, cleared rather than drawn as a zero, and never
+ * called at all where the Badging API does not exist — Safari on the desktop
+ * and every browser that is not installed.
+ */
+describe("app badge", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  let setAppBadge: ReturnType<typeof vi.fn>;
+  let clearAppBadge: ReturnType<typeof vi.fn>;
+
+  const badging = (supported: boolean) => {
+    vi.stubGlobal("navigator", {
+      serviceWorker: new EventTarget(),
+      ...(supported ? { setAppBadge, clearAppBadge } : {}),
+    });
+  };
+
+  beforeEach(() => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    setAppBadge = vi.fn(async () => {});
+    clearAppBadge = vi.fn(async () => {});
+    badging(true);
+    resetNavCounts();
+    vi.mocked(api.getBoard)
+      .mockReset()
+      .mockResolvedValue({ waiting: [] } as never);
+    vi.mocked(api.getInboxCounts).mockReset().mockResolvedValue({ unread: 0, needsAction: 0 });
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    container.remove();
+    resetNavCounts();
+    vi.unstubAllGlobals();
+  });
+
+  it("badges the board and the inbox together whenever either changes", async () => {
+    await act(async () => root.render(<Badge />));
+
+    await act(async () => publishBoardWaiting(2));
+    expect(setAppBadge).toHaveBeenLastCalledWith(2);
+
+    vi.mocked(api.getInboxCounts).mockResolvedValue({ unread: 3, needsAction: 0 });
+    await act(async () => refreshInboxCounts());
+    expect(setAppBadge).toHaveBeenLastCalledWith(5);
+  });
+
+  /** Needs-action is a dot in the navigation, never a second count here. */
+  it("leaves needs-action out of the number", async () => {
+    await act(async () => root.render(<Badge />));
+    vi.mocked(api.getInboxCounts).mockResolvedValue({ unread: 1, needsAction: 4 });
+    await act(async () => refreshInboxCounts());
+    expect(setAppBadge).toHaveBeenLastCalledWith(1);
+  });
+
+  it("clears the badge at zero rather than drawing a 0", async () => {
+    await act(async () => root.render(<Badge />));
+    await act(async () => publishBoardWaiting(1));
+    expect(setAppBadge).toHaveBeenLastCalledWith(1);
+
+    await act(async () => publishBoardWaiting(0));
+    expect(clearAppBadge).toHaveBeenCalled();
+    expect(setAppBadge).not.toHaveBeenLastCalledWith(0);
+  });
+
+  it("clears the badge and the counts on sign-out", async () => {
+    await act(async () => root.render(<Badge />));
+    await act(async () => publishBoardWaiting(4));
+    clearAppBadge.mockClear();
+
+    await act(async () => clearNavCounts());
+    expect(clearAppBadge).toHaveBeenCalledOnce();
+    expect(container.textContent).toBe("0/0/0");
+  });
+
+  it("never calls the API where the browser does not have it", async () => {
+    badging(false);
+    await act(async () => root.render(<Badge />));
+    await act(async () => publishBoardWaiting(3));
+    expect(setAppBadge).not.toHaveBeenCalled();
+    expect(clearAppBadge).not.toHaveBeenCalled();
   });
 });

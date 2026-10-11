@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { api } from "./api";
+import { clearAppBadge, setAppBadge } from "./appBadge";
 import { subscribeToInboxUpdates } from "./inboxUpdates";
 
 /**
@@ -38,6 +39,21 @@ let counts: NavCounts = ZERO;
 const listeners = new Set<() => void>();
 let stop: (() => void) | null = null;
 
+/**
+ * The number on the installed app's icon: what is waiting on you on the board
+ * plus what you have not read. "Needs action" is deliberately left out —
+ * adding it would double-count an unread approval, and the icon has room for
+ * one number, not a nuance.
+ *
+ * Zero clears the badge rather than drawing a 0, which on iOS and macOS is
+ * the difference between a clean icon and a permanent dot.
+ */
+function paintBadge(next: NavCounts): void {
+  const total = next.boardWaiting + next.inboxUnread;
+  // Both helpers no-op where the Badging API is unsupported.
+  void (total > 0 ? setAppBadge(total) : clearAppBadge());
+}
+
 function set(next: Partial<NavCounts>): void {
   const merged = { ...counts, ...next };
   if (
@@ -48,6 +64,7 @@ function set(next: Partial<NavCounts>): void {
     return;
   }
   counts = merged;
+  paintBadge(counts);
   for (const listener of listeners) listener();
 }
 
@@ -101,6 +118,16 @@ const noop = () => () => {};
 export function useNavCounts(enabled = true): NavCounts {
   const snapshot = () => (enabled ? counts : ZERO);
   return useSyncExternalStore(enabled ? subscribe : noop, snapshot, snapshot);
+}
+
+/**
+ * Sign-out: nothing is waiting on a signed-out browser, so the badge goes and
+ * the numbers go with it, without waiting for a read that would now 401.
+ */
+export function clearNavCounts(): void {
+  counts = ZERO;
+  void clearAppBadge();
+  for (const listener of listeners) listener();
 }
 
 /** Test seam: drop every subscriber and reset the counts. */
