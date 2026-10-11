@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiRequestError } from "../lib/api";
+import { ApiRequestError, api } from "../lib/api";
 import { offlineProps, useOffline } from "../lib/connection";
 import {
   browserDeviceName,
