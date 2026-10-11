@@ -1,25 +1,17 @@
-import { Link } from "react-router";
 import { DOC_CONTENT, DOCS_EYEBROW, DOCS_TITLE } from "../../shared/docs/content";
-import { BrandWordmark } from "../components/BrandWordmark";
+import { AppHeader } from "../components/AppShell";
 import { DocsSidebar } from "../components/DocsSidebar";
 import { DocSectionView } from "./docs/blocks";
 
+/**
+ * The docs keep their own sidebar layout and wider column, but share the app's
+ * header so the brand mark and navigation are the same here as everywhere else.
+ */
 export function Docs() {
   return (
     /* `hark-docs` scopes the smooth anchor scrolling in index.css to this page. */
     <div className="hark-docs min-h-dvh">
-      <header className="sticky top-0 z-30 border-b border-line bg-paper/90 backdrop-blur">
-        <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between px-6">
-          <Link className="text-lg font-semibold" to="/">
-            <BrandWordmark />
-          </Link>
-          <nav aria-label="Primary" className="text-sm text-ink-subtle">
-            <Link className="transition hover:text-ink" to="/dashboard">
-              Dashboard
-            </Link>
-          </nav>
-        </div>
-      </header>
+      <AppHeader column="mx-auto w-full max-w-6xl px-6" />
 
       <div className="mx-auto flex w-full max-w-6xl flex-col px-6 lg:flex-row lg:gap-14">
         <DocsSidebar />

@@ -1,17 +1,18 @@
 import type { AppDto, OncallPersonDto } from "@hark/contracts";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router";
-import { signOut, useSession } from "../lib/auth";
-import { Brand, PAGE_COLUMN } from "./SiteChrome";
-import { closeButton } from "./ui";
+import { IconX } from "./icons";
+import { closeButton, surfacePanel } from "./ui";
 
 /**
  * Pieces shared by the dashboard and the team pages: list panels, empty
- * states, switches, a dialog shell, form fields and time formatting.
+ * states, switches, a dialog shell, form fields and loading skeletons.
  */
 
-/** Glass panel that holds a list; rows are separated by hairlines. */
-export const LIST_PANEL = "hark-glass divide-y divide-line rounded-3xl px-4 sm:px-5";
+/** The one relative-time formatter, re-exported so section files import one kit. */
+export { relativeTime } from "../lib/format";
+
+/** Card panel that holds a list; rows are separated by hairlines. */
+export const LIST_PANEL = `${surfacePanel} divide-y divide-line rounded-2xl px-4 sm:px-5`;
 
 /** Top-level dashboard section spacing. */
 export const SECTION = "mt-10 border-t border-line pt-8";
@@ -53,9 +54,47 @@ export function InlineCode({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * Loading placeholder shaped like the content it replaces, so a list does not
+ * jump when it arrives. Wrap a group in `SkeletonList` to announce the wait.
+ */
+export function Skeleton({ className = "" }: { className?: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`block animate-pulse rounded-md bg-surface-muted motion-reduce:animate-none ${className}`}
+    />
+  );
+}
+
+/** `rows` placeholder rows, announced once to assistive technology. */
+export function SkeletonList({
+  label,
+  rows = 3,
+  className = "",
+  rowClassName = "h-16",
+}: {
+  label: string;
+  rows?: number;
+  className?: string;
+  rowClassName?: string;
+}) {
+  return (
+    <div aria-busy="true" className={className} role="status">
+      <span className="sr-only">{label}</span>
+      <div className="flex flex-col gap-3">
+        {Array.from({ length: rows }, (_, index) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: fixed-length placeholder rows
+          <Skeleton className={rowClassName} key={index} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function EmptyState({ title, children }: { title: string; children?: React.ReactNode }) {
   return (
-    <div className="rounded-3xl border border-dashed border-line-strong px-6 py-10 text-center">
+    <div className="rounded-2xl border border-dashed border-line-strong px-6 py-10 text-center">
       <p className="font-medium text-ink">{title}</p>
       {children ? <p className="mx-auto mt-1.5 max-w-sm text-ink-muted">{children}</p> : null}
     </div>
@@ -89,7 +128,7 @@ export function Badge({
     strong: "bg-accent font-medium text-on-accent",
     danger: "bg-danger-soft text-danger ring-1 ring-danger-line ring-inset",
     warn: "bg-warn/14 text-warn ring-1 ring-warn/45 ring-inset",
-    ok: "bg-mint/12 text-mint ring-1 ring-mint/40 ring-inset",
+    ok: "bg-ok/14 text-ok ring-1 ring-ok/45 ring-inset",
   } as const;
   return (
     <span
@@ -277,12 +316,14 @@ export function Segmented<T extends string>({
 }) {
   const name = useId();
   return (
-    <fieldset className="inline-flex rounded-full border border-line bg-panel p-0.5">
+    <fieldset className="inline-flex rounded-full border border-line bg-panel p-0.5 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent">
       <legend className="sr-only">{label}</legend>
       {options.map((option) => (
         <label
-          className={`relative cursor-pointer rounded-full px-3 py-1 text-[13px] font-medium transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-ink ${
-            value === option.value ? "bg-accent text-on-accent" : "text-ink-muted hover:text-ink"
+          className={`relative cursor-pointer rounded-full px-3 py-1 text-[13px] font-medium transition-colors ${
+            value === option.value
+              ? "bg-accent text-on-accent"
+              : "text-ink-muted hover:bg-surface-hover hover:text-ink"
           }`}
           key={option.value}
         >
@@ -372,12 +413,12 @@ export function Modal({
         onClick={close}
         type="button"
       >
-        ×
+        <IconX className="size-4.5" />
       </button>
     </div>
   );
 
-  const panelClass = `hark-modal-panel hark-glass hark-glass-strong outline-none ${
+  const panelClass = `hark-modal-panel outline-none ${
     wide ? "hark-plan-panel" : "max-h-[calc(100dvh-2rem)] overflow-y-auto"
   }`;
 
@@ -422,57 +463,6 @@ export function Modal({
       )}
     </div>
   );
-}
-
-/** Header shared by the dashboard and team pages. `children` go before the avatar. */
-export function DashboardHeader({ children }: { children?: React.ReactNode }) {
-  const { data: session } = useSession();
-  const navigate = useNavigate();
-  return (
-    <header className={`${PAGE_COLUMN} flex h-16 items-center justify-between gap-4`}>
-      <Brand />
-      <div className="flex min-w-0 items-center gap-[18px] text-[15px]">
-        {session ? (
-          <span className="hidden max-w-56 truncate text-ink-faint md:inline">
-            {session.user.email}
-          </span>
-        ) : null}
-        <Link
-          className="hidden text-ink-muted transition-colors hover:text-ink sm:inline"
-          to="/docs"
-        >
-          Docs
-        </Link>
-        <button
-          type="button"
-          onClick={() => void signOut().then(() => navigate("/"))}
-          className="text-ink-muted transition-colors hover:text-ink"
-        >
-          Sign out
-        </button>
-        {children}
-        {session?.user.image ? (
-          <img
-            src={session.user.image}
-            alt=""
-            className="size-8 shrink-0 rounded-full ring-1 ring-line"
-            referrerPolicy="no-referrer"
-            title={session.user.email}
-          />
-        ) : null}
-      </div>
-    </header>
-  );
-}
-
-export function relativeTime(iso: string): string {
-  const deltaMinutes = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
-  if (deltaMinutes < 1) return "just now";
-  if (deltaMinutes < 60) return `${deltaMinutes} minute${deltaMinutes === 1 ? "" : "s"} ago`;
-  const hours = Math.floor(deltaMinutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-  const days = Math.floor(hours / 24);
-  return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 /** "in 5 minutes", "in 3 hours", "in 2 days". */

@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { BrowserNotifications, SelfHostedBadge } from "./Dashboard";
+import { SelfHostedBadge } from "../components/AppShell";
+import { BrowserNotifications } from "./Dashboard";
 
 describe("self-hosted dashboard state", () => {
   it("renders a fixed self-hosted label without paid or metered copy", () => {

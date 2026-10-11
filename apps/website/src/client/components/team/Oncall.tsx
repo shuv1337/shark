@@ -25,7 +25,14 @@ import {
   Segmented,
   Select,
 } from "../DashboardKit";
-import { primaryButtonSmall, rowButton, rowDangerButton, secondaryButton, textLink } from "../ui";
+import {
+  primaryButtonSmall,
+  rowButton,
+  rowDangerButton,
+  secondaryButton,
+  surfacePanel,
+  textLink,
+} from "../ui";
 
 export function escalationSummary(steps: OncallEscalationStep[]): string {
   if (steps.length === 0) return "No escalation: only the person on call is paged.";
@@ -221,7 +228,10 @@ function GroupCard({
   };
 
   return (
-    <article aria-labelledby={`${detailId}-title`} className="hark-glass rounded-3xl p-4 sm:p-5">
+    <article
+      aria-labelledby={`${detailId}-title`}
+      className={`${surfacePanel} rounded-2xl p-4 sm:p-5`}
+    >
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
         <div className="min-w-0">
           <h3

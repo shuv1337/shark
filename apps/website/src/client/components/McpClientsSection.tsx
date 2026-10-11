@@ -2,9 +2,8 @@ import { API_TOKEN_SCOPE_DESCRIPTIONS, type OAuthClientGrantDto } from "@hark/co
 import { useCallback, useEffect, useState } from "react";
 import { oauthApi } from "../lib/oauth-api";
 import { useConfirm } from "./ConfirmDialog";
+import { InlineCode, LIST_PANEL, SkeletonList } from "./DashboardKit";
 import { rowDangerButton } from "./ui";
-
-const LIST_PANEL = "hark-glass divide-y divide-line rounded-3xl px-4 sm:px-5";
 
 /**
  * Dashboard section listing MCP/OAuth clients connected to the account
@@ -62,16 +61,15 @@ export function McpClientsSection({ mcpUrl }: { mcpUrl?: string }) {
           Connected MCP clients
         </h2>
         <p className="mt-1.5 text-ink-muted">
-          Add{" "}
-          <code className="rounded-md bg-surface-hover px-1 py-px font-mono text-[0.86em] text-ink">
-            {endpoint}
-          </code>{" "}
-          to Claude, OpenCode, Cursor, or any MCP client. It asks for your approval here first.
+          Add <InlineCode>{endpoint}</InlineCode> to Claude, OpenCode, Cursor, or any MCP client. It
+          asks for your approval here first.
         </p>
       </div>
-      {clients === null ? <p className="py-4 text-ink-faint">Loading clients…</p> : null}
+      {clients === null ? (
+        <SkeletonList label="Loading connected MCP clients" rowClassName="h-16" rows={2} />
+      ) : null}
       {clients?.length === 0 && !error ? (
-        <div className="rounded-3xl border border-dashed border-line-strong px-6 py-10 text-center">
+        <div className="rounded-2xl border border-dashed border-line-strong px-6 py-10 text-center">
           <p className="font-medium text-ink">No MCP clients connected</p>
         </div>
       ) : null}

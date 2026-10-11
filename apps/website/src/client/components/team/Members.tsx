@@ -24,7 +24,13 @@ import {
   SectionHeading,
   Select,
 } from "../DashboardKit";
-import { primaryButtonSmall, rowButton, rowDangerButton, secondaryButton } from "../ui";
+import {
+  primaryButtonSmall,
+  rowButton,
+  rowDangerButton,
+  secondaryButton,
+  surfacePanel,
+} from "../ui";
 
 export function MembersSection({
   team,
@@ -138,7 +144,7 @@ export function MembersSection({
       />
 
       {reveal ? (
-        <div className="hark-glass mb-5 rounded-3xl p-5">
+        <div className={`${surfacePanel} mb-5 rounded-2xl p-5`}>
           <div className="mb-1 flex items-center justify-between gap-4">
             <h3 className="text-lg font-medium text-ink">
               {reveal.invite.email ? `Invite for ${reveal.invite.email}` : "Invite link ready"}

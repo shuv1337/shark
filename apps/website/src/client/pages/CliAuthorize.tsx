@@ -1,8 +1,7 @@
 import type { DeviceAuthorizationRequestDto } from "@hark/contracts";
 import { useEffect, useState } from "react";
-import { Link } from "react-router";
 import { AppleButton } from "../components/AppleButton";
-import { BrandWordmark } from "../components/BrandWordmark";
+import { primaryButton, secondaryButton, surfacePanel } from "../components/ui";
 import { api } from "../lib/api";
 import { signInWithApple, useSession } from "../lib/auth";
 
@@ -65,73 +64,55 @@ export function CliAuthorize() {
   const callbackURL = `/cli/authorize?code=${encodeURIComponent(submittedCode || code.trim())}`;
 
   return (
-    <div className="flex min-h-dvh flex-col">
-      <header className="mx-auto flex h-20 w-full max-w-3xl items-center justify-between px-6">
-        <Link className="text-lg font-semibold" to="/">
-          <BrandWordmark />
-        </Link>
-        <div className="flex items-center gap-3">
-          {session ? (
-            <span className="text-ink-faint max-w-48 truncate text-xs">{session.user.email}</span>
-          ) : null}
-        </div>
-      </header>
+    <main className="mx-auto flex w-full max-w-lg flex-1 items-center px-5 py-12 sm:px-6">
+      <section className={`${surfacePanel} w-full rounded-2xl p-5 sm:p-8`}>
+        <h1 className="text-2xl font-semibold text-balance">Authorize a command-line client</h1>
+        <p className="mt-2 text-sm text-ink-subtle">
+          A client running in your terminal is asking for access to this account.
+        </p>
 
-      <main className="mx-auto flex w-full max-w-lg flex-1 items-center px-5 pb-20 sm:px-6">
-        <section className="w-full rounded-2xl border border-line bg-surface p-5 shadow-xl shadow-ink/5 sm:p-8 dark:shadow-none dark:ring-1 dark:ring-white/10">
-          <p className="text-accent-text text-xs font-semibold uppercase tracking-wide">
-            CLI access
-          </p>
-          <h1 className="mt-2 text-2xl font-semibold text-balance">
-            Authorize a command-line client
-          </h1>
+        {!submittedCode ? (
+          <form className="mt-6" onSubmit={lookUp}>
+            <label className="text-sm font-medium" htmlFor="device-code">
+              Enter the code shown in your terminal
+            </label>
+            <input
+              autoCapitalize="characters"
+              autoComplete="one-time-code"
+              className="hark-field mt-2 min-h-12 px-4 font-mono text-lg tracking-[0.12em] uppercase"
+              id="device-code"
+              maxLength={9}
+              onChange={(event) => setCode(event.target.value)}
+              placeholder="ABCD-EFGH"
+              value={code}
+            />
+            <button className={`${primaryButton} mt-4 w-full`} type="submit">
+              Continue
+            </button>
+          </form>
+        ) : isPending ? (
+          <p className="mt-6 text-sm text-ink-faint">Checking your session…</p>
+        ) : !session ? (
+          <div className="mt-6">
+            <p className="mb-5 text-sm leading-6 text-ink-subtle">
+              Sign in to choose whether this client may access your SHark account. Signing in does
+              not authorize it.
+            </p>
+            <AppleButton onClick={() => void signInWithApple(callbackURL)} />
+          </div>
+        ) : loading ? (
+          <p className="mt-6 text-sm text-ink-faint">Loading authorization request…</p>
+        ) : request ? (
+          <AuthorizationDetails request={request} busy={busy} onResolve={resolve} />
+        ) : null}
 
-          {!submittedCode ? (
-            <form className="mt-6" onSubmit={lookUp}>
-              <label className="text-sm font-medium" htmlFor="device-code">
-                Enter the code shown in your terminal
-              </label>
-              <input
-                autoCapitalize="characters"
-                autoComplete="one-time-code"
-                className="focus:border-accent border-line-strong bg-field text-ink placeholder:text-ink-faint mt-2 min-h-12 w-full rounded-xl border px-4 font-mono text-lg uppercase tracking-[0.12em] outline-none"
-                id="device-code"
-                maxLength={9}
-                onChange={(event) => setCode(event.target.value)}
-                placeholder="ABCD-EFGH"
-                value={code}
-              />
-              <button
-                className="bg-accent hover:bg-accent-hover mt-4 min-h-11 w-full rounded-full px-5 text-sm font-semibold text-on-accent"
-                type="submit"
-              >
-                Continue
-              </button>
-            </form>
-          ) : isPending ? (
-            <p className="mt-6 text-sm text-ink-faint">Checking your session…</p>
-          ) : !session ? (
-            <div className="mt-6">
-              <p className="mb-5 text-sm leading-6 text-ink-subtle">
-                Sign in to choose whether this client may access your SHark account. Signing in does
-                not authorize it.
-              </p>
-              <AppleButton onClick={() => void signInWithApple(callbackURL)} />
-            </div>
-          ) : loading ? (
-            <p className="mt-6 text-sm text-ink-faint">Loading authorization request…</p>
-          ) : request ? (
-            <AuthorizationDetails request={request} busy={busy} onResolve={resolve} />
-          ) : null}
-
-          {error ? (
-            <div className="mt-5 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger">
-              {error}
-            </div>
-          ) : null}
-        </section>
-      </main>
-    </div>
+        {error ? (
+          <div className="mt-5 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger">
+            {error}
+          </div>
+        ) : null}
+      </section>
+    </main>
   );
 }
 
@@ -147,7 +128,7 @@ function AuthorizationDetails({
   const pending = request.status === "pending";
   return (
     <div className="mt-6">
-      <div className="rounded-xl bg-surface-muted p-4">
+      <div className="rounded-xl bg-panel p-4">
         <p className="text-xs text-ink-faint">Requesting client</p>
         <p className="mt-1 font-semibold">{request.clientName}</p>
         <div className="mt-4 flex items-end justify-between gap-4 border-t border-line pt-4">
@@ -185,7 +166,7 @@ function AuthorizationDetails({
       {pending ? (
         <div className="mt-6 grid grid-cols-2 gap-3">
           <button
-            className="min-h-11 rounded-full border border-line-strong px-4 text-sm font-semibold text-ink-muted hover:bg-surface-hover disabled:opacity-50"
+            className={`${secondaryButton} h-11`}
             disabled={busy}
             onClick={() => void onResolve("deny")}
             type="button"
@@ -193,7 +174,7 @@ function AuthorizationDetails({
             Deny
           </button>
           <button
-            className="bg-accent hover:bg-accent-hover min-h-11 rounded-full px-4 text-sm font-semibold text-on-accent disabled:opacity-50"
+            className={primaryButton}
             disabled={busy}
             onClick={() => void onResolve("approve")}
             type="button"

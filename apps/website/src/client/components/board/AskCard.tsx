@@ -1,6 +1,7 @@
 import type { BoardAskDto, BoardAskEventDto } from "@hark/contracts";
 import { useState } from "react";
 import { ApiRequestError, api } from "../../lib/api";
+import { focusRing, quietButton, surfacePanel } from "../ui";
 import {
   answerSummary,
   defaultLaterDate,
@@ -28,7 +29,7 @@ export function LinkChips({ links }: { links: BoardAskDto["links"] }) {
     <span className="flex flex-wrap gap-1.5">
       {links.map((link) => (
         <a
-          className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] font-medium text-ink-muted transition hover:bg-surface-hover hover:text-ink"
+          className={`rounded-full bg-surface-muted px-2 py-0.5 text-[11px] font-medium text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink ${focusRing}`}
           href={link.url}
           key={link.url}
           rel="noreferrer"
@@ -132,7 +133,7 @@ export function AskCard({
   return (
     <article
       aria-labelledby={`ask-${ask.id}-title`}
-      className="rounded-2xl border border-line bg-surface p-4 shadow-xs"
+      className={`${surfacePanel} rounded-2xl p-4`}
       data-ask-id={ask.id}
     >
       <header className="flex flex-wrap items-center gap-1.5 text-[11px] text-ink-faint">
@@ -173,7 +174,7 @@ export function AskCard({
           </p>
           {ask.body.length > 180 ? (
             <button
-              className="mt-1 text-xs font-medium text-accent-text"
+              className={`${quietButton} mt-1 -ml-3 text-xs text-accent-text`}
               onClick={() => setShowBody((value) => !value)}
               type="button"
             >
@@ -201,7 +202,7 @@ export function AskCard({
           <div className="flex flex-wrap gap-2">
             {ask.kind === "todo" ? (
               <button
-                className="min-h-11 flex-1 rounded-xl bg-accent px-4 text-sm font-semibold text-on-accent transition hover:bg-accent-hover disabled:opacity-50"
+                className={`min-h-11 flex-1 rounded-xl bg-accent px-4 text-sm font-semibold text-on-accent transition-colors hover:bg-accent-hover disabled:pointer-events-none disabled:opacity-50 ${focusRing}`}
                 disabled={working}
                 onClick={() => void answerOption("done")}
                 type="button"
@@ -211,7 +212,7 @@ export function AskCard({
             ) : (
               ask.options.map((option) => (
                 <button
-                  className={`min-h-11 flex-1 basis-[calc(50%-0.25rem)] rounded-xl px-4 text-sm font-semibold transition disabled:opacity-50 ${optionClass(option.style)}`}
+                  className={`min-h-11 flex-1 basis-[calc(50%-0.25rem)] rounded-xl px-4 text-sm font-semibold transition-colors disabled:pointer-events-none disabled:opacity-50 ${focusRing} ${optionClass(option.style)}`}
                   disabled={working}
                   key={option.id}
                   onClick={() => void answerOption(option.id)}
@@ -228,7 +229,7 @@ export function AskCard({
               <div className="flex flex-col gap-2">
                 <textarea
                   aria-label="Reply"
-                  className="min-h-24 w-full rounded-xl border border-line bg-field px-3 py-2 text-sm text-ink"
+                  className="hark-field min-h-24 rounded-xl px-3 py-2 text-sm"
                   disabled={working}
                   maxLength={4000}
                   onChange={(event) => setReply(event.target.value)}
@@ -237,7 +238,7 @@ export function AskCard({
                 />
                 <div className="flex gap-2">
                   <button
-                    className="min-h-10 rounded-xl bg-accent px-4 text-sm font-semibold text-on-accent transition hover:bg-accent-hover disabled:opacity-50"
+                    className={`min-h-10 rounded-xl bg-accent px-4 text-sm font-semibold text-on-accent transition-colors hover:bg-accent-hover disabled:pointer-events-none disabled:opacity-50 ${focusRing}`}
                     disabled={working || reply.trim().length === 0}
                     onClick={answerText}
                     type="button"
@@ -245,7 +246,7 @@ export function AskCard({
                     Send reply
                   </button>
                   <button
-                    className="min-h-10 rounded-xl px-3 text-sm font-medium text-ink-subtle hover:bg-surface-hover"
+                    className={`${quietButton} min-h-10`}
                     onClick={() => setShowReply(false)}
                     type="button"
                   >
@@ -255,7 +256,7 @@ export function AskCard({
               </div>
             ) : (
               <button
-                className="min-h-10 self-start rounded-xl border border-line bg-surface px-3 text-sm font-medium text-ink-muted transition hover:bg-surface-hover"
+                className={`min-h-10 self-start rounded-xl border border-line bg-surface px-3 text-sm font-medium text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink disabled:pointer-events-none disabled:opacity-50 ${focusRing}`}
                 disabled={working}
                 onClick={() => setShowReply(true)}
                 type="button"
@@ -269,7 +270,7 @@ export function AskCard({
             {ask.allowLater ? (
               laterDate === null ? (
                 <button
-                  className="min-h-9 rounded-lg px-2.5 font-medium text-ink-subtle hover:bg-surface-hover hover:text-ink"
+                  className={`${quietButton} min-h-9`}
                   disabled={working}
                   onClick={() => setLaterDate(defaultLaterDate())}
                   type="button"
@@ -280,13 +281,13 @@ export function AskCard({
                 <span className="flex items-center gap-2">
                   <input
                     aria-label="Revisit on"
-                    className="min-h-9 rounded-lg border border-line bg-field px-2 text-xs text-ink"
+                    className="hark-field min-h-9 w-auto px-2 text-xs"
                     onChange={(event) => setLaterDate(event.target.value)}
                     type="date"
                     value={laterDate}
                   />
                   <button
-                    className="min-h-9 rounded-lg bg-surface-muted px-2.5 font-medium text-ink"
+                    className={`${quietButton} min-h-9 bg-surface-muted text-ink`}
                     disabled={working || !laterDate}
                     onClick={snooze}
                     type="button"
@@ -294,7 +295,7 @@ export function AskCard({
                     Snooze
                   </button>
                   <button
-                    className="min-h-9 px-2 text-ink-faint"
+                    className={`${quietButton} min-h-9 text-ink-faint`}
                     onClick={() => setLaterDate(null)}
                     type="button"
                   >
@@ -305,7 +306,7 @@ export function AskCard({
             ) : null}
             {dismissReason === null ? (
               <button
-                className="min-h-9 rounded-lg px-2.5 font-medium text-ink-subtle hover:bg-surface-hover hover:text-danger"
+                className={`${quietButton} min-h-9 hover:text-danger`}
                 disabled={working}
                 onClick={() => setDismissReason("")}
                 type="button"
@@ -316,14 +317,14 @@ export function AskCard({
               <span className="flex flex-1 items-center gap-2">
                 <input
                   aria-label="Reason"
-                  className="min-h-9 min-w-0 flex-1 rounded-lg border border-line bg-field px-2 text-xs text-ink"
+                  className="hark-field min-h-9 min-w-0 flex-1 px-2 text-xs"
                   maxLength={200}
                   onChange={(event) => setDismissReason(event.target.value)}
                   placeholder="Why? (optional)"
                   value={dismissReason}
                 />
                 <button
-                  className="min-h-9 rounded-lg bg-danger-soft px-2.5 font-medium text-danger"
+                  className={`${quietButton} min-h-9 bg-danger-soft text-danger`}
                   disabled={working}
                   onClick={() => void dismiss()}
                   type="button"
@@ -331,7 +332,7 @@ export function AskCard({
                   Dismiss
                 </button>
                 <button
-                  className="min-h-9 px-2 text-ink-faint"
+                  className={`${quietButton} min-h-9 text-ink-faint`}
                   onClick={() => setDismissReason(null)}
                   type="button"
                 >
@@ -348,7 +349,7 @@ export function AskCard({
           </div>
         </div>
       ) : (
-        <div className="mt-3 rounded-xl bg-surface-muted px-3 py-2 text-sm">
+        <div className="mt-3 rounded-xl bg-panel px-3 py-2 text-sm">
           <p className="font-medium text-ink">
             {ask.status === "answered" ? "You answered: " : ""}
             {answerSummary(ask)}
