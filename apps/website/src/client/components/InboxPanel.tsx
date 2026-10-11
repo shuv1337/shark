@@ -358,6 +358,7 @@ export function InboxDetailView({ id }: { id: string }) {
   const [loading, setLoading] = useState(true);
   const [dismissing, setDismissing] = useState(false);
   const { confirm, dialog } = useConfirm();
+  const offline = useOffline();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -432,7 +433,26 @@ export function InboxDetailView({ id }: { id: string }) {
       {loading && !detail ? (
         <SkeletonList label="Loading this notification" rowClassName="h-16" rows={4} />
       ) : null}
-      {error && !detail ? (
+      {/*
+       * Offline with nothing cached is not the same as a notification that
+       * does not exist. Saying "not available" and printing "Failed to fetch"
+       * would tell the operator their item is gone when it is only out of
+       * reach, so this says what is actually true and offers the way back.
+       */}
+      {error && !detail && offline ? (
+        <div>
+          <h1 className="text-[28px] leading-[1.15] font-medium tracking-[-0.015em] text-ink">
+            This notification has not loaded yet
+          </h1>
+          <p className="mt-2 max-w-[30rem] text-ink-muted">
+            You're offline, so SHark could not fetch it. It will open when you're back online.
+          </p>
+          <Link className={`${secondaryButton} mt-6 h-11`} to="/inbox">
+            Back to the inbox
+          </Link>
+        </div>
+      ) : null}
+      {error && !detail && !offline ? (
         <div>
           <h1 className="text-[28px] leading-[1.15] font-medium tracking-[-0.015em] text-ink">
             This notification is not available
@@ -450,7 +470,7 @@ export function InboxDetailView({ id }: { id: string }) {
             dismissing={dismissing}
             onDismiss={(interactionId) => void dismiss(interactionId)}
           />
-          <ErrorText>{error}</ErrorText>
+          <ErrorText>{offline ? null : error}</ErrorText>
         </>
       ) : null}
       {dialog}

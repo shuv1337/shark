@@ -14,17 +14,24 @@ import { ShellNotices } from "./ShellNotices";
  * the page out from under a half-typed answer.
  */
 const applyUpdate = vi.fn(async () => true);
-let announce: (() => void) | null = null;
+let announce: ((registration: ServiceWorkerRegistration) => void) | null = null;
 
 vi.mock("../lib/pwaUpdate", () => ({
   applyUpdate: (...args: unknown[]) => applyUpdate(...(args as [])),
-  onUpdateAvailable: (callback: () => void) => {
+  onUpdateAvailable: (callback: (registration: ServiceWorkerRegistration) => void) => {
     announce = callback;
     return () => {
       announce = null;
     };
   },
 }));
+
+/**
+ * Every build is served from the same `/sw.js`, so the waiting `ServiceWorker`
+ * object is what tells two builds apart. Each call here is a distinct one.
+ */
+const build = (name: string) =>
+  ({ waiting: { scriptURL: "/sw.js", name } }) as unknown as ServiceWorkerRegistration;
 
 function setOnline(online: boolean) {
   Object.defineProperty(navigator, "onLine", { configurable: true, value: online });
@@ -98,7 +105,7 @@ describe("shell notices", () => {
     });
 
     it("offers a reload that hands over to the waiting worker", async () => {
-      await act(async () => announce?.());
+      await act(async () => announce?.(build("one")));
       expect(text()).toContain("SHark updated.");
 
       await act(async () => button("Reload")?.click());
@@ -106,17 +113,35 @@ describe("shell notices", () => {
     });
 
     it("is a bar, not a dialog", async () => {
-      await act(async () => announce?.());
+      await act(async () => announce?.(build("one")));
       expect(container.querySelector("[role='dialog']")).toBeNull();
       expect(container.querySelector("[role='status']")).not.toBeNull();
     });
 
     it("can be dismissed and does not come back for the same build", async () => {
-      await act(async () => announce?.());
+      const one = build("one");
+      await act(async () => announce?.(one));
       await act(async () => button("Dismiss the update notice")?.click());
       expect(text()).not.toContain("SHark updated");
 
-      await act(async () => announce?.());
+      await act(async () => announce?.(one));
+      expect(text()).not.toContain("SHark updated");
+    });
+
+    /**
+     * On a tab left open for days, dismissing once must not mean never being
+     * told again: a later build is a new offer.
+     */
+    it("comes back for a newer build after a dismissal", async () => {
+      await act(async () => announce?.(build("one")));
+      await act(async () => button("Dismiss the update notice")?.click());
+      expect(text()).not.toContain("SHark updated");
+
+      await act(async () => announce?.(build("two")));
+      expect(text()).toContain("SHark updated.");
+
+      // And that one can be dismissed on its own terms.
+      await act(async () => button("Dismiss the update notice")?.click());
       expect(text()).not.toContain("SHark updated");
     });
 
@@ -133,7 +158,7 @@ describe("shell notices", () => {
       document.body.append(ask);
       reply.focus();
 
-      await act(async () => announce?.());
+      await act(async () => announce?.(build("one")));
       expect(text()).not.toContain("SHark updated");
       expect(applyUpdate).not.toHaveBeenCalled();
 

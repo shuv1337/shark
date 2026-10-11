@@ -10,14 +10,58 @@ function announceUpdate(): void {
   for (const callback of updateCallbacks) callback(registration);
 }
 
+/**
+ * Follow one worker to the end of its install.
+ *
+ * A worker that reaches `installed` while something already controls the page
+ * is a new build waiting its turn, which is the whole signal the update bar
+ * runs on. One that installs with no controller is the first worker this
+ * browser has ever had: it activates immediately and there is nothing to
+ * offer.
+ *
+ * The listener is attached and then fired by hand, because by the time any of
+ * this runs the worker may already be past `installing` — `register()`
+ * resolves while the install is still going, so `updatefound` has usually
+ * fired before there is anywhere to hear it.
+ */
+function watchInstalling(worker: ServiceWorker | null | undefined): void {
+  if (!worker) return;
+  const onStateChange = () => {
+    if (worker.state === "installing") return;
+    worker.removeEventListener("statechange", onStateChange);
+    if (worker.state === "installed" && navigator.serviceWorker.controller) announceUpdate();
+  };
+  worker.addEventListener("statechange", onStateChange);
+  onStateChange();
+}
+
 function watchRegistration(next: ServiceWorkerRegistration): void {
   registration = next;
   announceUpdate();
-  next.addEventListener("updatefound", () => {
-    const installing = next.installing;
-    installing?.addEventListener("statechange", () => {
-      if (installing.state === "installed" && navigator.serviceWorker.controller) announceUpdate();
-    });
+  // The install that was already running when this registration resolved.
+  // Without this the session that discovers a new build never offers it, and
+  // only the next full load shows the bar.
+  watchInstalling(next.installing);
+  next.addEventListener("updatefound", () => watchInstalling(next.installing));
+}
+
+/** Settle once this worker is no longer installing, or give up waiting. */
+function installSettled(worker: ServiceWorker | null, timeoutMs: number): Promise<void> {
+  if (!worker || worker.state !== "installing") return Promise.resolve();
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = () => {
+      clearTimeout(timer);
+      worker.removeEventListener("statechange", onStateChange);
+      resolve();
+    };
+    const onStateChange = () => {
+      if (worker.state !== "installing") finish();
+    };
+    // A worker that never leaves `installing` must not leave the caller's
+    // button saying "Checking…" for the rest of the session.
+    timer = setTimeout(finish, timeoutMs);
+    worker.addEventListener("statechange", onStateChange);
   });
 }
 
@@ -44,11 +88,17 @@ export function onUpdateAvailable(callback: UpdateCallback): () => void {
  * Ask the server whether a newer worker exists, for the "Check for updates"
  * action in Settings. Resolves true when one is downloaded and waiting, which
  * is also when the shell's update bar appears.
+ *
+ * `update()` resolves once the new script has been fetched, which can be
+ * before the worker it started has finished installing. Answering then would
+ * let Settings say "You are on the latest build" with an install in flight
+ * behind it, so this waits for that install to settle first.
  */
-export async function checkForUpdate(): Promise<boolean> {
+export async function checkForUpdate(installTimeoutMs = 10_000): Promise<boolean> {
   const next = registration ?? (await registerServiceWorker());
   if (!next) return false;
   await next.update();
+  await installSettled(next.installing, installTimeoutMs);
   announceUpdate();
   return Boolean(next.waiting);
 }

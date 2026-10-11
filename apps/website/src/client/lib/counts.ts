@@ -47,36 +47,54 @@ let stop: (() => void) | null = null;
  *
  * Zero clears the badge rather than drawing a 0, which on iOS and macOS is
  * the difference between a clean icon and a permanent dot.
+ *
+ * The badge outlives the page, so this cannot key off the in-memory counts
+ * changing: they start at zero, and a fresh load that reads zero and zero
+ * would change nothing and leave yesterday's number on the icon. It paints
+ * from the first moment both sources have answered — including, especially,
+ * when the answer is that there is nothing waiting — and after that whenever
+ * the total it would draw differs from the one already on the icon.
  */
-function paintBadge(next: NavCounts): void {
-  const total = next.boardWaiting + next.inboxUnread;
+let boardReported = false;
+let inboxReported = false;
+let painted: number | undefined;
+
+type Source = "board" | "inbox";
+
+function paintBadge(): void {
+  if (!boardReported || !inboxReported) return;
+  const total = counts.boardWaiting + counts.inboxUnread;
+  if (total === painted) return;
+  painted = total;
   // Both helpers no-op where the Badging API is unsupported.
   void (total > 0 ? setAppBadge(total) : clearAppBadge());
 }
 
-function set(next: Partial<NavCounts>): void {
+function set(next: Partial<NavCounts>, source?: Source): void {
+  if (source === "board") boardReported = true;
+  if (source === "inbox") inboxReported = true;
   const merged = { ...counts, ...next };
-  if (
+  const unchanged =
     merged.boardWaiting === counts.boardWaiting &&
     merged.inboxUnread === counts.inboxUnread &&
-    merged.inboxNeedsAction === counts.inboxNeedsAction
-  ) {
-    return;
-  }
+    merged.inboxNeedsAction === counts.inboxNeedsAction;
   counts = merged;
-  paintBadge(counts);
+  // Before the listeners, and whether or not anything changed: a load that
+  // learns both counts are zero has to clear a badge a previous session left.
+  paintBadge();
+  if (unchanged) return;
   for (const listener of listeners) listener();
 }
 
 export function publishBoardWaiting(count: number): void {
-  set({ boardWaiting: count });
+  set({ boardWaiting: count }, "board");
 }
 
 /** Re-read the inbox badge. Call after anything that changes read state. */
 export async function refreshInboxCounts(): Promise<void> {
   try {
     const { unread, needsAction } = await api.getInboxCounts();
-    set({ inboxUnread: unread, inboxNeedsAction: needsAction });
+    set({ inboxUnread: unread, inboxNeedsAction: needsAction }, "inbox");
   } catch {
     // Keep the last known numbers; the poll and the next push try again.
   }
@@ -84,7 +102,7 @@ export async function refreshInboxCounts(): Promise<void> {
 
 async function refresh(): Promise<void> {
   const [board] = await Promise.allSettled([api.getBoard(), refreshInboxCounts()]);
-  if (board.status === "fulfilled") set({ boardWaiting: board.value.waiting.length });
+  if (board.status === "fulfilled") set({ boardWaiting: board.value.waiting.length }, "board");
 }
 
 function subscribe(listener: () => void): () => void {
@@ -126,6 +144,11 @@ export function useNavCounts(enabled = true): NavCounts {
  */
 export function clearNavCounts(): void {
   counts = ZERO;
+  // A signed-out browser has no counts to report, so the next session starts
+  // its badge from scratch rather than from this one's last total.
+  boardReported = false;
+  inboxReported = false;
+  painted = undefined;
   void clearAppBadge();
   for (const listener of listeners) listener();
 }
@@ -136,4 +159,7 @@ export function resetNavCounts(): void {
   stop = null;
   listeners.clear();
   counts = ZERO;
+  boardReported = false;
+  inboxReported = false;
+  painted = undefined;
 }

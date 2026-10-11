@@ -23,6 +23,73 @@ describe("PWA update helpers", () => {
     expect(callback).toHaveBeenCalledWith(registration);
   });
 
+  /**
+   * The session that discovers a new build is the one that should offer it.
+   * `register()` resolves while the install is still running, so by the time
+   * anything can listen `updatefound` has already fired and the only handle
+   * left is `registration.installing`.
+   */
+  it("announces a worker that was still installing when it registered", async () => {
+    const installing = Object.assign(new EventTarget(), { state: "installing" });
+    const registration = Object.assign(new EventTarget(), { waiting: null, installing });
+    const serviceWorker = Object.assign(new EventTarget(), {
+      register: vi.fn().mockResolvedValue(registration),
+      controller: {},
+    });
+    vi.stubGlobal("navigator", { serviceWorker });
+    const helpers = await import("./pwaUpdate");
+    const callback = vi.fn();
+    helpers.onUpdateAvailable(callback);
+    await helpers.registerServiceWorker();
+    expect(callback).not.toHaveBeenCalled();
+
+    // The install finishes: it is now the waiting build.
+    Object.assign(registration, { waiting: { postMessage: vi.fn() } });
+    Object.assign(installing, { state: "installed" });
+    installing.dispatchEvent(new Event("statechange"));
+    expect(callback).toHaveBeenCalledWith(registration);
+  });
+
+  /** A worker that installs with no controller is this browser's first. */
+  it("stays quiet for the very first worker, which has nothing to replace", async () => {
+    const installing = Object.assign(new EventTarget(), { state: "installing" });
+    const registration = Object.assign(new EventTarget(), { waiting: null, installing });
+    vi.stubGlobal("navigator", {
+      serviceWorker: Object.assign(new EventTarget(), {
+        register: vi.fn().mockResolvedValue(registration),
+        controller: null,
+      }),
+    });
+    const helpers = await import("./pwaUpdate");
+    const callback = vi.fn();
+    helpers.onUpdateAvailable(callback);
+    await helpers.registerServiceWorker();
+
+    Object.assign(registration, { waiting: { postMessage: vi.fn() } });
+    Object.assign(installing, { state: "installed" });
+    installing.dispatchEvent(new Event("statechange"));
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  /** It may already be installed by the time anything attaches a listener. */
+  it("catches an install that finished before it looked", async () => {
+    const registration = Object.assign(new EventTarget(), {
+      waiting: { postMessage: vi.fn() },
+      installing: Object.assign(new EventTarget(), { state: "installed" }),
+    });
+    vi.stubGlobal("navigator", {
+      serviceWorker: Object.assign(new EventTarget(), {
+        register: vi.fn().mockResolvedValue(registration),
+        controller: {},
+      }),
+    });
+    const helpers = await import("./pwaUpdate");
+    const callback = vi.fn();
+    helpers.onUpdateAvailable(callback);
+    await helpers.registerServiceWorker();
+    expect(callback).toHaveBeenCalledWith(registration);
+  });
+
   it("reports the build the controlling worker is running", async () => {
     const serviceWorker = new EventTarget() as EventTarget & { controller: unknown };
     const postMessage = vi.fn(() => {
@@ -68,6 +135,60 @@ describe("PWA update helpers", () => {
 
     Object.assign(registration, { waiting: { postMessage: vi.fn() } });
     await expect(helpers.checkForUpdate()).resolves.toBe(true);
+  });
+
+  /**
+   * `update()` resolves once the script is fetched, which can be before the
+   * worker it started has installed. Answering then would let Settings say
+   * "latest build" over an install in flight.
+   */
+  it("waits for an install that update() started before answering", async () => {
+    const installing = Object.assign(new EventTarget(), { state: "installing" });
+    const registration = Object.assign(new EventTarget(), {
+      waiting: null,
+      installing,
+      update: vi.fn().mockResolvedValue(undefined),
+    }) as unknown as ServiceWorkerRegistration;
+    vi.stubGlobal("navigator", {
+      serviceWorker: Object.assign(new EventTarget(), {
+        register: vi.fn().mockResolvedValue(registration),
+        controller: {},
+      }),
+    });
+    const helpers = await import("./pwaUpdate");
+    await helpers.registerServiceWorker();
+
+    let settled = false;
+    const check = helpers.checkForUpdate().then((value) => {
+      settled = true;
+      return value;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    Object.assign(registration, { waiting: { postMessage: vi.fn() } });
+    Object.assign(installing, { state: "installed" });
+    installing.dispatchEvent(new Event("statechange"));
+    await expect(check).resolves.toBe(true);
+  });
+
+  /** A worker stuck installing must not leave "Checking…" on the button. */
+  it("gives up waiting on an install that never finishes", async () => {
+    const registration = Object.assign(new EventTarget(), {
+      waiting: null,
+      installing: Object.assign(new EventTarget(), { state: "installing" }),
+      update: vi.fn().mockResolvedValue(undefined),
+    }) as unknown as ServiceWorkerRegistration;
+    vi.stubGlobal("navigator", {
+      serviceWorker: Object.assign(new EventTarget(), {
+        register: vi.fn().mockResolvedValue(registration),
+        controller: {},
+      }),
+    });
+    const helpers = await import("./pwaUpdate");
+    await helpers.registerServiceWorker();
+    await expect(helpers.checkForUpdate(5)).resolves.toBe(false);
   });
 
   it("asks the waiting worker to activate and reloads on controller change", async () => {

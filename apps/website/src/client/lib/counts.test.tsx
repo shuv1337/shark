@@ -206,6 +206,28 @@ describe("app badge", () => {
     vi.unstubAllGlobals();
   });
 
+  /**
+   * The badge outlives the page. A load that reads zero and zero changes
+   * nothing in memory, so keying the paint off a change would leave the
+   * previous session's number sitting on the icon until something else moved.
+   */
+  it("clears a badge left by a previous session once both counts read zero", async () => {
+    await act(async () => root.render(<Badge />));
+    expect(clearAppBadge).toHaveBeenCalled();
+    expect(setAppBadge).not.toHaveBeenCalled();
+  });
+
+  it("paints nothing until both sources have actually reported", async () => {
+    // Only the board has answered; the inbox total is still unknown, and
+    // guessing it is zero would flash the wrong number on the icon.
+    await act(async () => publishBoardWaiting(3));
+    expect(setAppBadge).not.toHaveBeenCalled();
+    expect(clearAppBadge).not.toHaveBeenCalled();
+
+    await act(async () => root.render(<Badge />));
+    expect(setAppBadge).toHaveBeenLastCalledWith(3);
+  });
+
   it("badges the board and the inbox together whenever either changes", async () => {
     await act(async () => root.render(<Badge />));
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useOffline } from "../lib/connection";
 import { applyUpdate, onUpdateAvailable } from "../lib/pwaUpdate";
 import { IconOffline, IconX } from "./icons";
@@ -60,17 +60,30 @@ function midAnswer(): boolean {
  * which would discard a half-typed answer to an agent, so when the update
  * lands while an ask field has focus the bar waits until that field is left.
  *
- * Dismissing it is final for this build: the worker stays waiting and takes
- * over on the next natural reload, which is what every other tab does anyway.
+ * Dismissing it is final for the build that was dismissed: that worker stays
+ * waiting and takes over on the next natural reload, which is what every
+ * other tab does anyway. A *newer* build is a new offer and says so again —
+ * on a tab left open for days that is the difference between being told once
+ * and never being told again.
+ *
+ * The build is identified by the waiting `ServiceWorker` itself, because
+ * every build is served from the same `/sw.js`: the script URL is identical
+ * and only the object differs.
  */
 function UpdateNotice({ column }: { column: string }) {
-  const [state, setState] = useState<"none" | "held" | "ready" | "dismissed">("none");
+  const [state, setState] = useState<"none" | "held" | "ready">("none");
   const [reloading, setReloading] = useState(false);
+  const waiting = useRef<ServiceWorker | null>(null);
+  const dismissed = useRef<ServiceWorker | null>(null);
 
   useEffect(
     () =>
-      onUpdateAvailable(() => {
-        setState((current) => (current === "dismissed" ? current : midAnswer() ? "held" : "ready"));
+      onUpdateAvailable((registration) => {
+        const next = registration.waiting;
+        waiting.current = next;
+        if (next && next === dismissed.current) return;
+        dismissed.current = null;
+        setState(midAnswer() ? "held" : "ready");
       }),
     [],
   );
@@ -93,7 +106,7 @@ function UpdateNotice({ column }: { column: string }) {
       // Nothing was waiting after all; the page is already the new build.
       if (!applied) {
         setReloading(false);
-        setState("dismissed");
+        setState("none");
       }
     });
   }, []);
@@ -118,7 +131,10 @@ function UpdateNotice({ column }: { column: string }) {
         <button
           aria-label="Dismiss the update notice"
           className={`${closeButton} ml-auto size-8`}
-          onClick={() => setState("dismissed")}
+          onClick={() => {
+            dismissed.current = waiting.current;
+            setState("none");
+          }}
           type="button"
         >
           <IconX className="size-4" />

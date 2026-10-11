@@ -1,14 +1,23 @@
 // @vitest-environment happy-dom
-import type { BoardAskDto, InboxDetailDto, ServiceDto } from "@hark/contracts";
+import type {
+  BoardAskDto,
+  InboxDetailDto,
+  ServiceDto,
+  TeamDto,
+  TeamMemberDto,
+} from "@hark/contracts";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OFFLINE_HINT, resetConnection } from "../lib/connection";
 import { Board } from "../pages/Board";
+import { TeamPage } from "../pages/Team";
+import { ActivityLogSection } from "./ActivityLog";
 import { AskCard } from "./board/AskCard";
-import { InboxDetailContent, InboxPanel } from "./InboxPanel";
+import { InboxDetailContent, InboxDetailView, InboxPanel } from "./InboxPanel";
 import { ServicesSection } from "./ServicesSection";
+import { MembersSection } from "./team/Members";
 
 /**
  * Offline, a control that only sends something to the server says why it
@@ -85,6 +94,19 @@ vi.mock("../lib/api", () => {
       }),
       getInboxCounts: async () => ({ unread: 1, needsAction: 0 }),
       listInbox: async () => ({ items: [unread], nextCursor: null, unresolvedCount: 1 }),
+      listEvents: async () => {
+        throw new TypeError("Failed to fetch");
+      },
+      getTeam: async () => {
+        throw new TypeError("Failed to fetch");
+      },
+      getInboxItem: async () => {
+        throw new TypeError("Failed to fetch");
+      },
+      listTeamApps: async () => ({ apps: [] }),
+      listTeamInvites: async () => ({ invites: [] }),
+      listOncallGroups: async () => ({ groups: [] }),
+      listTeamPages: async () => ({ pages: [], nextCursor: null }),
     },
   };
 });
@@ -165,6 +187,37 @@ const detail: InboxDetailDto = {
   },
   events: [],
 } as unknown as InboxDetailDto;
+
+const team = {
+  id: "team_synthetic",
+  name: "Platform",
+  role: "owner",
+  memberCount: 2,
+  appCount: 0,
+  oncallGroupCount: 0,
+  plan: "free",
+  seats: { used: 2, available: null, billable: 0 },
+  createdAt: "2026-10-11T10:00:00.000Z",
+} as unknown as TeamDto;
+
+const members = [
+  {
+    userId: "usr_synthetic",
+    name: "Cap",
+    email: "operator@example.test",
+    image: null,
+    role: "owner",
+    joinedAt: "2026-10-11T10:00:00.000Z",
+  },
+  {
+    userId: "usr_other",
+    name: "Mate",
+    email: "mate@example.test",
+    image: null,
+    role: "member",
+    joinedAt: "2026-10-11T10:00:00.000Z",
+  },
+] as unknown as TeamMemberDto[];
 
 const service: ServiceDto = {
   id: "svc_synthetic",
@@ -308,6 +361,75 @@ describe("mutations while offline", () => {
     expect(container.querySelector(".text-danger")).toBeNull();
     // And the one action it offers is held back with its reason.
     expect(named("Ship now")?.title).toBe(OFFLINE_HINT);
+  });
+
+  /**
+   * The activity log polls, so offline it fails every ten seconds. The shell
+   * says it once; a red box under the log repeating it is noise.
+   */
+  it("keeps the activity log quiet offline rather than stacking load errors", async () => {
+    await goOffline();
+    await mount(<ActivityLogSection />);
+    expect(container.querySelector("[role='alert']")).toBeNull();
+    expect(container.textContent).not.toContain("Could not load activity");
+    expect(container.textContent).not.toContain("Failed to fetch");
+    // And it says what is actually true instead of a skeleton for something
+    // that is not coming.
+    expect(container.textContent).toContain("Activity has not loaded in this browser yet");
+  });
+
+  /**
+   * Offline with nothing cached is not the same as a notification that does
+   * not exist; saying "not available" would be a lie about the operator's data.
+   */
+  it("explains a cold inbox item offline instead of calling it unavailable", async () => {
+    await goOffline();
+    await mount(
+      <MemoryRouter initialEntries={["/inbox/ibox%3Aevent%3A1"]}>
+        <InboxDetailView id="ibox:event:1" />
+      </MemoryRouter>,
+    );
+    expect(container.textContent).toContain("This notification has not loaded yet");
+    expect(container.textContent).not.toContain("This notification is not available");
+    expect(container.textContent).not.toContain("Failed to fetch");
+  });
+
+  it("explains a cold team page offline instead of printing the load error", async () => {
+    await goOffline();
+    await mount(
+      <MemoryRouter initialEntries={["/teams/team_synthetic"]}>
+        <Routes>
+          <Route element={<TeamPage />} path="/teams/:teamId" />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(container.textContent).toContain("This team has not loaded in this browser yet");
+    expect(container.querySelector("[role='alert']")).toBeNull();
+    expect(container.textContent).not.toContain("Could not load this team");
+    expect(container.textContent).not.toContain("Try again");
+  });
+
+  it("disables the team writes with the same reason", async () => {
+    await mount(
+      <MemoryRouter initialEntries={["/teams/team_synthetic"]}>
+        <MembersSection
+          members={members}
+          onChanged={() => {}}
+          team={team}
+          viewerId="usr_synthetic"
+        />
+      </MemoryRouter>,
+    );
+    expect(named("Invite")?.disabled).toBe(false);
+
+    await goOffline();
+    for (const label of ["Invite", "Make owner", "Remove"]) {
+      const control = named(label);
+      expect(control?.disabled, label).toBe(true);
+      expect(control?.title, label).toBe(OFFLINE_HINT);
+    }
+    // The roster itself is still readable.
+    expect(container.textContent).toContain("mate@example.test");
   });
 
   it("disables the settings forms that write, and leaves copying alone", async () => {
