@@ -627,6 +627,7 @@ describe("isKnownWebPushEndpoint", () => {
   it("accepts only production browser push services on the default HTTPS port", () => {
     for (const endpoint of [
       "https://fcm.googleapis.com/fcm/send/synthetic",
+      "https://jmt17.google.com/fcm/send/synthetic",
       "https://updates.push.services.mozilla.com/wpush/v2/synthetic",
       "https://wns2-synthetic.notify.windows.com/w/?token=synthetic",
       "https://web.push.apple.com/synthetic",
@@ -639,6 +640,8 @@ describe("isKnownWebPushEndpoint", () => {
       "https://fcm.googleapis.com:8443/fcm/send/synthetic",
       "https://user:pass@fcm.googleapis.com/fcm/send/synthetic",
       "https://fcm.googleapis.com.example.com/fcm/send/synthetic",
+      "https://google.com/fcm/send/synthetic",
+      "https://jmt17.google.com.example.com/fcm/send/synthetic",
       "https://notify.windows.com/w/synthetic",
       "https://push.apple.com/synthetic",
       "https://evilpush.apple.com/synthetic",

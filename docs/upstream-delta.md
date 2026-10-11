@@ -256,7 +256,8 @@ Deliberate merge resolutions:
 - Browser Web Push endpoints are another server-side POST to a URL the user supplies, so
   `webPushSubscriptionSchema` only accepts HTTPS endpoints on the default port at the push
   services production browsers use (`WEB_PUSH_SERVICE_HOSTS` in
-  `packages/contracts/src/url.ts`): `fcm.googleapis.com`, `updates.push.services.mozilla.com`,
+  `packages/contracts/src/url.ts`): `fcm.googleapis.com`, `jmt17.google.com` (the GCM front
+  end some Chromium builds register through), `updates.push.services.mozilla.com`,
   `*.notify.windows.com`, and `*.push.apple.com`. Delivery repeats that check on every stored
   row; a row that fails it is never sent and is deactivated like an expired subscription. An
   allowlisted host is then resolved through `lib/outbound.ts` and refused, without deactivating
