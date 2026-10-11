@@ -17,11 +17,14 @@
   --font-sans:
     ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
 
-  /* Surfaces */
+  /* Surfaces. `panel` is the second neutral layer: the inner wells inside a
+     card (member rows, on-call slots, segmented controls) that need to read as
+     recessed without becoming a nested card. */
   --color-paper: oklch(0.985 0.002 100);
   --color-surface: oklch(1 0 0);
   --color-surface-muted: oklch(0.975 0.002 260);
   --color-surface-hover: oklch(0.962 0.003 260);
+  --color-panel: oklch(0.968 0.003 260);
   --color-field: oklch(1 0 0);
 
   /* Text */
@@ -53,6 +56,7 @@
   --color-danger-line: oklch(0.885 0.059 18);
   --color-warn: oklch(0.769 0.165 70);
   --color-info: oklch(0.623 0.188 260);
+  --color-ok: oklch(0.54 0.13 155);
   --color-idle: oklch(0.87 0.005 260);
 
   /* Code blocks. The surface stays dark in both themes, so the syntax colours
@@ -90,6 +94,7 @@
     --color-surface: oklch(0.228 0.009 260);
     --color-surface-muted: oklch(0.262 0.01 260);
     --color-surface-hover: oklch(0.3 0.011 260);
+    --color-panel: oklch(0.262 0.01 260);
     --color-field: oklch(0.2 0.009 260);
 
     --color-ink: oklch(0.958 0.003 260);
@@ -115,6 +120,7 @@
     --color-danger-line: oklch(0.42 0.09 25);
     --color-warn: oklch(0.8 0.15 75);
     --color-info: oklch(0.7 0.16 259);
+    --color-ok: oklch(0.78 0.15 155);
     --color-idle: oklch(0.45 0.012 260);
 
     --color-code: oklch(0.145 0.008 260);
@@ -169,6 +175,93 @@ cite,
 address {
   font-style: normal;
   letter-spacing: inherit;
+}
+
+/*
+ * Element styles that too many call sites would otherwise repeat. They live in
+ * `components` so a Tailwind utility at the call site still wins: `hark-field
+ * h-8 rounded-full` really is a short pill.
+ */
+@layer components {
+  /* Text input, textarea and select. Recessed from its panel, accent ring on
+     keyboard focus, and never a focus trap without a visible outline. */
+  .hark-field {
+    display: block;
+    width: 100%;
+    border: 1px solid var(--color-line-strong);
+    border-radius: 0.625rem;
+    background-color: var(--color-field);
+    color: var(--color-ink);
+    transition:
+      border-color 150ms ease-out,
+      background-color 150ms ease-out;
+  }
+
+  .hark-field::placeholder {
+    color: var(--color-ink-faint);
+  }
+
+  .hark-field:hover:not(:disabled) {
+    border-color: var(--color-ink-disabled);
+  }
+
+  .hark-field:focus-visible {
+    border-color: var(--color-accent);
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+  }
+
+  .hark-field:disabled {
+    background-color: var(--color-surface-muted);
+    color: var(--color-ink-disabled);
+    cursor: not-allowed;
+  }
+
+  /* Inline link inside running text. */
+  .hark-link {
+    color: var(--color-accent-text);
+    text-decoration-line: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+    text-decoration-color: var(--color-accent-soft);
+    transition: text-decoration-color 150ms ease-out;
+  }
+
+  .hark-link:hover {
+    text-decoration-color: currentcolor;
+  }
+
+  .hark-link:focus-visible {
+    border-radius: 0.25rem;
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  /* Long-form policy prose: a readable measure and real paragraph rhythm. */
+  .legal-copy p {
+    max-width: 70ch;
+  }
+
+  .legal-copy p + p {
+    margin-top: 0.75rem;
+  }
+
+  .legal-copy a {
+    color: var(--color-accent-text);
+    text-decoration-line: underline;
+    text-underline-offset: 2px;
+  }
+
+  .legal-copy ul {
+    margin-top: 0.75rem;
+    max-width: 70ch;
+    list-style: disc;
+    padding-left: 1.25rem;
+  }
+
+  .legal-copy li + li {
+    margin-top: 0.25rem;
+  }
 }
 
 .hark-modal-backdrop {
