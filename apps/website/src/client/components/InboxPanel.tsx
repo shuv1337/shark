@@ -10,6 +10,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { ApiRequestError, api } from "../lib/api";
+import { offlineProps, subscribeToReconnect, useOffline } from "../lib/connection";
 import { refreshInboxCounts } from "../lib/counts";
 import { subscribeToInboxUpdates } from "../lib/inboxUpdates";
 import { ActivityLogSection } from "./ActivityLog";
@@ -84,6 +85,9 @@ export function InboxPanel() {
   const [error, setError] = useState<string | null>(null);
   const listRequest = useRef(0);
   const filter: InboxFilter | null = view === "activity" ? null : view;
+  // Reading is local; marking read is a write, and it is the one control here
+  // that cannot do anything useful without the server.
+  const offline = useOffline();
 
   const load = useCallback(
     async (cursor?: string | null, initial = false) => {
@@ -124,6 +128,20 @@ export function InboxPanel() {
   }, [load]);
 
   useEffect(() => subscribeToInboxUpdates(() => void load()), [load]);
+
+  /*
+   * Back online: drop the error this page stopped showing while the shell's
+   * banner was up, and read again. Without this the error would simply
+   * reappear as the banner left, over data that is about to be replaced.
+   */
+  useEffect(
+    () =>
+      subscribeToReconnect(() => {
+        setError(null);
+        void load();
+      }),
+    [load],
+  );
 
   // Reading the list says nothing about how many unread items are behind it,
   // so the badge is read from the server alongside the first page.
@@ -180,6 +198,7 @@ export function InboxPanel() {
                 disabled={markingRead}
                 onClick={() => void markAllRead()}
                 type="button"
+                {...offlineProps(offline)}
               >
                 {markingRead ? "Marking…" : "Mark all read"}
               </button>
@@ -229,7 +248,9 @@ export function InboxPanel() {
 
       {filter ? (
         <>
-          {error ? (
+          {/* Offline, the shell's banner says it; a red box here would claim
+              the list on screen is wrong, which it is not. */}
+          {error && !offline ? (
             <p
               className="mt-4 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger"
               role="alert"
@@ -351,6 +372,7 @@ export function InboxDetailView({ id }: { id: string }) {
   const [loading, setLoading] = useState(true);
   const [dismissing, setDismissing] = useState(false);
   const { confirm, dialog } = useConfirm();
+  const offline = useOffline();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -425,7 +447,26 @@ export function InboxDetailView({ id }: { id: string }) {
       {loading && !detail ? (
         <SkeletonList label="Loading this notification" rowClassName="h-16" rows={4} />
       ) : null}
-      {error && !detail ? (
+      {/*
+       * Offline with nothing cached is not the same as a notification that
+       * does not exist. Saying "not available" and printing "Failed to fetch"
+       * would tell the operator their item is gone when it is only out of
+       * reach, so this says what is actually true and offers the way back.
+       */}
+      {error && !detail && offline ? (
+        <div>
+          <h1 className="text-[28px] leading-[1.15] font-medium tracking-[-0.015em] text-ink">
+            This notification has not loaded yet
+          </h1>
+          <p className="mt-2 max-w-[30rem] text-ink-muted">
+            You're offline, so SHark could not fetch it. It will open when you're back online.
+          </p>
+          <Link className={`${secondaryButton} mt-6 h-11`} to="/inbox">
+            Back to the inbox
+          </Link>
+        </div>
+      ) : null}
+      {error && !detail && !offline ? (
         <div>
           <h1 className="text-[28px] leading-[1.15] font-medium tracking-[-0.015em] text-ink">
             This notification is not available
@@ -443,7 +484,7 @@ export function InboxDetailView({ id }: { id: string }) {
             dismissing={dismissing}
             onDismiss={(interactionId) => void dismiss(interactionId)}
           />
-          <ErrorText>{error}</ErrorText>
+          <ErrorText>{offline ? null : error}</ErrorText>
         </>
       ) : null}
       {dialog}
@@ -461,6 +502,7 @@ export function InboxDetailContent({
   onDismiss?: (interactionId: string) => void;
 }) {
   const { item } = detail;
+  const offline = useOffline();
   return (
     <div>
       <div className="flex items-center gap-3">
@@ -515,6 +557,7 @@ export function InboxDetailContent({
                   if (item.action) onDismiss(item.action.interactionId);
                 }}
                 type="button"
+                {...offlineProps(offline)}
               >
                 {dismissing ? "Dismissing…" : "Dismiss"}
               </button>

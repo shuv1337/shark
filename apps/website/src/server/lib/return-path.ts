@@ -1,8 +1,13 @@
-const DEFAULT_RETURN_PATH = "/dashboard";
+/**
+ * Where a sign-in with no requested destination lands. The board, matching
+ * the manifest's `start_url` and the client's own default; `/dashboard` stays
+ * a working redirect for old push links and the iPhone app's web app entry.
+ */
+const DEFAULT_RETURN_PATH = "/board";
 
 /**
  * A same-site page path to land on after sign-in. Anything that could leave
- * the site, hit the API, or loop back into sign-in falls back to the dashboard.
+ * the site, hit the API, or loop back into sign-in falls back to the board.
  */
 export function safeReturnPath(value: string | null | undefined, appUrl: string): string {
   if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("\\")) {

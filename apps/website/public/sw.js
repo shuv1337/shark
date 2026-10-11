@@ -116,7 +116,7 @@ self.addEventListener("push", (event) => {
     icon: "/app-store-icon.png",
     badge: "/favicon.png",
     data: {
-      url: typeof payload.url === "string" ? payload.url : "/dashboard",
+      url: typeof payload.url === "string" ? payload.url : "/inbox",
       ...(typeof payload.eventId === "string" ? { eventId: payload.eventId } : {}),
     },
   };
@@ -142,16 +142,41 @@ async function withdrawPresentedNotifications(payload) {
   }
 }
 
+/*
+ * Where a tapped notification opens.
+ *
+ * A service can set a tap URL on another site deliberately — a CI run, a pull
+ * request — so an absolute http(s) URL is allowed to leave this origin. What
+ * is not allowed is a URL dressed up as this one. `https://shark.example@evil.test/`
+ * has origin `evil.test` and a username that reads like the real host, and a
+ * string that is not absolute can still resolve somewhere else entirely:
+ * `//evil.test`, `/\evil.test` and `///evil.test` all parse into another
+ * origin against this one. So credentials are refused outright, and anything
+ * that was not written as an absolute URL has to still be on this origin
+ * after parsing. Everything else falls back to the inbox.
+ */
+function notificationTarget(raw) {
+  const fallback = new URL("/inbox", self.location.origin);
+  if (typeof raw !== "string" || raw === "") return fallback;
+  const absolute = /^[a-z][a-z0-9+.-]*:/i.test(raw);
+  let candidate;
+  try {
+    candidate = new URL(raw, self.location.origin);
+  } catch {
+    return fallback;
+  }
+  if (candidate.protocol !== "https:" && candidate.protocol !== "http:") return fallback;
+  if (candidate.username || candidate.password) return fallback;
+  if (!absolute && candidate.origin !== self.location.origin) return fallback;
+  return candidate;
+}
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
-  let target = new URL("/dashboard", self.location.origin);
-  try {
-    const candidate = new URL(event.notification.data?.url || "/dashboard", self.location.origin);
-    if (candidate.protocol === "https:" || candidate.protocol === "http:") target = candidate;
-  } catch {
-    // Keep the safe dashboard fallback.
-  }
+  // A notification with no URL of its own opens the inbox, where its own
+  // record is. `/dashboard` still redirects, so older payloads keep working.
+  const target = notificationTarget(event.notification.data?.url);
 
   event.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {

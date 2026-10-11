@@ -154,7 +154,7 @@ export const webPushRoute = new Hono<AuthedEnv>()
     const result = await sendWebPushNotifications([subscription], {
       title: "SHark",
       body: "Browser notifications are working.",
-      url: "/dashboard",
+      url: "/inbox",
       tag: "shark-browser-test",
     });
     if (result.staleSubscriptionIds.length > 0) {

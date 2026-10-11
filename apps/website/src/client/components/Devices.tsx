@@ -1,6 +1,7 @@
 import type { DeviceDto } from "@hark/contracts";
 import { useState } from "react";
 import { api } from "../lib/api";
+import { offlineProps, useOffline } from "../lib/connection";
 import { useConfirm } from "./ConfirmDialog";
 import {
   EmptyState,
@@ -22,6 +23,9 @@ export function DevicesSection({
   onRemoved: () => void;
 }) {
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Removing a device, disconnecting a client and the push handshake are all
+  // server writes, so they say why rather than failing on the tap.
+  const offline = useOffline();
   const [error, setError] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
 
@@ -103,6 +107,7 @@ export function DevicesSection({
                   disabled={busyId === device.id}
                   onClick={() => void remove(device)}
                   type="button"
+                  {...offlineProps(offline)}
                 >
                   Remove
                 </button>

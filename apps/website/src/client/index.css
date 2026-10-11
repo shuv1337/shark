@@ -168,6 +168,39 @@ body {
   letter-spacing: -0.02em;
 }
 
+/*
+ * Running as an installed app, in its own window.
+ *
+ * Two things change and nothing else. The header takes the top safe-area
+ * inset, because `apple-mobile-web-app-status-bar-style` is translucent and
+ * the brand mark would otherwise sit under the clock. And the viewport stops
+ * bouncing: in a browser the rubber band belongs to the browser, but in a
+ * standalone window a downward drag on the board looks like a pull-to-refresh
+ * that never refreshes. Scrolling inside the page is untouched.
+ *
+ * The media query covers every standalone runtime that reports one; the class
+ * is added by `main.tsx` from `navigator.standalone`, which is all an older
+ * iOS home-screen app exposes. Both are CSS so the inset is right on the
+ * first paint rather than after hydration.
+ */
+@media (display-mode: standalone) {
+  html {
+    overscroll-behavior-y: none;
+  }
+
+  .hark-standalone-top {
+    padding-top: env(safe-area-inset-top);
+  }
+}
+
+html.hark-standalone {
+  overscroll-behavior-y: none;
+}
+
+html.hark-standalone .hark-standalone-top {
+  padding-top: env(safe-area-inset-top);
+}
+
 button,
 input,
 textarea,

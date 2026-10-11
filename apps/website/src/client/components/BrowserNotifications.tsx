@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
+import { offlineProps, useOffline } from "../lib/connection";
 import {
   browserDeviceName,
   browserPushAvailability,
@@ -23,6 +24,9 @@ export function BrowserNotifications({ onChanged = () => {} }: { onChanged?: () 
   const [state, setState] = useState<BrowserNotificationState>("checking");
   const [subscription, setSubscription] = useState<PushSubscription | null>(null);
   const [busy, setBusy] = useState<"enable" | "test" | "disable" | null>(null);
+  // Removing a device, disconnecting a client and the push handshake are all
+  // server writes, so they say why rather than failing on the tap.
+  const offline = useOffline();
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const onChangedRef = useRef(onChanged);
@@ -153,6 +157,7 @@ export function BrowserNotifications({ onChanged = () => {} }: { onChanged?: () 
                 disabled={busy !== null}
                 onClick={() => void enable()}
                 type="button"
+                {...offlineProps(offline)}
               >
                 {busy === "enable" ? "Enabling…" : "Enable notifications"}
               </button>
@@ -177,6 +182,7 @@ export function BrowserNotifications({ onChanged = () => {} }: { onChanged?: () 
                   disabled={busy !== null}
                   onClick={() => void sendTest()}
                   type="button"
+                  {...offlineProps(offline)}
                 >
                   {busy === "test" ? "Sending…" : "Send test"}
                 </button>
@@ -185,6 +191,7 @@ export function BrowserNotifications({ onChanged = () => {} }: { onChanged?: () 
                   disabled={busy !== null}
                   onClick={() => void disable()}
                   type="button"
+                  {...offlineProps(offline)}
                 >
                   {busy === "disable" ? "Disabling…" : "Disable"}
                 </button>

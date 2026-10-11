@@ -200,6 +200,10 @@ operator review:
 - The anonymous app assets return their expected content types: `/sw.js`, `/favicon.png`,
   `/app-store-icon.png`, `/manifest.webmanifest`, `/apple-touch-icon.png`, and the three explicit
   files under `/icons/`. Any other `/icons/*` path and all `/assets/*` remain private.
+- Sign-in with no requested destination lands on `/board`, matching the manifest's `start_url`. A
+  notification that carries no URL of its own opens `/inbox`. `/dashboard` and
+  `/dashboard/teams/<id>` still redirect, so older push payloads and the iPhone app's registered
+  web app keep working.
 - A signed-in browser can enable, test, disable, and re-enable notifications without creating
   duplicate active subscriptions.
 - Web Push responses with an expired subscription status deactivate only that browser target; they

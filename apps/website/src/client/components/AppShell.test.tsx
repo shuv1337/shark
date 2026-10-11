@@ -96,6 +96,26 @@ describe("app shell", () => {
     expect(html).toContain("board page");
     expect(html).not.toContain('aria-label="Primary"');
     expect(html).not.toContain("operator@example.test");
+    // The native app frames the page and handles its own updates and
+    // connectivity, so the shell's own notices stay out of it too.
+    expect(html).not.toContain("hark-standalone-top");
+  });
+
+  /**
+   * Installed, the status bar is translucent, so the header takes the top
+   * safe-area inset. It is a class rather than state so the inset is right on
+   * the first paint; `index.css` scopes it to a standalone display mode.
+   */
+  it("marks the header for the standalone safe-area inset", () => {
+    expect(shellAt("/board")).toContain("hark-standalone-top");
+  });
+
+  /** Offline and "a new build is waiting" belong to the shell, once. */
+  it("carries the shell notices around the page", () => {
+    const html = shellAt("/board");
+    // Neither one is showing: nothing is wrong and nothing is waiting.
+    expect(html).not.toContain("You're offline");
+    expect(html).not.toContain("SHark updated");
   });
 });
 

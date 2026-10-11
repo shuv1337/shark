@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { signOut, useSession } from "../lib/auth";
-import { type NavCounts, useNavCounts } from "../lib/counts";
+import { clearNavCounts, type NavCounts, useNavCounts } from "../lib/counts";
 import { inEmbeddedWebView } from "../lib/platform";
 import { BrandWordmark } from "./BrandWordmark";
 import {
@@ -14,6 +14,7 @@ import {
   IconTeams,
   IconX,
 } from "./icons";
+import { ShellNotices } from "./ShellNotices";
 import { DOCS_COLUMN, PAGE_COLUMN, SETTINGS_COLUMN } from "./SiteChrome";
 import { focusRing, quietButton } from "./ui";
 
@@ -100,6 +101,12 @@ export function AppShell() {
     <div className="flex min-h-dvh flex-col">
       <AppHeader column={column} />
       {/*
+       * Offline and "a new build is waiting" are facts about the shell, so
+       * they sit here once rather than in each page. They scroll away with
+       * the content; neither one is urgent enough to hold the viewport.
+       */}
+      <ShellNotices column={column} />
+      {/*
        * The tab bar is `position: fixed`, so rendering it here costs nothing
        * visually and puts the primary destinations before the page in tab
        * order — the first thing a keyboard or switch user reaches on a phone.
@@ -122,7 +129,14 @@ export function AppHeader({ column = PAGE_COLUMN }: { column?: string }) {
   const { data: session } = useSession();
   const counts = useNavCounts(Boolean(session));
   return (
-    <header className="sticky top-0 z-30 border-b border-line bg-paper/90 backdrop-blur">
+    /*
+     * `hark-standalone-top` pads the header by the top safe-area inset, but
+     * only when the app is running in its own window: the status bar is
+     * declared translucent, so on a notched phone the brand mark would
+     * otherwise sit under the clock. See index.css — it is CSS rather than
+     * state so it is right on the first paint.
+     */
+    <header className="hark-standalone-top sticky top-0 z-30 border-b border-line bg-paper/90 backdrop-blur">
       <div className={`${column} flex h-14 items-center gap-4 md:h-16`}>
         <Link
           aria-label="SHark home"
@@ -313,6 +327,9 @@ function AccountMenu({ email, image }: { email: string; image: string | null }) 
               className={itemClass}
               onClick={() => {
                 close();
+                // Nothing is waiting on a signed-out browser, so the app icon
+                // must not keep claiming it is.
+                clearNavCounts();
                 void signOut().then(() => navigate("/"));
               }}
               role="menuitem"

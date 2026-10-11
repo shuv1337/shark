@@ -1,6 +1,7 @@
 import type { EventDto } from "@hark/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { subscribeToReconnect, useOffline } from "../lib/connection";
 import { EmptyState, ErrorText, InlineCode, SkeletonList } from "./DashboardKit";
 import { quietButton } from "./ui";
 
@@ -15,6 +16,9 @@ export function ActivityLogSection() {
   const [events, setEvents] = useState<EventDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  // The shell's banner is the one place that says the page is not current; a
+  // red "Could not load activity" under a real log would contradict it.
+  const offline = useOffline();
 
   const load = useCallback(async (manual = false) => {
     if (manual) setRefreshing(true);
@@ -33,6 +37,20 @@ export function ActivityLogSection() {
     const interval = setInterval(() => void load(), ACTIVITY_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [load]);
+
+  /*
+   * Back online: drop the error this page stopped showing while the shell's
+   * banner was up, and read again. Without this the error would simply
+   * reappear as the banner left, over data that is about to be replaced.
+   */
+  useEffect(
+    () =>
+      subscribeToReconnect(() => {
+        setError(null);
+        void load();
+      }),
+    [load],
+  );
 
   return (
     <section aria-labelledby="activity-heading" className="mt-8">
@@ -53,7 +71,14 @@ export function ActivityLogSection() {
         </button>
       </div>
 
-      {events === null && !error ? (
+      {events === null && offline ? (
+        // Nothing has loaded in this browser and nothing is on its way, so a
+        // skeleton would be pretending.
+        <p className="rounded-2xl border border-dashed border-line-strong px-5 py-4 text-[15px] text-ink-muted">
+          Activity has not loaded in this browser yet. It will fill in when you're back online.
+        </p>
+      ) : null}
+      {events === null && !error && !offline ? (
         <SkeletonList label="Loading activity" rowClassName="h-12" rows={4} />
       ) : null}
       {events?.length === 0 ? (
@@ -98,7 +123,7 @@ export function ActivityLogSection() {
           ))}
         </ol>
       ) : null}
-      <ErrorText>{error}</ErrorText>
+      <ErrorText>{offline ? null : error}</ErrorText>
     </section>
   );
 }
