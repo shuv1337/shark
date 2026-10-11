@@ -56,7 +56,9 @@
   --color-danger-line: oklch(0.885 0.059 18);
   --color-warn: oklch(0.769 0.165 70);
   --color-info: oklch(0.623 0.188 260);
-  --color-ok: oklch(0.54 0.13 155);
+  /* Dark enough that the Badge "ok" tone clears 4.5:1 as text on its own 14%
+     tint, over both the card surface and the panel beneath it. */
+  --color-ok: oklch(0.46 0.13 155);
   --color-idle: oklch(0.87 0.005 260);
 
   /* Code blocks. The surface stays dark in both themes, so the syntax colours
@@ -139,9 +141,10 @@
 /* Anchor navigation on the docs page relies on native smooth scrolling rather
    than JavaScript, so sidebar links stay real links. Scoped to that page so the
    rest of the site keeps instant jumps. */
+/* Clears the app shell's header plus, on phones, the sticky chapter strip. */
 :root:has(.hark-docs) {
   scroll-behavior: smooth;
-  scroll-padding-top: 6rem;
+  scroll-padding-top: 7rem;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -16,9 +16,8 @@ import { TeamPage } from "./pages/Team";
  * Routes. Everything the operator works in mounts inside `AppShell`, which
  * carries the header, navigation and phone tab bar.
  *
- * Outside the shell: the sign-in page, the policies, the docs (its own sidebar
- * layout, sharing the shell's header), and the OAuth consent screen, which has
- * to stay a single focused decision.
+ * Outside the shell: the sign-in page, the policies, and the OAuth consent
+ * screen, which has to stay a single focused decision.
  */
 export function App() {
   return (
@@ -26,12 +25,12 @@ export function App() {
       <DocumentMetadata />
       <Routes>
         <Route path="/" element={<Landing />} />
-        <Route path="/docs" element={<Docs />} />
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/terms" element={<Terms />} />
         <Route path="/oauth/consent" element={<OAuthConsent />} />
 
         <Route element={<AppShell />}>
+          <Route path="/docs" element={<Docs />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/board" element={<Board />} />
           <Route path="/board/ask/:id" element={<Board />} />

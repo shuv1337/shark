@@ -1,10 +1,10 @@
-import { useEffect, useId, useRef, useState } from "react";
-import { Link, NavLink, Outlet, useNavigate } from "react-router";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { signOut, useSession } from "../lib/auth";
 import { inEmbeddedWebView } from "../lib/platform";
 import { BrandWordmark } from "./BrandWordmark";
 import { IconBoard, IconChevronDown, IconDocs, IconInbox, IconSignOut, IconX } from "./icons";
-import { PAGE_COLUMN } from "./SiteChrome";
+import { DOCS_COLUMN, PAGE_COLUMN } from "./SiteChrome";
 import { focusRing, quietButton } from "./ui";
 
 /**
@@ -35,15 +35,24 @@ export function SelfHostedBadge() {
  * so the shell renders the page alone.
  */
 export function AppShell() {
+  const { pathname } = useLocation();
   if (inEmbeddedWebView()) return <Outlet />;
+  // The docs carry a sidebar, so their column is wider; the header matches it
+  // rather than leaving the brand mark floating left of the content.
+  const column = pathname.startsWith("/docs") ? DOCS_COLUMN : PAGE_COLUMN;
   return (
     <div className="flex min-h-dvh flex-col">
-      <AppHeader />
+      <AppHeader column={column} />
+      {/*
+       * The tab bar is `position: fixed`, so rendering it here costs nothing
+       * visually and puts the primary destinations before the page in tab
+       * order — the first thing a keyboard or switch user reaches on a phone.
+       */}
+      <TabBar />
       {/* Room for the tab bar, which floats over the content on phones. */}
       <div className="flex flex-1 flex-col pb-[calc(env(safe-area-inset-bottom)+4.5rem)] md:pb-0">
         <Outlet />
       </div>
-      <TabBar />
     </div>
   );
 }
@@ -102,39 +111,81 @@ export function AppHeader({ column = PAGE_COLUMN }: { column?: string }) {
 
 /**
  * Account menu: who you are signed in as, that this is a self-hosted
- * deployment, docs, and sign out. A plain dropdown, closed by Escape, by a
- * click elsewhere, or by choosing something.
+ * deployment, docs, and sign out.
+ *
+ * A real menu, so it owes the keyboard the whole pattern: opening moves focus
+ * to the first item, Up/Down cycle, Home/End jump to the ends, and every way
+ * out (Escape, choosing an item, the phone close button) hands focus back to
+ * the trigger. A click elsewhere closes it without stealing focus.
  */
 function AccountMenu({ email, image }: { email: string; image: string | null }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const menuId = useId();
   const container = useRef<HTMLDivElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
+
+  const items = useCallback(
+    () => [...(menu.current?.querySelectorAll<HTMLElement>("[role='menuitem']") ?? [])],
+    [],
+  );
+
+  const close = useCallback((returnFocus = true) => {
+    setOpen(false);
+    if (returnFocus) trigger.current?.focus();
+  }, []);
+
+  // Focus the first item as the menu appears, which is where a keyboard user
+  // expects to land after activating the trigger.
+  useEffect(() => {
+    if (!open) return;
+    items()[0]?.focus();
+  }, [open, items]);
 
   useEffect(() => {
     if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setOpen(false);
-      trigger.current?.focus();
-    };
     const onPointerDown = (event: PointerEvent) => {
-      if (!container.current?.contains(event.target as Node)) setOpen(false);
+      // Clicking away is a dismissal, not a return: leave focus where it went.
+      if (!container.current?.contains(event.target as Node)) close(false);
     };
-    window.addEventListener("keydown", onKeyDown);
     window.addEventListener("pointerdown", onPointerDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [open, close]);
+
+  const onMenuKeyDown = (event: React.KeyboardEvent) => {
+    const all = items();
+    if (all.length === 0) return;
+    const index = all.indexOf(document.activeElement as HTMLElement);
+    const focusAt = (next: number) => {
+      event.preventDefault();
+      all[(next + all.length) % all.length]?.focus();
     };
-  }, [open]);
+    switch (event.key) {
+      case "ArrowDown":
+        return focusAt(index + 1);
+      case "ArrowUp":
+        return focusAt(index - 1);
+      case "Home":
+        return focusAt(0);
+      case "End":
+        return focusAt(all.length - 1);
+      case "Escape":
+        event.preventDefault();
+        return close();
+      case "Tab":
+        // Tabbing out of a menu dismisses it; let focus go where it was headed.
+        return close(false);
+      default:
+    }
+  };
 
   const itemClass = `flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[15px] text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink ${focusRing}`;
 
   return (
     <div className="relative" ref={container}>
       <button
+        aria-controls={open ? menuId : undefined}
         aria-expanded={open}
         aria-haspopup="menu"
         aria-label={`Account: ${email}`}
@@ -153,8 +204,10 @@ function AccountMenu({ email, image }: { email: string; image: string | null }) 
       {open ? (
         <div
           aria-label="Account"
-          className="absolute right-0 z-40 mt-2 w-[min(17rem,calc(100vw-2rem))] rounded-xl border border-line bg-surface p-1.5 shadow-lg"
+          className="absolute right-0 z-40 mt-2 w-[min(17rem,calc(100vw-2rem))] rounded-xl bg-surface p-1.5 shadow-lg"
           id={menuId}
+          onKeyDown={onMenuKeyDown}
+          ref={menu}
           role="menu"
         >
           <div className="flex items-start justify-between gap-2 px-2.5 pt-1.5 pb-3">
@@ -167,24 +220,31 @@ function AccountMenu({ email, image }: { email: string; image: string | null }) 
             <button
               aria-label="Close account menu"
               className={`${quietButton} -mt-1 size-8 shrink-0 justify-center px-0 md:hidden`}
-              onClick={() => setOpen(false)}
+              onClick={() => close()}
               type="button"
             >
               <IconX className="size-4" />
             </button>
           </div>
           <div className="border-t border-line pt-1.5">
-            <Link className={itemClass} onClick={() => setOpen(false)} role="menuitem" to="/docs">
+            <Link
+              className={itemClass}
+              onClick={() => close()}
+              role="menuitem"
+              tabIndex={-1}
+              to="/docs"
+            >
               <IconDocs className="size-4.5 shrink-0" />
               Docs
             </Link>
             <button
               className={itemClass}
               onClick={() => {
-                setOpen(false);
+                close();
                 void signOut().then(() => navigate("/"));
               }}
               role="menuitem"
+              tabIndex={-1}
               type="button"
             >
               <IconSignOut className="size-4.5 shrink-0" />

@@ -68,4 +68,25 @@ describe("routes", () => {
     const html = render("/oauth/consent");
     expect(html).not.toContain('aria-label="Primary"');
   });
+
+  /**
+   * One header per page, checked against the real tree rather than stub
+   * routes. A second wordmark means a page kept its own header after moving
+   * inside the shell, which is what every page had before.
+   */
+  it.each(["/board", "/dashboard", "/docs", "/dashboard/teams/team_synthetic"])(
+    "renders exactly one brand wordmark at %s",
+    (path) => {
+      const host = document.createElement("div");
+      host.innerHTML = render(path);
+      expect(host.querySelectorAll("[src*='shark-devil-mark']")).toHaveLength(1);
+    },
+  );
+
+  it("gives the docs the shell's navigation", () => {
+    const html = render("/docs");
+    // The phone tab bar is the only primary nav under `md`, so the docs need it.
+    expect(html.match(/aria-label="Primary"/g)).toHaveLength(2);
+    expect(html).toContain('aria-current="page"');
+  });
 });

@@ -65,18 +65,6 @@ describe("app shell", () => {
     expect(currentLabels(shellAt("/dashboard/teams/team_synthetic"))).toEqual(["Inbox", "Inbox"]);
   });
 
-  /**
-   * One header per page. A second wordmark means a page kept its own header
-   * after moving inside the shell, which is what every page did before.
-   */
-  it("renders exactly one brand wordmark", () => {
-    for (const path of ["/board", "/dashboard", "/dashboard/teams/team_synthetic"]) {
-      const host = document.createElement("div");
-      host.innerHTML = shellAt(path);
-      expect(host.querySelectorAll("[src*='shark-devil-mark']")).toHaveLength(1);
-    }
-  });
-
   it("renders the page alone inside the SHark iPhone web view", () => {
     Object.defineProperty(window, "hark", { configurable: true, value: {} });
     const html = shellAt("/board");
@@ -110,26 +98,84 @@ describe("account menu", () => {
     vi.unstubAllGlobals();
   });
 
+  const items = () => [...container.querySelectorAll<HTMLElement>("[role='menuitem']")];
+  const label = (element: Element | null | undefined) => element?.textContent?.trim();
+  const press = async (key: string) => {
+    await act(async () => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
+      );
+    });
+  };
+
   it("opens to the account, the self-hosted badge, docs and sign out", async () => {
     expect(container.querySelector("[role='menu']")).toBeNull();
     expect(trigger().getAttribute("aria-expanded")).toBe("false");
+    expect(trigger().getAttribute("aria-controls")).toBeNull();
 
     await act(async () => trigger().click());
 
     const menu = container.querySelector("[role='menu']");
     expect(menu).not.toBeNull();
     expect(trigger().getAttribute("aria-expanded")).toBe("true");
+    expect(trigger().getAttribute("aria-controls")).toBe(menu?.id);
     expect(menu?.textContent).toContain("operator@example.test");
     expect(menu?.textContent).toContain("Self-hosted");
-    expect(menu?.textContent).toContain("Docs");
-    expect(menu?.textContent).toContain("Sign out");
+    expect(label(items()[0])).toBe("Docs");
+    expect(label(items()[1])).toBe("Sign out");
   });
 
-  it("closes on Escape", async () => {
+  it("moves focus to the first item on open", async () => {
     await act(async () => trigger().click());
-    await act(async () => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
-    });
+    expect(document.activeElement).toBe(items()[0]);
+  });
+
+  it("cycles with the arrow keys and jumps with Home and End", async () => {
+    await act(async () => trigger().click());
+
+    await press("ArrowDown");
+    expect(label(document.activeElement)).toBe("Sign out");
+    // Past the end, back to the top.
+    await press("ArrowDown");
+    expect(label(document.activeElement)).toBe("Docs");
+    // Before the start, round to the bottom.
+    await press("ArrowUp");
+    expect(label(document.activeElement)).toBe("Sign out");
+    await press("Home");
+    expect(label(document.activeElement)).toBe("Docs");
+    await press("End");
+    expect(label(document.activeElement)).toBe("Sign out");
+  });
+
+  it("closes on Escape and returns focus to the trigger", async () => {
+    await act(async () => trigger().click());
+    await press("Escape");
     expect(container.querySelector("[role='menu']")).toBeNull();
+    expect(document.activeElement).toBe(trigger());
+  });
+
+  it("returns focus to the trigger from the phone close button", async () => {
+    await act(async () => trigger().click());
+    const dismiss = [...container.querySelectorAll("button")].find(
+      (node) => node.getAttribute("aria-label") === "Close account menu",
+    );
+    await act(async () => dismiss?.click());
+    expect(container.querySelector("[role='menu']")).toBeNull();
+    expect(document.activeElement).toBe(trigger());
+  });
+
+  it("closes on an outside click without stealing focus back", async () => {
+    await act(async () => trigger().click());
+    const outside = document.createElement("button");
+    document.body.append(outside);
+
+    await act(async () => {
+      outside.focus();
+      window.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    });
+
+    expect(container.querySelector("[role='menu']")).toBeNull();
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
   });
 });
