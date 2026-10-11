@@ -158,7 +158,16 @@ SHark v1 has no proactive monitoring or alerts. Check these manually after deplo
 operator review:
 
 - `https://shark.shuv.dev/api/health` returns 200 and only `{"ok":true}`.
-- Anonymous `/`, `/docs`, `/privacy`, `/terms`, `/dashboard`, and `/cli/authorize` are denied.
+- Anonymous `/`, `/docs`, `/privacy`, `/terms`, `/board`, `/inbox`, `/teams`, `/settings`,
+  `/dashboard`, and `/cli/authorize` are denied, as are the addresses that carry an id:
+  `/inbox/<id>`, `/teams/<id>`, `/board/ask/<id>`, and `/dashboard/teams/<id>`.
+- Any other page address — anything without a file extension, such as `/pricing` or a typo — is
+  also denied anonymously, and returns the application's 404 shell to a signed-in reader, so the
+  client renders its own not-found page. This is the only shell served for addresses that have no
+  page. It must not change what the rest of the boundary answers: `/api/*`, `/hooks/*`, `/mcp` and
+  anything under it, `/.well-known/*`, and a miss under `/assets/*` or any path ending in a file
+  extension all still return 404, signed in or not. Spot-check `/api/nope`, `/mcp/anything`,
+  `/.well-known/anything`, `/assets/missing.js`, and `/foo/bar.json`.
 - The OAuth endpoints for the MCP server are intentionally anonymous. They must not return account
   data:
   - `GET /.well-known/oauth-protected-resource`, `/.well-known/oauth-protected-resource/mcp`,

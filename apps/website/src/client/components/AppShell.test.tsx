@@ -4,6 +4,8 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { api } from "../lib/api";
+import { publishBoardWaiting, refreshInboxCounts, resetNavCounts } from "../lib/counts";
 import { AppShell } from "./AppShell";
 
 const session = { user: { id: "usr_synthetic", email: "operator@example.test", image: null } };
@@ -14,6 +16,14 @@ vi.mock("../lib/auth", () => ({
   signInWithApple: vi.fn(),
 }));
 
+/** The nav badges read the board and the inbox; no test here goes to a server. */
+vi.mock("../lib/api", () => ({
+  api: {
+    getBoard: vi.fn(async () => ({ waiting: [] })),
+    getInboxCounts: vi.fn(async () => ({ unread: 0, needsAction: 0 })),
+  },
+}));
+
 function shell(path: string) {
   return (
     <MemoryRouter initialEntries={[path]}>
@@ -21,8 +31,11 @@ function shell(path: string) {
         <Route element={<AppShell />}>
           <Route path="/board" element={<p>board page</p>} />
           <Route path="/board/ask/:id" element={<p>ask page</p>} />
-          <Route path="/dashboard" element={<p>inbox page</p>} />
-          <Route path="/dashboard/teams/:id" element={<p>team page</p>} />
+          <Route path="/inbox" element={<p>inbox page</p>} />
+          <Route path="/inbox/:id" element={<p>item page</p>} />
+          <Route path="/teams" element={<p>teams page</p>} />
+          <Route path="/teams/:id" element={<p>team page</p>} />
+          <Route path="/settings" element={<p>settings page</p>} />
         </Route>
       </Routes>
     </MemoryRouter>
@@ -31,24 +44,32 @@ function shell(path: string) {
 
 const shellAt = (path: string) => renderToStaticMarkup(shell(path));
 
-/** The active links, as the DOM marks them: `<a aria-current="page" …>Label</a>`. */
+/** The labels of the links the DOM marks with `aria-current="page"`. */
 function currentLabels(html: string): string[] {
-  return [...html.matchAll(/<a[^>]*aria-current="page"[^>]*>(?:<svg[\s\S]*?<\/svg>)?([^<]*)/g)].map(
-    (match) => match[1] ?? "",
+  const host = document.createElement("div");
+  host.innerHTML = html;
+  return [...host.querySelectorAll("a[aria-current='page']")].map((link) =>
+    // The badge's screen-reader text hangs off the same link; the label is the
+    // first thing in it either way.
+    (link.textContent ?? "").replace(/,.*$/, "").trim(),
   );
 }
 
 afterEach(() => {
   Reflect.deleteProperty(window, "hark");
+  resetNavCounts();
 });
 
 describe("app shell", () => {
   it("renders the primary navigation around the page", () => {
     const html = shellAt("/board");
     expect(html).toContain("board page");
-    expect(html).toContain(">Board<");
-    expect(html).toContain(">Inbox<");
-    expect(html).toContain(">Docs<");
+    for (const label of ["Board", "Inbox", "Teams", "Settings"]) {
+      // Once in the header navigation, once in the phone tab bar.
+      expect(html.match(new RegExp(`>${label}<`, "g"))?.length, label).toBe(2);
+    }
+    // Docs is a reference you read once: it lives in the account menu.
+    expect(html).not.toContain(">Docs<");
     // The brand mark, the header navigation, and the phone tab bar.
     expect(html.match(/href="\/board"/g)?.length).toBe(3);
     expect(html).toContain("operator@example.test");
@@ -56,13 +77,17 @@ describe("app shell", () => {
 
   it("marks only the current route with aria-current", () => {
     expect(currentLabels(shellAt("/board"))).toEqual(["Board", "Board"]);
-    expect(currentLabels(shellAt("/dashboard"))).toEqual(["Inbox", "Inbox"]);
+    expect(currentLabels(shellAt("/inbox"))).toEqual(["Inbox", "Inbox"]);
+    expect(currentLabels(shellAt("/teams"))).toEqual(["Teams", "Teams"]);
+    expect(currentLabels(shellAt("/settings"))).toEqual(["Settings", "Settings"]);
   });
 
   it("keeps the section marked on a page nested under it", () => {
-    // A push deep link to one ask is still the board; a team is still the inbox.
+    // A push deep link to one ask is still the board; one item is still the
+    // inbox; one team is still Teams.
     expect(currentLabels(shellAt("/board/ask/bask_synthetic"))).toEqual(["Board", "Board"]);
-    expect(currentLabels(shellAt("/dashboard/teams/team_synthetic"))).toEqual(["Inbox", "Inbox"]);
+    expect(currentLabels(shellAt("/inbox/ibox%3Aevent%3A1"))).toEqual(["Inbox", "Inbox"]);
+    expect(currentLabels(shellAt("/teams/team_synthetic"))).toEqual(["Teams", "Teams"]);
   });
 
   it("renders the page alone inside the SHark iPhone web view", () => {
@@ -71,6 +96,62 @@ describe("app shell", () => {
     expect(html).toContain("board page");
     expect(html).not.toContain('aria-label="Primary"');
     expect(html).not.toContain("operator@example.test");
+  });
+});
+
+describe("navigation badges", () => {
+  const inbox = (unread: number, needsAction: number) => {
+    vi.mocked(api.getInboxCounts).mockResolvedValue({ unread, needsAction });
+    return refreshInboxCounts();
+  };
+
+  it("shows no badge when nothing is waiting", () => {
+    const html = shellAt("/board");
+    expect(html).not.toContain("waiting on you");
+    expect(html).not.toContain("unread");
+    expect(html).not.toContain("needs your response");
+  });
+
+  it("counts board asks and unread inbox items, in the header and the tab bar", async () => {
+    publishBoardWaiting(3);
+    await inbox(2, 0);
+
+    const html = shellAt("/board");
+    expect(html.match(/3 waiting on you/g)).toHaveLength(2);
+    expect(html.match(/2 unread/g)).toHaveLength(2);
+  });
+
+  /**
+   * Unread and needs-action are different facts: an approval you have read is
+   * no longer unread but is still waiting on you. The count never absorbs it.
+   */
+  it("counts only what is unread, whatever needs an answer", async () => {
+    await inbox(2, 5);
+    const html = shellAt("/inbox");
+    expect(html.match(/2 unread/g)).toHaveLength(2);
+    // Not 7: the two numbers are never added together.
+    expect(html).not.toContain("7 unread");
+    expect(html).not.toContain(">7<");
+    // The dot is the inbox's other signal, and the count already carries one.
+    expect(html).not.toContain("needs your response");
+  });
+
+  it("falls back to a dot when something needs an answer and nothing is unread", async () => {
+    await inbox(0, 3);
+    const html = shellAt("/inbox");
+    expect(html.match(/needs your response/g)).toHaveLength(2);
+    expect(html).not.toContain("3 unread");
+  });
+
+  it("caps the counts instead of widening the navigation", async () => {
+    publishBoardWaiting(140);
+    await inbox(12, 0);
+
+    const html = shellAt("/board");
+    // Header has room for three characters; a phone tab does not.
+    expect(html).toContain("99+");
+    expect(html).toContain("9+");
+    expect(html).toContain("140 waiting on you");
   });
 });
 

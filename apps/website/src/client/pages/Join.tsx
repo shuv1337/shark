@@ -187,7 +187,7 @@ function Joined({ code, response }: { code: string; response: TeamJoinResponse }
           Open SHark on iPhone
         </a>
       </div>
-      <Link className={`${textLink} mt-5`} to={`/dashboard/teams/${response.team.id}`}>
+      <Link className={`${textLink} mt-5`} to={`/teams/${response.team.id}`}>
         Go to the team dashboard <span aria-hidden="true">→</span>
       </Link>
     </>

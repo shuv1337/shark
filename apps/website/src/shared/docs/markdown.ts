@@ -100,8 +100,8 @@ export function docsMarkdown(): string {
 export function llmsTxt(): string {
   return `# SHark
 
-> SHark turns an HTTP request into a source-branded iPhone notification. Create a service in the
-> dashboard, then POST JSON to its secret webhook URL. A Notification API sends one-shot pushes and
+> SHark turns an HTTP request into a source-branded iPhone notification. Create a service in
+> Settings, then POST JSON to its secret webhook URL. A Notification API sends one-shot pushes and
 > optional approval prompts; an Activity API drives a stateful Live Activity on the Lock Screen and
 > in the Dynamic Island.
 

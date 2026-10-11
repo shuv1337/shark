@@ -8,6 +8,7 @@ import { quietButton } from "../components/ui";
 import { api } from "../lib/api";
 import { useSession } from "../lib/auth";
 import { subscribeToBoardUpdates } from "../lib/boardUpdates";
+import { publishBoardWaiting } from "../lib/counts";
 
 export function Board() {
   const { data: session, isPending } = useSession();
@@ -74,6 +75,17 @@ export function Board() {
   useEffect(() => {
     document.title = waitingCount > 0 ? `(${waitingCount}) Board — SHark` : "Board — SHark";
   }, [waitingCount]);
+
+  /*
+   * The board's own stream is the fastest signal this number has, and
+   * answering, snoozing or dismissing an ask drops it from the lane here
+   * first. Publishing from the loaded page keeps the nav badge on that signal
+   * instead of its own slower poll. `page` rather than the count alone, so a
+   * board that has not loaded yet never zeroes a badge the store just read.
+   */
+  useEffect(() => {
+    if (page) publishBoardWaiting(page.waiting.length);
+  }, [page]);
 
   const replaceAsk = (ask: BoardAskDto) => {
     setPage((current) => {
