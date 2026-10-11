@@ -15,8 +15,14 @@ import { CopyField } from "../components/CopyField";
 import { InboxPanel } from "../components/InboxPanel";
 import { McpClientsSection } from "../components/McpClientsSection";
 import { TeamsSection } from "../components/TeamsSection";
-import { api, isMissingRoute } from "../lib/api";
+import { ApiRequestError, api, isMissingRoute } from "../lib/api";
 import { signOut, useSession } from "../lib/auth";
+import {
+  changedServiceFields,
+  type ServiceFieldErrors,
+  type ServiceFormValues,
+  serviceFieldErrors,
+} from "../lib/service-form";
 import {
   browserDeviceName,
   browserPushAvailability,
@@ -700,6 +706,7 @@ function ServiceModal({
   const [url, setUrl] = useState(service?.url ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<ServiceFieldErrors>({});
   const [closing, setClosing] = useState(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
 
@@ -731,22 +738,36 @@ function ServiceModal({
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setFieldErrors({});
     try {
-      const input = {
-        title: title.trim(),
-        imageUrl: imageUrl.trim() || null,
-        url: url.trim() || null,
-      };
+      const values: ServiceFormValues = { title, imageUrl, url };
       if (service) {
+        const input = changedServiceFields(service, values);
+        if (Object.keys(input).length === 0) {
+          close();
+          return;
+        }
         const response = await api.updateService(service.id, input);
         close(() => onUpdated?.(response.service));
       } else {
+        const input = {
+          title: title.trim(),
+          imageUrl: imageUrl.trim() || null,
+          url: url.trim() || null,
+        };
         const response = await api.createService(input);
         close(() => onCreated?.(response));
       }
     } catch (err) {
+      const nextFieldErrors =
+        err instanceof ApiRequestError && err.status === 400 ? serviceFieldErrors(err.issues) : {};
+      setFieldErrors(nextFieldErrors);
       setError(
-        err instanceof Error ? err.message : `Could not ${service ? "update" : "create"} service`,
+        Object.keys(nextFieldErrors).length > 0
+          ? "Please fix the errors below."
+          : err instanceof Error
+            ? err.message
+            : `Could not ${service ? "update" : "create"} service`,
       );
     } finally {
       setBusy(false);
@@ -805,6 +826,11 @@ function ServiceModal({
               maxLength={80}
               required
             />
+            {fieldErrors.title ? (
+              <p className="mt-1 text-xs text-danger" role="alert">
+                {fieldErrors.title}
+              </p>
+            ) : null}
           </label>
           <label className="block">
             <span className="mb-1.5 block text-xs font-medium text-ink-subtle">
@@ -817,6 +843,11 @@ function ServiceModal({
               onChange={(e) => setImageUrl(e.target.value)}
               placeholder="https://example.com/logo.png"
             />
+            {fieldErrors.imageUrl ? (
+              <p className="mt-1 text-xs text-danger" role="alert">
+                {fieldErrors.imageUrl}
+              </p>
+            ) : null}
           </label>
           <label className="block">
             <span className="mb-1.5 block text-xs font-medium text-ink-subtle">
@@ -829,6 +860,11 @@ function ServiceModal({
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://example.com/dashboard"
             />
+            {fieldErrors.url ? (
+              <p className="mt-1 text-xs text-danger" role="alert">
+                {fieldErrors.url}
+              </p>
+            ) : null}
           </label>
         </div>
         {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
