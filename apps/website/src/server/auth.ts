@@ -64,12 +64,20 @@ export const TOKEN_RESPONSE_HEADERS = { "Cache-Control": "no-store", Pragma: "no
  */
 const BOUND_GRANT_TYPES = new Set(["authorization_code", "refresh_token"]);
 
-/** An RFC 6749 §5.2 token error response. */
+/**
+ * An RFC 6749 §5.2 token error response.
+ *
+ * Built with `new Response`, not `Response.json`: better-call only honors a
+ * hook's response when it is `instanceof` the global `Response`, and the Node
+ * server replaces that global with a lightweight class whose inherited
+ * `Response.json` still returns the original one. Under vitest both are the
+ * same class, so only the real server shows the difference.
+ */
 export function tokenErrorResponse(status: number, error: string, description: string): Response {
-  return Response.json(
-    { error, error_description: description },
-    { status, headers: TOKEN_RESPONSE_HEADERS },
-  );
+  return new Response(JSON.stringify({ error, error_description: description }), {
+    status,
+    headers: { ...TOKEN_RESPONSE_HEADERS, "content-type": "application/json" },
+  });
 }
 
 function invalidTarget(description: string): Response {
