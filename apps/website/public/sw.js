@@ -2,12 +2,12 @@ const PRECACHE = /* __PRECACHE__ */ [];
 const VERSION = "__VERSION__";
 const CACHE_PREFIX = "shark-shell-";
 const CACHE_NAME = `${CACHE_PREFIX}${VERSION}`;
-const SHELL_DOCUMENTS = ["/board", "/dashboard"];
+const SHELL_DOCUMENTS = ["/board", "/inbox", "/teams", "/settings"];
 const PRECACHE_PATHS = new Set(PRECACHE);
 
 /*
  * Privacy rule: no authenticated JSON is ever cached. Only the build's exact
- * hashed asset allowlist and the two HTML shell documents may enter this cache.
+ * hashed asset allowlist and the four HTML shell documents may enter this cache.
  */
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -65,11 +65,17 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  const networkOnlyNavigation =
+    ["/api", "/hooks", "/mcp", "/.well-known"].some(
+      (prefix) => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`),
+    ) || /\/[^/]+\.[^/]+$/.test(url.pathname);
+  if (networkOnlyNavigation) return;
+
   if (request.mode === "navigate") {
     event.respondWith(
       fetch(request).catch(async () => {
         const cache = await caches.open(CACHE_NAME);
-        const shell = await cache.match("/board");
+        const shell = (await cache.match(url.pathname)) || (await cache.match("/board"));
         return shell || offlineResponse();
       }),
     );
