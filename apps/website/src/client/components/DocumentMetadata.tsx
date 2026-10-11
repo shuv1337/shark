@@ -24,9 +24,9 @@ export function DocumentMetadata() {
   const { pathname } = useLocation();
 
   useEffect(() => {
-    const page = seoPageForPath(pathname);
-    if (!page) return;
-    const metadata = PAGE_SEO[page];
+    // An address the router does not know renders the 404 page, so it gets the
+    // 404 title rather than keeping whichever page the reader came from.
+    const metadata = PAGE_SEO[seoPageForPath(pathname) ?? "notFound"];
 
     document.head.querySelectorAll("[data-seo]").forEach((element) => {
       element.remove();

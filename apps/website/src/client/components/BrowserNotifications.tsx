@@ -1,0 +1,208 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api } from "../lib/api";
+import {
+  browserDeviceName,
+  browserPushAvailability,
+  currentWebPushSubscription,
+  enableWebPush,
+  requestWebPushPermission,
+} from "../lib/webPush";
+import { errorMessage, SECTION, SectionHeading } from "./DashboardKit";
+import { primaryButtonSmall, rowDangerButton, secondaryButton, surfacePanel } from "./ui";
+
+type BrowserNotificationState =
+  | "checking"
+  | "unsupported"
+  | "default"
+  | "denied"
+  | "enabled"
+  | "error";
+
+/** Web Push for the browser you are reading this in. */
+export function BrowserNotifications({ onChanged = () => {} }: { onChanged?: () => void }) {
+  const [state, setState] = useState<BrowserNotificationState>("checking");
+  const [subscription, setSubscription] = useState<PushSubscription | null>(null);
+  const [busy, setBusy] = useState<"enable" | "test" | "disable" | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const onChangedRef = useRef(onChanged);
+
+  useEffect(() => {
+    onChangedRef.current = onChanged;
+  }, [onChanged]);
+
+  const inspect = useCallback(async () => {
+    setError(null);
+    const availability = browserPushAvailability();
+    if (availability.status === "unsupported") {
+      setState("unsupported");
+      return;
+    }
+    if (availability.status === "denied") {
+      setState("denied");
+      return;
+    }
+
+    try {
+      const current = await currentWebPushSubscription();
+      if (current) {
+        await api.registerWebPushSubscription(current.toJSON(), browserDeviceName());
+        onChangedRef.current();
+      }
+      setSubscription(current);
+      setState(current ? "enabled" : "default");
+    } catch (err) {
+      setState("error");
+      setError(errorMessage(err, "Could not check browser notifications."));
+    }
+  }, []);
+
+  useEffect(() => {
+    void inspect();
+  }, [inspect]);
+
+  const enable = async () => {
+    setBusy("enable");
+    setError(null);
+    setMessage(null);
+    try {
+      await requestWebPushPermission();
+      const { publicKey } = await api.getWebPushPublicKey();
+      const next = await enableWebPush(publicKey);
+      await api.registerWebPushSubscription(next.toJSON(), browserDeviceName());
+      setSubscription(next);
+      setState("enabled");
+      setMessage("Desktop alerts are enabled for this browser.");
+      onChanged();
+    } catch (err) {
+      const availability = browserPushAvailability();
+      if (availability.status === "denied") setState("denied");
+      setError(errorMessage(err, "Could not enable browser notifications."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const sendTest = async () => {
+    if (!subscription) return;
+    setBusy("test");
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await api.testWebPushSubscription(subscription.endpoint);
+      if (!result.accepted) throw new Error("The push service did not accept the test alert.");
+      setMessage("Test alert sent. It may take a moment to appear.");
+    } catch (err) {
+      setError(errorMessage(err, "Could not send a test notification."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const disable = async () => {
+    if (!subscription) return;
+    setBusy("disable");
+    setError(null);
+    setMessage(null);
+    try {
+      await api.removeWebPushSubscription(subscription.endpoint);
+      await subscription.unsubscribe();
+      setSubscription(null);
+      setState("default");
+      setMessage("Desktop alerts are disabled for this browser.");
+      onChanged();
+    } catch (err) {
+      setError(errorMessage(err, "Could not disable browser notifications."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const statusCopy = {
+    checking: "Checking notification support…",
+    unsupported: "This browser does not support Web Push, or this page is not in a secure context.",
+    default: "Enable alerts even when the SHark tab is closed.",
+    denied: "Notifications are blocked. Allow them in this site's browser settings, then reload.",
+    enabled: "Enabled for this browser profile.",
+    error: "SHark could not check notifications for this browser.",
+  }[state];
+
+  return (
+    <section
+      aria-labelledby="browser-notifications-heading"
+      className={`${SECTION} scroll-mt-24`}
+      id="notifications"
+    >
+      <SectionHeading
+        id="browser-notifications-heading"
+        title="Browser notifications"
+        description="Desktop alerts for this browser, delivered by Web Push."
+      />
+      <div className={`${surfacePanel} rounded-2xl px-5 py-4`}>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium">
+              {state === "enabled" ? "Notifications on" : "Browser alerts"}
+            </p>
+            <p className="mt-1 text-xs text-ink-subtle">{statusCopy}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {state === "default" ? (
+              <button
+                className={primaryButtonSmall}
+                disabled={busy !== null}
+                onClick={() => void enable()}
+                type="button"
+              >
+                {busy === "enable" ? "Enabling…" : "Enable notifications"}
+              </button>
+            ) : null}
+            {state === "error" ? (
+              <button
+                className={secondaryButton}
+                disabled={busy !== null}
+                onClick={() => {
+                  setState("checking");
+                  void inspect();
+                }}
+                type="button"
+              >
+                Try again
+              </button>
+            ) : null}
+            {state === "enabled" ? (
+              <>
+                <button
+                  className={secondaryButton}
+                  disabled={busy !== null}
+                  onClick={() => void sendTest()}
+                  type="button"
+                >
+                  {busy === "test" ? "Sending…" : "Send test"}
+                </button>
+                <button
+                  className={`${rowDangerButton} h-9 px-4 text-sm`}
+                  disabled={busy !== null}
+                  onClick={() => void disable()}
+                  type="button"
+                >
+                  {busy === "disable" ? "Disabling…" : "Disable"}
+                </button>
+              </>
+            ) : null}
+          </div>
+        </div>
+        {message ? (
+          <p className="mt-3 text-xs text-ink-muted" role="status">
+            {message}
+          </p>
+        ) : null}
+        {error ? (
+          <p className="mt-3 text-xs text-danger" role="alert">
+            {error}
+          </p>
+        ) : null}
+      </div>
+    </section>
+  );
+}

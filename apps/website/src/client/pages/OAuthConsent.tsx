@@ -7,7 +7,7 @@ import {
 } from "@hark/contracts";
 import { useEffect, useMemo, useState } from "react";
 import { Brand, PAGE_COLUMN } from "../components/SiteChrome";
-import { primaryButton, secondaryButton } from "../components/ui";
+import { primaryButton, secondaryButton, surfacePanel } from "../components/ui";
 import {
   getOAuthClientInfo,
   type OAuthClientInfo,
@@ -134,7 +134,7 @@ export function OAuthConsent() {
       </header>
 
       <main className="mx-auto flex w-full max-w-lg flex-1 items-center px-6 pb-20">
-        <section className="hark-glass w-full rounded-3xl p-5 sm:p-8">
+        <section className={`${surfacePanel} w-full rounded-2xl p-5 sm:p-8`}>
           {!request || request.expired ? (
             <>
               <h1 className="text-[26px] leading-[1.15] font-medium tracking-[-0.015em] text-balance text-ink">

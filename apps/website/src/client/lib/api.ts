@@ -14,6 +14,7 @@ import type {
   DeviceAuthorizationRequestDto,
   DeviceDto,
   EventDto,
+  InboxCountsDto,
   InboxDetailDto,
   InboxFilter,
   InboxPageDto,
@@ -155,6 +156,7 @@ export const api = {
     if (cursor) params.set("cursor", cursor);
     return request<InboxPageDto>(`/api/inbox?${params}`);
   },
+  getInboxCounts: () => request<InboxCountsDto>("/api/inbox/counts"),
   getInboxItem: (id: string) => request<InboxDetailDto>(`/api/inbox/${encodeURIComponent(id)}`),
   markInboxItemRead: (id: string) =>
     request<{ ok: true }>(`/api/inbox/${encodeURIComponent(id)}/read`, { method: "POST" }),

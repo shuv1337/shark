@@ -385,6 +385,15 @@ export interface InboxDetailDto {
   events: InboxItemEventDto[];
 }
 
+/**
+ * The two inbox numbers a navigation badge needs, without reading a page of
+ * items: everything unread, and everything still waiting on a response.
+ */
+export interface InboxCountsDto {
+  unread: number;
+  needsAction: number;
+}
+
 // ---------------------------------------------------------------------------
 // Devices
 // ---------------------------------------------------------------------------
