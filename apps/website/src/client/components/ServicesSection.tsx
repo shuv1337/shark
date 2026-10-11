@@ -1,6 +1,7 @@
 import type { ApiTokenDto, DeviceDto, ServiceCreatedResponse, ServiceDto } from "@hark/contracts";
 import { useEffect, useState } from "react";
 import { ApiRequestError, api } from "../lib/api";
+import { offlineProps, useOffline } from "../lib/connection";
 import {
   changedServiceFields,
   type ServiceFieldErrors,
@@ -124,6 +125,8 @@ export function ServicesSection({
 }) {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<ServiceDto | null>(null);
+  // Creating a service is a write; copying an existing webhook is not.
+  const offline = useOffline();
   const [reveal, setReveal] = useState<
     (ServiceCreatedResponse & { kind: "created" | "rotated" }) | null
   >(null);
@@ -143,7 +146,12 @@ export function ServicesSection({
               : `Delivering to ${deliveryCount} registered ${deliveryCount === 1 ? "device" : "devices"}.`
         }
         action={
-          <button className={rowButton} onClick={() => setCreating(true)} type="button">
+          <button
+            className={rowButton}
+            onClick={() => setCreating(true)}
+            type="button"
+            {...offlineProps(offline)}
+          >
             New service
           </button>
         }
@@ -273,6 +281,7 @@ function ServiceModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<ServiceFieldErrors>({});
+  const offline = useOffline();
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -381,6 +390,7 @@ function ServiceModal({
           className={primaryButtonSmall}
           disabled={busy || title.trim().length === 0}
           type="submit"
+          {...offlineProps(offline)}
         >
           {busy ? (service ? "Saving…" : "Creating…") : service ? "Save changes" : "Create service"}
         </button>
@@ -405,6 +415,9 @@ function ServiceList({
   onTokenRevoked: (id: string) => void;
 }) {
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Every control here writes to the server; none of them has an offline form.
+  const offline = useOffline();
+
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
@@ -537,6 +550,7 @@ function ServiceList({
                 disabled={busyId === svc.id}
                 onClick={() => onEdit(svc)}
                 type="button"
+                {...offlineProps(offline)}
               >
                 Edit
               </button>
@@ -545,6 +559,7 @@ function ServiceList({
                 disabled={busyId === svc.id}
                 onClick={() => void rotate(svc)}
                 type="button"
+                {...offlineProps(offline)}
               >
                 Rotate token
               </button>
@@ -553,6 +568,7 @@ function ServiceList({
                 disabled={busyId === svc.id}
                 onClick={() => void remove(svc)}
                 type="button"
+                {...offlineProps(offline)}
               >
                 Delete
               </button>
@@ -586,6 +602,7 @@ function ServiceList({
                 disabled={busyId === token.id}
                 onClick={() => void revokeToken(token)}
                 type="button"
+                {...offlineProps(offline)}
               >
                 Revoke
               </button>

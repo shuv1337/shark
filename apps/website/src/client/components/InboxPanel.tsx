@@ -10,6 +10,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { ApiRequestError, api } from "../lib/api";
+import { offlineProps, useOffline } from "../lib/connection";
 import { refreshInboxCounts } from "../lib/counts";
 import { subscribeToInboxUpdates } from "../lib/inboxUpdates";
 import { ActivityLogSection } from "./ActivityLog";
@@ -84,6 +85,9 @@ export function InboxPanel() {
   const [error, setError] = useState<string | null>(null);
   const listRequest = useRef(0);
   const filter: InboxFilter | null = view === "activity" ? null : view;
+  // Reading is local; marking read is a write, and it is the one control here
+  // that cannot do anything useful without the server.
+  const offline = useOffline();
 
   const load = useCallback(
     async (cursor?: string | null, initial = false) => {
@@ -180,6 +184,7 @@ export function InboxPanel() {
                 disabled={markingRead}
                 onClick={() => void markAllRead()}
                 type="button"
+                {...offlineProps(offline)}
               >
                 {markingRead ? "Marking…" : "Mark all read"}
               </button>
@@ -229,7 +234,9 @@ export function InboxPanel() {
 
       {filter ? (
         <>
-          {error ? (
+          {/* Offline, the shell's banner says it; a red box here would claim
+              the list on screen is wrong, which it is not. */}
+          {error && !offline ? (
             <p
               className="mt-4 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger"
               role="alert"
@@ -461,6 +468,7 @@ export function InboxDetailContent({
   onDismiss?: (interactionId: string) => void;
 }) {
   const { item } = detail;
+  const offline = useOffline();
   return (
     <div>
       <div className="flex items-center gap-3">
@@ -515,6 +523,7 @@ export function InboxDetailContent({
                   if (item.action) onDismiss(item.action.interactionId);
                 }}
                 type="button"
+                {...offlineProps(offline)}
               >
                 {dismissing ? "Dismissing…" : "Dismiss"}
               </button>

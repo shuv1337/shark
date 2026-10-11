@@ -1,5 +1,6 @@
 import { API_TOKEN_SCOPE_DESCRIPTIONS, type OAuthClientGrantDto } from "@hark/contracts";
 import { useCallback, useEffect, useState } from "react";
+import { offlineProps, useOffline } from "../lib/connection";
 import { oauthApi } from "../lib/oauth-api";
 import { useConfirm } from "./ConfirmDialog";
 import {
@@ -22,6 +23,9 @@ import { rowDangerButton } from "./ui";
 export function McpClientsSection({ mcpUrl }: { mcpUrl?: string }) {
   const [clients, setClients] = useState<OAuthClientGrantDto[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Removing a device, disconnecting a client and the push handshake are all
+  // server writes, so they say why rather than failing on the tap.
+  const offline = useOffline();
   const [error, setError] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
   const endpoint = mcpUrl ?? `${window.location.origin}/mcp`;
@@ -123,6 +127,7 @@ export function McpClientsSection({ mcpUrl }: { mcpUrl?: string }) {
                 disabled={busyId === client.clientId}
                 onClick={() => void disconnect(client)}
                 type="button"
+                {...offlineProps(offline)}
               >
                 Disconnect
               </button>
