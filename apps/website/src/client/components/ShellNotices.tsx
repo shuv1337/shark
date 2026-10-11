@@ -102,9 +102,10 @@ function UpdateNotice({ column }: { column: string }) {
   return (
     <div className="border-b border-line bg-accent-wash">
       <div className={`${column} ${BAR} text-ink-muted`} role="status">
+        {/* One line on a phone: the button already says what to do. */}
         <p>
-          <span className="font-medium text-ink">SHark updated.</span> Reload to use the new
-          version.
+          <span className="font-medium text-ink">SHark updated.</span>
+          <span className="hidden sm:inline"> Reload to use the new version.</span>
         </p>
         <button
           className={`inline-flex h-8 items-center rounded-full bg-accent px-3.5 text-[13px] font-medium whitespace-nowrap text-on-accent transition-colors hover:bg-accent-hover disabled:pointer-events-none disabled:opacity-50 ${focusRing}`}

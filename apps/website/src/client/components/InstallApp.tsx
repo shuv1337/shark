@@ -49,11 +49,23 @@ function useServiceWorkerVersion(): string | null {
   const [version, setVersion] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
-    void serviceWorkerVersion().then((value) => {
-      if (live) setVersion(value);
-    });
+    const read = () => {
+      void serviceWorkerVersion().then((value) => {
+        if (live && value) setVersion(value);
+      });
+    };
+    read();
+    /*
+     * On a first visit the worker is still installing when this mounts, so
+     * there is nothing in control to ask yet. It claims the page a moment
+     * later; read again then rather than leaving the line wrong until the
+     * next reload.
+     */
+    const worker = typeof navigator === "undefined" ? undefined : navigator.serviceWorker;
+    worker?.addEventListener("controllerchange", read);
     return () => {
       live = false;
+      worker?.removeEventListener("controllerchange", read);
     };
   }, []);
   return version;
