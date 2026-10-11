@@ -104,6 +104,31 @@ describe("shell notices", () => {
       expect(text()).not.toContain("SHark updated");
     });
 
+    /**
+     * A handover that is asked for and does not arrive must not leave the
+     * button spinning on "Reloading…" for the rest of the session.
+     */
+    it("says a failed handover failed and offers it again", async () => {
+      applyUpdate.mockRejectedValueOnce(new Error("did not take over in time"));
+      await act(async () => announce?.(build("one")));
+      await act(async () => button("Reload")?.click());
+
+      expect(text()).toContain("That didn't go through.");
+      const retry = button("Try again");
+      expect(retry).toBeDefined();
+      expect(retry?.disabled).toBe(false);
+
+      await act(async () => retry?.click());
+      expect(applyUpdate).toHaveBeenCalledTimes(2);
+    });
+
+    it("steps aside when there turned out to be nothing to apply", async () => {
+      applyUpdate.mockResolvedValueOnce(false as never);
+      await act(async () => announce?.(build("one")));
+      await act(async () => button("Reload")?.click());
+      expect(text()).not.toContain("SHark updated");
+    });
+
     it("offers a reload that hands over to the waiting worker", async () => {
       await act(async () => announce?.(build("one")));
       expect(text()).toContain("SHark updated.");

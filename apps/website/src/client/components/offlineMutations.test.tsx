@@ -26,6 +26,9 @@ import { MembersSection } from "./team/Members";
  * What must *not* happen is the other half of this: nothing already on screen
  * is hidden, replaced with an error, or unlinked. Reading is always available.
  */
+/** Flipped by the reconnect test so the board can fail and then recover. */
+const board = vi.hoisted(() => ({ fails: false }));
+
 vi.mock("../lib/api", () => {
   // Declared inside the factory because `vi.mock` is hoisted above the file.
   const boardAsk = {
@@ -76,22 +79,19 @@ vi.mock("../lib/api", () => {
   return {
     ApiRequestError: Error,
     api: {
-      getBoard: async () => ({
-        waiting: [
-          {
-            ...boardAsk,
-            id: "bask_synthetic",
-            title: "Ship the board or wait?",
-          },
-        ],
-        withAgent: [],
-        inFlight: [],
-        queued: [],
-        notes: [],
-        done: [],
-        crew: [],
-        cursor: "cursor-synthetic",
-      }),
+      getBoard: async () => {
+        if (board.fails) throw new TypeError("Failed to fetch");
+        return {
+          waiting: [{ ...boardAsk, id: "bask_synthetic", title: "Ship the board or wait?" }],
+          withAgent: [],
+          inFlight: [],
+          queued: [],
+          notes: [],
+          done: [],
+          crew: [],
+          cursor: "cursor-synthetic",
+        };
+      },
       getInboxCounts: async () => ({ unread: 1, needsAction: 0 }),
       listInbox: async () => ({ items: [unread], nextCursor: null, unresolvedCount: 1 }),
       listEvents: async () => {
@@ -258,6 +258,7 @@ describe("mutations while offline", () => {
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     setOnline(true);
+    board.fails = false;
     resetConnection();
     container = document.createElement("div");
     document.body.append(container);
@@ -407,6 +408,30 @@ describe("mutations while offline", () => {
     expect(container.querySelector("[role='alert']")).toBeNull();
     expect(container.textContent).not.toContain("Could not load this team");
     expect(container.textContent).not.toContain("Try again");
+  });
+
+  /**
+   * A page that stopped showing its load error because the shell was saying
+   * "offline" is still holding that error. Without a refetch on reconnect it
+   * would simply reappear the moment the banner left — the worst possible
+   * moment, because the page is about to be correct again.
+   */
+  it("clears the suppressed error and reads again when the network returns", async () => {
+    board.fails = true;
+    await mount(
+      <MemoryRouter initialEntries={["/board"]}>
+        <Board />
+      </MemoryRouter>,
+    );
+    await goOffline();
+    expect(container.textContent).not.toContain("Failed to fetch");
+
+    board.fails = false;
+    await goOnline();
+    // Not the error resurfacing as the banner leaves: the board itself.
+    expect(container.textContent).not.toContain("Failed to fetch");
+    expect(container.textContent).not.toContain("Could not load the board");
+    expect(container.textContent).toContain("Ship the board or wait?");
   });
 
   it("disables the team writes with the same reason", async () => {

@@ -10,7 +10,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { ApiRequestError, api } from "../lib/api";
-import { offlineProps, useOffline } from "../lib/connection";
+import { offlineProps, subscribeToReconnect, useOffline } from "../lib/connection";
 import { refreshInboxCounts } from "../lib/counts";
 import { subscribeToInboxUpdates } from "../lib/inboxUpdates";
 import { ActivityLogSection } from "./ActivityLog";
@@ -128,6 +128,20 @@ export function InboxPanel() {
   }, [load]);
 
   useEffect(() => subscribeToInboxUpdates(() => void load()), [load]);
+
+  /*
+   * Back online: drop the error this page stopped showing while the shell's
+   * banner was up, and read again. Without this the error would simply
+   * reappear as the banner left, over data that is about to be replaced.
+   */
+  useEffect(
+    () =>
+      subscribeToReconnect(() => {
+        setError(null);
+        void load();
+      }),
+    [load],
+  );
 
   // Reading the list says nothing about how many unread items are behind it,
   // so the badge is read from the server alongside the first page.

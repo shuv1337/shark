@@ -267,6 +267,55 @@ describe("app badge", () => {
     expect(container.textContent).toBe("0/0/0");
   });
 
+  /**
+   * Sign-out happens with reads in the air. One landing afterwards would put
+   * the badge back on a browser that is no longer signed in.
+   */
+  it("keeps the badge cleared when a read started before sign-out lands after it", async () => {
+    let settle: ((value: { waiting: unknown[] }) => void) | undefined;
+    vi.mocked(api.getBoard).mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve as typeof settle;
+      }) as never,
+    );
+    vi.mocked(api.getInboxCounts).mockResolvedValue({ unread: 7, needsAction: 0 });
+
+    await act(async () => root.render(<Badge />));
+    setAppBadge.mockClear();
+    clearAppBadge.mockClear();
+
+    await act(async () => clearNavCounts());
+    expect(clearAppBadge).toHaveBeenCalledOnce();
+
+    // The read from before the sign-out finally answers.
+    await act(async () => {
+      settle?.({ waiting: [{ id: "bask_1" }, { id: "bask_2" }] });
+    });
+    expect(setAppBadge).not.toHaveBeenCalled();
+    expect(container.textContent).toBe("0/0/0");
+  });
+
+  /** The board page publishes from an effect, which can also run late. */
+  it("ignores a board count published after sign-out", async () => {
+    await act(async () => root.render(<Badge />));
+    await act(async () => clearNavCounts());
+    setAppBadge.mockClear();
+
+    await act(async () => publishBoardWaiting(5));
+    expect(setAppBadge).not.toHaveBeenCalled();
+    expect(container.textContent).toBe("0/0/0");
+  });
+
+  /** A browser may have the API and still refuse the call. */
+  it("survives a badge the browser rejects", async () => {
+    setAppBadge.mockRejectedValue(new Error("not allowed"));
+    await act(async () => root.render(<Badge />));
+    await act(async () => publishBoardWaiting(2));
+    expect(setAppBadge).toHaveBeenCalledWith(2);
+    // No unhandled rejection, and the counts are still live.
+    expect(container.textContent).toBe("2/0/0");
+  });
+
   it("never calls the API where the browser does not have it", async () => {
     badging(false);
     await act(async () => root.render(<Badge />));

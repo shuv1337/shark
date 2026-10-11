@@ -59,6 +59,17 @@ let boardReported = false;
 let inboxReported = false;
 let painted: number | undefined;
 
+/*
+ * Sign-out happens while reads are in the air. Each read carries the
+ * generation it was started in and drops its result if that generation has
+ * since been retired, so a request issued before sign-out cannot land after
+ * it and put the badge back on a signed-out browser. `accepting` closes the
+ * same door on the synchronous path: the board page publishes its count from
+ * an effect, which can run after the clear for the same reason.
+ */
+let generation = 0;
+let accepting = true;
+
 type Source = "board" | "inbox";
 
 function paintBadge(): void {
@@ -66,11 +77,14 @@ function paintBadge(): void {
   const total = counts.boardWaiting + counts.inboxUnread;
   if (total === painted) return;
   painted = total;
-  // Both helpers no-op where the Badging API is unsupported.
-  void (total > 0 ? setAppBadge(total) : clearAppBadge());
+  // Both helpers no-op where the Badging API is unsupported, and a browser
+  // that has it can still refuse: a rejected badge is not worth an unhandled
+  // rejection in the console, let alone a broken page.
+  void (total > 0 ? setAppBadge(total) : clearAppBadge()).catch(() => {});
 }
 
 function set(next: Partial<NavCounts>, source?: Source): void {
+  if (!accepting) return;
   if (source === "board") boardReported = true;
   if (source === "inbox") inboxReported = true;
   const merged = { ...counts, ...next };
@@ -92,8 +106,10 @@ export function publishBoardWaiting(count: number): void {
 
 /** Re-read the inbox badge. Call after anything that changes read state. */
 export async function refreshInboxCounts(): Promise<void> {
+  const mine = generation;
   try {
     const { unread, needsAction } = await api.getInboxCounts();
+    if (mine !== generation) return;
     set({ inboxUnread: unread, inboxNeedsAction: needsAction }, "inbox");
   } catch {
     // Keep the last known numbers; the poll and the next push try again.
@@ -101,13 +117,18 @@ export async function refreshInboxCounts(): Promise<void> {
 }
 
 async function refresh(): Promise<void> {
+  const mine = generation;
   const [board] = await Promise.allSettled([api.getBoard(), refreshInboxCounts()]);
+  if (mine !== generation) return;
   if (board.status === "fulfilled") set({ boardWaiting: board.value.waiting.length }, "board");
 }
 
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   if (!stop) {
+    // A fresh start — the first subscriber after a sign-out, or after the
+    // last one left — reopens the store to results again.
+    accepting = true;
     void refresh();
     const unsubscribe = subscribeToInboxUpdates(() => void refresh());
     const poll = setInterval(() => void refresh(), COUNTS_POLL_INTERVAL_MS);
@@ -145,11 +166,14 @@ export function useNavCounts(enabled = true): NavCounts {
 export function clearNavCounts(): void {
   counts = ZERO;
   // A signed-out browser has no counts to report, so the next session starts
-  // its badge from scratch rather than from this one's last total.
+  // its badge from scratch rather than from this one's last total. Retiring
+  // the generation is what stops a read already in the air from undoing this.
+  generation++;
+  accepting = false;
   boardReported = false;
   inboxReported = false;
   painted = undefined;
-  void clearAppBadge();
+  void clearAppBadge().catch(() => {});
   for (const listener of listeners) listener();
 }
 
@@ -159,6 +183,8 @@ export function resetNavCounts(): void {
   stop = null;
   listeners.clear();
   counts = ZERO;
+  generation++;
+  accepting = true;
   boardReported = false;
   inboxReported = false;
   painted = undefined;

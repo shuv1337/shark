@@ -73,6 +73,7 @@ function midAnswer(): boolean {
 function UpdateNotice({ column }: { column: string }) {
   const [state, setState] = useState<"none" | "held" | "ready">("none");
   const [reloading, setReloading] = useState(false);
+  const [failed, setFailed] = useState(false);
   const waiting = useRef<ServiceWorker | null>(null);
   const dismissed = useRef<ServiceWorker | null>(null);
 
@@ -102,13 +103,21 @@ function UpdateNotice({ column }: { column: string }) {
 
   const reload = useCallback(() => {
     setReloading(true);
-    void applyUpdate().then((applied) => {
-      // Nothing was waiting after all; the page is already the new build.
-      if (!applied) {
+    setFailed(false);
+    void applyUpdate()
+      .then((applied) => {
+        // Nothing was waiting after all; the page is already the new build.
+        if (!applied) {
+          setReloading(false);
+          setState("none");
+        }
+      })
+      .catch(() => {
+        // The handover was asked for and did not arrive. Say so and leave the
+        // button pressable rather than spinning on "Reloading…" forever.
         setReloading(false);
-        setState("none");
-      }
-    });
+        setFailed(true);
+      });
   }, []);
 
   if (state !== "ready") return null;
@@ -116,17 +125,24 @@ function UpdateNotice({ column }: { column: string }) {
     <div className="border-b border-line bg-accent-wash">
       <div className={`${column} ${BAR} text-ink-muted`} role="status">
         {/* One line on a phone: the button already says what to do. */}
-        <p>
-          <span className="font-medium text-ink">SHark updated.</span>
-          <span className="hidden sm:inline"> Reload to use the new version.</span>
-        </p>
+        {failed ? (
+          <p>
+            <span className="font-medium text-ink">That didn't go through.</span>
+            <span className="hidden sm:inline"> The new version is still waiting — try again.</span>
+          </p>
+        ) : (
+          <p>
+            <span className="font-medium text-ink">SHark updated.</span>
+            <span className="hidden sm:inline"> Reload to use the new version.</span>
+          </p>
+        )}
         <button
           className={`inline-flex h-8 items-center rounded-full bg-accent px-3.5 text-[13px] font-medium whitespace-nowrap text-on-accent transition-colors hover:bg-accent-hover disabled:pointer-events-none disabled:opacity-50 ${focusRing}`}
           disabled={reloading}
           onClick={reload}
           type="button"
         >
-          {reloading ? "Reloading…" : "Reload"}
+          {reloading ? "Reloading…" : failed ? "Try again" : "Reload"}
         </button>
         <button
           aria-label="Dismiss the update notice"

@@ -90,6 +90,155 @@ describe("PWA update helpers", () => {
     expect(callback).toHaveBeenCalledWith(registration);
   });
 
+  /**
+   * The worker claims every client when it activates, so one tab pressing
+   * Reload takes the other tabs' controller with it. Each of them has to
+   * reload itself, or it carries on running the old bundle with its bar gone.
+   */
+  it("reloads a tab whose controller was replaced by another tab", async () => {
+    const reload = vi.fn();
+    const serviceWorker = Object.assign(new EventTarget(), {
+      register: vi.fn().mockResolvedValue(
+        Object.assign(new EventTarget(), {
+          waiting: null,
+          installing: null,
+        }),
+      ),
+      controller: {},
+    });
+    vi.stubGlobal("navigator", { serviceWorker });
+    vi.stubGlobal("window", { location: { reload } });
+    const helpers = await import("./pwaUpdate");
+    await helpers.registerServiceWorker();
+
+    serviceWorker.dispatchEvent(new Event("controllerchange"));
+    expect(reload).toHaveBeenCalledOnce();
+    // And exactly once, however many times the controller moves after that.
+    serviceWorker.dispatchEvent(new Event("controllerchange"));
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
+  /** The first worker a browser installs claims the page it installed on. */
+  it("does not reload when the first worker claims an uncontrolled page", async () => {
+    const reload = vi.fn();
+    const serviceWorker = Object.assign(new EventTarget(), {
+      register: vi.fn().mockResolvedValue(
+        Object.assign(new EventTarget(), {
+          waiting: null,
+          installing: null,
+        }),
+      ),
+      controller: null,
+    });
+    vi.stubGlobal("navigator", { serviceWorker });
+    vi.stubGlobal("window", { location: { reload } });
+    const helpers = await import("./pwaUpdate");
+    await helpers.registerServiceWorker();
+
+    Object.assign(serviceWorker, { controller: {} });
+    serviceWorker.dispatchEvent(new Event("controllerchange"));
+    expect(reload).not.toHaveBeenCalled();
+
+    // A later build replacing that controller is a real update.
+    serviceWorker.dispatchEvent(new Event("controllerchange"));
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
+  /**
+   * The tab that lost its race: another tab applied the build first, so there
+   * is nothing waiting here any more. Returning false would let the bar treat
+   * it as "already up to date" and leave this tab on the old bundle.
+   */
+  it("reloads rather than reporting nothing when another tab already applied", async () => {
+    const reload = vi.fn();
+    const serviceWorker = Object.assign(new EventTarget(), {
+      register: vi.fn().mockResolvedValue(
+        Object.assign(new EventTarget(), {
+          waiting: null,
+          installing: null,
+        }),
+      ),
+      controller: {},
+    });
+    vi.stubGlobal("navigator", { serviceWorker });
+    vi.stubGlobal("window", { location: { reload } });
+    const helpers = await import("./pwaUpdate");
+    await helpers.registerServiceWorker();
+
+    serviceWorker.dispatchEvent(new Event("controllerchange"));
+    reload.mockClear();
+    // The press that raced the page-wide reload still reports a handover.
+    await expect(helpers.applyUpdate()).resolves.toBe(true);
+  });
+
+  it("reports nothing to apply when no update has happened at all", async () => {
+    const serviceWorker = Object.assign(new EventTarget(), {
+      register: vi.fn().mockResolvedValue(
+        Object.assign(new EventTarget(), {
+          waiting: null,
+          installing: null,
+        }),
+      ),
+      controller: {},
+    });
+    vi.stubGlobal("navigator", { serviceWorker });
+    vi.stubGlobal("window", { location: { reload: vi.fn() } });
+    const helpers = await import("./pwaUpdate");
+    await helpers.registerServiceWorker();
+    await expect(helpers.applyUpdate()).resolves.toBe(false);
+  });
+
+  /** A refused handover must not leave the button spinning for the session. */
+  it("reports a failed handover and lets it be pressed again", async () => {
+    const reload = vi.fn();
+    // Typed, because the first implementation only ever throws and would
+    // otherwise infer `never` and refuse the second one.
+    const postMessage = vi.fn<(message: unknown) => void>(() => {
+      throw new Error("worker is redundant");
+    });
+    const registration = Object.assign(new EventTarget(), {
+      waiting: { postMessage },
+      installing: null,
+    });
+    const serviceWorker = Object.assign(new EventTarget(), {
+      register: vi.fn().mockResolvedValue(registration),
+      controller: {},
+    });
+    vi.stubGlobal("navigator", { serviceWorker });
+    vi.stubGlobal("window", { location: { reload } });
+    const helpers = await import("./pwaUpdate");
+    await helpers.registerServiceWorker();
+
+    await expect(helpers.applyUpdate()).rejects.toThrow("worker is redundant");
+    expect(reload).not.toHaveBeenCalled();
+
+    // Pressing again is a real second attempt, not a no-op from a stuck flag.
+    postMessage.mockImplementation(() => {
+      serviceWorker.dispatchEvent(new Event("controllerchange"));
+    });
+    await expect(helpers.applyUpdate()).resolves.toBe(true);
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
+  it("gives up when the handover never arrives", async () => {
+    const reload = vi.fn();
+    const registration = Object.assign(new EventTarget(), {
+      waiting: { postMessage: vi.fn() },
+      installing: null,
+    });
+    const serviceWorker = Object.assign(new EventTarget(), {
+      register: vi.fn().mockResolvedValue(registration),
+      controller: {},
+    });
+    vi.stubGlobal("navigator", { serviceWorker });
+    vi.stubGlobal("window", { location: { reload } });
+    const helpers = await import("./pwaUpdate");
+    await helpers.registerServiceWorker();
+
+    await expect(helpers.applyUpdate(5)).rejects.toThrow("did not take over in time");
+    expect(reload).not.toHaveBeenCalled();
+  });
+
   it("reports the build the controlling worker is running", async () => {
     const serviceWorker = new EventTarget() as EventTarget & { controller: unknown };
     const postMessage = vi.fn(() => {

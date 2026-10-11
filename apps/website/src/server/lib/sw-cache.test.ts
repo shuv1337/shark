@@ -212,4 +212,46 @@ describe("service worker notification routing", () => {
     });
     expect(worker.opened).toEqual(["https://shark.example/dashboard"]);
   });
+
+  /**
+   * A service can point a tap at its own site on purpose — a CI run, a pull
+   * request — so leaving this origin is allowed when it was written as an
+   * absolute URL.
+   */
+  it.each([
+    "https://ci.example.com/builds/42",
+    "http://ci.example.com/builds/42",
+    "https://github.com/org/repo/pull/82#files",
+  ])("opens the absolute external link %s a service asked for", async (url) => {
+    const worker = harness();
+    await worker.dispatch("notificationclick", { notification: { close: vi.fn(), data: { url } } });
+    expect(worker.opened).toEqual([url]);
+  });
+
+  /**
+   * A URL dressed up as this one. Credentials put the real host in the part a
+   * reader scans first while the origin is somewhere else, and a string that
+   * is not absolute can still resolve off-origin.
+   */
+  it.each([
+    ["credentials that read like this host", "https://shark.example@evil.test/"],
+    ["credentials with a password", "https://shark.example:hunter2@evil.test/inbox"],
+    ["a protocol-relative host", "//evil.test/inbox"],
+    ["a backslash the parser treats as a slash", "/\\evil.test"],
+    ["three slashes", "///evil.test"],
+    ["a non-http scheme", "javascript:alert(1)"],
+    ["a data URL", "data:text/html,<h1>hi"],
+  ])("falls back to the inbox for %s", async (_label, url) => {
+    const worker = harness();
+    await worker.dispatch("notificationclick", { notification: { close: vi.fn(), data: { url } } });
+    expect(worker.opened).toEqual(["https://shark.example/inbox"]);
+  });
+
+  it("keeps a same-origin path that merely looks odd", async () => {
+    const worker = harness();
+    await worker.dispatch("notificationclick", {
+      notification: { close: vi.fn(), data: { url: "/inbox/ibox%3Aevent%3A1?from=push" } },
+    });
+    expect(worker.opened).toEqual(["https://shark.example/inbox/ibox%3Aevent%3A1?from=push"]);
+  });
 });

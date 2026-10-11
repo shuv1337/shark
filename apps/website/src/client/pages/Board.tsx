@@ -8,7 +8,7 @@ import { quietButton } from "../components/ui";
 import { api } from "../lib/api";
 import { useSession } from "../lib/auth";
 import { subscribeToBoardUpdates } from "../lib/boardUpdates";
-import { useOffline } from "../lib/connection";
+import { subscribeToReconnect, useOffline } from "../lib/connection";
 import { publishBoardWaiting } from "../lib/counts";
 
 export function Board() {
@@ -54,6 +54,20 @@ export function Board() {
     if (!session) return;
     return subscribeToBoardUpdates(() => void refresh());
   }, [session, refresh]);
+
+  /*
+   * Back online: drop the error this page stopped showing while the shell's
+   * banner was up, and read again. Without this the error would simply
+   * reappear as the banner left, over data that is about to be replaced.
+   */
+  useEffect(
+    () =>
+      subscribeToReconnect(() => {
+        setError(null);
+        void refresh();
+      }),
+    [refresh],
+  );
 
   // A deep link from a push shows that ask first, with its timeline, even once
   // resolved. It reloads whenever the board changes so its state stays current.

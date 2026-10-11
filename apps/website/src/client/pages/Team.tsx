@@ -28,7 +28,7 @@ import {
 } from "../components/ui";
 import { ApiRequestError, api } from "../lib/api";
 import { useSession } from "../lib/auth";
-import { offlineProps, useOffline } from "../lib/connection";
+import { offlineProps, subscribeToReconnect, useOffline } from "../lib/connection";
 import { canManage, TEAM_NAME_MAX_CHARS, teamSummary } from "../lib/teams";
 
 type LoadState =
@@ -71,6 +71,10 @@ export function TeamPage() {
     }
     if (session) void load();
   }, [session, isPending, navigate, load]);
+
+  // Back online: read again, which replaces whatever load state this page was
+  // left holding rather than revealing it as the shell's banner leaves.
+  useEffect(() => subscribeToReconnect(() => void load()), [load]);
 
   if (isPending || !session) {
     return (

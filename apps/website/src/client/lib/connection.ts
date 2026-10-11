@@ -58,6 +58,21 @@ export function reportNetworkSuccess(): void {
   emit();
 }
 
+/**
+ * The network coming back.
+ *
+ * Clearing the banner is not enough on its own: a page that stopped showing
+ * its load error because the shell was saying "offline" is still holding that
+ * error, and it would reappear the moment the banner left. Every page that
+ * suppresses an error subscribes here to drop it and read again, so coming
+ * back online looks like coming back rather than like a failure.
+ */
+export function subscribeToReconnect(listener: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener("online", listener);
+  return () => window.removeEventListener("online", listener);
+}
+
 function subscribe(listener: () => void): () => void {
   bind();
   listeners.add(listener);

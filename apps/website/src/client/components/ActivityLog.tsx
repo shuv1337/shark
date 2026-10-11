@@ -1,7 +1,7 @@
 import type { EventDto } from "@hark/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
-import { useOffline } from "../lib/connection";
+import { subscribeToReconnect, useOffline } from "../lib/connection";
 import { EmptyState, ErrorText, InlineCode, SkeletonList } from "./DashboardKit";
 import { quietButton } from "./ui";
 
@@ -37,6 +37,20 @@ export function ActivityLogSection() {
     const interval = setInterval(() => void load(), ACTIVITY_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [load]);
+
+  /*
+   * Back online: drop the error this page stopped showing while the shell's
+   * banner was up, and read again. Without this the error would simply
+   * reappear as the banner left, over data that is about to be replaced.
+   */
+  useEffect(
+    () =>
+      subscribeToReconnect(() => {
+        setError(null);
+        void load();
+      }),
+    [load],
+  );
 
   return (
     <section aria-labelledby="activity-heading" className="mt-8">

@@ -12,7 +12,7 @@ import { SETTINGS_COLUMN } from "../components/SiteChrome";
 import { focusRing, secondaryButton } from "../components/ui";
 import { api } from "../lib/api";
 import { signOut, useSession } from "../lib/auth";
-import { useOffline } from "../lib/connection";
+import { subscribeToReconnect, useOffline } from "../lib/connection";
 import { clearNavCounts } from "../lib/counts";
 import { activeSection, visibleSections } from "../lib/sectionSpy";
 
@@ -80,6 +80,20 @@ export function Settings() {
     }
     if (session) void refresh();
   }, [session, isPending, navigate, refresh]);
+
+  /*
+   * Back online: drop the error this page stopped showing while the shell's
+   * banner was up, and read again. Without this the error would simply
+   * reappear as the banner left, over data that is about to be replaced.
+   */
+  useEffect(
+    () =>
+      subscribeToReconnect(() => {
+        setError(null);
+        void refresh();
+      }),
+    [refresh],
+  );
 
   const [visible, setVisible] = useState<string[]>([]);
   // The hashes this page wrote itself, which must not be read back as a

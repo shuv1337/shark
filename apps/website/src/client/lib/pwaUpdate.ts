@@ -11,6 +11,51 @@ function announceUpdate(): void {
 }
 
 /**
+ * The handover, watched for the whole page rather than only inside
+ * `applyUpdate`.
+ *
+ * The worker calls `clients.claim()` when it activates, so pressing Reload in
+ * one tab takes every other tab's controller with it. A tab that only
+ * listened while its own button was pressed would be left running the old
+ * bundle against the new worker, with its bar gone and nothing to press. So
+ * the listener is attached once at registration and every tab reloads itself
+ * exactly once when its controller is replaced.
+ *
+ * "Replaced" is the condition, not "changed": the first worker a browser ever
+ * installs claims the page it was installed on, and reloading there would
+ * reload a page that has only just finished loading.
+ */
+let controllerWatched = false;
+let hadController = false;
+let controllerChanged = false;
+let reloaded = false;
+const controllerWaiters = new Set<() => void>();
+
+function reloadOnce(): void {
+  if (reloaded) return;
+  reloaded = true;
+  window.location.reload();
+}
+
+function watchController(): void {
+  if (controllerWatched) return;
+  controllerWatched = true;
+  hadController = Boolean(navigator.serviceWorker.controller);
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    const replaced = hadController;
+    hadController = Boolean(navigator.serviceWorker.controller);
+    controllerChanged = true;
+    for (const waiter of [...controllerWaiters]) waiter();
+    controllerWaiters.clear();
+    if (replaced) reloadOnce();
+  });
+}
+
+function onceControllerChanged(): Promise<void> {
+  return new Promise((resolve) => controllerWaiters.add(resolve));
+}
+
+/**
  * Follow one worker to the end of its install.
  *
  * A worker that reaches `installed` while something already controls the page
@@ -71,6 +116,9 @@ export function registerServiceWorker(): Promise<ServiceWorkerRegistration | und
     registrationPromise = Promise.resolve(undefined);
     return registrationPromise;
   }
+  // Before the register, so the controller this page started with is read
+  // before anything has had a chance to replace it.
+  watchController();
   registrationPromise = navigator.serviceWorker.register("/sw.js", { scope: "/" }).then((next) => {
     watchRegistration(next);
     return next;
@@ -133,24 +181,56 @@ export function serviceWorkerVersion(timeoutMs = 2000): Promise<string | null> {
   });
 }
 
-export async function applyUpdate(): Promise<boolean> {
+/**
+ * Hand over to the waiting build and reload onto it.
+ *
+ * Resolves true once the handover has happened — the page is reloading, so
+ * nothing after that matters. Resolves false when there is genuinely nothing
+ * to apply. Rejects when a handover was asked for and did not arrive, so the
+ * caller can say so and offer the button again rather than leaving it
+ * spinning on "Reloading…" for the rest of the session.
+ */
+export async function applyUpdate(timeoutMs = 10_000): Promise<boolean> {
   const next = registration ?? (await registerServiceWorker());
-  if (!next?.waiting) return false;
-  // One reload, however many times the button is pressed while the handover
-  // is in flight: a second listener would reload the page it just loaded.
+  if (!next) return false;
+  if (!next.waiting) {
+    /*
+     * Another tab pressed Reload first and the new worker claimed this one
+     * too, which cleared `waiting` here. This tab is now the old bundle
+     * running against the new worker; the page-wide listener has normally
+     * reloaded it already, and this covers the press that raced it.
+     */
+    if (controllerChanged) {
+      reloadOnce();
+      return true;
+    }
+    return false;
+  }
+  // One handover, however many times the button is pressed while it is in
+  // flight.
   if (applying) return true;
   applying = true;
-  const controllerChanged = new Promise<void>((resolve) => {
-    navigator.serviceWorker.addEventListener(
-      "controllerchange",
-      () => {
-        window.location.reload();
-        resolve();
-      },
-      { once: true },
-    );
-  });
-  next.waiting.postMessage({ type: "hark:skip-waiting" });
-  await controllerChanged;
+  try {
+    const handover = onceControllerChanged();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const gaveUp = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error("The new version did not take over in time.")),
+        timeoutMs,
+      );
+    });
+    next.waiting.postMessage({ type: "hark:skip-waiting" });
+    try {
+      await Promise.race([handover, gaveUp]);
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (reason) {
+    // The worker refused, went redundant, or never answered. Let the caller
+    // show it and press again.
+    applying = false;
+    throw reason;
+  }
+  reloadOnce();
   return true;
 }
