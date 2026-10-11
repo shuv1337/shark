@@ -47,6 +47,19 @@ describe("web inbox", () => {
     expect(html).toContain("Notifications");
   });
 
+  /**
+   * The UA stylesheet gives `fieldset` a `min-inline-size: min-content`, which
+   * `overflow-x-auto` does not clear on its own. Without `min-w-0` the filter
+   * chips set a min-content floor on the whole document: at 320px the page laid
+   * out at 370px and the fixed tab bar overhung the screen.
+   */
+  it("lets the filter row scroll instead of widening the page", () => {
+    const fieldset = /<fieldset class="([^"]*)"/.exec(renderToStaticMarkup(<InboxPanel />))?.[1];
+    expect(fieldset).toBeDefined();
+    expect(fieldset).toContain("overflow-x-auto");
+    expect(fieldset).toContain("min-w-0");
+  });
+
   it("renders unread rows with source, body, kind, and state", () => {
     const html = renderToStaticMarkup(<InboxRow item={item} onOpen={() => {}} />);
     expect(html).toContain("Production approval");

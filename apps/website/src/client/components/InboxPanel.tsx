@@ -10,6 +10,9 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiRequestError, api } from "../lib/api";
 import { subscribeToInboxUpdates } from "../lib/inboxUpdates";
+import { SkeletonList } from "./DashboardKit";
+import { IconChevronDown, IconExternalLink, IconX } from "./icons";
+import { closeButton, focusRing, quietButton, rowButton, secondaryButton } from "./ui";
 
 const FILTER_LABELS: Record<InboxFilter, string> = {
   all: "All",
@@ -159,7 +162,7 @@ export function InboxPanel() {
         <div className="flex items-center gap-2">
           {hasUnread ? (
             <button
-              className="rounded-full px-3 py-1.5 text-xs font-medium text-ink-subtle transition hover:bg-surface-hover hover:text-ink disabled:opacity-50"
+              className={quietButton}
               disabled={markingRead}
               onClick={() => void markAllRead()}
               type="button"
@@ -168,7 +171,7 @@ export function InboxPanel() {
             </button>
           ) : null}
           <button
-            className="rounded-full border border-line px-3 py-1.5 text-xs font-medium text-ink-muted transition hover:bg-surface-hover disabled:opacity-50"
+            className={rowButton}
             disabled={refreshing}
             onClick={() => void load()}
             type="button"
@@ -178,18 +181,25 @@ export function InboxPanel() {
         </div>
       </div>
 
-      <fieldset className="mt-5 flex gap-2 overflow-x-auto pb-1">
+      {/*
+       * `min-w-0` is load-bearing: the UA stylesheet gives `fieldset` a
+       * `min-inline-size: min-content`, which `overflow-x-auto` alone cannot
+       * clear. Without it the chips set a min-content floor on the whole
+       * page, widening the layout viewport until the fixed tab bar overhangs
+       * the screen on a phone.
+       */}
+      <fieldset className="mt-5 flex min-w-0 gap-2 overflow-x-auto pb-1">
         <legend className="sr-only">Inbox filters</legend>
         {INBOX_FILTERS.map((value) => {
           const selected = value === filter;
           return (
             <button
               aria-pressed={selected}
-              className={
+              className={`shrink-0 rounded-full px-3 py-1.5 text-xs transition-colors ${focusRing} ${
                 selected
-                  ? "shrink-0 rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent"
-                  : "shrink-0 rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink-muted transition hover:bg-surface-hover"
-              }
+                  ? "bg-accent font-semibold text-on-accent"
+                  : "border border-line bg-surface font-medium text-ink-muted hover:bg-surface-hover hover:text-ink"
+              }`}
               key={value}
               onClick={() => setFilter(value)}
               type="button"
@@ -206,7 +216,7 @@ export function InboxPanel() {
         </p>
       ) : null}
       {loading ? (
-        <p className="border-b border-line py-8 text-sm text-ink-faint">Loading inbox…</p>
+        <SkeletonList className="mt-4" label="Loading your inbox" rowClassName="h-20" rows={4} />
       ) : null}
       {!loading && !error && items.length === 0 ? (
         <div className="mt-4 rounded-2xl border border-dashed border-line-strong px-6 py-10 text-center">
@@ -227,7 +237,7 @@ export function InboxPanel() {
       ) : null}
       {nextCursor ? (
         <button
-          className="mt-4 w-full rounded-xl border border-line py-2.5 text-sm font-medium text-ink-muted transition hover:bg-surface-hover disabled:opacity-50"
+          className={`${secondaryButton} mt-4 w-full`}
           disabled={loading || refreshing || loadingMore}
           onClick={() => void loadMore()}
           type="button"
@@ -257,7 +267,7 @@ export function InboxPanel() {
 export function InboxRow({ item, onOpen }: { item: InboxItemDto; onOpen: () => void }) {
   return (
     <button
-      className="group flex w-full items-start gap-3 py-4 text-left transition hover:bg-accent-wash"
+      className={`group flex w-full items-start gap-3 rounded-lg py-4 text-left transition-colors hover:bg-accent-wash ${focusRing}`}
       onClick={onOpen}
       type="button"
     >
@@ -284,9 +294,7 @@ export function InboxRow({ item, onOpen }: { item: InboxItemDto; onOpen: () => v
           {inboxStateLabel(item)}
         </span>
       </span>
-      <span className="mt-7 text-base text-ink-disabled transition group-hover:translate-x-0.5 group-hover:text-accent-text">
-        ›
-      </span>
+      <IconChevronDown className="mt-6 size-4 shrink-0 -rotate-90 text-ink-disabled transition-transform group-hover:translate-x-0.5 group-hover:text-accent-text" />
     </button>
   );
 }
@@ -359,16 +367,18 @@ function InboxDetailModal({
       >
         <div className="flex items-center justify-between gap-4 border-b border-line pb-4">
           <p className="text-sm font-semibold">Notification</p>
-          <button
-            aria-label="Close"
-            className="grid size-8 place-items-center rounded-full text-xl leading-none text-ink-faint transition hover:bg-surface-hover hover:text-ink"
-            onClick={onClose}
-            type="button"
-          >
-            ×
+          <button aria-label="Close" className={closeButton} onClick={onClose} type="button">
+            <IconX className="size-4.5" />
           </button>
         </div>
-        {loading ? <p className="py-12 text-center text-sm text-ink-faint">Loading…</p> : null}
+        {loading ? (
+          <SkeletonList
+            className="py-8"
+            label="Loading this notification"
+            rowClassName="h-16"
+            rows={3}
+          />
+        ) : null}
         {error ? <p className="py-10 text-center text-sm text-danger">{error}</p> : null}
         {detail ? (
           <InboxDetailContent detail={detail} dismissing={dismissing} onDismiss={onDismiss} />
@@ -415,12 +425,13 @@ export function InboxDetailContent({
       ) : null}
       {item.url ? (
         <a
-          className="mt-5 inline-flex items-center gap-1.5 rounded-full border border-line px-4 py-2 text-sm font-medium text-accent-text transition hover:bg-accent-soft"
+          className={`${secondaryButton} mt-5 text-accent-text`}
           href={item.url}
           rel="noreferrer"
           target="_blank"
         >
-          Open link <span aria-hidden="true">↗</span>
+          Open link
+          <IconExternalLink className="size-4" />
         </a>
       ) : null}
 
@@ -437,7 +448,7 @@ export function InboxDetailContent({
             </p>
             {onDismiss ? (
               <button
-                className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink-muted transition hover:bg-surface-hover disabled:opacity-50"
+                className={`${rowButton} bg-surface`}
                 disabled={dismissing}
                 onClick={() => {
                   if (item.action) onDismiss(item.action.interactionId);

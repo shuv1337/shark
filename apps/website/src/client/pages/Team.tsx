@@ -3,7 +3,6 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import {
   AppIcon,
-  DashboardHeader,
   ErrorText,
   errorMessage,
   Field,
@@ -12,13 +11,21 @@ import {
   Modal,
   SECTION,
   SectionHeading,
+  SkeletonList,
   TeamMark,
 } from "../components/DashboardKit";
-import { Brand, PAGE_COLUMN } from "../components/SiteChrome";
+import { IconChevronDown } from "../components/icons";
+import { PAGE_COLUMN } from "../components/SiteChrome";
 import { LeaveOrDelete, MembersSection } from "../components/team/Members";
 import { OncallSection } from "../components/team/Oncall";
 import { PagesSection } from "../components/team/Pages";
-import { primaryButton, primaryButtonSmall, rowButton, secondaryButton } from "../components/ui";
+import {
+  primaryButton,
+  primaryButtonSmall,
+  quietButton,
+  rowButton,
+  secondaryButton,
+} from "../components/ui";
 import { ApiRequestError, api } from "../lib/api";
 import { useSession } from "../lib/auth";
 import { canManage, TEAM_NAME_MAX_CHARS, teamSummary } from "../lib/teams";
@@ -63,135 +70,119 @@ export function TeamPage() {
 
   if (isPending || !session) {
     return (
-      <div className="flex min-h-dvh flex-col">
-        <header className={`${PAGE_COLUMN} flex h-16 items-center`}>
-          <Brand />
-        </header>
-        <main className={`${PAGE_COLUMN} flex-1 pt-8`}>
-          <p className="text-ink-faint" role="status">
-            Loading…
-          </p>
-        </main>
-      </div>
+      <main className={`${PAGE_COLUMN} flex-1 pt-8`}>
+        <SkeletonList label="Loading this team" rowClassName="h-20" rows={3} />
+      </main>
     );
   }
 
   return (
-    <div className="flex min-h-dvh flex-col">
-      <DashboardHeader />
-      <main className={`${PAGE_COLUMN} flex-1 pt-6 pb-16`}>
-        <Link
-          className="group mb-5 inline-flex items-center gap-1.5 text-[15px] text-ink-muted transition-colors hover:text-ink"
-          to="/dashboard"
-        >
-          <span
-            aria-hidden="true"
-            className="inline-block transition-transform group-hover:-translate-x-0.5"
-          >
-            ←
-          </span>
-          Dashboard
-        </Link>
+    <main className={`${PAGE_COLUMN} flex-1 pt-6 pb-16`}>
+      <Link className={`${quietButton} mb-5 -ml-3`} to="/dashboard">
+        <IconChevronDown className="size-4 rotate-90" />
+        Inbox
+      </Link>
 
-        {state.kind === "loading" ? (
-          <p className="text-ink-faint" role="status">
-            Loading team…
+      {state.kind === "loading" ? (
+        <SkeletonList label="Loading this team" rowClassName="h-20" rows={3} />
+      ) : null}
+
+      {state.kind === "missing" ? (
+        <div>
+          <h1 className="text-[28px] leading-[1.15] font-medium tracking-[-0.015em] text-ink">
+            Team not found
+          </h1>
+          <p className="mt-2 max-w-[30rem] text-ink-muted">
+            It may have been deleted, or you're no longer a member. Ask a team admin for a new
+            invite.
           </p>
-        ) : null}
+          <Link className={`${primaryButton} mt-6`} to="/dashboard">
+            Back to dashboard
+          </Link>
+        </div>
+      ) : null}
 
-        {state.kind === "missing" ? (
-          <div>
-            <h1 className="text-[28px] leading-[1.15] font-medium tracking-[-0.015em] text-ink">
-              Team not found
-            </h1>
-            <p className="mt-2 max-w-[30rem] text-ink-muted">
-              It may have been deleted, or you're no longer a member. Ask a team admin for a new
-              invite.
-            </p>
-            <Link className={`${primaryButton} mt-6`} to="/dashboard">
-              Back to dashboard
-            </Link>
-          </div>
-        ) : null}
-
-        {state.kind === "error" ? (
-          <div
-            className="rounded-2xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger"
-            role="alert"
+      {state.kind === "error" ? (
+        <div
+          className="rounded-2xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger"
+          role="alert"
+        >
+          {state.message}{" "}
+          <button
+            className={`${quietButton} text-danger`}
+            onClick={() => void load()}
+            type="button"
           >
-            {state.message}{" "}
-            <button className="underline" onClick={() => void load()} type="button">
-              Try again
-            </button>
-          </div>
-        ) : null}
+            Try again
+          </button>
+        </div>
+      ) : null}
 
-        {state.kind === "ready" ? (
-          <>
-            <div className="mb-6 flex items-start justify-between gap-4">
-              <div className="flex min-w-0 items-center gap-3.5">
-                <TeamMark name={state.team.name} size="lg" />
-                <div className="min-w-0">
-                  <h1 className="truncate text-[28px] leading-[1.15] font-medium tracking-[-0.015em] text-ink">
-                    {state.team.name}
-                  </h1>
-                  <p className="mt-1 text-[15px] text-ink-muted">{teamSummary(state.team)}</p>
-                </div>
+      {state.kind === "ready" ? (
+        <>
+          <div className="mb-6 flex items-start justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-3.5">
+              <TeamMark name={state.team.name} size="lg" />
+              <div className="min-w-0">
+                <h1 className="truncate text-[28px] leading-[1.15] font-medium tracking-[-0.015em] text-ink">
+                  {state.team.name}
+                </h1>
+                <p className="mt-1 text-[15px] text-ink-muted">{teamSummary(state.team)}</p>
               </div>
-              {canManage(state.team.role) ? (
-                <button
-                  className={`${rowButton} mt-1 shrink-0`}
-                  onClick={() => setRenaming(true)}
-                  type="button"
-                >
-                  Rename
-                </button>
-              ) : null}
             </div>
+            {canManage(state.team.role) ? (
+              <button
+                className={`${rowButton} mt-1 shrink-0`}
+                onClick={() => setRenaming(true)}
+                type="button"
+              >
+                Rename
+              </button>
+            ) : null}
+          </div>
 
-            <MembersSection
-              members={state.members}
-              onChanged={async () => {
-                await load();
+          <MembersSection
+            members={state.members}
+            onChanged={async () => {
+              await load();
+            }}
+            team={state.team}
+            viewerId={session.user.id}
+          />
+
+          <OncallSection
+            members={state.members}
+            onPaged={() => setPagesKey((value) => value + 1)}
+            team={state.team}
+            viewerName={session.user.name || session.user.email}
+          />
+
+          <PagesSection refreshKey={pagesKey} teamId={state.team.id} />
+
+          <TeamApps teamId={state.team.id} />
+
+          <LeaveOrDelete
+            onLeft={() => navigate("/dashboard", { replace: true })}
+            team={state.team}
+          />
+
+          {renaming ? (
+            <RenameModal
+              onClose={() => setRenaming(false)}
+              onRenamed={(team) => {
+                setRenaming(false);
+                setState((current) =>
+                  current.kind === "ready"
+                    ? { ...current, team: { ...current.team, ...team } }
+                    : current,
+                );
               }}
               team={state.team}
-              viewerId={session.user.id}
             />
-
-            <OncallSection
-              members={state.members}
-              onPaged={() => setPagesKey((value) => value + 1)}
-              team={state.team}
-              viewerName={session.user.name || session.user.email}
-            />
-
-            <PagesSection refreshKey={pagesKey} teamId={state.team.id} />
-
-            <TeamApps teamId={state.team.id} />
-
-            <LeaveOrDelete
-              onLeft={() => navigate("/dashboard", { replace: true })}
-              team={state.team}
-            />
-
-            {renaming ? (
-              <RenameModal
-                onClose={() => setRenaming(false)}
-                onRenamed={(team) => {
-                  setRenaming(false);
-                  setState((current) =>
-                    current.kind === "ready"
-                      ? { ...current, team: { ...current.team, ...team } }
-                      : current,
-                  );
-                }}
-                team={state.team}
-              />
-            ) : null}
-          </>
-        ) : null}
-      </main>
-    </div>
+          ) : null}
+        </>
+      ) : null}
+    </main>
   );
 }
 
@@ -232,9 +223,11 @@ function TeamApps({ teamId }: { teamId: string }) {
           </>
         }
       />
-      {apps === null ? <p className="py-4 text-ink-faint">Loading apps…</p> : null}
+      {apps === null ? (
+        <SkeletonList label="Loading team apps" rowClassName="h-14" rows={2} />
+      ) : null}
       {apps?.length === 0 && !error ? (
-        <p className="rounded-3xl border border-dashed border-line-strong px-5 py-4 text-[15px] text-ink-muted">
+        <p className="rounded-2xl border border-dashed border-line-strong px-5 py-4 text-[15px] text-ink-muted">
           No team apps yet. Agents can add one straight to the team, or you can share one of yours.
         </p>
       ) : null}

@@ -8,15 +8,25 @@ import type {
   TeamDto,
 } from "@hark/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router";
-import { BrandWordmark } from "../components/BrandWordmark";
+import { useNavigate } from "react-router";
 import { useConfirm } from "../components/ConfirmDialog";
 import { CopyField } from "../components/CopyField";
+import { relativeTime, SkeletonList } from "../components/DashboardKit";
 import { InboxPanel } from "../components/InboxPanel";
+import { IconX } from "../components/icons";
 import { McpClientsSection } from "../components/McpClientsSection";
 import { TeamsSection } from "../components/TeamsSection";
+import {
+  closeButton,
+  primaryButtonSmall,
+  quietButton,
+  rowButton,
+  rowDangerButton,
+  secondaryButton,
+  surfacePanel,
+} from "../components/ui";
 import { ApiRequestError, api, isMissingRoute } from "../lib/api";
-import { signOut, useSession } from "../lib/auth";
+import { useSession } from "../lib/auth";
 import {
   changedServiceFields,
   type ServiceFieldErrors,
@@ -112,14 +122,6 @@ function agentPrompt(webhookUrl: string, devices: DeviceDto[]): string {
   ].join("\n");
 }
 
-export function SelfHostedBadge() {
-  return (
-    <span className="bg-accent-soft text-accent-text rounded-full px-3 py-2 text-xs font-semibold">
-      Self-hosted
-    </span>
-  );
-}
-
 export function Dashboard() {
   const { data: session, isPending } = useSession();
   const navigate = useNavigate();
@@ -199,137 +201,105 @@ export function Dashboard() {
   }, [session, refreshActivity]);
 
   if (isPending || !session) {
-    return <div className="flex min-h-dvh items-center justify-center text-ink-faint">…</div>;
+    return (
+      <main className="mx-auto w-full max-w-3xl px-6 py-10">
+        <SkeletonList label="Loading your dashboard" rowClassName="h-20" rows={4} />
+      </main>
+    );
   }
 
   const activeDeviceCount = devices?.filter((device) => device.active).length ?? null;
   const deliveryDeviceCount = activeDeviceCount;
 
   return (
-    <div className="min-h-dvh">
-      <header>
-        <div className="mx-auto flex h-20 w-full max-w-3xl items-center justify-between px-6">
-          <Link to="/" className="text-lg font-semibold">
-            <BrandWordmark />
-          </Link>
-          <div className="flex items-center gap-3">
-            <Link className="text-ink-subtle hover:text-ink text-sm transition" to="/docs">
-              Docs
-            </Link>
-            {session.user.image ? (
-              <img
-                src={session.user.image}
-                alt=""
-                className="border-media-line size-7 rounded-full border"
-                referrerPolicy="no-referrer"
-              />
-            ) : null}
-            <span className="hidden text-sm text-ink-subtle sm:block">{session.user.email}</span>
-            <SelfHostedBadge />
-            <button
-              type="button"
-              onClick={() => void signOut().then(() => navigate("/"))}
-              className="min-h-10 rounded-full border border-line bg-surface px-3.5 text-xs font-medium text-ink-muted shadow-xs transition-colors hover:bg-surface-hover"
-            >
-              Sign out
-            </button>
-          </div>
+    <main className="mx-auto w-full max-w-3xl px-6 py-10">
+      <InboxPanel />
+
+      <div className="mt-16 mb-8 flex items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Services</h1>
+          <p className="mt-1 text-sm text-ink-subtle">
+            {deliveryDeviceCount === null
+              ? "Each service gets a secret webhook URL."
+              : deliveryDeviceCount === 0
+                ? "No devices registered yet — enable this browser or sign in inside the SHark app."
+                : `Delivering to ${deliveryDeviceCount} registered ${deliveryDeviceCount === 1 ? "device" : "devices"}.`}
+          </p>
         </div>
-      </header>
+        <button className={primaryButtonSmall} onClick={() => setCreating(true)} type="button">
+          New service
+        </button>
+      </div>
 
-      <main className="mx-auto w-full max-w-3xl px-6 py-10">
-        <InboxPanel />
-
-        <div className="mt-16 mb-8 flex items-end justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold">Services</h1>
-            <p className="mt-1 text-sm text-ink-subtle">
-              {deliveryDeviceCount === null
-                ? "Each service gets a secret webhook URL."
-                : deliveryDeviceCount === 0
-                  ? "No devices registered yet — enable this browser or sign in inside the SHark app."
-                  : `Delivering to ${deliveryDeviceCount} registered ${deliveryDeviceCount === 1 ? "device" : "devices"}.`}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setCreating(true)}
-            className="bg-accent hover:bg-accent-hover rounded-full px-4 py-2 text-sm font-medium text-on-accent transition"
-          >
-            New service
-          </button>
+      {error ? (
+        <div className="mb-6 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger">
+          {error}
         </div>
+      ) : null}
 
-        {error ? (
-          <div className="mb-6 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger">
-            {error}
-          </div>
-        ) : null}
+      {reveal ? (
+        <WebhookReveal
+          devices={devices?.filter((device) => device.active) ?? []}
+          reveal={reveal}
+          onDismiss={() => setReveal(null)}
+        />
+      ) : null}
 
-        {reveal ? (
-          <WebhookReveal
-            devices={devices?.filter((device) => device.active) ?? []}
-            reveal={reveal}
-            onDismiss={() => setReveal(null)}
-          />
-        ) : null}
-
-        {creating ? (
-          <ServiceModal
-            onCancel={() => setCreating(false)}
-            onCreated={(response) => {
-              setCreating(false);
-              setReveal({ ...response, kind: "created" });
-              void refresh();
-            }}
-          />
-        ) : null}
-
-        {editing ? (
-          <ServiceModal
-            service={editing}
-            onCancel={() => setEditing(null)}
-            onUpdated={() => {
-              setEditing(null);
-              void refresh();
-            }}
-          />
-        ) : null}
-
-        <ServiceList
-          services={services}
-          tokens={apiTokens}
-          onEdit={setEditing}
-          onRotated={(response) => {
-            setReveal({ ...response, kind: "rotated" });
+      {creating ? (
+        <ServiceModal
+          onCancel={() => setCreating(false)}
+          onCreated={(response) => {
+            setCreating(false);
+            setReveal({ ...response, kind: "created" });
             void refresh();
           }}
-          onDeleted={() => void refresh()}
-          onTokenRevoked={(id) =>
-            setApiTokens((current) => current?.filter((token) => token.id !== id) ?? current)
-          }
         />
+      ) : null}
 
-        <BrowserNotifications onChanged={() => void refresh()} />
+      {editing ? (
+        <ServiceModal
+          service={editing}
+          onCancel={() => setEditing(null)}
+          onUpdated={() => {
+            setEditing(null);
+            void refresh();
+          }}
+        />
+      ) : null}
 
-        <Devices devices={devices} onRemoved={() => void refresh()} />
-        <McpClientsSection />
+      <ServiceList
+        services={services}
+        tokens={apiTokens}
+        onEdit={setEditing}
+        onRotated={(response) => {
+          setReveal({ ...response, kind: "rotated" });
+          void refresh();
+        }}
+        onDeleted={() => void refresh()}
+        onTokenRevoked={(id) =>
+          setApiTokens((current) => current?.filter((token) => token.id !== id) ?? current)
+        }
+      />
 
-        {teams !== "unsupported" ? (
-          <TeamsSection
-            error={teamsError}
-            onCreated={(team) =>
-              setTeams((current) => [...(Array.isArray(current) ? current : []), team])
-            }
-            teams={teams}
-          />
-        ) : null}
+      <BrowserNotifications onChanged={() => void refresh()} />
 
-        <LiveActivities activities={liveActivities} />
+      <Devices devices={devices} onRemoved={() => void refresh()} />
+      <McpClientsSection />
 
-        <ActivityLog events={events} onRefresh={refreshActivity} />
-      </main>
-    </div>
+      {teams !== "unsupported" ? (
+        <TeamsSection
+          error={teamsError}
+          onCreated={(team) =>
+            setTeams((current) => [...(Array.isArray(current) ? current : []), team])
+          }
+          teams={teams}
+        />
+      ) : null}
+
+      <LiveActivities activities={liveActivities} />
+
+      <ActivityLog events={events} onRefresh={refreshActivity} />
+    </main>
   );
 }
 
@@ -367,11 +337,7 @@ function WebhookReveal({
             ? `“${reveal.service.title}” is ready`
             : `New webhook URL for “${reveal.service.title}”`}
         </h2>
-        <button
-          type="button"
-          onClick={onDismiss}
-          className="text-accent-text text-xs font-medium underline-offset-2 hover:underline"
-        >
+        <button className={`${quietButton} text-accent-text`} onClick={onDismiss} type="button">
           Done
         </button>
       </div>
@@ -383,9 +349,9 @@ function WebhookReveal({
           <CopyField label="Webhook URL" value={reveal.webhookUrl} />
         </div>
         <button
-          type="button"
+          className={`${primaryButtonSmall} shrink-0 self-start sm:self-auto`}
           onClick={copyAgentPrompt}
-          className="bg-accent hover:bg-accent-hover shrink-0 self-start rounded-full px-4 py-2 text-sm font-medium text-on-accent transition sm:self-auto"
+          type="button"
         >
           {agentPromptCopied ? "Agent prompt copied" : "Copy agent prompt"}
         </button>
@@ -518,7 +484,7 @@ export function BrowserNotifications({ onChanged = () => {} }: { onChanged?: () 
         </h2>
         <p className="mt-1 text-sm text-ink-subtle">Desktop notifications</p>
       </div>
-      <div className="rounded-2xl border border-line bg-surface px-5 py-4 shadow-xs">
+      <div className={`${surfacePanel} rounded-2xl px-5 py-4`}>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-medium">
@@ -529,23 +495,23 @@ export function BrowserNotifications({ onChanged = () => {} }: { onChanged?: () 
           <div className="flex flex-wrap gap-2">
             {state === "default" ? (
               <button
-                type="button"
+                className={primaryButtonSmall}
                 disabled={busy !== null}
                 onClick={() => void enable()}
-                className="bg-accent hover:bg-accent-hover rounded-full px-4 py-2 text-xs font-medium text-on-accent transition disabled:opacity-50"
+                type="button"
               >
                 {busy === "enable" ? "Enabling…" : "Enable notifications"}
               </button>
             ) : null}
             {state === "error" ? (
               <button
-                type="button"
+                className={secondaryButton}
                 disabled={busy !== null}
                 onClick={() => {
                   setState("checking");
                   void inspect();
                 }}
-                className="rounded-full border border-line px-3.5 py-2 text-xs font-medium text-ink-muted transition hover:bg-surface-hover disabled:opacity-50"
+                type="button"
               >
                 Try again
               </button>
@@ -553,18 +519,18 @@ export function BrowserNotifications({ onChanged = () => {} }: { onChanged?: () 
             {state === "enabled" ? (
               <>
                 <button
-                  type="button"
+                  className={secondaryButton}
                   disabled={busy !== null}
                   onClick={() => void sendTest()}
-                  className="rounded-full border border-line px-3.5 py-2 text-xs font-medium text-ink-muted transition hover:bg-surface-hover disabled:opacity-50"
+                  type="button"
                 >
                   {busy === "test" ? "Sending…" : "Send test"}
                 </button>
                 <button
-                  type="button"
+                  className={`${rowDangerButton} h-9 px-4 text-sm`}
                   disabled={busy !== null}
                   onClick={() => void disable()}
-                  className="rounded-full border border-danger-line px-3.5 py-2 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-50"
+                  type="button"
                 >
                   {busy === "disable" ? "Disabling…" : "Disable"}
                 </button>
@@ -625,7 +591,9 @@ function Devices({ devices, onRemoved }: { devices: DeviceDto[] | null; onRemove
           active devices. Include IDs to route a webhook to specific devices.
         </p>
       </div>
-      {devices === null ? <p className="py-6 text-sm text-ink-faint">Loading devices…</p> : null}
+      {devices === null ? (
+        <SkeletonList label="Loading devices" rowClassName="h-14" rows={2} />
+      ) : null}
       {devices?.length === 0 ? (
         <p className="border-y border-line py-8 text-sm text-ink-faint">
           No devices registered yet.
@@ -655,17 +623,17 @@ function Devices({ devices, onRemoved }: { devices: DeviceDto[] | null; onRemove
               </div>
               <div className="flex shrink-0 gap-2">
                 <button
-                  type="button"
+                  className={rowButton}
                   onClick={() => void navigator.clipboard.writeText(device.id)}
-                  className="rounded-full border border-line px-3 py-1.5 text-xs font-medium text-ink-muted transition hover:bg-surface-hover"
+                  type="button"
                 >
                   Copy ID
                 </button>
                 <button
-                  type="button"
+                  className={rowDangerButton}
                   disabled={busyId === device.id}
                   onClick={() => void remove(device)}
-                  className="rounded-full border border-danger-line px-3 py-1.5 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-50"
+                  type="button"
                 >
                   Remove
                 </button>
@@ -678,16 +646,6 @@ function Devices({ devices, onRemoved }: { devices: DeviceDto[] | null; onRemove
       {dialog}
     </section>
   );
-}
-
-function relativeTime(iso: string): string {
-  const deltaMinutes = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
-  if (deltaMinutes < 1) return "just now";
-  if (deltaMinutes < 60) return `${deltaMinutes} minute${deltaMinutes === 1 ? "" : "s"} ago`;
-  const hours = Math.floor(deltaMinutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-  const days = Math.floor(hours / 24);
-  return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 function ServiceModal({
@@ -774,8 +732,7 @@ function ServiceModal({
     }
   };
 
-  const inputClass =
-    "focus:border-accent w-full rounded-lg border border-line-strong bg-field px-3 py-2 text-base text-ink placeholder:text-ink-faint focus:outline-none sm:text-sm";
+  const inputClass = "hark-field px-3 py-2 text-base sm:text-sm";
 
   return (
     <div className={`hark-modal-backdrop ${closing ? "is-closing" : ""}`}>
@@ -804,12 +761,12 @@ function ServiceModal({
           </div>
           <button
             aria-label="Close"
-            className="grid size-9 shrink-0 place-items-center rounded-full text-xl leading-none text-ink-faint transition hover:bg-surface-hover hover:text-ink-muted"
+            className={closeButton}
             disabled={busy}
             onClick={() => close()}
             type="button"
           >
-            ×
+            <IconX className="size-4.5" />
           </button>
         </div>
         <div className="space-y-4">
@@ -869,18 +826,13 @@ function ServiceModal({
         </div>
         {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
         <div className="mt-6 flex justify-end gap-2">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => close()}
-            className="rounded-full px-4 py-2 text-sm font-medium text-ink-subtle transition hover:bg-surface-hover disabled:opacity-50"
-          >
+          <button className={secondaryButton} disabled={busy} onClick={() => close()} type="button">
             Cancel
           </button>
           <button
-            type="submit"
+            className={primaryButtonSmall}
             disabled={busy || title.trim().length === 0}
-            className="bg-accent hover:bg-accent-hover rounded-full px-4 py-2 text-sm font-medium text-on-accent transition disabled:opacity-50"
+            type="submit"
           >
             {busy
               ? service
@@ -936,16 +888,14 @@ function ActivityLog({
           </h2>
           <p className="mt-1 text-sm text-ink-subtle">Latest webhook delivery attempts.</p>
         </div>
-        <button
-          type="button"
-          onClick={() => void onRefresh()}
-          className="rounded-full px-3 py-1.5 text-xs font-medium text-ink-subtle transition hover:bg-surface-hover hover:text-ink"
-        >
+        <button className={quietButton} onClick={() => void onRefresh()} type="button">
           Refresh
         </button>
       </div>
 
-      {events === null ? <p className="py-6 text-sm text-ink-faint">Loading activity…</p> : null}
+      {events === null ? (
+        <SkeletonList label="Loading activity" rowClassName="h-12" rows={3} />
+      ) : null}
       {events?.length === 0 ? (
         <p className="border-t border-line py-8 text-sm text-ink-faint">No webhook activity yet.</p>
       ) : null}
@@ -1059,11 +1009,11 @@ function ServiceList({
   const activeTokens = tokens?.filter((token) => token.revokedAt === null) ?? [];
 
   if (services === null) {
-    return <div className="py-12 text-center text-sm text-ink-faint">Loading…</div>;
+    return <SkeletonList className="py-6" label="Loading services" rowClassName="h-14" rows={3} />;
   }
   if (services.length === 0 && activeTokens.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-line-strong py-14 text-center">
+      <div className="rounded-2xl border border-dashed border-line-strong px-6 py-14 text-center">
         <p className="text-sm font-medium text-ink-muted">No services yet</p>
         <p className="mx-auto mt-1 max-w-sm text-sm text-ink-faint">
           Create your first service to get a secret webhook URL you can POST to from CI, cron jobs,
@@ -1164,39 +1114,39 @@ function ServiceList({
             </div>
             <div className="flex shrink-0 flex-wrap justify-end gap-2">
               <button
-                type="button"
+                className={rowButton}
                 disabled={!svc.webhookUrl}
+                onClick={() => void copy(svc)}
                 title={
                   svc.webhookUrl
                     ? "Copy webhook URL"
                     : "Rotate this legacy token once to make its URL copyable"
                 }
-                onClick={() => void copy(svc)}
-                className="rounded-full border border-line px-3 py-1.5 text-xs font-medium text-ink-muted transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:text-ink-disabled"
+                type="button"
               >
                 {copiedId === svc.id ? "Copied" : "Copy webhook"}
               </button>
               <button
-                type="button"
+                className={rowButton}
                 disabled={busyId === svc.id}
                 onClick={() => onEdit(svc)}
-                className="rounded-full border border-line px-3 py-1.5 text-xs font-medium text-ink-muted transition hover:bg-surface-hover disabled:opacity-50"
+                type="button"
               >
                 Edit
               </button>
               <button
-                type="button"
+                className={rowButton}
                 disabled={busyId === svc.id}
                 onClick={() => void rotate(svc)}
-                className="rounded-full border border-line px-3 py-1.5 text-xs font-medium text-ink-muted transition hover:bg-surface-hover disabled:opacity-50"
+                type="button"
               >
                 Rotate token
               </button>
               <button
-                type="button"
+                className={rowDangerButton}
                 disabled={busyId === svc.id}
                 onClick={() => void remove(svc)}
-                className="rounded-full border border-danger-line px-3 py-1.5 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-50"
+                type="button"
               >
                 Delete
               </button>
@@ -1226,10 +1176,10 @@ function ServiceList({
             </div>
             <div className="flex shrink-0 flex-wrap justify-end gap-2">
               <button
-                type="button"
+                className={rowDangerButton}
                 disabled={busyId === token.id}
                 onClick={() => void revokeToken(token)}
-                className="rounded-full border border-danger-line px-3 py-1.5 text-xs font-medium text-danger transition hover:bg-danger-soft disabled:opacity-50"
+                type="button"
               >
                 Revoke
               </button>

@@ -1,17 +1,13 @@
 import type { BoardAskDto, BoardAskEventDto, BoardPageDto } from "@hark/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { BrandWordmark } from "../components/BrandWordmark";
 import { AskCard } from "../components/board/AskCard";
 import { CrewStrip, Lane, NoteCard, WorkCard } from "../components/board/Cards";
+import { SkeletonList } from "../components/DashboardKit";
+import { quietButton } from "../components/ui";
 import { api } from "../lib/api";
-import { signOut, useSession } from "../lib/auth";
+import { useSession } from "../lib/auth";
 import { subscribeToBoardUpdates } from "../lib/boardUpdates";
-
-/** Whether this page runs inside the SHark iPhone web view, which has no chrome of its own. */
-function inWebView(): boolean {
-  return typeof window !== "undefined" && "hark" in window;
-}
 
 export function Board() {
   const { data: session, isPending } = useSession();
@@ -101,185 +97,160 @@ export function Board() {
   };
 
   if (isPending || !session) {
-    return <div className="flex min-h-dvh items-center justify-center text-ink-faint">…</div>;
+    return (
+      <main className="mx-auto w-full max-w-3xl px-4 pt-6 pb-16 sm:px-6">
+        <SkeletonList label="Loading the board" rowClassName="h-28" rows={3} />
+      </main>
+    );
   }
 
   const fresh = page?.waiting.filter((ask) => !ask.aged) ?? [];
   const aged = page?.waiting.filter((ask) => ask.aged) ?? [];
-  const embedded = inWebView();
 
   return (
-    <div className="min-h-dvh">
-      {embedded ? null : (
-        <header>
-          <div className="mx-auto flex h-16 w-full max-w-3xl items-center justify-between px-4 sm:px-6">
-            <Link className="text-lg font-semibold" to="/">
-              <BrandWordmark />
-            </Link>
-            <nav className="flex items-center gap-3 text-sm">
-              <Link className="text-ink-subtle transition hover:text-ink" to="/dashboard">
-                Dashboard
-              </Link>
-              <button
-                className="min-h-9 rounded-full border border-line bg-surface px-3 text-xs font-medium text-ink-muted shadow-xs transition-colors hover:bg-surface-hover"
-                onClick={() => void signOut().then(() => navigate("/"))}
-                type="button"
-              >
-                Sign out
-              </button>
-            </nav>
-          </div>
-        </header>
-      )}
-
-      <main className="mx-auto w-full max-w-3xl px-4 pb-16 pt-6 sm:px-6">
-        <div className="flex items-end justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold">Board</h1>
-            <p className="mt-1 text-sm text-ink-subtle">
-              {waitingCount === 0
-                ? "Nothing is waiting on you."
-                : waitingCount === 1
-                  ? "One thing is waiting on you."
-                  : `${waitingCount} things are waiting on you.`}
-            </p>
-          </div>
-          <button
-            className="min-h-9 rounded-full border border-line px-3 text-xs font-medium text-ink-muted transition hover:bg-surface-hover"
-            onClick={() => void refresh()}
-            type="button"
-          >
-            Refresh
-          </button>
-        </div>
-
-        {error ? (
-          <p className="mt-4 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger">
-            {error}
+    <main className="mx-auto w-full max-w-3xl px-4 pt-6 pb-16 sm:px-6">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Board</h1>
+          <p className="mt-1 text-sm text-ink-subtle">
+            {waitingCount === 0
+              ? "Nothing is waiting on you."
+              : waitingCount === 1
+                ? "One thing is waiting on you."
+                : `${waitingCount} things are waiting on you.`}
           </p>
-        ) : null}
+        </div>
+        <button className={quietButton} onClick={() => void refresh()} type="button">
+          Refresh
+        </button>
+      </div>
 
-        {page ? (
-          <div className="mt-4">
-            <CrewStrip crew={page.crew} />
+      {error ? (
+        <p className="mt-4 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger">
+          {error}
+        </p>
+      ) : null}
+
+      {page ? (
+        <div className="mt-4">
+          <CrewStrip crew={page.crew} />
+        </div>
+      ) : null}
+
+      {focused ? (
+        <section aria-labelledby="focused-heading" className="mt-8">
+          <div className="mb-3 flex items-baseline justify-between">
+            <h2 className="text-lg font-semibold text-ink" id="focused-heading">
+              From your notification
+            </h2>
+            <Link className={`${quietButton} text-accent-text`} to="/board">
+              Whole board
+            </Link>
           </div>
-        ) : null}
+          <AskCard ask={focused.ask} events={focused.events} expanded onChanged={replaceAsk} />
+        </section>
+      ) : null}
 
-        {focused ? (
-          <section aria-labelledby="focused-heading" className="mt-8">
-            <div className="mb-3 flex items-baseline justify-between">
-              <h2 className="text-lg font-semibold text-ink" id="focused-heading">
-                From your notification
-              </h2>
-              <Link className="text-xs font-medium text-accent-text" to="/board">
-                Whole board
-              </Link>
-            </div>
-            <AskCard ask={focused.ask} events={focused.events} expanded onChanged={replaceAsk} />
-          </section>
-        ) : null}
-
-        {page ? (
-          <div className="mt-8">
-            <Lane
-              count={fresh.length}
-              empty="Your agents have no open questions."
-              id="waiting"
-              title="Waiting on you"
-            >
-              <div className="flex flex-col gap-3">
-                {fresh
-                  .filter((ask) => ask.id !== focused?.ask.id)
-                  .map((ask) => (
-                    <AskCard ask={ask} key={ask.id} onChanged={replaceAsk} />
-                  ))}
-              </div>
-            </Lane>
-
-            {aged.length > 0 ? (
-              <section className="mt-6">
-                <button
-                  aria-expanded={showAged}
-                  className="text-sm font-medium text-ink-subtle hover:text-ink"
-                  onClick={() => setShowAged((value) => !value)}
-                  type="button"
-                >
-                  {showAged ? "Hide" : "Show"} {aged.length} older{" "}
-                  {aged.length === 1 ? "question" : "questions"} still open
-                </button>
-                {showAged ? (
-                  <div className="mt-3 flex flex-col gap-3">
-                    {aged.map((ask) => (
-                      <AskCard ask={ask} key={ask.id} onChanged={replaceAsk} />
-                    ))}
-                  </div>
-                ) : null}
-              </section>
-            ) : null}
-
-            <Lane
-              count={page.withAgent.length}
-              empty="Every answer has reached its agent."
-              id="with-agent"
-              title="Answered, with the agent"
-            >
-              <div className="flex flex-col gap-3">
-                {page.withAgent.map((ask) => (
+      {page ? (
+        <div className="mt-8">
+          <Lane
+            count={fresh.length}
+            empty="Your agents have no open questions."
+            id="waiting"
+            title="Waiting on you"
+          >
+            <div className="flex flex-col gap-3">
+              {fresh
+                .filter((ask) => ask.id !== focused?.ask.id)
+                .map((ask) => (
                   <AskCard ask={ask} key={ask.id} onChanged={replaceAsk} />
                 ))}
-              </div>
-            </Lane>
+            </div>
+          </Lane>
 
-            <Lane
-              count={page.inFlight.length}
-              empty="Nothing is running."
-              id="in-flight"
-              title="In flight"
-            >
-              <div className="flex flex-col gap-3">
-                {page.inFlight.map((item) => (
-                  <WorkCard item={item} key={item.id} />
-                ))}
-              </div>
-            </Lane>
+          {aged.length > 0 ? (
+            <section className="mt-6">
+              <button
+                aria-expanded={showAged}
+                className={`${quietButton} px-0 text-sm hover:bg-transparent`}
+                onClick={() => setShowAged((value) => !value)}
+                type="button"
+              >
+                {showAged ? "Hide" : "Show"} {aged.length} older{" "}
+                {aged.length === 1 ? "question" : "questions"} still open
+              </button>
+              {showAged ? (
+                <div className="mt-3 flex flex-col gap-3">
+                  {aged.map((ask) => (
+                    <AskCard ask={ask} key={ask.id} onChanged={replaceAsk} />
+                  ))}
+                </div>
+              ) : null}
+            </section>
+          ) : null}
 
-            <Lane count={page.queued.length} empty="The queue is empty." id="queued" title="Queued">
-              <div className="flex flex-col gap-3">
-                {page.queued.map((item) => (
-                  <WorkCard item={item} key={item.id} />
-                ))}
-              </div>
-            </Lane>
+          <Lane
+            count={page.withAgent.length}
+            empty="Every answer has reached its agent."
+            id="with-agent"
+            title="Answered, with the agent"
+          >
+            <div className="flex flex-col gap-3">
+              {page.withAgent.map((ask) => (
+                <AskCard ask={ask} key={ask.id} onChanged={replaceAsk} />
+              ))}
+            </div>
+          </Lane>
 
-            <Lane count={page.notes.length} empty="No heads-up notes." id="notes" title="Heads-up">
-              <div className="flex flex-col gap-3">
-                {page.notes.map((note) => (
-                  <NoteCard key={note.id} note={note} />
-                ))}
-              </div>
-            </Lane>
+          <Lane
+            count={page.inFlight.length}
+            empty="Nothing is running."
+            id="in-flight"
+            title="In flight"
+          >
+            <div className="flex flex-col gap-3">
+              {page.inFlight.map((item) => (
+                <WorkCard item={item} key={item.id} />
+              ))}
+            </div>
+          </Lane>
 
-            <Lane
-              count={page.done.length}
-              empty="Nothing finished in the last two weeks."
-              id="done"
-              title="Recently done"
-            >
-              <div className="flex flex-col gap-3">
-                {page.done.map((entry) =>
-                  entry.kind === "work" ? (
-                    <WorkCard item={entry.item} key={entry.item.id} />
-                  ) : (
-                    <AskCard ask={entry.item} key={entry.item.id} onChanged={replaceAsk} />
-                  ),
-                )}
-              </div>
-            </Lane>
-          </div>
-        ) : error ? null : (
-          <p className="mt-8 text-sm text-ink-faint">Loading the board…</p>
-        )}
-      </main>
-    </div>
+          <Lane count={page.queued.length} empty="The queue is empty." id="queued" title="Queued">
+            <div className="flex flex-col gap-3">
+              {page.queued.map((item) => (
+                <WorkCard item={item} key={item.id} />
+              ))}
+            </div>
+          </Lane>
+
+          <Lane count={page.notes.length} empty="No heads-up notes." id="notes" title="Heads-up">
+            <div className="flex flex-col gap-3">
+              {page.notes.map((note) => (
+                <NoteCard key={note.id} note={note} />
+              ))}
+            </div>
+          </Lane>
+
+          <Lane
+            count={page.done.length}
+            empty="Nothing finished in the last two weeks."
+            id="done"
+            title="Recently done"
+          >
+            <div className="flex flex-col gap-3">
+              {page.done.map((entry) =>
+                entry.kind === "work" ? (
+                  <WorkCard item={entry.item} key={entry.item.id} />
+                ) : (
+                  <AskCard ask={entry.item} key={entry.item.id} onChanged={replaceAsk} />
+                ),
+              )}
+            </div>
+          </Lane>
+        </div>
+      ) : error ? null : (
+        <SkeletonList className="mt-8" label="Loading the board" rowClassName="h-28" rows={3} />
+      )}
+    </main>
   );
 }
