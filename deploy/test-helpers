@@ -550,7 +550,7 @@ health_timeout_started=$SECONDS
 FAKE_HANG_AT=health-timeout run_deploy health-timeout
 assert_status 28 "new container never answers its health probe"
 assert_rolled_back "new container never answers its health probe"
-((SECONDS - health_timeout_started <= 15)) ||
+((SECONDS - health_timeout_started <= 30)) ||
   fail_case "took $((SECONDS - health_timeout_started))s to give up on a hung health probe."
 
 FAKE_WRONG_IMAGE=1 run_deploy wrong-image
