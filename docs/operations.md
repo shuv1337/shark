@@ -188,8 +188,11 @@ operator review:
 - The latest nightly/pre-deploy Restic snapshot is verified.
 - Disk pressure, container restarts, and the capped local log files are healthy.
 - Expo receipts and APNs responses are reviewed; expired native tokens are deactivated per target.
-- `/sw.js` returns 200 with JavaScript content, and a signed-in browser can enable, test, disable,
-  and re-enable notifications without creating duplicate active subscriptions.
+- The anonymous app assets return their expected content types: `/sw.js`, `/favicon.png`,
+  `/app-store-icon.png`, `/manifest.webmanifest`, `/apple-touch-icon.png`, and the three explicit
+  files under `/icons/`. Any other `/icons/*` path and all `/assets/*` remain private.
+- A signed-in browser can enable, test, disable, and re-enable notifications without creating
+  duplicate active subscriptions.
 - Web Push responses with an expired subscription status deactivate only that browser target; they
   do not prevent delivery to healthy iPhone or browser targets. A push service that resolves to a
   non-public address, fails DNS, or doesn't finish resolution plus the request within 10 seconds

@@ -13,7 +13,16 @@ export const PRIVATE_DOCUMENT_ROUTES = [
   "/board",
 ] as const;
 export const PRIVATE_ROOT_ASSETS = ["/ogimage.png"] as const;
-export const PUBLIC_PUSH_ASSETS = ["/sw.js", "/favicon.png", "/app-store-icon.png"] as const;
+export const PUBLIC_APP_ASSETS = [
+  "/sw.js",
+  "/favicon.png",
+  "/app-store-icon.png",
+  "/manifest.webmanifest",
+  "/apple-touch-icon.png",
+  "/icons/icon-192.png",
+  "/icons/icon-512.png",
+  "/icons/icon-maskable-512.png",
+] as const;
 
 export function mountPrivateStaticRoutes(
   app: Hono,
@@ -53,11 +62,22 @@ export function mountPrivateStaticRoutes(
       app.get(path, requireAuth, serveStatic({ path: `${staticRoot}/${file}` }));
     }
   }
-  for (const path of PUBLIC_PUSH_ASSETS) {
+  for (const path of PUBLIC_APP_ASSETS) {
     const file = path.slice(1);
     if (existsSync(resolve(clientDir, file))) {
-      app.get(path, serveStatic({ path: `${staticRoot}/${file}` }));
+      app.get(
+        path,
+        async (c, next) => {
+          if (path === "/manifest.webmanifest") {
+            c.header("Content-Type", "application/manifest+json; charset=utf-8");
+          }
+          await next();
+        },
+        serveStatic({ path: `${staticRoot}/${file}` }),
+      );
     }
   }
+  // Named PWA icons above are public; no other file inherits that boundary.
+  app.use("/icons/*", requireAuth);
   app.use("/assets/*", requireAuth, serveStatic({ root: staticRoot }));
 }

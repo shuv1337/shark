@@ -26,8 +26,10 @@ changes.
   - the Apple app-site association (`/.well-known/apple-app-site-association`) and the static
     SSHuv handoff page (`/conversation/v1/:reference`), which never looks up, echoes, or logs the
     reference (`routes/sshuv-handoff.ts`);
-  - the push service worker and the icons its notifications use (`PUBLIC_PUSH_ASSETS` in
-    `static.ts`: `/sw.js`, `/favicon.png`, `/app-store-icon.png`).
+  - the service worker, PWA manifest, and explicit app icons (`PUBLIC_APP_ASSETS` in `static.ts`:
+    `/sw.js`, `/favicon.png`, `/app-store-icon.png`, `/manifest.webmanifest`,
+    `/apple-touch-icon.png`, and the three named PWA icons under `/icons/`). No wildcard icon
+    directory is public.
 - Production uses the `shark-prod` deployment, attested immutable GHCR digests,
   1Password-fed secrets, exact-schema SQLite checkpoint validation, encrypted Restic snapshots,
   and operator promotion with no GitHub VM credential.
