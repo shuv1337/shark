@@ -133,6 +133,40 @@ export function IconSignOut(props: IconProps) {
   );
 }
 
+/** No route to the server: the signal arcs, struck through. */
+export function IconOffline(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3 8.5a15 15 0 0 1 18 0" />
+      <path d="M6.5 12.25a10 10 0 0 1 11 0" />
+      <path d="M10 15.9a5 5 0 0 1 4 0" />
+      <circle cx="12" cy="19" r="0.9" />
+      <path d="M4 20 20 4" />
+    </Icon>
+  );
+}
+
+/** iOS and macOS Safari share control: a box with the arrow leaving it. */
+export function IconShare(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 3.75v10" />
+      <path d="M8.5 7.25 12 3.75l3.5 3.5" />
+      <path d="M7.5 10.5H6.25A1.75 1.75 0 0 0 4.5 12.25v6A1.75 1.75 0 0 0 6.25 20h11.5a1.75 1.75 0 0 0 1.75-1.75v-6a1.75 1.75 0 0 0-1.75-1.75H16.5" />
+    </Icon>
+  );
+}
+
+/** The "Add to Home Screen" row's mark: a plus inside a rounded square. */
+export function IconPlusSquare(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect height="15" rx="3.25" width="15" x="4.5" y="4.5" />
+      <path d="M12 8.75v6.5M8.75 12h6.5" />
+    </Icon>
+  );
+}
+
 /** Points down; rotate with a utility class for the other three directions. */
 export function IconChevronDown(props: IconProps) {
   return (
