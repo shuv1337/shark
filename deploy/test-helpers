@@ -4,9 +4,22 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 test_root="$(mktemp -d)"
 cleanup() {
+  if [[ -f "$test_root/shark/fake-op-daemons" ]]; then
+    xargs kill 2>/dev/null <"$test_root/shark/fake-op-daemons" || true
+  fi
   rm -rf -- "$test_root"
 }
 trap cleanup EXIT
+
+# The SIGINT cases need a deliverable SIGINT. A job started in the background from a
+# non-interactive shell inherits an ignored SIGINT, which bash cannot trap, so those cases would
+# hang instead of failing. Refuse to run in that state.
+sigint_probe=0
+bash -c 'trap "exit 99" INT; kill -INT "$$"; sleep 1; exit 0' || sigint_probe=$?
+if [[ "$sigint_probe" -ne 99 ]]; then
+  echo "SIGINT is ignored in this shell; run deploy/test-helpers in the foreground." >&2
+  exit 1
+fi
 
 deploy_root="$test_root/shark"
 credential_root="$test_root/credentials"
@@ -25,6 +38,12 @@ fi
 if [[ "${OP_CACHE:-}" != "false" ]]; then
   echo "1Password would leave a background cache daemon running." >&2
   exit 1
+fi
+# The real CLI leaves a detached `op daemon` behind on every read; the wrapper must stop it.
+if [[ ! -e "$SHARK_DEPLOY_ROOT/fake-op-daemon.pid" ]]; then
+  (exec -a "op daemon" sleep 300) >/dev/null 2>&1 </dev/null &
+  printf '%s\n' "$!" >"$SHARK_DEPLOY_ROOT/fake-op-daemon.pid"
+  printf '%s\n' "$!" >>"$SHARK_DEPLOY_ROOT/fake-op-daemons"
 fi
 if [[ "${OP_FAIL:-0}" == "1" ]]; then
   exit 1
@@ -145,7 +164,29 @@ sha256_file() {
   fi
 }
 
+# Each wrapper run must stop the `op daemon` its fake `op` started, and leave a daemon that was
+# already running alone.
+assert_started_op_daemon_stopped() {
+  local pid _attempt
+  pid="$(<"$deploy_root/fake-op-daemon.pid")"
+  rm -f -- "$deploy_root/fake-op-daemon.pid"
+  for _attempt in $(seq 1 20); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.2
+  done
+  echo "$1 left the 1Password daemon it started running." >&2
+  exit 1
+}
+(exec -a "op daemon" sleep 300) >/dev/null 2>&1 </dev/null &
+preexisting_op_daemon=$!
+printf '%s\n' "$preexisting_op_daemon" >>"$deploy_root/fake-op-daemons"
+
 "$repo_root/deploy/shark-materialize-secrets" "$deploy_root/.env.new"
+assert_started_op_daemon_stopped "Secret materializer"
+kill -0 "$preexisting_op_daemon" || {
+  echo "Secret materializer stopped a 1Password daemon it did not start." >&2
+  exit 1
+}
 [[ "$(file_mode "$deploy_root/.env.new")" == "600" ]]
 grep -qx 'APP_URL=https://shark.shuv.dev' "$deploy_root/.env.new"
 grep -qx 'APPLE_SIGN_IN_PRIVATE_KEY=QUJDRA==' "$deploy_root/.env.new"
@@ -166,12 +207,14 @@ if OP_FAIL=1 "$repo_root/deploy/shark-materialize-secrets" "$deploy_root/.env.ne
 fi
 environment_after="$(sha256_file "$deploy_root/.env.new")"
 [[ "$environment_before" == "$environment_after" ]]
+assert_started_op_daemon_stopped "Secret materializer (failed read)"
 if OP_EXTRA=1 "$repo_root/deploy/shark-materialize-secrets" "$deploy_root/.env.new" \
   >/dev/null 2>&1; then
   echo "Secret materializer accepted an unexpected 1Password item." >&2
   exit 1
 fi
 [[ "$environment_before" == "$(sha256_file "$deploy_root/.env.new")" ]]
+assert_started_op_daemon_stopped "Secret materializer (unexpected item)"
 
 backup_dir="$deploy_root/backup.ABC123"
 install -d -m 700 "$backup_dir"
@@ -180,6 +223,12 @@ printf 'sqlite fixture\n' >"$backup_file"
 snapshot_id="$("$repo_root/deploy/shark-restic-backup" "$backup_file")"
 [[ "$snapshot_id" == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ]]
 [[ ! -e "$backup_file" ]]
+assert_started_op_daemon_stopped "Restic helper"
+kill -0 "$preexisting_op_daemon" || {
+  echo "Restic helper stopped a 1Password daemon it did not start." >&2
+  exit 1
+}
+kill "$preexisting_op_daemon"
 
 failed_backup_dir="$deploy_root/nightly-backup.FAIL01"
 install -d -m 700 "$failed_backup_dir"
@@ -191,6 +240,7 @@ if RESTIC_FAIL_CHECK=1 "$repo_root/deploy/shark-restic-backup" "$failed_backup_f
   exit 1
 fi
 [[ -f "$failed_backup_file" ]]
+assert_started_op_daemon_stopped "Restic helper (failed check)"
 
 outside_file="$test_root/hark.sqlite.pre-0123456789abcdef0123456789abcdef01234567"
 printf 'must remain\n' >"$outside_file"
@@ -317,6 +367,12 @@ case "$url" in
       touch "$FAKE_STATE/reached"
       sleep 30
     fi
+    # A server that accepts the connection and never answers: honor --max-time by timing out.
+    if [[ "${FAKE_HANG_AT:-}" == "health-timeout" ]]; then
+      [[ " $* " == *" --max-time "* ]] || exit 64
+      sleep 1
+      exit 28
+    fi
     ;;
   https://shark.shuv.dev/api/health) ;;
   https://shark.shuv.dev/robots.txt | https://shark.shuv.dev/sitemap.xml) printf '404' ;;
@@ -376,7 +432,7 @@ run_deploy() {
   set -m
   PATH="$deploy_fake_bin:$PATH" \
     SHARK_DEPLOY_ROOT="$root" SHARK_COMPOSE_FILE="$FAKE_STATE/compose.yaml" \
-    SHARK_HELPER_ROOT="$deploy_helpers" \
+    SHARK_HELPER_ROOT="$deploy_helpers" SHARK_READINESS_SECONDS=3 \
     "$repo_root/deploy/shark-deploy" "$next_deploy_sha" "$next_deploy_digest" \
     >"$FAKE_STATE/out" 2>&1 9>&- &
   local pid=$!
@@ -487,6 +543,15 @@ assert_rolled_back "SIGTERM while waiting for the new container"
 FAKE_HANG_AT=health run_deploy int-during-health INT
 assert_status 130 "SIGINT while waiting for the new container"
 assert_rolled_back "SIGINT while waiting for the new container"
+
+# The new container accepts connections but never answers: the readiness budget expires, the
+# confirming probe times out, and the previous release is restarted without any signal.
+health_timeout_started=$SECONDS
+FAKE_HANG_AT=health-timeout run_deploy health-timeout
+assert_status 28 "new container never answers its health probe"
+assert_rolled_back "new container never answers its health probe"
+((SECONDS - health_timeout_started <= 30)) ||
+  fail_case "took $((SECONDS - health_timeout_started))s to give up on a hung health probe."
 
 FAKE_WRONG_IMAGE=1 run_deploy wrong-image
 assert_status 70 "running image mismatch"

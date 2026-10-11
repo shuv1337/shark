@@ -10,7 +10,7 @@ if [[ "$#" -ne 1 ]]; then
   exit 64
 fi
 
-for command in op cmp jq realpath restic ssh; do
+for command in op cmp jq pgrep realpath restic ssh; do
   command -v "$command" >/dev/null || {
     echo "Required command is unavailable: $command" >&2
     exit 69
@@ -49,7 +49,22 @@ if [[ -z "$OP_SERVICE_ACCOUNT_TOKEN" ||
 fi
 export OP_SERVICE_ACCOUNT_TOKEN
 
-# OP_CACHE=false keeps the CLI from leaving a background `op daemon` behind after the run.
+# 1Password CLI 2.35 starts a background `op daemon` even with OP_CACHE=false, so this run stops
+# any daemon it started on exit. A daemon that was already running is left alone.
+op_daemons() {
+  pgrep -u "$(id -u)" -f '^op daemon( |$)' || true
+}
+op_daemons_before="$(op_daemons)"
+stop_started_op_daemons() {
+  local pid
+  for pid in $(op_daemons); do
+    grep -qx -- "$pid" <<<"$op_daemons_before" && continue
+    # Re-read the command line right before signalling, so a PID recycled since the lookup is
+    # left alone.
+    [[ "$(ps -o command= -p "$pid" 2>/dev/null)" =~ ^op\ daemon(\ |$) ]] || continue
+    kill -- "$pid" 2>/dev/null || true
+  done
+}
 op_without_deploy_lock() {
   OP_CACHE=false op "$@" 9>&-
 }
@@ -59,6 +74,7 @@ secrets_json="$(mktemp "$deploy_root/backup-secrets.XXXXXXXX.json")"
 backup_log="$(mktemp "$deploy_root/restic-backup.XXXXXXXX.json")"
 restored_copy="$(mktemp "$deploy_root/restic-restore.XXXXXXXX.sqlite")"
 cleanup() {
+  stop_started_op_daemons
   rm -f -- "$items_json" "$secrets_json" "$backup_log" "$restored_copy"
 }
 trap cleanup EXIT

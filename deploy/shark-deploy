@@ -21,6 +21,7 @@ done
 deploy_root="${SHARK_DEPLOY_ROOT:-/home/exedev/shark}"
 compose_file="${SHARK_COMPOSE_FILE:-/etc/shark/compose.yaml}"
 helper_root="${SHARK_HELPER_ROOT:-/usr/local/sbin}"
+readiness_seconds="${SHARK_READINESS_SECONDS:-60}"
 runtime_env="$deploy_root/.env"
 provenance_root="$deploy_root/provenance"
 lock_file="$deploy_root/deploy.lock"
@@ -209,13 +210,15 @@ fi
 new_release_issued=1
 DEPLOY_GIT_SHA="$deploy_sha" SHARK_IMAGE="$image" "${compose[@]}" up --detach
 new_release_up=1
-for _attempt in $(seq 1 30); do
-  if curl --fail --silent http://127.0.0.1:8787/api/health >/dev/null; then
-    break
-  fi
+# The readiness wait has one overall budget and every probe has its own deadline, so a server
+# that accepts connections but never answers fails into the rollback within about that budget
+# instead of stalling the deploy.
+readiness_deadline=$((SECONDS + readiness_seconds))
+until curl --fail --silent --max-time 5 http://127.0.0.1:8787/api/health >/dev/null; do
+  ((SECONDS < readiness_deadline)) || break
   sleep 2
 done
-curl --fail --silent http://127.0.0.1:8787/api/health >/dev/null
+curl --fail --silent --max-time 10 http://127.0.0.1:8787/api/health >/dev/null
 
 container_id="$(DEPLOY_GIT_SHA="$deploy_sha" SHARK_IMAGE="$image" "${compose[@]}" ps --quiet shark)"
 running_image_id="$(docker inspect --format '{{.Image}}' "$container_id")"
@@ -225,9 +228,9 @@ if [[ "$running_image_id" != "$expected_image_id" ]]; then
   exit 70
 fi
 
-curl --fail --silent https://shark.shuv.dev/api/health >/dev/null
+curl --fail --silent --max-time 20 https://shark.shuv.dev/api/health >/dev/null
 for path in / /docs /privacy /terms /dashboard /cli/authorize; do
-  status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 20 \
     "https://shark.shuv.dev${path}")"
   case "$status" in
     302|303|307|401) ;;
@@ -235,7 +238,7 @@ for path in / /docs /privacy /terms /dashboard /cli/authorize; do
   esac
 done
 for path in /robots.txt /sitemap.xml; do
-  status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 20 \
     "https://shark.shuv.dev${path}")"
   [[ "$status" == "404" ]] || {
     echo "Unexpected removed-surface status $status for $path" >&2
