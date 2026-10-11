@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../lib/api";
+import { api, ApiRequestError } from "../lib/api";
 import { offlineProps, useOffline } from "../lib/connection";
 import {
   browserDeviceName,
@@ -23,7 +23,10 @@ type BrowserNotificationState =
 export function BrowserNotifications({ onChanged = () => {} }: { onChanged?: () => void }) {
   const [state, setState] = useState<BrowserNotificationState>("checking");
   const [subscription, setSubscription] = useState<PushSubscription | null>(null);
-  const [busy, setBusy] = useState<"enable" | "test" | "disable" | null>(null);
+  const [busy, setBusy] = useState<"enable" | "test" | "disable" | "reset" | null>(null);
+  // The browser holds a subscription the server refused; it must be dropped before a new one
+  // can be created, because `pushManager.subscribe` returns the existing one.
+  const [refused, setRefused] = useState<PushSubscription | null>(null);
   // Removing a device, disconnecting a client and the push handshake are all
   // server writes, so they say why rather than failing on the tap.
   const offline = useOffline();
@@ -47,8 +50,10 @@ export function BrowserNotifications({ onChanged = () => {} }: { onChanged?: () 
       return;
     }
 
+    setRefused(null);
+    let current: PushSubscription | null = null;
     try {
-      const current = await currentWebPushSubscription();
+      current = await currentWebPushSubscription();
       if (current) {
         await api.registerWebPushSubscription(current.toJSON(), browserDeviceName());
         onChangedRef.current();
@@ -57,9 +62,27 @@ export function BrowserNotifications({ onChanged = () => {} }: { onChanged?: () 
       setState(current ? "enabled" : "default");
     } catch (err) {
       setState("error");
-      setError(errorMessage(err, "Could not check browser notifications."));
+      setError(describeRegistrationError(err, "Could not check browser notifications."));
+      if (current && err instanceof ApiRequestError && err.status === 400) setRefused(current);
     }
   }, []);
+
+  const reset = useCallback(async () => {
+    if (!refused) return;
+    setBusy("reset");
+    setError(null);
+    try {
+      await refused.unsubscribe();
+      setRefused(null);
+      setSubscription(null);
+      setState("default");
+      setMessage("The old subscription was removed. Enable notifications to create a new one.");
+    } catch (err) {
+      setError(errorMessage(err, "Could not remove the old subscription."));
+    } finally {
+      setBusy(null);
+    }
+  }, [refused]);
 
   useEffect(() => {
     void inspect();
@@ -162,6 +185,17 @@ export function BrowserNotifications({ onChanged = () => {} }: { onChanged?: () 
                 {busy === "enable" ? "Enabling…" : "Enable notifications"}
               </button>
             ) : null}
+            {state === "error" && refused ? (
+              <button
+                className={primaryButtonSmall}
+                disabled={busy !== null}
+                onClick={() => void reset()}
+                type="button"
+                {...offlineProps(offline)}
+              >
+                {busy === "reset" ? "Removing…" : "Remove old subscription"}
+              </button>
+            ) : null}
             {state === "error" ? (
               <button
                 className={secondaryButton}
@@ -212,4 +246,19 @@ export function BrowserNotifications({ onChanged = () => {} }: { onChanged?: () 
       </div>
     </section>
   );
+}
+
+/**
+ * A 400 from the subscription endpoint carries the validation issue (for example a push
+ * service that is not on the allowlist); show it, since "invalid" alone cannot be acted on.
+ */
+function describeRegistrationError(error: unknown, fallback: string): string {
+  const base = errorMessage(error, fallback);
+  if (!(error instanceof ApiRequestError) || !Array.isArray(error.issues)) return base;
+  const detail = error.issues
+    .map((issue) =>
+      issue && typeof issue === "object" ? (issue as { message?: unknown }).message : null,
+    )
+    .find((message): message is string => typeof message === "string" && message.length > 0);
+  return detail ? `${base}: ${detail}.` : base;
 }

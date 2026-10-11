@@ -43,6 +43,9 @@ export function publicHttpsHref(value: string | null | undefined): string | null
  */
 export const WEB_PUSH_SERVICE_HOSTS = [
   "fcm.googleapis.com",
+  // Chromium builds that register through Google's `jmt17` GCM front end (seen on Linux
+  // Chromium) get this host instead of `fcm.googleapis.com`; it is the same push service.
+  "jmt17.google.com",
   "updates.push.services.mozilla.com",
   "*.notify.windows.com",
   "*.push.apple.com",
