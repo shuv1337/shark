@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../lib/api";
-import { resetNavCounts } from "../lib/counts";
+import { resetNavCounts, useNavCounts } from "../lib/counts";
 import { Inbox } from "./Inbox";
 
 const session = { user: { id: "usr_synthetic", email: "operator@example.test", image: null } };
@@ -17,15 +17,24 @@ vi.mock("../lib/auth", () => ({
 }));
 
 vi.mock("../lib/api", () => ({
-  ApiRequestError: class extends Error {},
+  // `InboxDetailView` only uses this for an `instanceof` check on a failure.
+  ApiRequestError: Error,
   api: {
     listInbox: vi.fn(),
     getInboxItem: vi.fn(),
+    getInboxCounts: vi.fn(),
     markInboxItemRead: vi.fn(),
+    markAllInboxRead: vi.fn(),
     listLiveActivities: vi.fn(),
     listEvents: vi.fn(),
+    getBoard: vi.fn(async () => ({ waiting: [] })),
   },
 }));
+
+/** Stands in for the navigation badge, which reads the same shared counts. */
+function Badge() {
+  return <p data-testid="badge">{useNavCounts().inboxUnread}</p>;
+}
 
 const item: InboxItemDto = {
   id: "ibox:interaction:int_1",
@@ -73,6 +82,8 @@ const detail: InboxDetailDto = {
 describe("inbox pages", () => {
   let container: HTMLDivElement;
   let root: Root;
+  /** What the server would answer right now, as actions change it. */
+  let unread = 3;
 
   const mount = async (path: string) => {
     await act(async () =>
@@ -82,10 +93,12 @@ describe("inbox pages", () => {
             <Route element={<Inbox />} path="/inbox" />
             <Route element={<Inbox />} path="/inbox/:id" />
           </Routes>
+          <Badge />
         </MemoryRouter>,
       ),
     );
   };
+  const badge = () => container.querySelector("[data-testid='badge']")?.textContent;
   const click = async (element: Element | null | undefined) => {
     if (!element) throw new Error("Nothing to click");
     await act(async () => (element as HTMLElement).click());
@@ -102,6 +115,11 @@ describe("inbox pages", () => {
       .mockResolvedValue({ items: [item], nextCursor: null, unresolvedCount: 1 });
     vi.mocked(api.getInboxItem).mockReset().mockResolvedValue(detail);
     vi.mocked(api.markInboxItemRead).mockReset().mockResolvedValue({ ok: true });
+    vi.mocked(api.markAllInboxRead).mockReset().mockResolvedValue({ ok: true });
+    unread = 3;
+    vi.mocked(api.getInboxCounts)
+      .mockReset()
+      .mockImplementation(async () => ({ unread, needsAction: 1 }));
     vi.mocked(api.listLiveActivities).mockReset().mockResolvedValue({ activities: [] });
     container = document.createElement("div");
     document.body.append(container);
@@ -172,5 +190,48 @@ describe("inbox pages", () => {
     await mount(`/inbox/${encodeURIComponent(item.id)}`);
     expect(container.textContent).toContain("This notification is not available");
     expect(container.textContent).toContain("Item not found");
+  });
+
+  /**
+   * The badge is the exact unread total from the server, so every action that
+   * changes read state asks for it again rather than adjusting a local guess.
+   */
+  it("drops the badge when opening an unread item reads it", async () => {
+    await mount("/inbox");
+    expect(badge()).toBe("3");
+
+    unread = 2;
+    await click(row());
+
+    expect(api.markInboxItemRead).toHaveBeenCalledWith(item.id);
+    expect(badge()).toBe("2");
+  });
+
+  it("leaves the badge alone for an item that was already read", async () => {
+    vi.mocked(api.getInboxItem).mockResolvedValue({
+      ...detail,
+      item: { ...item, readAt: "2026-07-30T19:30:00.000Z" },
+    });
+    await mount("/inbox");
+    unread = 2;
+    await click(row());
+
+    expect(api.markInboxItemRead).not.toHaveBeenCalled();
+    expect(badge()).toBe("3");
+  });
+
+  it("zeroes the badge on mark all read", async () => {
+    await mount("/inbox");
+    expect(badge()).toBe("3");
+
+    unread = 0;
+    await click(
+      [...container.querySelectorAll("button")].find(
+        (node) => node.textContent === "Mark all read",
+      ),
+    );
+
+    expect(api.markAllInboxRead).toHaveBeenCalled();
+    expect(badge()).toBe("0");
   });
 });

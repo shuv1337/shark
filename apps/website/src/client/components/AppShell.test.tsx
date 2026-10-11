@@ -4,7 +4,8 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { publishBoardWaiting, publishInboxPage, resetNavCounts } from "../lib/counts";
+import { api } from "../lib/api";
+import { publishBoardWaiting, refreshInboxCounts, resetNavCounts } from "../lib/counts";
 import { AppShell } from "./AppShell";
 
 const session = { user: { id: "usr_synthetic", email: "operator@example.test", image: null } };
@@ -19,7 +20,7 @@ vi.mock("../lib/auth", () => ({
 vi.mock("../lib/api", () => ({
   api: {
     getBoard: vi.fn(async () => ({ waiting: [] })),
-    listInbox: vi.fn(async () => ({ items: [], nextCursor: null, unresolvedCount: 0 })),
+    getInboxCounts: vi.fn(async () => ({ unread: 0, needsAction: 0 })),
   },
 }));
 
@@ -99,44 +100,52 @@ describe("app shell", () => {
 });
 
 describe("navigation badges", () => {
-  const item = {
-    id: "ibox:event:1",
-    kind: "notification",
-    sourceName: "Deploy Agent",
-    sourceImageUrl: null,
-    title: "Deploy finished",
-    body: "Synthetic body",
-    imageUrl: null,
-    url: null,
-    status: "accepted",
-    result: "Accepted",
-    accepted: 1,
-    failed: 0,
-    needsAction: false,
-    readAt: null,
-    occurredAt: "2026-07-30T19:00:00.000Z",
-    updatedAt: "2026-07-30T19:00:00.000Z",
-    action: null,
-  } as const;
+  const inbox = (unread: number, needsAction: number) => {
+    vi.mocked(api.getInboxCounts).mockResolvedValue({ unread, needsAction });
+    return refreshInboxCounts();
+  };
 
   it("shows no badge when nothing is waiting", () => {
     const html = shellAt("/board");
     expect(html).not.toContain("waiting on you");
-    expect(html).not.toContain("unread or needing action");
+    expect(html).not.toContain("unread");
+    expect(html).not.toContain("needs your response");
   });
 
-  it("counts board asks and unread inbox items, in the header and the tab bar", () => {
+  it("counts board asks and unread inbox items, in the header and the tab bar", async () => {
     publishBoardWaiting(3);
-    publishInboxPage({ items: [item], nextCursor: null, unresolvedCount: 2 });
+    await inbox(2, 0);
 
     const html = shellAt("/board");
     expect(html.match(/3 waiting on you/g)).toHaveLength(2);
-    expect(html.match(/2 unread or needing action/g)).toHaveLength(2);
+    expect(html.match(/2 unread/g)).toHaveLength(2);
   });
 
-  it("caps the counts instead of widening the navigation", () => {
+  /**
+   * Unread and needs-action are different facts: an approval you have read is
+   * no longer unread but is still waiting on you. The count never absorbs it.
+   */
+  it("counts only what is unread, whatever needs an answer", async () => {
+    await inbox(2, 5);
+    const html = shellAt("/inbox");
+    expect(html.match(/2 unread/g)).toHaveLength(2);
+    // Not 7: the two numbers are never added together.
+    expect(html).not.toContain("7 unread");
+    expect(html).not.toContain(">7<");
+    // The dot is the inbox's other signal, and the count already carries one.
+    expect(html).not.toContain("needs your response");
+  });
+
+  it("falls back to a dot when something needs an answer and nothing is unread", async () => {
+    await inbox(0, 3);
+    const html = shellAt("/inbox");
+    expect(html.match(/needs your response/g)).toHaveLength(2);
+    expect(html).not.toContain("3 unread");
+  });
+
+  it("caps the counts instead of widening the navigation", async () => {
     publishBoardWaiting(140);
-    publishInboxPage({ items: [], nextCursor: null, unresolvedCount: 12 });
+    await inbox(12, 0);
 
     const html = shellAt("/board");
     // Header has room for three characters; a phone tab does not.

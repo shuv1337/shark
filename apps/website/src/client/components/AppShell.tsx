@@ -21,9 +21,14 @@ import { focusRing, quietButton } from "./ui";
  * The four primary destinations. Docs lives in the account menu, which is where
  * a reference you read once belongs; it stays a shell route.
  *
- * `count` reads the live badge from the shared nav counts, and `countLabel`
+ * `count` reads the live badge from the shared nav counts and `countLabel`
  * says what the number means for a screen reader, which cannot see that the
  * pill sits next to "Board".
+ *
+ * `dot` is the second signal: something is waiting on you that the number does
+ * not already carry. An inbox item can need an answer and have been read, so
+ * when the unread count is zero the dot is what says the inbox still wants
+ * you. Two indicators on one tab would only compete.
  */
 const NAV_ITEMS = [
   {
@@ -32,16 +37,36 @@ const NAV_ITEMS = [
     icon: IconBoard,
     count: (counts: NavCounts) => counts.boardWaiting,
     countLabel: (count: number) => `${count} waiting on you`,
+    dot: () => false,
+    dotLabel: "",
   },
   {
     to: "/inbox",
     label: "Inbox",
     icon: IconInbox,
-    count: (counts: NavCounts) => counts.inboxAttention,
-    countLabel: (count: number) => `${count} unread or needing action`,
+    count: (counts: NavCounts) => counts.inboxUnread,
+    countLabel: (count: number) => `${count} unread`,
+    dot: (counts: NavCounts) => counts.inboxUnread === 0 && counts.inboxNeedsAction > 0,
+    dotLabel: "needs your response",
   },
-  { to: "/teams", label: "Teams", icon: IconTeams, count: () => 0, countLabel: () => "" },
-  { to: "/settings", label: "Settings", icon: IconSettings, count: () => 0, countLabel: () => "" },
+  {
+    to: "/teams",
+    label: "Teams",
+    icon: IconTeams,
+    count: () => 0,
+    countLabel: () => "",
+    dot: () => false,
+    dotLabel: "",
+  },
+  {
+    to: "/settings",
+    label: "Settings",
+    icon: IconSettings,
+    count: () => 0,
+    countLabel: () => "",
+    dot: () => false,
+    dotLabel: "",
+  },
 ] as const;
 
 /** This deployment is one operator's own server: never a plan, never a quota. */
@@ -111,6 +136,7 @@ export function AppHeader({ column = PAGE_COLUMN }: { column?: string }) {
           <nav aria-label="Primary" className="ml-2 hidden items-center gap-1 md:flex">
             {NAV_ITEMS.map((item) => {
               const count = item.count(counts);
+              const dot = item.dot(counts);
               return (
                 <NavLink
                   className={({ isActive }) =>
@@ -128,6 +154,11 @@ export function AppHeader({ column = PAGE_COLUMN }: { column?: string }) {
                     <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-accent px-1.5 text-[11px] font-semibold text-on-accent">
                       {count > 99 ? "99+" : count}
                       <span className="sr-only">, {item.countLabel(count)}</span>
+                    </span>
+                  ) : null}
+                  {dot ? (
+                    <span className="size-2 rounded-full bg-accent">
+                      <span className="sr-only">, {item.dotLabel}</span>
                     </span>
                   ) : null}
                 </NavLink>
@@ -332,6 +363,7 @@ function TabBar() {
       <ul className="mx-auto flex max-w-md items-stretch">
         {NAV_ITEMS.map((item) => {
           const count = item.count(counts);
+          const dot = item.dot(counts);
           return (
             <li className="flex-1" key={item.to}>
               <NavLink
@@ -348,6 +380,11 @@ function TabBar() {
                     <span className="absolute -top-1 -right-2 inline-flex min-w-[18px] items-center justify-center rounded-full bg-accent px-1 text-[10px] leading-[18px] font-semibold text-on-accent">
                       {count > 9 ? "9+" : count}
                       <span className="sr-only">, {item.countLabel(count)}</span>
+                    </span>
+                  ) : null}
+                  {dot ? (
+                    <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-accent">
+                      <span className="sr-only">, {item.dotLabel}</span>
                     </span>
                   ) : null}
                 </span>

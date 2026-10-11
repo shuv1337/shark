@@ -10,7 +10,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { ApiRequestError, api } from "../lib/api";
-import { publishInboxPage } from "../lib/counts";
+import { refreshInboxCounts } from "../lib/counts";
 import { subscribeToInboxUpdates } from "../lib/inboxUpdates";
 import { ActivityLogSection } from "./ActivityLog";
 import { useConfirm } from "./ConfirmDialog";
@@ -99,8 +99,6 @@ export function InboxPanel() {
         setItems((current) => (cursor ? [...current, ...page.items] : page.items));
         setNextCursor(page.nextCursor);
         setUnresolvedCount(page.unresolvedCount);
-        // The nav badge never has to read the inbox while the inbox is open.
-        if (!cursor) publishInboxPage(page);
         setError(null);
       } catch (reason) {
         if (request !== listRequest.current) return;
@@ -127,6 +125,12 @@ export function InboxPanel() {
 
   useEffect(() => subscribeToInboxUpdates(() => void load()), [load]);
 
+  // Reading the list says nothing about how many unread items are behind it,
+  // so the badge is read from the server alongside the first page.
+  useEffect(() => {
+    void refreshInboxCounts();
+  }, []);
+
   const loadMore = async () => {
     if (!nextCursor || loading || refreshing || loadingMore) return;
     await load(nextCursor);
@@ -139,6 +143,7 @@ export function InboxPanel() {
       const readAt = new Date().toISOString();
       setItems((current) => current.map((item) => ({ ...item, readAt: item.readAt ?? readAt })));
       void load();
+      void refreshInboxCounts();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not mark the inbox as read");
     } finally {
@@ -353,8 +358,14 @@ export function InboxDetailView({ id }: { id: string }) {
       const value = await api.getInboxItem(id);
       setDetail(value);
       setError(null);
-      // Opening an item is reading it; the list and the badge catch up next read.
-      if (!value.item.readAt) void api.markInboxItemRead(id).catch(() => {});
+      // Opening an item is reading it, so the badge drops as soon as the
+      // server agrees it has been read.
+      if (!value.item.readAt) {
+        void api
+          .markInboxItemRead(id)
+          .then(() => refreshInboxCounts())
+          .catch(() => {});
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load this notification");
     } finally {
@@ -390,6 +401,7 @@ export function InboxDetailView({ id }: { id: string }) {
     } catch {
       // The item stays on screen in its last known state.
     }
+    void refreshInboxCounts();
     setDismissing(false);
   };
 

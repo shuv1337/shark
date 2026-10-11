@@ -1,29 +1,38 @@
-import type { InboxPageDto } from "@hark/contracts";
 import { useSyncExternalStore } from "react";
 import { api } from "./api";
 import { subscribeToInboxUpdates } from "./inboxUpdates";
 
 /**
- * The two numbers the primary navigation shows as badges, in one place so the
- * shell and the pages never disagree.
+ * The numbers the primary navigation shows, in one place so the shell and the
+ * pages never disagree.
  *
- * A page that already loaded the data publishes its own count (`publishBoard`,
- * `publishInbox`), which is both free and exact. For every other route the
- * store reads the counts itself: once on first subscribe, again whenever a push
- * arrives or the tab is resumed (`subscribeToInboxUpdates`), and on a slow poll
- * in case neither fires. Phase 3 replaces the poll with one live stream shared
- * by the board and the inbox.
+ * The inbox badge is the exact unread total from `/api/inbox/counts`, never a
+ * figure derived from the page of items a list happens to hold: the two sets
+ * drift apart as soon as something unread is older than the first page.
+ * Anything that changes read state asks for the number again rather than
+ * guessing at a delta.
+ *
+ * "Needs action" is a second, different fact — a request can be read and still
+ * waiting on you — so it is a separate signal, shown as a dot rather than
+ * folded into the count.
+ *
+ * A page that already loaded the data publishes its own count, which is both
+ * free and exact. Otherwise the store reads: on first subscribe, whenever a
+ * push arrives or the tab is resumed, and on a slow poll in case neither
+ * fires. Phase 3 replaces the poll with one live stream.
  */
 export interface NavCounts {
   /** Asks on the board waiting on an answer from you. */
   boardWaiting: number;
-  /** Inbox items that are unread or still need your response. */
-  inboxAttention: number;
+  /** Inbox items you have not read. */
+  inboxUnread: number;
+  /** Inbox items still waiting on your response, read or not. */
+  inboxNeedsAction: number;
 }
 
 export const COUNTS_POLL_INTERVAL_MS = 30_000;
 
-const ZERO: NavCounts = { boardWaiting: 0, inboxAttention: 0 };
+const ZERO: NavCounts = { boardWaiting: 0, inboxUnread: 0, inboxNeedsAction: 0 };
 
 let counts: NavCounts = ZERO;
 const listeners = new Set<() => void>();
@@ -33,35 +42,32 @@ function set(next: Partial<NavCounts>): void {
   const merged = { ...counts, ...next };
   if (
     merged.boardWaiting === counts.boardWaiting &&
-    merged.inboxAttention === counts.inboxAttention
-  )
+    merged.inboxUnread === counts.inboxUnread &&
+    merged.inboxNeedsAction === counts.inboxNeedsAction
+  ) {
     return;
+  }
   counts = merged;
   for (const listener of listeners) listener();
-}
-
-/**
- * What the inbox badge counts: anything unread, plus anything still waiting on
- * a response. `unresolvedCount` is the floor because a request needing action
- * can be older than the page of items the inbox just read.
- */
-export function inboxAttentionCount(page: InboxPageDto): number {
-  const onPage = page.items.filter((item) => !item.readAt || item.needsAction).length;
-  return Math.max(page.unresolvedCount, onPage);
 }
 
 export function publishBoardWaiting(count: number): void {
   set({ boardWaiting: count });
 }
 
-export function publishInboxPage(page: InboxPageDto): void {
-  set({ inboxAttention: inboxAttentionCount(page) });
+/** Re-read the inbox badge. Call after anything that changes read state. */
+export async function refreshInboxCounts(): Promise<void> {
+  try {
+    const { unread, needsAction } = await api.getInboxCounts();
+    set({ inboxUnread: unread, inboxNeedsAction: needsAction });
+  } catch {
+    // Keep the last known numbers; the poll and the next push try again.
+  }
 }
 
 async function refresh(): Promise<void> {
-  const [board, inbox] = await Promise.allSettled([api.getBoard(), api.listInbox("all")]);
+  const [board] = await Promise.allSettled([api.getBoard(), refreshInboxCounts()]);
   if (board.status === "fulfilled") set({ boardWaiting: board.value.waiting.length });
-  if (inbox.status === "fulfilled") set({ inboxAttention: inboxAttentionCount(inbox.value) });
 }
 
 function subscribe(listener: () => void): () => void {
@@ -97,7 +103,7 @@ export function useNavCounts(enabled = true): NavCounts {
   return useSyncExternalStore(enabled ? subscribe : noop, snapshot, snapshot);
 }
 
-/** Test seam: drop every subscriber and reset both counts. */
+/** Test seam: drop every subscriber and reset the counts. */
 export function resetNavCounts(): void {
   stop?.();
   stop = null;
