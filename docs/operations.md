@@ -168,7 +168,10 @@ operator review:
     client IP and grants nothing without consent. An empty body returns 400.
   - `POST /api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, and `/api/auth/oauth2/introspect`
     authenticate with a client ID, code, or token instead of a session. An empty form body returns
-    400, and JSON returns 415.
+    400, and JSON returns 415. An `authorization_code` or `refresh_token` request whose
+    `resource` is missing or is not exactly `https://shark.shuv.dev/mcp` returns 400
+    `invalid_target` without spending the code or refresh token. Every `/api/auth/oauth2/token`
+    response, errors included, carries `Cache-Control: no-store` and `Pragma: no-cache`.
   - `POST /api/auth/oauth2/public-client-prelogin` accepts JSON and verifies a signed
     `oauth_query` instead of a session. An empty JSON body returns 400, a `client_id` that
     differs from the signed query's returns 400, and valid JSON with a validly signed query for
