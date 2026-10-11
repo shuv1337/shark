@@ -10,6 +10,7 @@ import { trustedClientIp, withTrustedClientIp } from "./lib/client-ip";
 import { OAUTH_TOKEN_ENDPOINT_PATH } from "./lib/oauth";
 import { databaseIsReady } from "./lib/readiness";
 import { safeReturnPath } from "./lib/return-path";
+import { errorClass } from "./lib/teams";
 import { beginAppleWebSignIn } from "./lib/web-sign-in";
 import { verifyFirstPartyPass, webViewEntryRefusal } from "./lib/web-view-session";
 import { INTERNAL_AGENT_TOKEN, requireAuth } from "./middleware";
@@ -122,9 +123,7 @@ app.on(["GET", "POST"], "/api/auth/*", async (c) => {
   try {
     response = await auth.handler(request);
   } catch (error) {
-    console.error(
-      `[oauth] token endpoint failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    console.error("[oauth] token endpoint threw", errorClass(error));
     return tokenErrorResponse(500, "server_error", "the token request could not be completed");
   }
   for (const [name, value] of Object.entries(TOKEN_RESPONSE_HEADERS)) {
@@ -205,7 +204,7 @@ app.onError((err, c) => {
       }
       return response;
     }
-    console.error(`[oauth] token request failed: ${err.message}`);
+    console.error("[oauth] token request failed", errorClass(err));
     return tokenErrorResponse(500, "server_error", "the token request could not be completed");
   }
   // Middleware rejections (for example the body-size limit) carry their own status.

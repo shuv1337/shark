@@ -578,10 +578,18 @@ describe("MCP OAuth end to end", () => {
     expectUncacheable(unreadable.headers, "unreadable body");
 
     // Without one the middleware reads the body first and the failure reaches app.onError.
-    const upstream = await app.request(failingBody({}));
-    expect(upstream.status).toBe(500);
-    expect(await upstream.json()).toMatchObject({ error: "server_error" });
-    expectUncacheable(upstream.headers, "middleware failure");
+    // Thrown errors can carry request material, so the log records only their class.
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const upstream = await app.request(failingBody({}));
+      expect(upstream.status).toBe(500);
+      expect(await upstream.json()).toMatchObject({ error: "server_error" });
+      expectUncacheable(upstream.headers, "middleware failure");
+      expect(logged).toHaveBeenCalledWith("[oauth] token request failed", "Error");
+      expect(JSON.stringify(logged.mock.calls)).not.toContain("synthetic body failure");
+    } finally {
+      logged.mockRestore();
+    }
 
     // The body-size limit's own rejection is uncacheable too.
     const oversized = await rawToken([
@@ -592,13 +600,19 @@ describe("MCP OAuth end to end", () => {
     expectUncacheable(oversized.headers, "oversized");
 
     // Better Auth throwing instead of answering still yields a token error response.
-    const handler = vi.spyOn(auth, "handler").mockRejectedValueOnce(new Error("synthetic"));
+    const handler = vi
+      .spyOn(auth, "handler")
+      .mockRejectedValueOnce(new TypeError("synthetic handler crash code=hark_mat_leak"));
+    const loggedThrow = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const failed = await rawToken([["grant_type", "authorization_code"]]);
       expect(failed.status).toBe(500);
       expect(failed.body).toMatchObject({ error: "server_error" });
       expectUncacheable(failed.headers, "thrown");
+      expect(loggedThrow).toHaveBeenCalledWith("[oauth] token endpoint threw", "TypeError");
+      expect(JSON.stringify(loggedThrow.mock.calls)).not.toContain("hark_mat_leak");
     } finally {
+      loggedThrow.mockRestore();
       handler.mockRestore();
     }
 
