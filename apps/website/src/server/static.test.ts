@@ -163,8 +163,13 @@ describe("unknown address shell", () => {
     for (const [path, body] of [
       ["/api/nope", '{"error":"Not found"}'],
       ["/hooks/nope", '{"error":"Not found"}'],
+      ["/mcp/anything", "Not found"],
+      ["/.well-known/anything", "Not found"],
       ["/assets/missing.js", "Not found"],
       ["/missing.png", "Not found"],
+      // An extension anywhere in the last segment is an asset, however deep.
+      ["/foo/bar.json", "Not found"],
+      ["/inbox/item.json", "Not found"],
     ] as const) {
       const response = await app.request(path, { headers: { Cookie: cookie } });
       expect(response.status, path).toBe(404);

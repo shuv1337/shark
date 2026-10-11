@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { serveStatic } from "@hono/node-server/serve-static";
-import type { Hono } from "hono";
+import type { Hono, MiddlewareHandler } from "hono";
 import { requireAuth } from "./middleware";
 
 export const PRIVATE_DOCUMENT_ROUTES = [
@@ -25,7 +25,11 @@ export const PUBLIC_PUSH_ASSETS = ["/sw.js", "/favicon.png", "/app-store-icon.pn
  */
 const NON_SHELL_PREFIXES = ["/api", "/hooks", "/mcp", "/.well-known", "/assets"] as const;
 
-/** A shell is a page address. Anything with a file extension is an asset. */
+/**
+ * A shell is a page address. Anything with a file extension is an asset, at
+ * any depth: `/inbox/item.json` is a mistyped fetch, not a notification, and
+ * answering it with HTML would only hide the mistake.
+ */
 export function servesAppShell(path: string): boolean {
   if (NON_SHELL_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) {
     return false;
@@ -40,6 +44,10 @@ export function mountPrivateStaticRoutes(
 ): void {
   if (!existsSync(clientDir)) return;
 
+  /** Routes with a parameter accept any segment, so they check it is a page. */
+  const pageAddress: MiddlewareHandler = async (c, next) =>
+    servesAppShell(c.req.path) ? next() : c.notFound();
+
   for (const path of PRIVATE_DOCUMENT_ROUTES) {
     const file = path === "/" ? "index.html" : `${path.slice(1)}/index.html`;
     if (existsSync(resolve(clientDir, file))) {
@@ -50,18 +58,33 @@ export function mountPrivateStaticRoutes(
   // Ask deep links from pushes render the same board shell.
   const boardFile = "board/index.html";
   if (existsSync(resolve(clientDir, boardFile))) {
-    app.get("/board/ask/:id", requireAuth, serveStatic({ path: `${staticRoot}/${boardFile}` }));
+    app.get(
+      "/board/ask/:id",
+      pageAddress,
+      requireAuth,
+      serveStatic({ path: `${staticRoot}/${boardFile}` }),
+    );
   }
 
   // One inbox item, deep-linked from a push, renders the inbox shell.
   const inboxFile = "inbox/index.html";
   if (existsSync(resolve(clientDir, inboxFile))) {
-    app.get("/inbox/:id", requireAuth, serveStatic({ path: `${staticRoot}/${inboxFile}` }));
+    app.get(
+      "/inbox/:id",
+      pageAddress,
+      requireAuth,
+      serveStatic({ path: `${staticRoot}/${inboxFile}` }),
+    );
   }
 
   const teamsFile = "teams/index.html";
   if (existsSync(resolve(clientDir, teamsFile))) {
-    app.get("/teams/:teamId", requireAuth, serveStatic({ path: `${staticRoot}/${teamsFile}` }));
+    app.get(
+      "/teams/:teamId",
+      pageAddress,
+      requireAuth,
+      serveStatic({ path: `${staticRoot}/${teamsFile}` }),
+    );
   }
 
   // Invite links and OAuth consent render the dashboard shell, as do the
@@ -69,7 +92,12 @@ export function mountPrivateStaticRoutes(
   const dashboardFile = "dashboard/index.html";
   if (existsSync(resolve(clientDir, dashboardFile))) {
     for (const path of ["/dashboard/teams/:teamId", "/join/:code", "/oauth/consent"]) {
-      app.get(path, requireAuth, serveStatic({ path: `${staticRoot}/${dashboardFile}` }));
+      app.get(
+        path,
+        pageAddress,
+        requireAuth,
+        serveStatic({ path: `${staticRoot}/${dashboardFile}` }),
+      );
     }
   }
 
@@ -100,11 +128,6 @@ export function mountPrivateStaticRoutes(
    */
   const notFoundFile = "404/index.html";
   if (existsSync(resolve(clientDir, notFoundFile))) {
-    app.get(
-      "*",
-      (c, next) => (servesAppShell(c.req.path) ? next() : c.notFound()),
-      requireAuth,
-      serveStatic({ path: `${staticRoot}/${notFoundFile}` }),
-    );
+    app.get("*", pageAddress, requireAuth, serveStatic({ path: `${staticRoot}/${notFoundFile}` }));
   }
 }
