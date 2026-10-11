@@ -3,12 +3,14 @@ import { APIError } from "better-auth/api";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
-import { auth } from "./auth";
+import { auth, TOKEN_RESPONSE_HEADERS, tokenErrorResponse } from "./auth";
 import { env } from "./env";
 import { accessLog } from "./lib/access-log";
 import { trustedClientIp, withTrustedClientIp } from "./lib/client-ip";
+import { OAUTH_TOKEN_ENDPOINT_PATH } from "./lib/oauth";
 import { databaseIsReady } from "./lib/readiness";
 import { safeReturnPath } from "./lib/return-path";
+import { errorClass } from "./lib/teams";
 import { beginAppleWebSignIn } from "./lib/web-sign-in";
 import { verifyFirstPartyPass, webViewEntryRefusal } from "./lib/web-view-session";
 import { INTERNAL_AGENT_TOKEN, requireAuth } from "./middleware";
@@ -112,7 +114,23 @@ app.route("/", docsTextRoute);
 app.route("/", appPassJwksRoute);
 app.route("/", sshuvHandoffRoute);
 
-app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(withTrustedClientIp(c.req.raw)));
+app.on(["GET", "POST"], "/api/auth/*", async (c) => {
+  const request = withTrustedClientIp(c.req.raw);
+  if (c.req.path !== OAUTH_TOKEN_ENDPOINT_PATH) return auth.handler(request);
+  // Better Auth sets these on successful token responses only; RFC 6749 wants them on every
+  // token endpoint response, including errors it throws instead of returning.
+  let response: Response;
+  try {
+    response = await auth.handler(request);
+  } catch (error) {
+    console.error("[oauth] token endpoint threw", errorClass(error));
+    return tokenErrorResponse(500, "server_error", "the token request could not be completed");
+  }
+  for (const [name, value] of Object.entries(TOKEN_RESPONSE_HEADERS)) {
+    if (!response.headers.has(name)) response.headers.set(name, value);
+  }
+  return response;
+});
 // OAuth discovery for the MCP server, and the server itself. Tool calls are
 // dispatched through the agent routes below as the caller's grant token.
 app.route("/", oauthWellKnownRoute);
@@ -176,6 +194,19 @@ app.notFound((c) => {
 });
 
 app.onError((err, c) => {
+  if (c.req.path === OAUTH_TOKEN_ENDPOINT_PATH) {
+    // RFC 6749 §5.2: even a token request that fails in middleware gets an uncacheable
+    // token error, including when the body stream itself fails.
+    if (err instanceof HTTPException) {
+      const response = err.getResponse();
+      for (const [name, value] of Object.entries(TOKEN_RESPONSE_HEADERS)) {
+        if (!response.headers.has(name)) response.headers.set(name, value);
+      }
+      return response;
+    }
+    console.error("[oauth] token request failed", errorClass(err));
+    return tokenErrorResponse(500, "server_error", "the token request could not be completed");
+  }
   // Middleware rejections (for example the body-size limit) carry their own status.
   if (err instanceof HTTPException) return err.getResponse();
   console.error(err);

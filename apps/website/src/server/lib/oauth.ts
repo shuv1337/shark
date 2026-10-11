@@ -43,6 +43,9 @@ export const OAUTH_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 /** Path of the consent (and sign-in) page the authorize endpoint redirects to. */
 export const OAUTH_CONSENT_PAGE = "/oauth/consent";
 
+/** Better Auth's token endpoint as the app serves it. */
+export const OAUTH_TOKEN_ENDPOINT_PATH = "/api/auth/oauth2/token";
+
 const API_SCOPE_SET = new Set<string>(OAUTH_API_SCOPES);
 
 export function appOrigin(): string {

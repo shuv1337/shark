@@ -190,7 +190,23 @@ Deliberate merge resolutions:
     per client IP. Registration grants nothing without an allowlisted user's consent.
   - `POST /api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, and `/api/auth/oauth2/introspect`.
     They take no session; a client authenticates with its client ID plus a PKCE-bound code, a
-    refresh token, or the token being revoked or introspected.
+    refresh token, or the token being revoked or introspected. Better Auth 1.6.25 checks the
+    RFC 8707 `resource` against `validAudiences` only when the client sends one and stores no
+    audience on opaque access tokens, so SHark's `hark-oauth-resource-binding` plugin in
+    `auth.ts` requires every `authorization_code` and `refresh_token` request to name
+    `https://shark.shuv.dev/mcp` exactly and answers anything else with 400 `invalid_target`
+    before the code or refresh token is spent; other bodies keep Better Auth's own answers. It
+    reads the raw form in `onRequest` because RFC 8707 lets `resource` repeat and every value
+    must be acceptable, while better-call's form parser keeps only the last one.
+    Better Auth adds `Cache-Control: no-store` and `Pragma: no-cache` only to successful token
+    responses, so `app.ts` adds them to every `/api/auth/oauth2/token` response (RFC 6749 §5.2),
+    including the 413 body-limit rejection and the 500 `server_error` it answers when the handler
+    or a middleware throws; a request body the plugin cannot read is 400 `invalid_request`. Every access token `/mcp` accepts was therefore
+    requested for `/mcp`; tokens issued before this rule expire within their one-hour TTL. MCP
+    (2025-06-18) requires clients to send `resource`; current Claude Code and OpenCode do through
+    the TypeScript SDK (which sends it once it has read the protected resource metadata `/mcp`
+    advertises in its 401 challenge), as do Cursor and Codex (since March 2026). Drop the plugin
+    if upstream requires `resource` itself.
   - `POST /api/auth/oauth2/public-client-prelogin`, which the consent page uses to show the
     requesting client's registered name, URI, logo, and policy links. It requires a validly
     signed authorize query (`oauth_query`), which anyone can obtain by starting an authorization.
@@ -203,8 +219,8 @@ Deliberate merge resolutions:
 
   `docs/operations.md` lists the response each one should give in its manual checks.
   `routes/mcp-oauth.integration.test.ts` runs the whole flow through the real Better Auth
-  handler: registration, S256 PKCE, consent, code exchange and reuse, `/mcp`, refresh rotation
-  and reuse detection, and revocation.
+  handler: registration, S256 PKCE, consent, code exchange and reuse, `resource` binding, `/mcp`,
+  refresh rotation and reuse detection, and revocation.
 - `/api/oauth/clients` mutations require a same-origin request, like the other session routes.
 - Better Auth rate limits read the client IP the app resolves from `TRUSTED_CLIENT_IP_HEADER` or
   `TRUSTED_FORWARDED_FOR_HOPS` (production: one exe.dev hop) per `docs/operations.md`. An hourly

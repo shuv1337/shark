@@ -44,6 +44,71 @@ const oauthDefaultScopes = {
   },
 } satisfies BetterAuthPlugin;
 
+/** RFC 6749 §5.1–5.2: token endpoint responses, errors included, are never cached. */
+export const TOKEN_RESPONSE_HEADERS = { "Cache-Control": "no-store", Pragma: "no-cache" } as const;
+
+/**
+ * Every token is bound to the MCP server. Better Auth 1.6.25 checks `resource`
+ * against `validAudiences` only when the client sends it (RFC 8707) and stores
+ * no audience on opaque access tokens, so a token request without `resource`
+ * would mint a token for no resource in particular. MCP (2025-06-18) requires
+ * clients to send it, so require it to name `/mcp` exactly and refuse anything
+ * else with RFC 8707's `invalid_target`. Rejected here, before the endpoint
+ * runs, the authorization code or refresh token stays unspent for a retry.
+ * Only the grant types SHark issues are checked, so a request without a
+ * usable `grant_type` still gets Better Auth's own answer.
+ *
+ * This reads the raw form rather than the parsed body: RFC 8707 lets a client
+ * repeat `resource`, and every value must be valid, but better-call's form
+ * parser keeps only the last one.
+ */
+const BOUND_GRANT_TYPES = new Set(["authorization_code", "refresh_token"]);
+
+/** An RFC 6749 §5.2 token error response. */
+export function tokenErrorResponse(status: number, error: string, description: string): Response {
+  return Response.json(
+    { error, error_description: description },
+    { status, headers: TOKEN_RESPONSE_HEADERS },
+  );
+}
+
+function invalidTarget(description: string): Response {
+  return tokenErrorResponse(400, "invalid_target", description);
+}
+
+const oauthResourceBinding = {
+  id: "hark-oauth-resource-binding",
+  onRequest: async (request) => {
+    if (request.method !== "POST") return;
+    if (!new URL(request.url).pathname.endsWith("/oauth2/token")) return;
+    const contentType = request.headers.get("content-type") ?? "";
+    // Anything else is refused by the endpoint's media-type check (415).
+    if (!contentType.toLowerCase().startsWith("application/x-www-form-urlencoded")) return;
+    let form: URLSearchParams;
+    try {
+      form = new URLSearchParams(await request.clone().text());
+    } catch {
+      // A body that cannot be read cannot be checked, so it never reaches the endpoint.
+      return {
+        response: tokenErrorResponse(400, "invalid_request", "the request body could not be read"),
+      };
+    }
+    if (!BOUND_GRANT_TYPES.has(form.get("grant_type") ?? "")) return;
+    const expected = mcpResourceUrl();
+    const resources = form.getAll("resource");
+    if (resources.length === 0) {
+      return { response: invalidTarget(`resource is required and must be ${expected}`) };
+    }
+    if (resources.some((resource) => resource !== expected)) {
+      return {
+        response: invalidTarget(
+          `requested resource invalid; tokens are issued only for ${expected}`,
+        ),
+      };
+    }
+  },
+} satisfies BetterAuthPlugin;
+
 const PRELOGIN_PATH = "/oauth2/public-client-prelogin";
 const PUBLIC_CLIENT_PATHS = new Set([PRELOGIN_PATH, "/oauth2/public-client"]);
 
@@ -174,7 +239,8 @@ export const auth = betterAuth({
       loginPage: OAUTH_CONSENT_PAGE,
       consentPage: OAUTH_CONSENT_PAGE,
       scopes: [...OAUTH_SCOPES],
-      // Tokens are only ever issued for the MCP server.
+      // Tokens are only ever issued for the MCP server; oauthResourceBinding
+      // makes every token request say so.
       validAudiences: [mcpResourceUrl()],
       grantTypes: ["authorization_code", "refresh_token"],
       // MCP clients (Claude, OpenCode, Cursor, …) register themselves as public
@@ -195,6 +261,7 @@ export const auth = betterAuth({
       silenceWarnings: { oauthAuthServerConfig: true },
     }),
     oauthDefaultScopes,
+    oauthResourceBinding,
     oauthPublicClientHardening,
     webViewSessionPlugin(),
   ],
