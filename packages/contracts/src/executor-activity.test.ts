@@ -65,7 +65,7 @@ describe("Executor activity contract", () => {
   });
   it("retains safe conflict details and excludes arbitrary response content", async () => {
     const response = {
-      error: "secret must not be echoed",
+      error: `leaked hark_${"a".repeat(43)}`,
       code: "ACTIVE_ACTIVITY_CONFLICT",
       activityId: "act_test",
       ownedByRequester: false,
@@ -78,6 +78,7 @@ describe("Executor activity contract", () => {
         fetch: async () => new Response(JSON.stringify(response), { status: 409 }),
       }),
     ).rejects.toMatchObject({
+      status: 409,
       code: "ACTIVE_ACTIVITY_CONFLICT",
       message: expect.stringContaining("ownedByRequester=false"),
     });
@@ -89,6 +90,7 @@ describe("Executor activity contract", () => {
       });
     } catch (error) {
       expect(String(error)).not.toContain("secret");
+      expect(String(error)).not.toContain("hark_");
     }
   });
 });
