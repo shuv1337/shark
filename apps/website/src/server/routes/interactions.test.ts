@@ -1781,6 +1781,60 @@ describe("agent notifications", () => {
     });
   });
 
+  it("keeps an older notify payload idempotent and shows agentDisplay in place of the token name", async () => {
+    const payload = { body: "Deploy finished", title: "Deploy bot" };
+    const first = await createNotification(payload, "notify-display-old");
+    expect(first.status).toBe(201);
+    const replay = await createNotification(payload, "notify-display-old");
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ idempotent: true });
+
+    const named = await createNotification(
+      { ...payload, agentDisplay: "Grok Bot" },
+      "notify-display-named",
+    );
+    expect(named.status).toBe(201);
+    const namedBody = (await named.json()) as {
+      notification: { id: string; agentDisplay?: string };
+    };
+    expect(namedBody.notification.agentDisplay).toBe("Grok Bot");
+    expect((await createNotification(payload, "notify-display-named")).status).toBe(409);
+
+    const detail = await app.request(
+      `/api/inbox/${encodeURIComponent(`ibox:agent_notification:${namedBody.notification.id}`)}`,
+    );
+    expect(detail.status).toBe(200);
+    expect(await detail.json()).toMatchObject({ item: { sourceName: "Grok Bot" } });
+
+    const tooLong = await createNotification({ body: "x", agentDisplay: "y".repeat(61) });
+    expect(tooLong.status).toBe(400);
+    expect(await tooLong.json()).toMatchObject({ error: "Invalid notification" });
+  });
+
+  it("shows an ask's agentDisplay in place of the token name", async () => {
+    const created = await createInteraction({
+      title: "Ship",
+      prompt: "Ship it?",
+      kind: "approval",
+      agentDisplay: "Grok Bot",
+    });
+    expect(created.status).toBe(201);
+    const listed = await agent("/interactions");
+    expect(listed.status).toBe(200);
+    const { interactions } = (await listed.json()) as {
+      interactions: Array<{ sourceName: string; agentDisplay?: string; title: string }>;
+    };
+    expect(interactions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: "Ship",
+          sourceName: "Grok Bot",
+          agentDisplay: "Grok Bot",
+        }),
+      ]),
+    );
+  });
+
   it("reports accepted 0 with a message and skips usage tracking when providers reject", async () => {
     billingState.acceptPush = false;
     const response = await createNotification({ body: "Rejected" });

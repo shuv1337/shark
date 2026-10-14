@@ -958,7 +958,39 @@ describe("cross-deploy request-hash stability", () => {
     for (const fixture of fixtures) {
       const parsed = agentNotificationCreateSchema.parse(fixture.input);
       expect(JSON.stringify(parsed)).toBe(fixture.expected);
+      expect(parsed).not.toHaveProperty("agentDisplay");
     }
+    const named = agentNotificationCreateSchema.parse({ body: "Done", agentDisplay: "Grok Bot" });
+    expect(JSON.stringify(named)).toBe('{"body":"Done","title":"SHark","agentDisplay":"Grok Bot"}');
+  });
+
+  it("keeps parsed interaction payloads identical when agentDisplay is omitted", () => {
+    const parsed = interactionCreateSchema.parse({
+      title: "Ship",
+      prompt: "Ship it?",
+      kind: "approval",
+    });
+    expect(JSON.stringify(parsed)).toBe(
+      '{"title":"Ship","prompt":"Ship it?","kind":"approval","expiresInSeconds":900}',
+    );
+    expect(parsed).not.toHaveProperty("agentDisplay");
+    const named = interactionCreateSchema.parse({
+      title: "Ship",
+      prompt: "Ship it?",
+      kind: "approval",
+      agentDisplay: "Grok Bot",
+    });
+    expect(JSON.stringify(named)).toBe(
+      '{"title":"Ship","prompt":"Ship it?","kind":"approval","expiresInSeconds":900,"agentDisplay":"Grok Bot"}',
+    );
+    expect(
+      interactionCreateSchema.safeParse({
+        title: "T",
+        prompt: "P",
+        kind: "approval",
+        agentDisplay: "x".repeat(61),
+      }).success,
+    ).toBe(false);
   });
 
   it("appends new optional fields after every legacy key", () => {
