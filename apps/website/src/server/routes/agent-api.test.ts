@@ -311,6 +311,27 @@ describe("agent OpenAPI document", () => {
     expect(registered.size).toBeGreaterThan(30);
   });
 
+  it("documents work read-back and optional agentDisplay on notify and interactions", () => {
+    expect(openApi.agentOperations["/board/work/{key}"]?.get?.scopes).toEqual(["board:read"]);
+    const document = openApi.agentOpenApiDocument as unknown as {
+      paths: Record<
+        string,
+        {
+          post?: {
+            requestBody?: {
+              content: Record<string, { schema: { properties?: object; required?: string[] } }>;
+            };
+          };
+        }
+      >;
+    };
+    for (const path of ["/notifications", "/interactions"]) {
+      const schema = document.paths[path]?.post?.requestBody?.content["application/json"]?.schema;
+      expect(schema?.properties).toHaveProperty("agentDisplay");
+      expect(schema?.required ?? []).not.toContain("agentDisplay");
+    }
+  });
+
   it("generates request bodies from the zod contracts", async () => {
     const document = openApi.agentOpenApiDocument as unknown as {
       paths: Record<

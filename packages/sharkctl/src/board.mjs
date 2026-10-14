@@ -257,6 +257,12 @@ export async function boardCommand(action, positionals, options, context) {
     return { body, exitCode: 0 };
   }
 
+  if (action === "work-get") {
+    const key = requireValue(options, "key", "work-get");
+    const body = await scopedRequest(config, `/api/agent/board/work/${encodeURIComponent(key)}`);
+    return { body, exitCode: 0 };
+  }
+
   if (action === "work") {
     const key = options.key ?? stdin.key;
     const title = options.title ?? stdin.title;
@@ -370,7 +376,7 @@ export async function boardCommand(action, positionals, options, context) {
   }
 
   throw new BoardUsageError(
-    "board verbs: ask, cancel, get, wait, answers, ack, work, done, note. Run sharkctl --help.",
+    "board verbs: ask, cancel, get, wait, answers, ack, work, work-get, done, note. Run sharkctl --help.",
   );
 }
 
@@ -388,6 +394,7 @@ export const BOARD_HELP = `  sharkctl board ask --key <key> --title <title> [--b
                       [--status <label>] [--detail <text>] [--progress <0..1>] [--host <name>]
                       [--link <[kind=]url>]... [--waiting-ask <key>] [--heartbeat-ttl <duration>]
                       [--agent <name>]
+  sharkctl board work-get --key <key>
   sharkctl board done --key <key> [--title <title>] [--verb <merged|shipped|done|closed|reported>]
                       [--outcome <done|failed|cancelled>] [--link <[kind=]url>]... [--note-file <path>]
                       [--agent <name>]

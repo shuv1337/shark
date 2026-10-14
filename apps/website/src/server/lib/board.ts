@@ -649,6 +649,16 @@ export async function ackAsk(
   return { ok: true, row };
 }
 
+/** The calling token's work item for a key. Another token's row is invisible. */
+export async function workForToken(token: TokenRow, key: string): Promise<WorkRow | undefined> {
+  const [row] = await db
+    .select()
+    .from(boardWorkItem)
+    .where(and(eq(boardWorkItem.requesterTokenId, token.id), eq(boardWorkItem.workKey, key)))
+    .limit(1);
+  return row;
+}
+
 /** The open ask for a key, else the most recently resolved one. */
 export async function askForToken(token: TokenRow, key: string): Promise<AskRow | undefined> {
   const [row] = await db

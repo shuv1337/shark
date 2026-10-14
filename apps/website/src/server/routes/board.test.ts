@@ -678,6 +678,47 @@ describe("work, notes, done", () => {
   });
 });
 
+describe("work read-back", () => {
+  it("returns the calling token's work item and hides everyone else's", async () => {
+    const created = await agent("/work", BRO, {
+      method: "PUT",
+      body: JSON.stringify({
+        key: "bro:readback",
+        title: "Mate",
+        state: "in_flight",
+        agentDisplay: "Synthetic Harness",
+      }),
+    });
+    expect(created.status).toBe(201);
+
+    const read = await agent("/work/bro:readback", BRO);
+    expect(read.status).toBe(200);
+    expect(await read.json()).toMatchObject({
+      work: { key: "bro:readback", state: "in_flight", agentDisplay: "Synthetic Harness" },
+    });
+
+    expect((await agent("/work/bro:readback", FM)).status).toBe(404);
+    expect(await (await agent("/work/bro:readback", FM)).json()).toEqual({
+      error: "Work item not found",
+    });
+    expect((await agent("/work/missing-key", BRO)).status).toBe(404);
+    expect((await agent("/work/bro:readback", READ_ONLY)).status).toBe(404);
+
+    const { hashApiToken } = await import("../lib/token");
+    const writer = `hark_${"w".repeat(43)}`;
+    await db.insert(schema.apiToken).values({
+      id: "tok_write_only",
+      userId: "cap",
+      name: "Writer",
+      tokenHash: hashApiToken(writer),
+      prefix: writer.slice(0, 13),
+      scopes: ["board:write"],
+      createdAt: new Date(),
+    });
+    expect((await agent("/work/bro:readback", writer)).status).toBe(403);
+  });
+});
+
 describe("work re-posts", () => {
   type Work = {
     statusLabel: string | null;

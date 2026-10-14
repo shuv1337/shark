@@ -615,6 +615,13 @@ export const MCP_TOOLS: McpToolSpec[] = [
     kind: "write",
   },
   {
+    name: "board_work_get",
+    title: "Read a board work item",
+    operation: "GET /board/work/{key}",
+    kind: "read",
+    path: { key: { arg: "key", description: "Work item key used with board_work." } },
+  },
+  {
     name: "board_work_done",
     title: "Complete a board work item",
     operation: "POST /board/work/{key}/done",

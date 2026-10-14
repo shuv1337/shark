@@ -87,7 +87,7 @@ function readActivityFeed(
       select
         'notification:' || n.id as id,
         'notification' as kind,
-        coalesce(n.source_name, t.name, n.title) as source_name,
+        coalesce(n.agent_display, n.source_name, t.name, n.title) as source_name,
         n.image_url as source_image_url,
         n.title as title,
         coalesce(n.summary, substr(n.body, 1, 2000)) as detail,
@@ -103,7 +103,7 @@ function readActivityFeed(
       select
         'response:' || i.id as id,
         'response' as kind,
-        coalesce(s.title, t.name, i.title) as source_name,
+        coalesce(s.title, i.agent_display, t.name, i.title) as source_name,
         coalesce(i.image_url, s.image_url) as source_image_url,
         i.title as title,
         i.prompt as detail,

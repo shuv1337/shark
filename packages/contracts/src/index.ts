@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { agentDisplaySchema } from "./board";
 
 /** Version of the push `data` payload schema understood by the iOS extension. */
 export const PUSH_SCHEMA_VERSION = 1 as const;
@@ -1148,6 +1149,11 @@ export const interactionCreateSchema = z
     style: interactiveLiveActivityStyleSchema.optional(),
     primaryLabel: interactionActionLabelSchema.optional(),
     secondaryLabel: interactionActionLabelSchema.optional(),
+    /**
+     * Per-bot name shown in place of the token's client name. Optional and
+     * without a default so idempotent retries of older requests still match.
+     */
+    agentDisplay: agentDisplaySchema.optional(),
   })
   .superRefine((value, context) => {
     const presentation = value.presentation ?? "notification";
@@ -1315,6 +1321,8 @@ export interface InteractionDto {
   secondaryLabel: string | null;
   accepted: number;
   respondingDeviceId: string | null;
+  /** Set when the creating request named a bot. Absent on rows written before that. */
+  agentDisplay?: string | null;
   expiresAt: string;
   createdAt: string;
   respondedAt: string | null;
@@ -1386,6 +1394,11 @@ export const agentNotificationCreateSchema = z.object({
    * `deviceIds`; the response is then an `OncallPageCreateResponse`.
    */
   oncall: oncallGroupIdSchema.optional(),
+  /**
+   * Per-bot name shown in place of the token's client name. Optional and
+   * without a default so idempotent retries of older requests still match.
+   */
+  agentDisplay: agentDisplaySchema.optional(),
 });
 export type AgentNotificationCreateInput = z.infer<typeof agentNotificationCreateSchema>;
 
@@ -1400,6 +1413,8 @@ export interface AgentNotificationDto {
   url: string | null;
   createdAt: string;
   appId?: string | null;
+  /** Set when the request named a bot. Absent on rows written before that. */
+  agentDisplay?: string | null;
 }
 
 export interface AgentNotificationCreateResponse {
