@@ -49,12 +49,11 @@ pick_shim_dir() {
   esac
   # At build time /exec-daemon is absent: target the dir known to lead PATH at
   # runtime (verified: /usr/local/cargo/bin sits ahead of /exec-daemon).
-  for d in /usr/local/cargo/bin; do
-    if [ -d "$d" ] && [ -w "$d" ]; then
-      printf '%s' "$d"
-      return 0
-    fi
-  done
+  local d=/usr/local/cargo/bin
+  if [ -d "$d" ] && [ -w "$d" ]; then
+    printf '%s' "$d"
+    return 0
+  fi
   return 1
 }
 
