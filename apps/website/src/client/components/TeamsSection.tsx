@@ -116,6 +116,7 @@ function CreateTeamModal({
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
 
+  // Catches its own errors; the form fires and forgets it.
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -123,7 +124,8 @@ function CreateTeamModal({
     try {
       const { team } = await api.createTeam({ name: name.trim() });
       onCreated(team);
-      navigate(`/teams/${team.id}`);
+      // navigate() can return a promise; the router owns navigation errors.
+      void navigate(`/teams/${team.id}`);
     } catch (err) {
       setError(errorMessage(err, "Could not create the team"));
       setBusy(false);
@@ -135,7 +137,7 @@ function CreateTeamModal({
       busy={busy}
       description="You'll be the owner. Your own seat is free."
       onClose={onClose}
-      onSubmit={submit}
+      onSubmit={(event) => void submit(event)}
       title="New team"
     >
       <Field label="Team name">

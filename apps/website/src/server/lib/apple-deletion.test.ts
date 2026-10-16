@@ -134,4 +134,30 @@ describe("Apple account deletion revocation", () => {
 
     await expect(revokeAppleGrantsForUser("failed_revoke")).rejects.toThrow("revocation failed");
   });
+
+  it("retries a transient Apple 503 and does not retry a 400", async () => {
+    await insertUser("flaky_revoke");
+    const now = new Date();
+    await db.insert(schema.account).values({
+      id: "flaky_account",
+      accountId: "flaky-subject",
+      providerId: "apple",
+      userId: "flaky_revoke",
+      refreshToken: "flaky-refresh",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const flaky = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", flaky);
+    await revokeAppleGrantsForUser("flaky_revoke");
+    expect(flaky).toHaveBeenCalledTimes(2);
+
+    const rejected = vi.fn(async () => new Response(null, { status: 400 }));
+    vi.stubGlobal("fetch", rejected);
+    await expect(revokeAppleGrantsForUser("flaky_revoke")).rejects.toThrow("status 400");
+    expect(rejected).toHaveBeenCalledTimes(1);
+  });
 });

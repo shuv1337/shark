@@ -75,7 +75,8 @@ export function Settings() {
 
   useEffect(() => {
     if (!isPending && !session) {
-      navigate("/", { replace: true });
+      // navigate() can return a promise; the router owns navigation errors.
+      void navigate("/", { replace: true });
       return;
     }
     if (session) void refresh();
@@ -146,7 +147,8 @@ export function Settings() {
     const next = `#${active}`;
     if (hash === next) return;
     authored.current = active;
-    navigate(`/settings${next}`, { replace: true });
+    // navigate() can return a promise; the router owns navigation errors.
+    void navigate(`/settings${next}`, { replace: true });
   }, [active, hash, navigate, visible]);
 
   if (isPending || !session) {

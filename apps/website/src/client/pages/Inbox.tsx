@@ -20,7 +20,8 @@ export function Inbox() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!isPending && !session) navigate("/", { replace: true });
+    // navigate() can return a promise; the router owns navigation errors.
+    if (!isPending && !session) void navigate("/", { replace: true });
   }, [session, isPending, navigate]);
 
   if (isPending || !session) {

@@ -430,6 +430,7 @@ function Overrides({
   const offline = useOffline();
   const formId = useId();
 
+  // Catches its own errors; the form fires and forgets it.
   const add = async (event: React.FormEvent) => {
     event.preventDefault();
     const start = new Date(startsAt);
@@ -507,7 +508,7 @@ function Overrides({
         aria-label={`Add an override to ${group.name}`}
         className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.1fr)_minmax(0,1.1fr)]"
         id={formId}
-        onSubmit={add}
+        onSubmit={(event) => void add(event)}
       >
         <Field label="Who">
           <Select onChange={(event) => setUserId(event.target.value)} value={userId}>
@@ -626,6 +627,7 @@ function GroupModal({
       current.map((step, position) => (position === index ? { ...step, ...patch } : step)),
     );
 
+  // Catches its own errors; the form fires and forgets it.
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (rotation.length === 0) {
@@ -655,7 +657,7 @@ function GroupModal({
       busy={busy}
       description="Who gets paged, when shifts change, and how pages escalate."
       onClose={onClose}
-      onSubmit={submit}
+      onSubmit={(event) => void submit(event)}
       title={group ? `Edit ${group.name}` : "New on-call group"}
       wide
     >
