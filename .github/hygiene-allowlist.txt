@@ -8,9 +8,6 @@ pii:apps/website/src/server/lib/admission.test.ts
 pii:apps/website/src/server/lib/outbound.test.ts
 pii:deploy/README.md
 pii:deploy/shark-backup
-pii:deploy/shark-deploy
-pii:deploy/shark-materialize-secrets
-pii:deploy/shark-restic-backup
 pii:docs/agent-reply-routing/arbitration-prototype/README.md
 pii:docs/agent-reply-routing/research/opencode-v2/README.md
 pii:docs/agent-reply-routing/research/opencode-v2/execution-probe-result.json
@@ -22,5 +19,4 @@ pii:goals/shark-v1/facts.md
 pii:packages/contracts/src/index.test.ts
 pii:packages/contracts/src/ip.ts
 pii:packages/contracts/src/url.test.ts
-pii:packages/shark-broker/test/service.test.mjs
 pii:packages/sharkctl/test/permissions-hook.test.mjs
