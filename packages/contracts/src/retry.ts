@@ -85,7 +85,7 @@ export function withTimeout<T>(
   timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<T> {
-  return withRetry(fn, { attempts: 1, timeoutMs, signal });
+  return withRetry(fn, signal ? { attempts: 1, timeoutMs, signal } : { attempts: 1, timeoutMs });
 }
 
 /** Runs fn with a per-attempt deadline, retrying retryable failures. */
