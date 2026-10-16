@@ -61,7 +61,7 @@ jobs:
             artifact:<glob> allow a matching spike/harness/scratch path
             email:<addr>    allow an email address (case-insensitive)
             text:<literal>  allow a matched string (exact)
-          Lines starting with # are comments.
+          Lines starting with # are comments; " #" starts a trailing comment.
           """
           import fnmatch, os, re, subprocess, sys
 
@@ -69,7 +69,7 @@ jobs:
           rules = {"path": [], "pii": [], "artifact": [], "email": set(), "text": set()}
           if os.path.exists(allow_file):
               for raw in open(allow_file, encoding="utf-8"):
-                  line = raw.strip()
+                  line = raw.split(" #", 1)[0].strip()
                   if not line or line.startswith("#") or ":" not in line:
                       continue
                   kind, val = line.split(":", 1)
@@ -127,7 +127,7 @@ jobs:
                       addr, dom = m.group(0).lower(), m.group(1).lower()
                       if addr in DEFAULT_EMAILS or addr in rules["email"] or m.group(0) in rules["text"]:
                           continue
-                      if dom.endswith(EMAIL_OK_DOMAINS):
+                      if any(dom == d or dom.endswith("." + d) for d in EMAIL_OK_DOMAINS):
                           continue
                       if dom in PERSONAL_DOMAINS:
                           problems.append(f"{path}:{n}: personal-email: {m.group(0)}")
@@ -149,7 +149,7 @@ jobs:
           set -euo pipefail
           skip=()
           if [ -f "$ALLOWLIST" ]; then
-            while IFS= read -r glob; do skip+=("$glob"); done < <(sed -n 's/^shellcheck:[[:space:]]*//p' "$ALLOWLIST")
+            while IFS= read -r glob; do skip+=("$glob"); done < <(sed -n 's/^shellcheck:[[:space:]]*//p' "$ALLOWLIST" | sed 's/[[:space:]]#.*//; s/[[:space:]]*$//')
           fi
           files=()
           while IFS= read -r -d '' f; do
