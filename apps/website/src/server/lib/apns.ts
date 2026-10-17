@@ -1,5 +1,5 @@
 import { createPrivateKey, sign } from "node:crypto";
-import { connect } from "node:http2";
+import { type ClientSessionOptions, connect } from "node:http2";
 import type { LiveActivityProps } from "@hark/contracts";
 import { LIVE_ACTIVITY_NAME } from "@hark/contracts";
 import { env } from "../env";
@@ -241,13 +241,23 @@ function providerJwt(config: ApnsProviderConfig): string {
   return value;
 }
 
+function connectFailureReason(error: Error): string {
+  if (error.message) return error.message;
+  const code = "code" in error && typeof error.code === "string" ? error.code : "";
+  return code || "ConnectError";
+}
+
 async function sendApnsPayload(
   environment: "sandbox" | "production",
   headers: Record<string, string>,
   payload: Buffer,
 ): Promise<ApnsResult> {
   return new Promise<ApnsResult>((resolve) => {
-    const client = connect(apnsHost(environment));
+    // Pin IPv4. A missing IPv6 route makes Happy Eyeballs emit ENETUNREACH on the
+    // TLS socket, and that unhandled error crashes the process. @types/node's
+    // HTTP/2 options omit net.Socket's family, but Node forwards it to tls.connect.
+    const connectOptions = { family: 4 } as ClientSessionOptions;
+    const client = connect(apnsHost(environment), connectOptions);
     let request: ReturnType<typeof client.request> | null = null;
     let settled = false;
     const finish = (result: ApnsResult) => {
@@ -258,12 +268,13 @@ async function sendApnsPayload(
       client.destroy();
       resolve(result);
     };
+    const failConnect = (error: Error) =>
+      finish({ status: 0, apnsId: null, reason: connectFailureReason(error), accepted: false });
     client.setTimeout(10_000, () =>
       finish({ status: 0, apnsId: null, reason: "Timeout", accepted: false }),
     );
-    client.on("error", (error) =>
-      finish({ status: 0, apnsId: null, reason: error.message, accepted: false }),
-    );
+    client.on("error", failConnect);
+    client.socket?.on("error", failConnect);
 
     request = client.request(headers);
     let status = 0;
