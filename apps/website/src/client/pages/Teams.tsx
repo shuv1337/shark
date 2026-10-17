@@ -27,7 +27,8 @@ export function Teams() {
 
   useEffect(() => {
     if (!isPending && !session) {
-      navigate("/", { replace: true });
+      // navigate() can return a promise; the router owns navigation errors.
+      void navigate("/", { replace: true });
       return;
     }
     if (session) void load();

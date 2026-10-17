@@ -66,7 +66,8 @@ export function TeamPage() {
 
   useEffect(() => {
     if (!isPending && !session) {
-      navigate("/", { replace: true });
+      // navigate() can return a promise; the router owns navigation errors.
+      void navigate("/", { replace: true });
       return;
     }
     if (session) void load();
@@ -176,7 +177,10 @@ export function TeamPage() {
 
           <TeamApps teamId={state.team.id} />
 
-          <LeaveOrDelete onLeft={() => navigate("/teams", { replace: true })} team={state.team} />
+          <LeaveOrDelete
+            onLeft={() => void navigate("/teams", { replace: true })}
+            team={state.team}
+          />
 
           {renaming ? (
             <RenameModal
@@ -271,6 +275,7 @@ function RenameModal({
   const [error, setError] = useState<string | null>(null);
   const offline = useOffline();
 
+  // Catches its own errors; the form fires and forgets it.
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -285,7 +290,12 @@ function RenameModal({
   };
 
   return (
-    <Modal busy={busy} onClose={onClose} onSubmit={submit} title="Rename team">
+    <Modal
+      busy={busy}
+      onClose={onClose}
+      onSubmit={(event) => void submit(event)}
+      title="Rename team"
+    >
       <Field label="Team name">
         <input
           className={INPUT}

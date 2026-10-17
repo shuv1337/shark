@@ -24,15 +24,20 @@ function docsTextPlugin(): Plugin {
     name: "hark-docs-text",
     apply: "serve",
     configureServer(server) {
-      server.middlewares.use(async (req, res, next) => {
+      server.middlewares.use((req, res, next) => {
         const path = req.url?.split("?")[0];
         const route = path ? routes[path] : undefined;
         if (!route) return next();
 
         // Loaded through Vite so the docs content model stays the single source.
-        const module = await server.ssrLoadModule("/src/shared/docs/markdown.ts");
-        res.setHeader("Content-Type", route.type);
-        res.end(module[route.module]());
+        // Fire-and-forget: a load failure goes to Vite's error handler via next().
+        void server
+          .ssrLoadModule("/src/shared/docs/markdown.ts")
+          .then((module) => {
+            res.setHeader("Content-Type", route.type);
+            res.end(module[route.module]());
+          })
+          .catch(next);
       });
     },
   };

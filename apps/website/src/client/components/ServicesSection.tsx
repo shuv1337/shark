@@ -283,6 +283,7 @@ function ServiceModal({
   const [fieldErrors, setFieldErrors] = useState<ServiceFieldErrors>({});
   const offline = useOffline();
 
+  // Catches its own errors; the form fires and forgets it.
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -326,7 +327,7 @@ function ServiceModal({
         service ? "Update this webhook's defaults." : "Set the defaults for this webhook."
       }
       onClose={onCancel}
-      onSubmit={submit}
+      onSubmit={(event) => void submit(event)}
       title={service ? "Edit service" : "New service"}
     >
       <div className="space-y-4">

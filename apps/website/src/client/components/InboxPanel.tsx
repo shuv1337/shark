@@ -435,8 +435,9 @@ export function InboxDetailView({ id }: { id: string }) {
           // Going back keeps the list's filter and scroll. A push deep link or
           // a typed URL is the first entry in the history (`key: "default"`),
           // with nothing to pop, so that lands on the inbox instead.
-          if (location.key === "default") navigate("/inbox");
-          else navigate(-1);
+          // navigate() can return a promise; the router owns navigation errors.
+          if (location.key === "default") void navigate("/inbox");
+          else void navigate(-1);
         }}
         type="button"
       >

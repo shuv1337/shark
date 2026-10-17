@@ -303,6 +303,7 @@ function InviteModal({
   const [error, setError] = useState<string | null>(null);
   const offline = useOffline();
 
+  // Catches its own errors; the form fires and forgets it.
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -323,7 +324,7 @@ function InviteModal({
       busy={busy}
       description="You'll get a join link to send. It expires in 7 days."
       onClose={onClose}
-      onSubmit={submit}
+      onSubmit={(event) => void submit(event)}
       title={`Invite to ${team.name}`}
     >
       <div className="space-y-4">
