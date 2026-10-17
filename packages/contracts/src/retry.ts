@@ -45,14 +45,38 @@ export function isRetryableError(error: unknown): boolean {
 }
 
 /**
- * Node fetch rejects with TypeError "fetch failed" and a system-error cause.
- * Browsers use "Failed to fetch". Other TypeErrors are caller bugs.
+ * Node fetch rejects with TypeError "fetch failed". Browsers use "Failed to fetch".
+ * Retry those only when there is no cause, or the cause is a network system code.
+ * Node's internal and argument errors use ERR_* (ERR_INVALID_URL, and so on) and
+ * are caller bugs. An unsupported scheme is "fetch failed" with a non-network cause.
  */
-function isRetryableTypeError(error: TypeError): boolean {
-  if (error.message === "fetch failed" || error.message === "Failed to fetch") return true;
+const NETWORK_CAUSE_CODES = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "EAI_AGAIN",
+  "ENOTFOUND",
+  "EPIPE",
+]);
+
+function causeCode(error: TypeError): string | undefined {
   const cause = error.cause;
-  if (typeof cause !== "object" || cause === null || !("code" in cause)) return false;
-  return typeof cause.code === "string" && cause.code.length > 0;
+  if (typeof cause !== "object" || cause === null || !("code" in cause)) return undefined;
+  return typeof cause.code === "string" && cause.code.length > 0 ? cause.code : undefined;
+}
+
+function isNetworkCauseCode(code: string): boolean {
+  return code.startsWith("UND_ERR_") || NETWORK_CAUSE_CODES.has(code);
+}
+
+function isRetryableTypeError(error: TypeError): boolean {
+  const code = causeCode(error);
+  if (code?.startsWith("ERR_")) return false;
+  if (code !== undefined && isNetworkCauseCode(code)) return true;
+  if (error.cause != null) return false;
+  return error.message === "fetch failed" || error.message === "Failed to fetch";
 }
 
 /** Full-jitter delay for a zero-based retry index, capped at maxDelayMs. */

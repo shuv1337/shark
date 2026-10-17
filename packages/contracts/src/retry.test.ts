@@ -12,6 +12,14 @@ describe("isRetryableError", () => {
     reset.cause = Object.assign(new Error("connect ECONNRESET"), { code: "ECONNRESET" });
     expect(isRetryableError(reset)).toBe(true);
     expect(isRetryableError(new TypeError("Cannot read properties of undefined"))).toBe(false);
+    const invalidUrl = new TypeError("Failed to parse URL from http://");
+    invalidUrl.cause = Object.assign(new TypeError("Invalid URL"), { code: "ERR_INVALID_URL" });
+    expect(isRetryableError(invalidUrl)).toBe(false);
+    const undiciTimeout = new TypeError("fetch failed");
+    undiciTimeout.cause = Object.assign(new Error("connect timeout"), {
+      code: "UND_ERR_CONNECT_TIMEOUT",
+    });
+    expect(isRetryableError(undiciTimeout)).toBe(true);
     const numericCause = new TypeError("boom");
     numericCause.cause = { code: 1 };
     expect(isRetryableError(numericCause)).toBe(false);
@@ -72,6 +80,20 @@ describe("withRetry", () => {
     await expect(withRetry(fn, { attempts: 5, sleep: noSleep })).rejects.toBeInstanceOf(
       HttpStatusError,
     );
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry ERR_INVALID_URL", async () => {
+    const fn = vi.fn(() => fetch("http://"));
+    await expect(withRetry(fn, { attempts: 4, sleep: noSleep })).rejects.toMatchObject({
+      cause: { code: "ERR_INVALID_URL" },
+    });
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry an unsupported fetch scheme", async () => {
+    const fn = vi.fn(() => fetch("ftp://example.com/file"));
+    await expect(withRetry(fn, { attempts: 4, sleep: noSleep })).rejects.toThrow("fetch failed");
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
