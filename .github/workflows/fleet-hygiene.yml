@@ -1,0 +1,165 @@
+# Fleet hygiene (reusable). Call from any repo:
+#   jobs:
+#     hygiene:
+#       uses: shuv1337/shark/.github/workflows/fleet-hygiene.yml@<ref>
+# Checks the tracked tree for secrets (gitleaks), PII/host details, stray
+# spike/harness/scratch files, and shellcheck warnings in *.sh.
+# Per-repo exceptions live in .github/hygiene-allowlist.txt (see the script
+# header below) and .gitleaks.toml (gitleaks' own allowlist format).
+name: fleet-hygiene
+
+on:
+  workflow_call:
+    inputs:
+      allowlist:
+        description: Path to the hygiene allowlist file in the caller repo.
+        type: string
+        default: .github/hygiene-allowlist.txt
+      shellcheck-severity:
+        description: Minimum shellcheck severity that fails (error, warning, info, style).
+        type: string
+        default: warning
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Secrets (gitleaks)
+        env:
+          GITLEAKS_VERSION: 8.21.2
+          GITLEAKS_SHA256: 5bc41815076e6ed6ef8fbecc9d9b75bcae31f39029ceb55da08086315316e3ba
+        run: |
+          set -euo pipefail
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL --retry 3 --max-time 60 -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$tarball"
+          echo "$GITLEAKS_SHA256  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" gitleaks
+          config=()
+          if [ -f .gitleaks.toml ]; then config=(--config .gitleaks.toml); fi
+          "$RUNNER_TEMP/gitleaks" dir . "${config[@]}" --redact --no-banner --exit-code 1
+
+      - name: PII, host details and stray artifacts
+        env:
+          ALLOWLIST: ${{ inputs.allowlist }}
+        run: |
+          cat > "$RUNNER_TEMP/hygiene_check.py" <<'PY'
+          #!/usr/bin/env python3
+          """Fleet hygiene: PII/host-detail and stray-artifact checks over tracked files.
+
+          Allowlist file (default .github/hygiene-allowlist.txt), one rule per line:
+            path:<glob>     skip every check for matching paths
+            pii:<glob>      skip PII/host checks for matching paths
+            artifact:<glob> allow a matching spike/harness/scratch path
+            email:<addr>    allow an email address (case-insensitive)
+            text:<literal>  allow a matched string (exact)
+          Lines starting with # are comments; " #" starts a trailing comment.
+          """
+          import fnmatch, os, re, subprocess, sys
+
+          allow_file = sys.argv[1] if len(sys.argv) > 1 else ".github/hygiene-allowlist.txt"
+          rules = {"path": [], "pii": [], "artifact": [], "email": set(), "text": set()}
+          if os.path.exists(allow_file):
+              for raw in open(allow_file, encoding="utf-8"):
+                  line = raw.split(" #", 1)[0].strip()
+                  if not line or line.startswith("#") or ":" not in line:
+                      continue
+                  kind, val = line.split(":", 1)
+                  kind, val = kind.strip(), val.strip()
+                  if kind in ("email", "text"):
+                      rules[kind].add(val.lower() if kind == "email" else val)
+                  elif kind in rules:
+                      rules[kind].append(val)
+
+          DEFAULT_EMAILS = {"kyle.crommett@gmail.com"}
+          EMAIL_OK_DOMAINS = ("example.com", "example.org", "example.net", "users.noreply.github.com",
+                              "noreply.github.com", "localhost", "test", "invalid", "example")
+          PERSONAL_DOMAINS = ("gmail.com", "googlemail.com", "yahoo.com", "hotmail.com", "outlook.com",
+                              "icloud.com", "me.com", "proton.me", "protonmail.com", "live.com", "aol.com")
+
+          PATTERNS = [
+              ("tailnet-host", re.compile(r"\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.ts\.net\b", re.I)),
+              ("tailscale-ip", re.compile(r"(?<![\d.])100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}(?![\d.])")),
+              ("home-path", re.compile(r"(?<![\w.~-])(?:/home/(?!runner\b|user\b|node\b|<)[a-z_][a-z0-9_-]{1,31}\b|/Users/(?!Shared\b|<)[A-Za-z][A-Za-z0-9._-]+)")),
+          ]
+          EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)\b")
+
+          ARTIFACTS = [re.compile(p) for p in (
+              r"(^|/)spike-[^/]*$", r"(^|/)[^/]*\.harness\.[^/]+$", r"(^|/)scratch/", r"^tmp/",
+          )]
+
+          def match_any(path, globs):
+              return any(fnmatch.fnmatch(path, g) for g in globs)
+
+          files = subprocess.run(["git", "ls-files", "-z"], capture_output=True, check=True).stdout.decode().split("\0")
+          problems = []
+          for path in filter(None, files):
+              if path == allow_file or match_any(path, rules["path"]):
+                  continue
+              if any(p.search(path) for p in ARTIFACTS) and not match_any(path, rules["artifact"]):
+                  problems.append(f"{path}: artifact: spike/harness/scratch file is tracked")
+              if match_any(path, rules["pii"]) or not os.path.isfile(path) or os.path.islink(path):
+                  continue
+              try:
+                  with open(path, "rb") as fh:
+                      data = fh.read(2_000_000)
+              except OSError:
+                  continue
+              if b"\0" in data[:8192]:
+                  continue
+              text = data.decode("utf-8", "replace")
+              for n, line in enumerate(text.splitlines(), 1):
+                  if len(line) > 4000:
+                      continue
+                  for name, rx in PATTERNS:
+                      for m in rx.finditer(line):
+                          if m.group(0) not in rules["text"]:
+                              problems.append(f"{path}:{n}: {name}: {m.group(0)}")
+                  for m in EMAIL.finditer(line):
+                      addr, dom = m.group(0).lower(), m.group(1).lower()
+                      if addr in DEFAULT_EMAILS or addr in rules["email"] or m.group(0) in rules["text"]:
+                          continue
+                      if any(dom == d or dom.endswith("." + d) for d in EMAIL_OK_DOMAINS):
+                          continue
+                      if dom in PERSONAL_DOMAINS:
+                          problems.append(f"{path}:{n}: personal-email: {m.group(0)}")
+
+          for p in problems:
+              print(p)
+          if problems:
+              print(f"\n{len(problems)} hygiene finding(s). Fix them or add a rule to {allow_file}.", file=sys.stderr)
+              sys.exit(1)
+          print("hygiene: clean")
+          PY
+          python3 "$RUNNER_TEMP/hygiene_check.py" "$ALLOWLIST"
+
+      - name: shellcheck
+        env:
+          ALLOWLIST: ${{ inputs.allowlist }}
+          SEVERITY: ${{ inputs.shellcheck-severity }}
+        run: |
+          set -euo pipefail
+          skip=()
+          if [ -f "$ALLOWLIST" ]; then
+            while IFS= read -r glob; do skip+=("$glob"); done < <(sed -n 's/^shellcheck:[[:space:]]*//p' "$ALLOWLIST" | sed 's/[[:space:]]#.*//; s/[[:space:]]*$//')
+          fi
+          files=()
+          while IFS= read -r -d '' f; do
+            keep=1
+            for g in "${skip[@]}"; do
+              # shellcheck disable=SC2053 # glob match is intended
+              [[ "$f" == $g ]] && keep=0
+            done
+            [ "$keep" = 1 ] && files+=("$f")
+          done < <(git ls-files -z -- '*.sh')
+          if [ "${#files[@]}" -eq 0 ]; then echo "no shell scripts"; exit 0; fi
+          shellcheck --version | head -2
+          shellcheck -S "$SEVERITY" -f gcc "${files[@]}"
