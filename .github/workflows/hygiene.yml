@@ -1,0 +1,17 @@
+name: hygiene
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: hygiene-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene:
+    uses: ./.github/workflows/fleet-hygiene.yml
