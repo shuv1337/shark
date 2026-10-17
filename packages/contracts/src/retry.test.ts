@@ -7,6 +7,14 @@ describe("isRetryableError", () => {
   it("retries timeouts, network errors and transient statuses only", () => {
     expect(isRetryableError(new DOMException("t", "TimeoutError"))).toBe(true);
     expect(isRetryableError(new TypeError("fetch failed"))).toBe(true);
+    expect(isRetryableError(new TypeError("Failed to fetch"))).toBe(true);
+    const reset = new TypeError("socket hang up");
+    reset.cause = Object.assign(new Error("connect ECONNRESET"), { code: "ECONNRESET" });
+    expect(isRetryableError(reset)).toBe(true);
+    expect(isRetryableError(new TypeError("Cannot read properties of undefined"))).toBe(false);
+    const numericCause = new TypeError("boom");
+    numericCause.cause = { code: 1 };
+    expect(isRetryableError(numericCause)).toBe(false);
     for (const status of [408, 425, 500, 502, 503, 504]) {
       expect(isRetryableError(new HttpStatusError(status))).toBe(true);
     }
@@ -67,6 +75,16 @@ describe("withRetry", () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
+  it("does not retry a generic TypeError", async () => {
+    const fn = vi.fn(async () => {
+      throw new TypeError("Cannot read properties of undefined");
+    });
+    await expect(withRetry(fn, { attempts: 5, sleep: noSleep })).rejects.toThrow(
+      "Cannot read properties of undefined",
+    );
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
   it("aborts a hung attempt at the per-attempt deadline", async () => {
     const hang = (signal: AbortSignal) =>
       new Promise<never>((_, reject) => {
@@ -89,9 +107,48 @@ describe("withRetry", () => {
 
   it("clamps attempts to at least one", async () => {
     const fn = vi.fn(async () => {
-      throw new TypeError("x");
+      throw new TypeError("fetch failed");
     });
-    await expect(withRetry(fn, { attempts: 0, sleep: noSleep })).rejects.toThrow("x");
+    await expect(withRetry(fn, { attempts: 0, sleep: noSleep })).rejects.toThrow("fetch failed");
     expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("defaults NaN and non-finite attempts to 3 before clamping", async () => {
+    const fn = vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    });
+    await expect(withRetry(fn, { attempts: Number.NaN, sleep: noSleep })).rejects.toThrow(
+      "fetch failed",
+    );
+    expect(fn).toHaveBeenCalledTimes(3);
+
+    const infinite = vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    });
+    await expect(
+      withRetry(infinite, { attempts: Number.POSITIVE_INFINITY, sleep: noSleep }),
+    ).rejects.toThrow("fetch failed");
+    expect(infinite).toHaveBeenCalledTimes(3);
+  });
+
+  it("disarms the per-attempt deadline once the attempt settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const parent = new AbortController();
+      let attemptSignal: AbortSignal | undefined;
+      await withTimeout(
+        async (signal) => {
+          attemptSignal = signal;
+          return "ok";
+        },
+        30,
+        parent.signal,
+      );
+      parent.abort();
+      await vi.advanceTimersByTimeAsync(30);
+      expect(attemptSignal?.aborted).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
