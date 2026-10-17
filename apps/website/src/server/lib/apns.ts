@@ -1,5 +1,5 @@
 import { createPrivateKey, sign } from "node:crypto";
-import { type ClientSessionOptions, connect } from "node:http2";
+import { type ClientHttp2Session, type ClientSessionOptions, connect } from "node:http2";
 import type { LiveActivityProps } from "@hark/contracts";
 import { LIVE_ACTIVITY_NAME } from "@hark/contracts";
 import { env } from "../env";
@@ -241,23 +241,31 @@ function providerJwt(config: ApnsProviderConfig): string {
   return value;
 }
 
+/** HTTP/2 session opener. Tests wrap this to observe real connect failures. */
+export const apnsConnection = {
+  open(authority: string, options: ClientSessionOptions): ClientHttp2Session {
+    return connect(authority, options);
+  },
+};
+
 function connectFailureReason(error: Error): string {
   if (error.message) return error.message;
   const code = "code" in error && typeof error.code === "string" ? error.code : "";
   return code || "ConnectError";
 }
 
-async function sendApnsPayload(
+export async function sendApnsPayload(
   environment: "sandbox" | "production",
   headers: Record<string, string>,
   payload: Buffer,
+  authority = apnsHost(environment),
 ): Promise<ApnsResult> {
   return new Promise<ApnsResult>((resolve) => {
     // Pin IPv4. A missing IPv6 route makes Happy Eyeballs emit ENETUNREACH on the
     // TLS socket, and that unhandled error crashes the process. @types/node's
     // HTTP/2 options omit net.Socket's family, but Node forwards it to tls.connect.
     const connectOptions = { family: 4 } as ClientSessionOptions;
-    const client = connect(apnsHost(environment), connectOptions);
+    const client = apnsConnection.open(authority, connectOptions);
     let request: ReturnType<typeof client.request> | null = null;
     let settled = false;
     const finish = (result: ApnsResult) => {
