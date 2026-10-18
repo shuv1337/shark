@@ -245,7 +245,7 @@ describe("POST /apps/enter", () => {
   it("never redirects off the site", async () => {
     for (const next of UNSAFE_NEXT) {
       const response = await enter({ pass: await pass("app_board0000"), next });
-      expect(response.headers.get("location")).toBe("/dashboard");
+      expect(response.headers.get("location")).toBe("/board");
     }
   });
 
@@ -376,13 +376,13 @@ describe("sign-in return path", () => {
     expect(signIns).toEqual(["/board/ask/bask_1"]);
   });
 
-  it("falls back to the dashboard for unsafe targets", async () => {
+  it("falls back to the board for unsafe targets", async () => {
     for (const next of UNSAFE_NEXT) {
       const response = await app.request(`/login?next=${encodeURIComponent(next)}`);
       expect(response.status).toBe(302);
     }
     await app.request("/login");
-    expect(new Set(signIns)).toEqual(new Set(["/dashboard"]));
+    expect(new Set(signIns)).toEqual(new Set(["/board"]));
     expect(signIns).toHaveLength(UNSAFE_NEXT.length + 1);
   });
 });

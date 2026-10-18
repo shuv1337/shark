@@ -15,7 +15,10 @@ export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 # shellcheck disable=SC1091
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 NODE_BIN="$(nvm which default 2>/dev/null || true)"
-[ -n "$NODE_BIN" ] && export PATH="$(dirname "$NODE_BIN"):$PATH"
+if [ -n "$NODE_BIN" ]; then
+  PATH="$(dirname "$NODE_BIN"):$PATH"
+  export PATH
+fi
 
 corepack enable >/dev/null 2>&1 || true
 

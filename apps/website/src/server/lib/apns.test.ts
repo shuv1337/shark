@@ -178,7 +178,10 @@ describe("Live Activity APNs payloads", () => {
       },
       5,
     );
-    expect(transport.connect).toHaveBeenCalledWith("https://api.push.apple.com");
+    expect(transport.connect).toHaveBeenCalledWith(
+      "https://api.push.apple.com",
+      expect.objectContaining({ family: 4 }),
+    );
     timeout?.();
 
     await expect(pending).resolves.toMatchObject({ accepted: false, reason: "Timeout" });
@@ -212,12 +215,77 @@ describe("Live Activity APNs payloads", () => {
       { event: "update", props, timestamp: 100 },
       5,
     );
-    expect(transport.connect).toHaveBeenCalledWith("https://api.sandbox.push.apple.com");
+    expect(transport.connect).toHaveBeenCalledWith(
+      "https://api.sandbox.push.apple.com",
+      expect.objectContaining({ family: 4 }),
+    );
     const headers = client.request.mock.calls.at(-1)?.[0] as Record<string, string>;
     const jwtHeader = headers.authorization?.slice("bearer ".length).split(".")[0] ?? "";
     expect(JSON.parse(Buffer.from(jwtHeader, "base64url").toString())).toMatchObject({
       kid: "DEVKEY123",
     });
+  });
+
+  it("fails one send when the socket connect errors and does not emit an unhandled error", async () => {
+    const request = new EventEmitter() as EventEmitter & {
+      close: ReturnType<typeof vi.fn>;
+      end: ReturnType<typeof vi.fn>;
+    };
+    request.close = vi.fn();
+    request.end = vi.fn();
+    const socket = new EventEmitter();
+    const client = new EventEmitter() as EventEmitter & {
+      socket: EventEmitter;
+      close: ReturnType<typeof vi.fn>;
+      destroy: ReturnType<typeof vi.fn>;
+      request: ReturnType<typeof vi.fn>;
+      setTimeout: ReturnType<typeof vi.fn>;
+    };
+    client.socket = socket;
+    client.close = vi.fn();
+    client.destroy = vi.fn();
+    client.request = vi.fn(() => request);
+    client.setTimeout = vi.fn(() => client);
+    transport.connect.mockReturnValue(client);
+
+    const unhandled: unknown[] = [];
+    const onUncaught = (error: unknown) => {
+      unhandled.push(error);
+    };
+    process.on("uncaughtException", onUncaught);
+    try {
+      const pending = sendLiveActivityPush(
+        "aa".repeat(32),
+        "production",
+        { event: "update", props, timestamp: 100 },
+        5,
+      );
+      const error = new AggregateError(
+        [
+          Object.assign(new Error("connect ENETUNREACH 2620:149:f9:1020::d:443"), {
+            code: "ENETUNREACH",
+          }),
+        ],
+        "connect ENETUNREACH 2620:149:f9:1020::d:443",
+      );
+      expect(() => socket.emit("error", error)).not.toThrow();
+      await expect(pending).resolves.toMatchObject({
+        accepted: false,
+        status: 0,
+        reason: "connect ENETUNREACH 2620:149:f9:1020::d:443",
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+      expect(request.close).toHaveBeenCalledOnce();
+      expect(client.close).toHaveBeenCalledOnce();
+      expect(client.destroy).toHaveBeenCalledOnce();
+      expect(transport.connect).toHaveBeenLastCalledWith(
+        "https://api.push.apple.com",
+        expect.objectContaining({ family: 4 }),
+      );
+    } finally {
+      process.removeListener("uncaughtException", onUncaught);
+    }
   });
 });
 

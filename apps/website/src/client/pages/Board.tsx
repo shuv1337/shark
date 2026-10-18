@@ -8,6 +8,7 @@ import { quietButton } from "../components/ui";
 import { api } from "../lib/api";
 import { useSession } from "../lib/auth";
 import { subscribeToBoardUpdates } from "../lib/boardUpdates";
+import { subscribeToReconnect, useOffline } from "../lib/connection";
 import { publishBoardWaiting } from "../lib/counts";
 
 export function Board() {
@@ -21,6 +22,12 @@ export function Board() {
   );
   const [showAged, setShowAged] = useState(false);
   const request = useRef(0);
+  /*
+   * Offline, the shell already says the page is showing what was last loaded.
+   * Repeating it here as a red "Could not load the board" would be both
+   * redundant and wrong: the board underneath it is real, just not current.
+   */
+  const offline = useOffline();
 
   const refresh = useCallback(async () => {
     const current = ++request.current;
@@ -37,7 +44,8 @@ export function Board() {
 
   useEffect(() => {
     if (!isPending && !session) {
-      navigate("/", { replace: true });
+      // navigate() can return a promise; the router owns navigation errors.
+      void navigate("/", { replace: true });
       return;
     }
     if (session) void refresh();
@@ -47,6 +55,20 @@ export function Board() {
     if (!session) return;
     return subscribeToBoardUpdates(() => void refresh());
   }, [session, refresh]);
+
+  /*
+   * Back online: drop the error this page stopped showing while the shell's
+   * banner was up, and read again. Without this the error would simply
+   * reappear as the banner left, over data that is about to be replaced.
+   */
+  useEffect(
+    () =>
+      subscribeToReconnect(() => {
+        setError(null);
+        void refresh();
+      }),
+    [refresh],
+  );
 
   // A deep link from a push shows that ask first, with its timeline, even once
   // resolved. It reloads whenever the board changes so its state stays current.
@@ -137,7 +159,7 @@ export function Board() {
         </button>
       </div>
 
-      {error ? (
+      {error && !offline ? (
         <p className="mt-4 rounded-xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger">
           {error}
         </p>
@@ -260,6 +282,13 @@ export function Board() {
             </div>
           </Lane>
         </div>
+      ) : offline ? (
+        // A cold start with no connection: the shell opened from the cache and
+        // there is genuinely nothing to show yet. A skeleton here would
+        // pretend something is on its way.
+        <p className="mt-8 rounded-2xl border border-dashed border-line-strong px-6 py-10 text-center text-ink-muted">
+          The board has not loaded in this browser yet. It will fill in when you're back online.
+        </p>
       ) : error ? null : (
         <SkeletonList className="mt-8" label="Loading the board" rowClassName="h-28" rows={3} />
       )}

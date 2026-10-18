@@ -627,6 +627,7 @@ describe("isKnownWebPushEndpoint", () => {
   it("accepts only production browser push services on the default HTTPS port", () => {
     for (const endpoint of [
       "https://fcm.googleapis.com/fcm/send/synthetic",
+      "https://jmt17.google.com/fcm/send/synthetic",
       "https://updates.push.services.mozilla.com/wpush/v2/synthetic",
       "https://wns2-synthetic.notify.windows.com/w/?token=synthetic",
       "https://web.push.apple.com/synthetic",
@@ -639,6 +640,8 @@ describe("isKnownWebPushEndpoint", () => {
       "https://fcm.googleapis.com:8443/fcm/send/synthetic",
       "https://user:pass@fcm.googleapis.com/fcm/send/synthetic",
       "https://fcm.googleapis.com.example.com/fcm/send/synthetic",
+      "https://google.com/fcm/send/synthetic",
+      "https://jmt17.google.com.example.com/fcm/send/synthetic",
       "https://notify.windows.com/w/synthetic",
       "https://push.apple.com/synthetic",
       "https://evilpush.apple.com/synthetic",
@@ -955,7 +958,39 @@ describe("cross-deploy request-hash stability", () => {
     for (const fixture of fixtures) {
       const parsed = agentNotificationCreateSchema.parse(fixture.input);
       expect(JSON.stringify(parsed)).toBe(fixture.expected);
+      expect(parsed).not.toHaveProperty("agentDisplay");
     }
+    const named = agentNotificationCreateSchema.parse({ body: "Done", agentDisplay: "Grok Bot" });
+    expect(JSON.stringify(named)).toBe('{"body":"Done","title":"SHark","agentDisplay":"Grok Bot"}');
+  });
+
+  it("keeps parsed interaction payloads identical when agentDisplay is omitted", () => {
+    const parsed = interactionCreateSchema.parse({
+      title: "Ship",
+      prompt: "Ship it?",
+      kind: "approval",
+    });
+    expect(JSON.stringify(parsed)).toBe(
+      '{"title":"Ship","prompt":"Ship it?","kind":"approval","expiresInSeconds":900}',
+    );
+    expect(parsed).not.toHaveProperty("agentDisplay");
+    const named = interactionCreateSchema.parse({
+      title: "Ship",
+      prompt: "Ship it?",
+      kind: "approval",
+      agentDisplay: "Grok Bot",
+    });
+    expect(JSON.stringify(named)).toBe(
+      '{"title":"Ship","prompt":"Ship it?","kind":"approval","expiresInSeconds":900,"agentDisplay":"Grok Bot"}',
+    );
+    expect(
+      interactionCreateSchema.safeParse({
+        title: "T",
+        prompt: "P",
+        kind: "approval",
+        agentDisplay: "x".repeat(61),
+      }).success,
+    ).toBe(false);
   });
 
   it("appends new optional fields after every legacy key", () => {

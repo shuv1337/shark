@@ -581,7 +581,7 @@ export const hooksRoute = new Hono()
       webPayload: {
         title: resolved.title,
         body: resolved.summary ?? resolved.body,
-        url: resolved.url ?? "/dashboard",
+        url: resolved.url ?? "/inbox",
         eventId,
         ...(resolved.imageUrl ? { imageUrl: resolved.imageUrl } : {}),
         tag: parsed.data.response ? `interaction-${interactionId}` : notificationEventTag(eventId),

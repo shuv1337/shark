@@ -1,6 +1,7 @@
 import type { BoardAskDto, BoardAskEventDto } from "@hark/contracts";
 import { useState } from "react";
 import { ApiRequestError, api } from "../../lib/api";
+import { offlineProps, useOffline } from "../../lib/connection";
 import { focusRing, quietButton, surfacePanel } from "../ui";
 import {
   answerSummary,
@@ -86,6 +87,13 @@ export function AskCard({
   const [dismissReason, setDismissReason] = useState<string | null>(null);
   const [busy, setBusy] = useState<Busy>("idle");
   const [notice, setNotice] = useState<string | null>(null);
+  /*
+   * Answering, snoozing and dismissing all go to the server and have no
+   * offline form. Disabling them with a reason is kinder than letting the tap
+   * land and reporting a failure the operator could have been spared.
+   */
+  const offline = useOffline();
+  const offlineAction = offlineProps(offline);
 
   const open = ask.status === "open";
 
@@ -205,6 +213,7 @@ export function AskCard({
                 className={`min-h-11 flex-1 rounded-xl bg-accent px-4 text-sm font-semibold text-on-accent transition-colors hover:bg-accent-hover disabled:pointer-events-none disabled:opacity-50 ${focusRing}`}
                 disabled={working}
                 onClick={() => void answerOption("done")}
+                {...offlineAction}
                 type="button"
               >
                 Done
@@ -216,6 +225,7 @@ export function AskCard({
                   disabled={working}
                   key={option.id}
                   onClick={() => void answerOption(option.id)}
+                  {...offlineAction}
                   type="button"
                 >
                   {option.label}
@@ -241,6 +251,7 @@ export function AskCard({
                     className={`min-h-10 rounded-xl bg-accent px-4 text-sm font-semibold text-on-accent transition-colors hover:bg-accent-hover disabled:pointer-events-none disabled:opacity-50 ${focusRing}`}
                     disabled={working || reply.trim().length === 0}
                     onClick={answerText}
+                    {...offlineAction}
                     type="button"
                   >
                     Send reply
@@ -290,6 +301,7 @@ export function AskCard({
                     className={`${quietButton} min-h-9 bg-surface-muted text-ink`}
                     disabled={working || !laterDate}
                     onClick={snooze}
+                    {...offlineAction}
                     type="button"
                   >
                     Snooze
@@ -327,6 +339,7 @@ export function AskCard({
                   className={`${quietButton} min-h-9 bg-danger-soft text-danger`}
                   disabled={working}
                   onClick={() => void dismiss()}
+                  {...offlineAction}
                   type="button"
                 >
                   Dismiss

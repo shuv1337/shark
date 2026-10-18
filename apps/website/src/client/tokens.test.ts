@@ -95,3 +95,34 @@ describe("status token contrast", () => {
     expect(contrast([0, 0, 0], [255, 255, 255])).toBeCloseTo(21, 5);
   });
 });
+
+/**
+ * Standalone polish. The rules are CSS rather than React state so an installed
+ * app has the right inset on its very first paint, which means this is where
+ * they can be checked at all.
+ */
+describe("standalone display mode", () => {
+  const standaloneBlock = css.slice(
+    css.indexOf("@media (display-mode: standalone)"),
+    css.indexOf("html.hark-standalone {"),
+  );
+
+  it("pads the header by the top safe-area inset", () => {
+    expect(standaloneBlock).toContain(".hark-standalone-top");
+    expect(standaloneBlock).toContain("padding-top: env(safe-area-inset-top)");
+    // Same rule for an older iOS home-screen app, which only reports
+    // `navigator.standalone`; `main.tsx` sets the class from it.
+    expect(css).toContain("html.hark-standalone .hark-standalone-top");
+  });
+
+  /**
+   * Only in standalone. In a browser the rubber band belongs to the browser,
+   * and taking it away there would be rude.
+   */
+  it("stops the viewport bouncing, and only when installed", () => {
+    expect(standaloneBlock).toContain("overscroll-behavior-y: none");
+    expect(css).toContain("html.hark-standalone {\n  overscroll-behavior-y: none;\n}");
+    const outside = css.slice(0, css.indexOf("@media (display-mode: standalone)"));
+    expect(outside).not.toContain("overscroll-behavior");
+  });
+});

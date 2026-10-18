@@ -1,22 +1,28 @@
 import type { ApiTokenDto, DeviceDto, ServiceDto } from "@hark/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { SelfHostedBadge } from "../components/AppShell";
 import { BrowserNotifications } from "../components/BrowserNotifications";
 import { ErrorText, SECTION, SectionHeading, SkeletonList } from "../components/DashboardKit";
 import { DevicesSection } from "../components/Devices";
+import { AppBuildLine, InstallAppSection, useInstallTarget } from "../components/InstallApp";
 import { McpClientsSection } from "../components/McpClientsSection";
 import { ServicesSection } from "../components/ServicesSection";
 import { SETTINGS_COLUMN } from "../components/SiteChrome";
 import { focusRing, secondaryButton } from "../components/ui";
 import { api } from "../lib/api";
 import { signOut, useSession } from "../lib/auth";
+import { subscribeToReconnect, useOffline } from "../lib/connection";
+import { clearNavCounts } from "../lib/counts";
 import { activeSection, visibleSections } from "../lib/sectionSpy";
 
 /**
  * Settings sections, in the order they appear. The rail on `md+` is the
  * page's table of contents, and each entry is a real link so a section can be
  * sent to someone (`/settings#devices`) or bookmarked.
+ *
+ * Install is conditional: it only exists in a browser that has somewhere to
+ * install to, so the rail is built per visit rather than fixed here.
  */
 const SECTIONS = [
   { id: "account", label: "Account" },
@@ -26,7 +32,7 @@ const SECTIONS = [
   { id: "mcp", label: "Connected MCP clients" },
 ] as const;
 
-const SECTION_IDS = SECTIONS.map((section) => section.id);
+const INSTALL_SECTION = { id: "install", label: "Install app" } as const;
 
 /**
  * The band that counts as "here": the strip just under the sticky header. A
@@ -39,6 +45,12 @@ export function Settings() {
   const { data: session, isPending } = useSession();
   const navigate = useNavigate();
   const { hash } = useLocation();
+  const installTarget = useInstallTarget();
+  const offline = useOffline();
+  const sections = useMemo(
+    () => (installTarget ? [...SECTIONS, INSTALL_SECTION] : [...SECTIONS]),
+    [installTarget],
+  );
 
   const [services, setServices] = useState<ServiceDto[] | null>(null);
   const [devices, setDevices] = useState<DeviceDto[] | null>(null);
@@ -63,11 +75,26 @@ export function Settings() {
 
   useEffect(() => {
     if (!isPending && !session) {
-      navigate("/", { replace: true });
+      // navigate() can return a promise; the router owns navigation errors.
+      void navigate("/", { replace: true });
       return;
     }
     if (session) void refresh();
   }, [session, isPending, navigate, refresh]);
+
+  /*
+   * Back online: drop the error this page stopped showing while the shell's
+   * banner was up, and read again. Without this the error would simply
+   * reappear as the banner left, over data that is about to be replaced.
+   */
+  useEffect(
+    () =>
+      subscribeToReconnect(() => {
+        setError(null);
+        void refresh();
+      }),
+    [refresh],
+  );
 
   const [visible, setVisible] = useState<string[]>([]);
   // The hashes this page wrote itself, which must not be read back as a
@@ -93,17 +120,18 @@ export function Settings() {
     // The sections only exist once the session has resolved and the page has
     // rendered them, so this waits for it rather than observing nothing.
     if (!session || typeof IntersectionObserver === "undefined") return;
-    const targets = SECTION_IDS.map((id) => document.getElementById(id)).filter(
-      (element): element is HTMLElement => element !== null,
-    );
+    const ids = sections.map((section) => section.id);
+    const targets = ids
+      .map((id) => document.getElementById(id))
+      .filter((element): element is HTMLElement => element !== null);
     if (targets.length === 0) return;
     const observer = new IntersectionObserver(
-      (entries) => setVisible((current) => visibleSections(current, entries, SECTION_IDS)),
+      (entries) => setVisible((current) => visibleSections(current, entries, ids)),
       { rootMargin: SPY_BAND },
     );
     for (const target of targets) observer.observe(target);
     return () => observer.disconnect();
-  }, [session]);
+  }, [session, sections]);
 
   const active = activeSection(visible, hash.slice(1) || SECTIONS[0].id);
 
@@ -119,7 +147,8 @@ export function Settings() {
     const next = `#${active}`;
     if (hash === next) return;
     authored.current = active;
-    navigate(`/settings${next}`, { replace: true });
+    // navigate() can return a promise; the router owns navigation errors.
+    void navigate(`/settings${next}`, { replace: true });
   }, [active, hash, navigate, visible]);
 
   if (isPending || !session) {
@@ -140,7 +169,7 @@ export function Settings() {
       <div className="mt-8 md:grid md:grid-cols-[12rem_minmax(0,1fr)] md:gap-12">
         <nav aria-label="Settings sections" className="hidden md:block">
           <ul className="sticky top-24 space-y-0.5">
-            {SECTIONS.map((section) => (
+            {sections.map((section) => (
               <li key={section.id}>
                 <Link
                   aria-current={active === section.id ? "true" : undefined}
@@ -159,11 +188,15 @@ export function Settings() {
         </nav>
 
         <div className="min-w-0">
-          <ErrorText>{error}</ErrorText>
+          {/* Offline is the shell's banner, not a failure of this page. */}
+          <ErrorText>{offline ? null : error}</ErrorText>
 
           <AccountSection
             email={session.user.email}
-            onSignOut={() => void signOut().then(() => navigate("/"))}
+            onSignOut={() => {
+              clearNavCounts();
+              void signOut().then(() => navigate("/"));
+            }}
           />
 
           <BrowserNotifications onChanged={() => void refresh()} />
@@ -183,10 +216,15 @@ export function Settings() {
           <McpClientsSection />
 
           {/*
-           * Install app: Phase 2b fills this in with the Chromium install
-           * prompt and the iOS Add to Home Screen steps. It renders nothing
-           * until then rather than promising a button that does not exist.
+           * The install section carries the build line. Where there is nothing
+           * to install — Firefox on the desktop — the section is gone but the
+           * build is still worth being able to read back, so it stands alone.
            */}
+          {installTarget ? (
+            <InstallAppSection />
+          ) : (
+            <AppBuildLine className="mt-10 border-t border-line pt-8" />
+          )}
         </div>
       </div>
     </main>

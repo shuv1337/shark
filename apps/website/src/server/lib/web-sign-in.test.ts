@@ -35,7 +35,7 @@ describe("Apple web sign-in bootstrap", () => {
     expect(request?.headers.get(CLIENT_IP_HEADER)).toBeNull();
     expect(await request?.json()).toEqual({
       provider: "apple",
-      callbackURL: "/dashboard",
+      callbackURL: "/board",
     });
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toContain("https://appleid.apple.com/auth/authorize");

@@ -68,6 +68,59 @@ logs. Unchecked release evidence keeps the goal active.
     `c96e5e045c4651ee2e59f5ebc00207777c336d99f8ab8cc9a059d9f90333cc00`). The installed copy
     therefore came from that unpublished working state, not from either bundle revision.
     `~/.claude/skills/shark` still links to `../../.agents/skills/shark`.
+- 2026-10-11: production was promoted from `2f79498` to
+  `6882c7d708d0564380ec83c13583cadf0d4be426` (#154, the `jmt17.google.com` push endpoint and a
+  recoverable refused browser subscription) at image digest
+  `sha256:90366534562a74ddc7f75c5853b631a78fcc11f853c65587287b07137c2bf042` from publisher run
+  `38174055682`. No helper, Compose, or migration change. `shark-deploy` ran detached at
+  20:56:26 UTC, verified pre-deploy snapshot
+  `e3a59712fa63cc4d65e116a97c29af1273c65abd0daf6562a8663a22e0007ee1`, and recorded the release at
+  `2026-10-11T20:58:10Z` with about 90 seconds of downtime, no `rollback.log`, no `op daemon`
+  left behind, a healthy container with 0 restarts and no logged errors or warnings, migrations
+  unchanged at 28 with integrity `ok`. Health, manifest, and service worker returned 200;
+  `/board`, `/settings`, and `/api/inbox/counts` 401; `/api/nope` 404. A labeled test
+  notification was accepted for 4 targets.
+  - Cause of the owner's report: the Linux Chromium subscription's endpoint host is
+    `jmt17.google.com`, a Google FCM front end that the #127 allowlist did not include. To
+    diagnose it, the two stored subscriptions were decrypted inside the container and only the
+    endpoint hostname, path length, key lengths, and `expirationTime` were printed (hosts
+    `web.push.apple.com`, active, and `jmt17.google.com`, inactive since 2026-10-07 21:05 UTC);
+    no capability URL or key left the container.
+  - Not yet checked: that the Linux browser's existing subscription registers on reload; the
+    owner reports this from the device.
+- 2026-10-11: production was promoted from `239f441` to
+  `2f79498bc5c5b0be4c54fd99153b1155103e13f0` (web app shell, navigation, pages, and PWA: #147,
+  #148, #149, #150, #151) at image digest
+  `sha256:4bd39347096511ba680d6bcc701d3da7eb2c9961e8393397b1bf5ec3ebb5689e` from publisher run
+  `38168920632`. No helper, Compose, or migration change. `shark-deploy` ran detached at
+  19:41:59 UTC, verified pre-deploy snapshot
+  `9aa2d2d776572e5ceed8e8d5b8403178d856793c17625504c71085a9d16c6e4a`, and recorded the release at
+  `2026-10-11T19:43:40Z`; the loopback probe saw 88 non-200 seconds (19:42:09 to 19:43:37). The
+  running image ID matches the digest, the container is healthy with 0 restarts and logged no
+  errors or warnings, migrations are unchanged at 28 with integrity `ok` and no foreign-key
+  violations, no `rollback.log` exists, and no `op daemon` was left behind. Post-deploy checks
+  through `https://shark.shuv.dev`:
+  - **New anonymous surface, exactly as allowlisted** (`PUBLIC_APP_ASSETS`):
+    `/manifest.webmanifest` (200, `application/manifest+json`; `name` SHark, `start_url`
+    `/board`, `display` standalone, `scope` `/`, three icons including a maskable 512, no `@` or
+    account content), `/apple-touch-icon.png`, `/icons/icon-192.png`, `/icons/icon-512.png`,
+    `/icons/icon-maskable-512.png` (200 `image/png`), plus the existing `/sw.js`, `/favicon.png`,
+    and `/app-store-icon.png`. `/icons/other.png` and `/ogimage.png` return 401.
+  - The built service worker (7,156 bytes) has no `__PRECACHE__`/`__VERSION__` placeholders,
+    lists 3 hashed `/assets/*` files, excludes `/api`, `/hooks`, `/mcp`, and `/.well-known` from
+    the navigation fallback, waits for the `hark:skip-waiting` message, and defaults
+    notification taps to `/inbox`.
+  - Anonymous `/`, `/board`, `/inbox`, `/inbox/x`, `/teams`, `/teams/x`, `/settings`, `/docs`,
+    `/dashboard`, `/dashboard/teams/x`, `/assets/index.js`, and unknown page paths (`/pricing`,
+    `/nope`) return 401 (the authenticated catch-all shell from #148). `/api/nope`,
+    `/hooks/nope`, `/mcp/x`, `/.well-known/nope`, `/foo/bar.json`, `/robots.txt`, and
+    `/sitemap.xml` return 404. `/api/inbox/counts` (new in #148) returns 401 anonymously.
+  - `/api/health` returned `{"ok":true}`; `/mcp` with a forged bearer 401; a token request
+    without `resource` still 400.
+  - A labeled test notification at 19:44:12 UTC was accepted for 4 targets.
+  - Not yet checked: signed-in use of the new pages, iOS Add to Home Screen and the standalone
+    run, the Chromium install prompt, and the update bar on the next promotion. These are the
+    owner's checks on real devices.
 - 2026-10-11: production was promoted from `4b68efc` to
   `239f44129b2df16d384ea6b629df14d880432565` (#145, the `/mcp` resource-binding runtime fix) at
   image digest `sha256:189877bcab70232f9c4764b85f289dff5d7067e1ec0a23249acbfa5471da5a8a` from

@@ -82,6 +82,9 @@ const singleLine = (max: number) =>
     )
     .refine(noFormatCharacters, "Format characters are not allowed");
 
+/** Per-bot label. No default: an omitted value must stay off the parsed object. */
+export const agentDisplaySchema = singleLine(60);
+
 export const boardKeySchema = z
   .string()
   .trim()
@@ -137,7 +140,7 @@ export const boardAskUpsertSchema = z
     allowLater: z.boolean().default(true),
     priority: boardPrioritySchema.default("p1"),
     taskId: singleLine(100).optional(),
-    agentDisplay: singleLine(60).optional(),
+    agentDisplay: agentDisplaySchema.optional(),
     links: z.array(boardLinkSchema).max(BOARD_MAX_LINKS).default([]),
     /** Null or omitted: the ask stays open until answered or cancelled. */
     expiresInSeconds: z.number().int().min(60).max(BOARD_MAX_EXPIRES_IN_SECONDS).nullish(),
@@ -193,7 +196,7 @@ export const boardWorkUpsertSchema = z.object({
   progress: z.number().min(0).max(1).nullable().optional(),
   links: z.array(boardLinkSchema).max(BOARD_MAX_LINKS).optional(),
   host: singleLine(60).nullable().optional(),
-  agentDisplay: singleLine(60).nullable().optional(),
+  agentDisplay: agentDisplaySchema.nullable().optional(),
   /** Key of one of this account's asks that this work is waiting on; an unknown key is refused. */
   waitingAskKey: boardKeySchema.nullable().optional(),
   /** Defaults to {@link BOARD_DEFAULT_HEARTBEAT_TTL_SECONDS} for a new work item. */
@@ -215,7 +218,7 @@ export const boardDoneSchema = z.object({
   outcome: z.enum(["done", "failed", "cancelled"]).default("done"),
   links: z.array(boardLinkSchema).max(BOARD_MAX_LINKS).default([]),
   note: multiLine(600).optional(),
-  agentDisplay: singleLine(60).optional(),
+  agentDisplay: agentDisplaySchema.optional(),
 });
 export type BoardDoneInput = z.infer<typeof boardDoneSchema>;
 
@@ -225,7 +228,7 @@ export const boardNoteUpsertSchema = z.object({
   detail: multiLine(2000).optional(),
   link: httpsUrlSchema.optional(),
   expiresInSeconds: z.number().int().min(60).max(BOARD_MAX_EXPIRES_IN_SECONDS).nullish(),
-  agentDisplay: singleLine(60).optional(),
+  agentDisplay: agentDisplaySchema.optional(),
 });
 export type BoardNoteUpsertInput = z.infer<typeof boardNoteUpsertSchema>;
 

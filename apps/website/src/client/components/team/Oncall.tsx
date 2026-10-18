@@ -7,6 +7,7 @@ import type {
 } from "@hark/contracts";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { api } from "../../lib/api";
+import { offlineProps, useOffline } from "../../lib/connection";
 import { canManage, MAX_ESCALATION_STEPS, TEAM_NAME_MAX_CHARS } from "../../lib/teams";
 import { useConfirm } from "../ConfirmDialog";
 import {
@@ -68,6 +69,8 @@ export function OncallSection({
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<OncallGroupDto | "new" | null>(null);
   const manage = canManage(team.role);
+  // Paging someone, editing a rotation and adding an override are all writes.
+  const offline = useOffline();
 
   const load = useCallback(async () => {
     try {
@@ -97,7 +100,12 @@ export function OncallSection({
         description="Rotations decide who gets paged. Unacknowledged pages escalate on their own."
         action={
           manage ? (
-            <button className={rowButton} onClick={() => setEditing("new")} type="button">
+            <button
+              className={rowButton}
+              onClick={() => setEditing("new")}
+              type="button"
+              {...offlineProps(offline)}
+            >
               New group
             </button>
           ) : null
@@ -171,6 +179,7 @@ function GroupCard({
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const offline = useOffline();
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
@@ -253,11 +262,18 @@ function GroupCard({
             disabled={busy}
             onClick={() => void sendTest()}
             type="button"
+            {...offlineProps(offline)}
           >
             Send test page
           </button>
           {manage ? (
-            <button className={rowButton} disabled={busy} onClick={onEdit} type="button">
+            <button
+              className={rowButton}
+              disabled={busy}
+              onClick={onEdit}
+              type="button"
+              {...offlineProps(offline)}
+            >
               Edit
             </button>
           ) : null}
@@ -335,6 +351,7 @@ function GroupCard({
                 disabled={busy}
                 onClick={() => void remove()}
                 type="button"
+                {...offlineProps(offline)}
               >
                 Delete group
               </button>
@@ -410,8 +427,10 @@ function Overrides({
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const offline = useOffline();
   const formId = useId();
 
+  // Catches its own errors; the form fires and forgets it.
   const add = async (event: React.FormEvent) => {
     event.preventDefault();
     const start = new Date(startsAt);
@@ -477,6 +496,7 @@ function Overrides({
                 disabled={busy}
                 onClick={() => void remove(override)}
                 type="button"
+                {...offlineProps(offline)}
               >
                 Remove
               </button>
@@ -488,7 +508,7 @@ function Overrides({
         aria-label={`Add an override to ${group.name}`}
         className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.1fr)_minmax(0,1.1fr)]"
         id={formId}
-        onSubmit={add}
+        onSubmit={(event) => void add(event)}
       >
         <Field label="Who">
           <Select onChange={(event) => setUserId(event.target.value)} value={userId}>
@@ -518,7 +538,12 @@ function Overrides({
           />
         </Field>
         <div className="sm:col-span-3">
-          <button className={secondaryButton} disabled={busy} type="submit">
+          <button
+            className={secondaryButton}
+            disabled={busy}
+            type="submit"
+            {...offlineProps(offline)}
+          >
             {busy ? "Adding…" : "Add override"}
           </button>
         </div>
@@ -580,6 +605,7 @@ function GroupModal({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const offline = useOffline();
   const zones = useMemo(() => timeZones(timezone), [timezone]);
   const byId = new Map(members.map((member) => [member.userId, member]));
   const available = members.filter((member) => !rotation.includes(member.userId));
@@ -601,6 +627,7 @@ function GroupModal({
       current.map((step, position) => (position === index ? { ...step, ...patch } : step)),
     );
 
+  // Catches its own errors; the form fires and forgets it.
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (rotation.length === 0) {
@@ -630,7 +657,7 @@ function GroupModal({
       busy={busy}
       description="Who gets paged, when shifts change, and how pages escalate."
       onClose={onClose}
-      onSubmit={submit}
+      onSubmit={(event) => void submit(event)}
       title={group ? `Edit ${group.name}` : "New on-call group"}
       wide
     >
@@ -838,6 +865,7 @@ function GroupModal({
           className={primaryButtonSmall}
           disabled={busy || name.trim().length === 0 || rotation.length === 0}
           type="submit"
+          {...offlineProps(offline)}
         >
           {busy ? "Saving…" : group ? "Save changes" : "Create group"}
         </button>

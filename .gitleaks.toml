@@ -1,0 +1,10 @@
+# gitleaks config: default rules plus a baseline of reviewed false positives
+# (FM-PYRAMID-2, 2026-10-16). Add new entries only after confirming a match is not a credential.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "reviewed baseline"
+paths = [
+  '''^docs/agent\-reply\-routing/research/opencode\-v2/api\-summary\.json$''',
+]

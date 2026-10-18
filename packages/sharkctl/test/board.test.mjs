@@ -309,6 +309,11 @@ test("board work, done, and note send the documented payloads", async () => {
       /--state/,
     );
     await assert.rejects(execute(["board", "done", "--key", "k", "--verb", "won"], env), /--verb/);
+    const read = await execute(["board", "work-get", "--key", "bro:sb-1"], env);
+    assert.equal(read.exitCode, 0);
+    assert.equal(calls.at(-1).method, "GET");
+    assert.equal(calls.at(-1).url, "https://example.test/api/agent/board/work/bro%3Asb-1");
+    await assert.rejects(execute(["board", "work-get"], env), /--key/);
     await assert.rejects(execute(["board", "frobnicate"], env), /board verbs/);
   } finally {
     restore();

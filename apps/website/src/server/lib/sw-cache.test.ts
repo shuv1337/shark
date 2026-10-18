@@ -33,6 +33,8 @@ function harness() {
   };
   const fetchMock = vi.fn();
   const skipWaiting = vi.fn().mockResolvedValue(undefined);
+  const shown: Array<[string, Record<string, unknown>]> = [];
+  const opened: string[] = [];
   class WorkerRequest {
     url: string;
 
@@ -45,10 +47,19 @@ function harness() {
       addEventListener: (name: string, listener: (event: Record<string, unknown>) => void) =>
         listeners.set(name, listener),
       location: { origin: "https://shark.example" },
-      registration: { showNotification: vi.fn(), getNotifications: vi.fn() },
+      registration: {
+        showNotification: vi.fn((title: string, options: Record<string, unknown>) => {
+          shown.push([title, options]);
+        }),
+        getNotifications: vi.fn(),
+      },
       skipWaiting,
     },
-    clients: { matchAll: vi.fn(), claim: vi.fn(), openWindow: vi.fn() },
+    clients: {
+      matchAll: vi.fn().mockResolvedValue([]),
+      claim: vi.fn(),
+      openWindow: vi.fn((url: string) => opened.push(url)),
+    },
     caches,
     fetch: fetchMock,
     Request: WorkerRequest,
@@ -68,12 +79,21 @@ function harness() {
     return responsePromise;
   }
 
+  async function dispatch(name: string, event: Record<string, unknown>) {
+    const pending: Promise<unknown>[] = [];
+    listeners.get(name)?.({ ...event, waitUntil: (p: Promise<unknown>) => pending.push(p) });
+    await Promise.all(pending);
+  }
+
   return {
     cache,
     caches,
     fetchMock,
     listeners,
     skipWaiting,
+    shown,
+    opened,
+    dispatch,
     dispatchFetch,
     removeShells: () => {
       shells.clear();
@@ -323,6 +343,39 @@ const PREVIOUS_SHELLS = {
  * used to delete every other shark-shell cache anyway.
  */
 describe("service worker shell retention", () => {
+  it("keeps an old shell and its differently hashed assets together until a fresh shell is ready", async () => {
+    const worker = storageHarness({ addFails: true });
+    worker.seed(PREVIOUS, {
+      "/board": '<script src="/assets/old.js"></script>',
+      "/assets/old.js": "old bundle",
+    });
+    await worker.dispatch("install");
+    await worker.dispatch("activate");
+    worker.fetchMock.mockRejectedValue(new Error("offline"));
+    expect(await (await worker.dispatchFetch("/board", "navigate"))?.text()).toContain("old.js");
+    expect(await (await worker.dispatchFetch("/assets/old.js"))?.text()).toBe("old bundle");
+
+    // Fetching new assets alone cannot make an old document a current shell.
+    worker.fetchMock.mockResolvedValue(
+      page("new bundle", {
+        type: "text/javascript",
+        url: "https://shark.example/assets/x.js",
+      }),
+    );
+    await worker.dispatchFetch("/assets/x.js");
+    expect(worker.names()).toContain(PREVIOUS);
+    expect(await worker.body(CACHE_NAME, "/board")).toBeUndefined();
+    worker.fetchMock.mockResolvedValue(
+      page('<script src="/assets/x.js"></script>', {
+        url: "https://shark.example/board",
+      }),
+    );
+    await worker.dispatchFetch("/board", "navigate");
+    expect(worker.names()).not.toContain(PREVIOUS);
+    worker.fetchMock.mockRejectedValue(new Error("offline"));
+    expect(await (await worker.dispatchFetch("/inbox", "navigate"))?.text()).toContain("x.js");
+  });
+
   it("does not delete the previous shell cache when the new one stored nothing", async () => {
     const worker = storageHarness({ addFails: true, putFails: true });
     worker.seed(PREVIOUS, PREVIOUS_SHELLS);
@@ -341,16 +394,16 @@ describe("service worker shell retention", () => {
     expect(await inbox?.text()).toBe("previous inbox");
   });
 
-  it("drops the previous cache only after the new one holds /board and the precache", async () => {
+  it("does not copy previous documents into the current build cache", async () => {
     const worker = storageHarness({ addFails: true });
     worker.seed(PREVIOUS, PREVIOUS_SHELLS);
     await worker.dispatch("install");
     await worker.dispatch("activate");
 
-    expect(worker.deleted).toEqual([PREVIOUS]);
-    expect(worker.names()).toEqual([CACHE_NAME]);
-    expect(await worker.body(CACHE_NAME, "/inbox")).toBe("previous inbox");
-    expect(await worker.body(CACHE_NAME, "/assets/x.js")).toBe("previous asset");
+    expect(worker.deleted).toEqual([]);
+    expect(worker.names()).toContain(PREVIOUS);
+    expect(await worker.body(CACHE_NAME, "/inbox")).toBeUndefined();
+    expect(await worker.body(CACHE_NAME, "/assets/x.js")).toBeUndefined();
 
     worker.fetchMock.mockRejectedValue(new Error("offline"));
     const inbox = await worker.dispatchFetch("/inbox", "navigate");
@@ -405,6 +458,18 @@ describe("service worker shell retention", () => {
     expect(await settings?.text()).toContain("signed-in board");
   });
 
+  it("does not cache an asset outside the current precache", async () => {
+    const worker = storageHarness({ addFails: true });
+    worker.fetchMock.mockResolvedValue(
+      page("unlisted", {
+        type: "text/javascript",
+        url: "https://shark.example/assets/unlisted.js",
+      }),
+    );
+    expect(await (await worker.dispatchFetch("/assets/unlisted.js"))?.text()).toBe("unlisted");
+    expect(await worker.body(CACHE_NAME, "/assets/unlisted.js")).toBeUndefined();
+  });
+
   it("does not cache a signed-out page or a document outside the four shells", async () => {
     const worker = storageHarness({ addFails: true });
     await worker.dispatch("install");
@@ -429,5 +494,86 @@ describe("service worker shell retention", () => {
     expect(await worker.body(CACHE_NAME, "/settings")).toBeUndefined();
     expect(await worker.body(CACHE_NAME, "/docs")).toBeUndefined();
     expect(worker.names()).toEqual([CACHE_NAME]);
+  });
+});
+
+/**
+ * A push with no URL of its own, and a tap on a notification that carries
+ * none, both open the inbox: that is where the notification's own record is.
+ * `/dashboard` was the old default and still redirects there, so nothing that
+ * was sent before this change breaks.
+ */
+describe("service worker notification routing", () => {
+  it("defaults a push payload's URL to the inbox", async () => {
+    const worker = harness();
+    await worker.dispatch("push", { data: { json: () => ({ title: "SHark", body: "Hi" }) } });
+    expect(worker.shown).toHaveLength(1);
+    expect(worker.shown[0]?.[1].data).toMatchObject({ url: "/inbox" });
+  });
+
+  it("keeps a URL the payload supplies", async () => {
+    const worker = harness();
+    await worker.dispatch("push", {
+      data: { json: () => ({ title: "SHark", url: "/board/ask/bask_1" }) },
+    });
+    expect(worker.shown[0]?.[1].data).toMatchObject({ url: "/board/ask/bask_1" });
+  });
+
+  it("opens the inbox when a tapped notification carries no URL", async () => {
+    const worker = harness();
+    await worker.dispatch("notificationclick", {
+      notification: { close: vi.fn(), data: {} },
+    });
+    expect(worker.opened).toEqual(["https://shark.example/inbox"]);
+  });
+
+  it("still opens an old /dashboard deep link, which the app redirects", async () => {
+    const worker = harness();
+    await worker.dispatch("notificationclick", {
+      notification: { close: vi.fn(), data: { url: "/dashboard" } },
+    });
+    expect(worker.opened).toEqual(["https://shark.example/dashboard"]);
+  });
+
+  /**
+   * A service can point a tap at its own site on purpose — a CI run, a pull
+   * request — so leaving this origin is allowed when it was written as an
+   * absolute URL.
+   */
+  it.each([
+    "https://ci.example.com/builds/42",
+    "http://ci.example.com/builds/42",
+    "https://github.com/org/repo/pull/82#files",
+  ])("opens the absolute external link %s a service asked for", async (url) => {
+    const worker = harness();
+    await worker.dispatch("notificationclick", { notification: { close: vi.fn(), data: { url } } });
+    expect(worker.opened).toEqual([url]);
+  });
+
+  /**
+   * A URL dressed up as this one. Credentials put the real host in the part a
+   * reader scans first while the origin is somewhere else, and a string that
+   * is not absolute can still resolve off-origin.
+   */
+  it.each([
+    ["credentials that read like this host", "https://shark.example@evil.test/"],
+    ["credentials with a password", "https://shark.example:hunter2@evil.test/inbox"],
+    ["a protocol-relative host", "//evil.test/inbox"],
+    ["a backslash the parser treats as a slash", "/\\evil.test"],
+    ["three slashes", "///evil.test"],
+    ["a non-http scheme", "javascript:alert(1)"],
+    ["a data URL", "data:text/html,<h1>hi"],
+  ])("falls back to the inbox for %s", async (_label, url) => {
+    const worker = harness();
+    await worker.dispatch("notificationclick", { notification: { close: vi.fn(), data: { url } } });
+    expect(worker.opened).toEqual(["https://shark.example/inbox"]);
+  });
+
+  it("keeps a same-origin path that merely looks odd", async () => {
+    const worker = harness();
+    await worker.dispatch("notificationclick", {
+      notification: { close: vi.fn(), data: { url: "/inbox/ibox%3Aevent%3A1?from=push" } },
+    });
+    expect(worker.opened).toEqual(["https://shark.example/inbox/ibox%3Aevent%3A1?from=push"]);
   });
 });

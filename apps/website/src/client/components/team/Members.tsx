@@ -7,6 +7,7 @@ import type {
 } from "@hark/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../lib/api";
+import { offlineProps, useOffline } from "../../lib/connection";
 import { canManage, ROLE_LABELS, withArticle } from "../../lib/teams";
 import { useConfirm } from "../ConfirmDialog";
 import { CopyField } from "../CopyField";
@@ -50,6 +51,9 @@ export function MembersSection({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
+  // Inviting, changing a role, transferring ownership and revoking all go to
+  // the server; offline they say why instead of failing on the click.
+  const offline = useOffline();
 
   const loadInvites = useCallback(async () => {
     if (!manage) return;
@@ -136,7 +140,12 @@ export function MembersSection({
         description={`${members.length} ${members.length === 1 ? "person" : "people"}`}
         action={
           manage ? (
-            <button className={rowButton} onClick={() => setInviting(true)} type="button">
+            <button
+              className={rowButton}
+              onClick={() => setInviting(true)}
+              type="button"
+              {...offlineProps(offline)}
+            >
               Invite
             </button>
           ) : null
@@ -194,6 +203,7 @@ export function MembersSection({
                     disabled={busy}
                     onChange={(event) => void changeRole(member, event.target.value as TeamRole)}
                     value={member.role}
+                    {...offlineProps(offline)}
                   >
                     <option value="admin">Admin</option>
                     <option value="member">Member</option>
@@ -209,6 +219,7 @@ export function MembersSection({
                     disabled={busy}
                     onClick={() => void transfer(member)}
                     type="button"
+                    {...offlineProps(offline)}
                   >
                     Make owner
                   </button>
@@ -219,6 +230,7 @@ export function MembersSection({
                     disabled={busy}
                     onClick={() => void remove(member)}
                     type="button"
+                    {...offlineProps(offline)}
                   >
                     Remove
                   </button>
@@ -249,6 +261,7 @@ export function MembersSection({
                   disabled={busyId === invite.id}
                   onClick={() => void revoke(invite)}
                   type="button"
+                  {...offlineProps(offline)}
                 >
                   Revoke
                 </button>
@@ -288,7 +301,9 @@ function InviteModal({
   const [role, setRole] = useState<"member" | "admin">("member");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const offline = useOffline();
 
+  // Catches its own errors; the form fires and forgets it.
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -309,7 +324,7 @@ function InviteModal({
       busy={busy}
       description="You'll get a join link to send. It expires in 7 days."
       onClose={onClose}
-      onSubmit={submit}
+      onSubmit={(event) => void submit(event)}
       title={`Invite to ${team.name}`}
     >
       <div className="space-y-4">
@@ -353,7 +368,12 @@ function InviteModal({
         <button className={secondaryButton} disabled={busy} onClick={onClose} type="button">
           Cancel
         </button>
-        <button className={primaryButtonSmall} disabled={busy} type="submit">
+        <button
+          className={primaryButtonSmall}
+          disabled={busy}
+          type="submit"
+          {...offlineProps(offline)}
+        >
           {busy ? "Creating…" : "Create invite"}
         </button>
       </div>
@@ -372,6 +392,7 @@ export function LeaveOrDelete({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
+  const offline = useOffline();
   const owner = team.role === "owner";
 
   const act = async () => {
@@ -419,6 +440,7 @@ export function LeaveOrDelete({
         disabled={busy}
         onClick={() => void act()}
         type="button"
+        {...offlineProps(offline)}
       >
         {owner ? "Delete team" : "Leave team"}
       </button>

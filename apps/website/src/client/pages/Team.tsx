@@ -28,6 +28,7 @@ import {
 } from "../components/ui";
 import { ApiRequestError, api } from "../lib/api";
 import { useSession } from "../lib/auth";
+import { offlineProps, subscribeToReconnect, useOffline } from "../lib/connection";
 import { canManage, TEAM_NAME_MAX_CHARS, teamSummary } from "../lib/teams";
 
 type LoadState =
@@ -44,6 +45,9 @@ export function TeamPage() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [renaming, setRenaming] = useState(false);
   const [pagesKey, setPagesKey] = useState(0);
+  // Offline the shell's banner already explains the page; a red load error
+  // with a "Try again" that cannot succeed only adds noise.
+  const offline = useOffline();
 
   const load = useCallback(async () => {
     try {
@@ -62,11 +66,16 @@ export function TeamPage() {
 
   useEffect(() => {
     if (!isPending && !session) {
-      navigate("/", { replace: true });
+      // navigate() can return a promise; the router owns navigation errors.
+      void navigate("/", { replace: true });
       return;
     }
     if (session) void load();
   }, [session, isPending, navigate, load]);
+
+  // Back online: read again, which replaces whatever load state this page was
+  // left holding rather than revealing it as the shell's banner leaves.
+  useEffect(() => subscribeToReconnect(() => void load()), [load]);
 
   if (isPending || !session) {
     return (
@@ -83,8 +92,14 @@ export function TeamPage() {
         Teams
       </Link>
 
-      {state.kind === "loading" ? (
+      {state.kind === "loading" && !offline ? (
         <SkeletonList label="Loading this team" rowClassName="h-20" rows={3} />
+      ) : null}
+
+      {(state.kind === "loading" || state.kind === "error") && offline ? (
+        <p className="rounded-2xl border border-dashed border-line-strong px-5 py-4 text-[15px] text-ink-muted">
+          This team has not loaded in this browser yet. It will open when you're back online.
+        </p>
       ) : null}
 
       {state.kind === "missing" ? (
@@ -102,7 +117,7 @@ export function TeamPage() {
         </div>
       ) : null}
 
-      {state.kind === "error" ? (
+      {state.kind === "error" && !offline ? (
         <div
           className="rounded-2xl border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger"
           role="alert"
@@ -135,6 +150,7 @@ export function TeamPage() {
                 className={`${rowButton} mt-1 shrink-0`}
                 onClick={() => setRenaming(true)}
                 type="button"
+                {...offlineProps(offline)}
               >
                 Rename
               </button>
@@ -161,7 +177,10 @@ export function TeamPage() {
 
           <TeamApps teamId={state.team.id} />
 
-          <LeaveOrDelete onLeft={() => navigate("/teams", { replace: true })} team={state.team} />
+          <LeaveOrDelete
+            onLeft={() => void navigate("/teams", { replace: true })}
+            team={state.team}
+          />
 
           {renaming ? (
             <RenameModal
@@ -186,6 +205,7 @@ export function TeamPage() {
 function TeamApps({ teamId }: { teamId: string }) {
   const [apps, setApps] = useState<AppDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const offline = useOffline();
 
   useEffect(() => {
     let cancelled = false;
@@ -236,7 +256,7 @@ function TeamApps({ teamId }: { teamId: string }) {
           ))}
         </ul>
       ) : null}
-      <ErrorText>{error}</ErrorText>
+      <ErrorText>{offline ? null : error}</ErrorText>
     </section>
   );
 }
@@ -253,7 +273,9 @@ function RenameModal({
   const [name, setName] = useState(team.name);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const offline = useOffline();
 
+  // Catches its own errors; the form fires and forgets it.
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -268,7 +290,12 @@ function RenameModal({
   };
 
   return (
-    <Modal busy={busy} onClose={onClose} onSubmit={submit} title="Rename team">
+    <Modal
+      busy={busy}
+      onClose={onClose}
+      onSubmit={(event) => void submit(event)}
+      title="Rename team"
+    >
       <Field label="Team name">
         <input
           className={INPUT}
@@ -288,6 +315,7 @@ function RenameModal({
           className={primaryButtonSmall}
           disabled={busy || name.trim().length === 0 || name.trim() === team.name}
           type="submit"
+          {...offlineProps(offline)}
         >
           {busy ? "Saving…" : "Save"}
         </button>

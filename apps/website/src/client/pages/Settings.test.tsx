@@ -27,6 +27,27 @@ vi.mock("../lib/oauth-api", () => ({
   oauthApi: { listClients: vi.fn(async () => ({ clients: [] })) },
 }));
 
+/**
+ * The install section only exists where there is something to install, so the
+ * platform detectors are stubbed per test. happy-dom is none of these
+ * browsers, which is also the Firefox-desktop case: no section, version only.
+ */
+const install = { standalone: false, prompt: false, ios: false, macSafari: false };
+
+vi.mock("../lib/pwaInstall", () => ({
+  isStandalone: () => install.standalone,
+  canInstall: () => install.prompt,
+  isIosSafari: () => install.ios,
+  isMacSafari: () => install.macSafari,
+  promptInstall: vi.fn(async () => "accepted"),
+  subscribeToInstallAvailability: () => () => {},
+}));
+
+vi.mock("../lib/pwaUpdate", () => ({
+  checkForUpdate: vi.fn(async () => false),
+  serviceWorkerVersion: async () => "0f1e2d3c4b5a6978",
+}));
+
 vi.mock("../lib/webPush", () => ({
   browserPushAvailability: () => ({ status: "unsupported" }),
   browserDeviceName: () => "Synthetic browser",
@@ -56,6 +77,7 @@ describe("settings page", () => {
 
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    Object.assign(install, { standalone: false, prompt: false, ios: false, macSafari: false });
     scrolled = [];
     Element.prototype.scrollIntoView = function scrollIntoView(this: Element) {
       scrolled.push(this.id);
@@ -110,8 +132,45 @@ describe("settings page", () => {
     ).toEqual(["Connected MCP clients"]);
   });
 
-  it("leaves the install section to Phase 2b rather than promising a button", async () => {
+  /**
+   * Where nothing can be installed there is no section and no rail entry, but
+   * the build line stays: it is what gets read back when someone is asked
+   * which version they are on.
+   */
+  it("shows the build alone where there is nothing to install", async () => {
     await mount("/settings");
+    expect(container.querySelector("#install")).toBeNull();
     expect(container.textContent).not.toContain("Install SHark");
+    expect(railLinks().map((link) => link.getAttribute("href"))).not.toContain("/settings#install");
+    expect(container.textContent).toContain("0f1e2d3c4b5a6978");
+  });
+
+  it("adds the install section and its rail entry on Chromium", async () => {
+    install.prompt = true;
+    await mount("/settings");
+    expect(container.querySelector("#install")).not.toBeNull();
+    expect(container.textContent).toContain("Install SHark");
+    expect(
+      railLinks()
+        .map((link) => link.getAttribute("href"))
+        .at(-1),
+    ).toBe("/settings#install");
+    expect(railLinks().at(-1)?.textContent).toBe("Install app");
+  });
+
+  it("gives iOS Safari the Add to Home Screen steps instead of a button", async () => {
+    install.ios = true;
+    await mount("/settings");
+    expect(container.textContent).toContain("Add to Home Screen");
+    expect(container.textContent).not.toContain("Install SHark");
+  });
+
+  it("reports the build and offers an update check when already installed", async () => {
+    install.standalone = true;
+    await mount("/settings");
+    const section = container.querySelector("#install");
+    expect(section?.textContent).toContain("Installed");
+    expect(section?.textContent).toContain("0f1e2d3c4b5a6978");
+    expect(section?.textContent).toContain("Check for updates");
   });
 });

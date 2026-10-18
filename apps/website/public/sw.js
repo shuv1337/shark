@@ -35,32 +35,11 @@ async function dropPreviousShellCaches() {
   await Promise.all((await previousShellCacheNames()).map((name) => caches.delete(name)));
 }
 
-async function copyMissing(from, to) {
-  for (const path of [...PRECACHE, ...SHELL_DOCUMENTS]) {
-    if (await cacheHolds(to, path)) continue;
-    const hit = await from.match(path);
-    if (!hit?.ok) continue;
-    try {
-      await to.put(cacheKey(path), hit);
-    } catch {
-      // The previous cache still has the copy this one refused.
-    }
-  }
-}
-
-/*
- * A signed-out install stores nothing: precache requests 401 and the failure is
- * swallowed so push registration still succeeds. Dropping every other
- * shark-shell cache then would delete the last offline copy. Keep those caches
- * until this one holds /board and the precache, after copying whatever they
- * still have so this worker can serve it.
- */
+/* Keep old documents with their own hashed assets until a fresh shell is ready.
+ * Copying old HTML into this build's cache can mark a mixed-version cache
+ * complete and delete the only copies of the assets that HTML references. */
 async function retainPreviousUntilComplete() {
   const current = await caches.open(CACHE_NAME);
-  if (!(await shellCacheComplete(current))) {
-    const previous = (await previousShellCacheNames()).reverse();
-    for (const name of previous) await copyMissing(await caches.open(name), current);
-  }
   if (await shellCacheComplete(current)) await dropPreviousShellCaches();
 }
 
@@ -200,8 +179,14 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  if (url.pathname.startsWith("/assets/") && PRECACHE_PATHS.has(url.pathname)) {
-    event.respondWith(respondWithAsset(url.pathname, request));
+  if (url.pathname.startsWith("/assets/")) {
+    event.respondWith(
+      PRECACHE_PATHS.has(url.pathname)
+        ? respondWithAsset(url.pathname, request)
+        : matchPrevious(url.pathname).then((cached) => cached || fetch(request)),
+    );
+    // Old build assets may be read from retained caches, but only this build's
+    // explicit precache allowlist can introduce new asset responses to storage.
     return;
   }
 
@@ -250,7 +235,7 @@ self.addEventListener("push", (event) => {
     icon: "/app-store-icon.png",
     badge: "/favicon.png",
     data: {
-      url: typeof payload.url === "string" ? payload.url : "/dashboard",
+      url: typeof payload.url === "string" ? payload.url : "/inbox",
       ...(typeof payload.eventId === "string" ? { eventId: payload.eventId } : {}),
     },
   };
@@ -276,16 +261,41 @@ async function withdrawPresentedNotifications(payload) {
   }
 }
 
+/*
+ * Where a tapped notification opens.
+ *
+ * A service can set a tap URL on another site deliberately — a CI run, a pull
+ * request — so an absolute http(s) URL is allowed to leave this origin. What
+ * is not allowed is a URL dressed up as this one. `https://shark.example@evil.test/`
+ * has origin `evil.test` and a username that reads like the real host, and a
+ * string that is not absolute can still resolve somewhere else entirely:
+ * `//evil.test`, `/\evil.test` and `///evil.test` all parse into another
+ * origin against this one. So credentials are refused outright, and anything
+ * that was not written as an absolute URL has to still be on this origin
+ * after parsing. Everything else falls back to the inbox.
+ */
+function notificationTarget(raw) {
+  const fallback = new URL("/inbox", self.location.origin);
+  if (typeof raw !== "string" || raw === "") return fallback;
+  const absolute = /^[a-z][a-z0-9+.-]*:/i.test(raw);
+  let candidate;
+  try {
+    candidate = new URL(raw, self.location.origin);
+  } catch {
+    return fallback;
+  }
+  if (candidate.protocol !== "https:" && candidate.protocol !== "http:") return fallback;
+  if (candidate.username || candidate.password) return fallback;
+  if (!absolute && candidate.origin !== self.location.origin) return fallback;
+  return candidate;
+}
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
-  let target = new URL("/dashboard", self.location.origin);
-  try {
-    const candidate = new URL(event.notification.data?.url || "/dashboard", self.location.origin);
-    if (candidate.protocol === "https:" || candidate.protocol === "http:") target = candidate;
-  } catch {
-    // Keep the safe dashboard fallback.
-  }
+  // A notification with no URL of its own opens the inbox, where its own
+  // record is. `/dashboard` still redirects, so older payloads keep working.
+  const target = notificationTarget(event.notification.data?.url);
 
   event.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
