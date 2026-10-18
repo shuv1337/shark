@@ -177,7 +177,13 @@ Deliberate merge resolutions:
   `0025_upstream_oauth_mcp`.
 - Consent is Apple-only and served behind `requireAuth`, so a signed-out visitor goes through
   `/login`. Sessions are already restricted to allowlisted accounts, and `/mcp` re-checks the
-  owner's allowlist on every call, so removing an email stops its clients immediately.
+  owner's allowlist on every call, so removing an email stops its clients immediately. The token
+  endpoint re-checks it too: refresh and code exchange fail with `invalid_grant`, and tokens
+  minted while offboarding commits are discarded (`lib/oauth-token-admission.ts`). A denied
+  refresh revokes the presented token before provider processing; the provider retains client
+  validation and its normal revoked-token family invalidation. Re-admission cannot revive that
+  token. Known missing-session grant errors become `invalid_grant`; unrelated provider errors
+  and opaque storage failures remain errors of their original class, including 500 responses.
 - The consent page leaves high-impact scopes (`OAUTH_HIGH_IMPACT_SCOPES`) unticked, but
   `OAUTH_DEFAULT_SCOPES` still requests them, and Better Auth skips consent only when the stored
   consent covers every requested scope. Leaving them unticked therefore shows consent again on each

@@ -91,7 +91,7 @@ describe("resource binding through the Node server", () => {
 
     // Naming /mcp reaches the endpoint, which then rejects the fake code itself.
     const reached = await token({ ...CODE_EXCHANGE, resource: RESOURCE });
-    expect(reached.status).toBe(401);
+    expect(reached.status).toBe(400);
     expect(reached.body).toMatchObject({ error: "invalid_grant" });
     expect(reached.headers.get("cache-control")).toBe("no-store");
   });
