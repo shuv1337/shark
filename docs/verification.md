@@ -5,7 +5,7 @@ logs. Unchecked release evidence keeps the goal active.
 
 ## Source baseline
 
-- 2026-10-18, 3:38 AM PDT: read-only production reconciliation found `shark-prod`
+- 2026-10-18 (PDT): read-only production reconciliation found `shark-prod`
   already running `1756421c457f143725738cc644f5e725d15d5c99` (#159). The retained
   `current` record dates promotion to 2026-10-17, 3:45 PM PDT, with image
   `ghcr.io/shuv1337/shark@sha256:0653efe96398ebb8975e0c3fa157168129a75bec2523d49334b8d14cbc484b8f`.
