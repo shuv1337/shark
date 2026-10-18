@@ -20,7 +20,7 @@ import { ApiError, api } from "./api";
 import { getCookie } from "./auth";
 import { detailFromNotification, type NotificationDetail } from "./notification-detail";
 import { parseSshuvDestination } from "./sshuv-destination";
-import { joinCodeFromUrl, pagePushData } from "./teams";
+import { joinCodeFromUrl, oncallTeamFromUrl, pagePushData } from "./teams";
 
 export const DEVICE_ID_KEY = "hark.device.serverId";
 const RETRY_QUEUE_KEY = "hark.interaction.responseQueue.v1";
@@ -337,6 +337,10 @@ function openJoin(code: string): void {
   navigateSoon(() => router.push({ pathname: "/join/[code]", params: { code } }));
 }
 
+function openOncall(teamId: string): void {
+  navigateSoon(() => router.push({ pathname: "/oncall", params: teamId ? { team: teamId } : {} }));
+}
+
 /** Handles taps and actions on on-call pages; returns false for other pushes. */
 async function handlePageResponse(response: Notifications.NotificationResponse): Promise<boolean> {
   const page = pagePushData(response.notification.request.content.data);
@@ -367,6 +371,12 @@ export async function handleNotificationResponse(
     const joinCode = joinCodeFromUrl(data?.url);
     if (joinCode) {
       openJoin(joinCode);
+      return;
+    }
+    // On-call override notices open the on-call screen for their team.
+    const oncallTeam = oncallTeamFromUrl(data?.url);
+    if (oncallTeam !== null) {
+      openOncall(oncallTeam);
       return;
     }
     const destination = parseSshuvDestination(data?.url, sshuvLinkPrefix);

@@ -134,7 +134,10 @@ export async function appAccess(viewerId: string, appId: string): Promise<AppAcc
 }
 
 /** Owner of a personal app, the member who added a team app, or a team admin. */
-export function canManageApp(viewerId: string, access: AppAccess): boolean {
+export function canManageApp(
+  viewerId: string,
+  access: { app: Pick<AppRow, "userId">; role: AppAccess["role"] },
+): boolean {
   if (access.app.userId === viewerId) return true;
   return access.role === "owner" || access.role === "admin";
 }

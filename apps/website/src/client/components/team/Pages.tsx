@@ -1,6 +1,7 @@
 import type { OncallPageDto, OncallPageStatus } from "@hark/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../lib/api";
+import { offlineProps, useOffline } from "../../lib/connection";
 import {
   Badge,
   EmptyState,
@@ -32,6 +33,7 @@ export function PagesSection({ teamId, refreshKey }: { teamId: string; refreshKe
   const [cursor, setCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const offline = useOffline();
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -127,6 +129,7 @@ export function PagesSection({ teamId, refreshKey }: { teamId: string; refreshKe
             <PageRow
               busy={busyId === page.id}
               key={page.id}
+              offline={offline}
               onAction={(action) => void act(page, action)}
               page={page}
             />
@@ -180,10 +183,12 @@ function pageProgress(page: OncallPageDto): string {
 function PageRow({
   page,
   busy,
+  offline,
   onAction,
 }: {
   page: OncallPageDto;
   busy: boolean;
+  offline: boolean;
   onAction: (action: PageAction) => void;
 }) {
   const status = STATUS[page.status];
@@ -227,6 +232,7 @@ function PageRow({
               disabled={busy}
               onClick={() => onAction("acknowledge")}
               type="button"
+              {...offlineProps(offline)}
             >
               Acknowledge
             </button>
@@ -236,6 +242,7 @@ function PageRow({
             disabled={busy}
             onClick={() => onAction("escalate")}
             type="button"
+            {...offlineProps(offline)}
           >
             Escalate
           </button>
@@ -244,6 +251,7 @@ function PageRow({
             disabled={busy}
             onClick={() => onAction("resolve")}
             type="button"
+            {...offlineProps(offline)}
           >
             Resolve
           </button>

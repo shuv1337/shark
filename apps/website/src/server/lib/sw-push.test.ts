@@ -16,20 +16,37 @@ function workerHarness() {
   };
   const listeners = new Map<string, (event: WorkerEvent) => void>();
   const windows = [{ postMessage: vi.fn() }, { postMessage: vi.fn() }];
-  const clients = { matchAll: vi.fn().mockResolvedValue(windows) };
+  const clients = {
+    matchAll: vi.fn().mockResolvedValue(windows),
+    claim: vi.fn().mockResolvedValue(undefined),
+    openWindow: vi.fn(),
+  };
   const registration = {
     showNotification: vi.fn().mockResolvedValue(undefined),
     getNotifications: vi.fn().mockResolvedValue([]),
   };
   const skipWaiting = vi.fn().mockResolvedValue(undefined);
+  const cache = { add: vi.fn().mockResolvedValue(undefined), match: vi.fn() };
+  const caches = {
+    open: vi.fn().mockResolvedValue(cache),
+    keys: vi.fn().mockResolvedValue([]),
+    delete: vi.fn(),
+  };
   runInNewContext(sw, {
     self: {
       addEventListener: (name: string, listener: (event: WorkerEvent) => void) =>
         listeners.set(name, listener),
       registration,
       skipWaiting,
+      location: { origin: "https://shark.example" },
     },
     clients,
+    caches,
+    fetch,
+    Request,
+    Response,
+    URL,
+    Set,
   });
   const dispatch = async (name: string, data?: WorkerEvent["data"]) => {
     const pending: Promise<unknown>[] = [];
@@ -41,9 +58,11 @@ function workerHarness() {
 }
 
 describe("service worker push updates", () => {
-  it("activates the new push handler while existing dashboard tabs remain open", async () => {
+  it("waits for an explicit update message before activating", async () => {
     const worker = workerHarness();
     await worker.dispatch("install");
+    expect(worker.skipWaiting).not.toHaveBeenCalled();
+    await worker.dispatch("message", { type: "hark:skip-waiting" } as never);
     expect(worker.skipWaiting).toHaveBeenCalledOnce();
   });
 

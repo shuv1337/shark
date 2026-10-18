@@ -1,0 +1,22 @@
+# Fleet hygiene allowlist. Rules: path:, pii:, artifact:, email:, text:, shellcheck:
+# Baseline 2026-10-16 (FM-PYRAMID-2): files below already contained matches when the
+# check was added. Kept, not deleted; real host details are listed in the PR body.
+# Remove an entry once its file is cleaned up.
+pii:HANDOFF-shark-grilling-mac-ios.md
+pii:PLAN-shark-minimal-rebrand-self-host.md
+pii:apps/website/src/server/lib/admission.test.ts
+pii:apps/website/src/server/lib/outbound.test.ts
+pii:deploy/README.md
+pii:deploy/shark-backup
+pii:docs/agent-reply-routing/arbitration-prototype/README.md
+pii:docs/agent-reply-routing/research/opencode-v2/README.md
+pii:docs/agent-reply-routing/research/opencode-v2/execution-probe-result.json
+pii:docs/agent-reply-routing/research/opencode-v2/probe-result.json
+pii:docs/agent-reply-routing/research/opencode-v2/probe.mjs
+pii:docs/operations.md
+pii:docs/verification.md
+pii:goals/shark-v1/facts.md
+pii:packages/contracts/src/index.test.ts
+pii:packages/contracts/src/ip.ts
+pii:packages/contracts/src/url.test.ts
+pii:packages/sharkctl/test/permissions-hook.test.mjs

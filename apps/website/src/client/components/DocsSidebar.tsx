@@ -58,7 +58,9 @@ export function DocsSidebar() {
   const active = useScrollSpy(DOC_ANCHOR_IDS);
 
   return (
-    <div className="sticky top-14 z-20 -mx-6 border-b border-line bg-paper/90 px-6 backdrop-blur lg:top-14 lg:mx-0 lg:h-[calc(100dvh-3.5rem)] lg:w-56 lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:bg-transparent lg:px-0 lg:pt-12 lg:pb-16 lg:backdrop-blur-none">
+    // Sticks directly under the app shell's header, which is h-14 on phones
+    // and h-16 from `md` up.
+    <div className="sticky top-14 z-20 -mx-6 border-b border-line bg-paper/90 px-6 backdrop-blur md:top-16 lg:mx-0 lg:h-[calc(100dvh-4rem)] lg:w-56 lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:bg-transparent lg:px-0 lg:pt-12 lg:pb-16 lg:backdrop-blur-none">
       <nav aria-label="Documentation" className="py-3 lg:py-0">
         {/* Below `lg` the same tree collapses into a horizontal strip of the
             three chapters; the nested anchors are hidden rather than duplicated

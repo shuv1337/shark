@@ -117,14 +117,15 @@ async function updateServiceForUser(
   id: string,
   input: ServiceUpdateInput,
 ): Promise<ServiceRow | undefined> {
+  const changes = {
+    ...(input.title === undefined ? {} : { title: input.title }),
+    ...(input.imageUrl === undefined ? {} : { imageUrl: input.imageUrl }),
+    ...(input.url === undefined ? {} : { url: input.url }),
+    updatedAt: new Date(),
+  };
   const [row] = await db
     .update(service)
-    .set({
-      ...input,
-      imageUrl: input.imageUrl === undefined ? undefined : (input.imageUrl ?? null),
-      url: input.url === undefined ? undefined : (input.url ?? null),
-      updatedAt: new Date(),
-    })
+    .set(changes)
     .where(and(eq(service.id, id), eq(service.userId, userId)))
     .returning();
   return row;

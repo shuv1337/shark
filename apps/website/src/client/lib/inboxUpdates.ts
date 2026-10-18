@@ -14,15 +14,20 @@ export function subscribeToInboxUpdates(refresh: () => void): () => void {
   const onResume = () => {
     if (document.visibilityState === "visible") refresh();
   };
+  // Regaining the network is a resume like any other: whatever this browser
+  // holds was last read before the link went, so it is already stale.
+  const onOnline = () => refresh();
 
   navigator.serviceWorker?.addEventListener("message", onMessage);
   window.addEventListener("focus", onResume);
+  window.addEventListener("online", onOnline);
   document.addEventListener("visibilitychange", onResume);
 
   return () => {
     clearTimeout(followUp);
     navigator.serviceWorker?.removeEventListener("message", onMessage);
     window.removeEventListener("focus", onResume);
+    window.removeEventListener("online", onOnline);
     document.removeEventListener("visibilitychange", onResume);
   };
 }

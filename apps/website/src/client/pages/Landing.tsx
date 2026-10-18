@@ -2,6 +2,14 @@ import { Link } from "react-router";
 import { AppleButton } from "../components/AppleButton";
 import { BrandWordmark } from "../components/BrandWordmark";
 import { CodeBlock } from "../components/CodeBlock";
+import { InlineCode } from "../components/DashboardKit";
+import {
+  focusRing,
+  primaryButton,
+  primaryButtonSmall,
+  quietButton,
+  textLink,
+} from "../components/ui";
 import { signInWithApple, useSession } from "../lib/auth";
 
 const requestExample = `curl -X POST https://shark.shuv.dev/hooks/whk_your_token \\
@@ -24,19 +32,16 @@ export function Landing() {
   return (
     <div className="flex min-h-dvh flex-col">
       <header className="mx-auto flex h-20 w-full max-w-3xl items-center justify-between px-6">
-        <Link to="/" className="text-lg font-semibold">
+        <Link className={`rounded-md text-lg font-semibold ${focusRing}`} to="/">
           <BrandWordmark />
         </Link>
-        <nav className="flex items-center gap-4" aria-label="Primary">
-          <Link className="text-ink-subtle hover:text-ink text-sm transition" to="/docs">
+        <nav className="flex items-center gap-3" aria-label="Primary">
+          <Link className={quietButton} to="/docs">
             Docs
           </Link>
           {session ? (
-            <Link
-              to="/dashboard"
-              className="bg-accent hover:bg-accent-hover text-on-accent rounded-full px-4 py-2 text-sm font-medium transition"
-            >
-              Open dashboard
+            <Link className={primaryButtonSmall} to="/board">
+              Open SHark
             </Link>
           ) : null}
         </nav>
@@ -53,11 +58,8 @@ export function Landing() {
           </p>
           <div className="mt-8">
             {session ? (
-              <Link
-                to="/dashboard"
-                className="bg-accent hover:bg-accent-hover text-on-accent rounded-full px-6 py-3 text-sm font-medium transition"
-              >
-                Go to your services
+              <Link className={primaryButton} to="/board">
+                Go to your board
               </Link>
             ) : (
               <AppleButton onClick={() => void signInWithApple()} disabled={isPending} />
@@ -80,21 +82,18 @@ export function Landing() {
 
           <h3 className="mt-8 mb-3 text-sm font-semibold">Payload</h3>
           <dl className="divide-line border-line divide-y border-y">
-            <Field name="body" required>
+            <PayloadRow name="body" required>
               The notification message, up to 2,000 characters.
-            </Field>
-            <Field name="title">The sender name shown on the notification.</Field>
-            <Field name="imageUrl">A public HTTPS avatar URL.</Field>
-            <Field name="url">Opened when you tap the notification.</Field>
+            </PayloadRow>
+            <PayloadRow name="title">The sender name shown on the notification.</PayloadRow>
+            <PayloadRow name="imageUrl">A public HTTPS avatar URL.</PayloadRow>
+            <PayloadRow name="url">Opened when you tap the notification.</PayloadRow>
           </dl>
 
           <h3 className="mt-8 mb-3 text-sm font-semibold">Response</h3>
           <CodeBlock language="json" code={responseExample} />
 
-          <Link
-            to="/docs"
-            className="text-accent-text mt-8 inline-flex items-center gap-1.5 text-sm font-medium transition hover:gap-2.5"
-          >
+          <Link className={`${textLink} mt-8 text-accent-text`} to="/docs">
             Read the full docs
             <span aria-hidden="true">&rarr;</span>
           </Link>
@@ -104,10 +103,16 @@ export function Landing() {
       <footer className="text-ink-faint mx-auto flex w-full max-w-3xl items-center justify-between px-6 py-6 text-xs">
         <span>SHark · webhook → iPhone, nothing else in between.</span>
         <nav className="flex items-center gap-3" aria-label="Legal">
-          <Link className="hover:text-ink-muted transition" to="/privacy">
+          <Link
+            className={`rounded-md transition-colors hover:text-ink-muted ${focusRing}`}
+            to="/privacy"
+          >
             Privacy
           </Link>
-          <Link className="hover:text-ink-muted transition" to="/terms">
+          <Link
+            className={`rounded-md transition-colors hover:text-ink-muted ${focusRing}`}
+            to="/terms"
+          >
             Terms
           </Link>
         </nav>
@@ -116,7 +121,8 @@ export function Landing() {
   );
 }
 
-function Field({
+/** One webhook payload field, described. Not a form field: see `Field` in DashboardKit. */
+function PayloadRow({
   name,
   required,
   children,
@@ -136,8 +142,4 @@ function Field({
       <dd className="text-ink-subtle text-sm leading-relaxed">{children}</dd>
     </div>
   );
-}
-
-function InlineCode({ children }: { children: React.ReactNode }) {
-  return <code className="text-ink-muted font-mono text-xs">{children}</code>;
 }

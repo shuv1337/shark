@@ -161,7 +161,9 @@ sharkctl activity start --title "Release" --status "Building" --progress 0.1
 
 The installable [`shark` agent skill](./skills/shark/SKILL.md) follows the open Agent Skills format
 and supports OpenCode, Claude Code, Codex, Cursor, and other compatible agents. Install it only from
-this reviewed operator checkout. `sharkctl` is the fork's canonical executable. The `HARK_*`
+this reviewed operator checkout. The skill's frontmatter `metadata.version` names the SHark release
+it came from and matches the `sharkctl` version it was reviewed with, so an installed copy can be
+compared with the checkout. `sharkctl` is the fork's canonical executable. The `HARK_*`
 environment variables, token prefixes, and local `hark` config paths remain protocol-compatibility
 identifiers so existing credentials and integrations continue to work.
 
@@ -187,8 +189,9 @@ tokens, and refresh tokens when you allow "Stay connected". Registering a client
 without consent. Connected clients are listed on the dashboard, where **Disconnect** revokes them
 immediately; removing an account from the allowlist also stops its clients on the next call.
 
-OAuth scopes are the agent token scopes one to one, plus `offline_access`. A client that requests
-no scope gets everything except `tokens:manage`. There is one tool per agent API operation,
+OAuth scopes are the agent token scopes, minus the native companion scopes (`watch:*` and
+`macos:*`), plus `offline_access`. A client that requests no scope gets everything except
+`tokens:manage`. There is one tool per agent API operation,
 including the board, and each runs through the same handler, validation, and scope check as its
 `/api/agent` route. Human-only actions are never tools: answering prompts or board asks,
 acknowledging or escalating pages, accepting team invites, approving app sign-in, and creating

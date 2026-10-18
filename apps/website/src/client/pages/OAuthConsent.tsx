@@ -3,10 +3,11 @@ import {
   type ApiTokenScope,
   OAUTH_API_SCOPES,
   OAUTH_OFFLINE_ACCESS_SCOPE,
+  publicHttpsHref,
 } from "@hark/contracts";
 import { useEffect, useMemo, useState } from "react";
 import { Brand, PAGE_COLUMN } from "../components/SiteChrome";
-import { primaryButton, secondaryButton } from "../components/ui";
+import { primaryButton, secondaryButton, surfacePanel } from "../components/ui";
 import {
   getOAuthClientInfo,
   type OAuthClientInfo,
@@ -133,7 +134,7 @@ export function OAuthConsent() {
       </header>
 
       <main className="mx-auto flex w-full max-w-lg flex-1 items-center px-6 pb-20">
-        <section className="hark-glass w-full rounded-3xl p-5 sm:p-8">
+        <section className={`${surfacePanel} w-full rounded-2xl p-5 sm:p-8`}>
           {!request || request.expired ? (
             <>
               <h1 className="text-[26px] leading-[1.15] font-medium tracking-[-0.015em] text-balance text-ink">
@@ -260,13 +261,15 @@ function ClientHeader({
   name: string;
   redirectHost: string | null;
 }) {
+  const logoUri = publicHttpsHref(client?.logo_uri);
+  const clientUri = publicHttpsHref(client?.client_uri);
   return (
     <div className="flex items-start gap-4">
-      {client?.logo_uri ? (
+      {logoUri ? (
         <img
           alt=""
           className="size-12 shrink-0 rounded-2xl bg-surface object-cover ring-1 ring-line"
-          src={client.logo_uri}
+          src={logoUri}
         />
       ) : (
         <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-accent text-lg font-medium text-on-accent">
@@ -283,15 +286,15 @@ function ClientHeader({
               Returns to <span className="font-mono text-ink-muted">{redirectHost}</span>
             </>
           ) : null}
-          {redirectHost && client?.client_uri ? " · " : null}
-          {client?.client_uri ? (
+          {redirectHost && clientUri ? " · " : null}
+          {clientUri ? (
             <a
               className="underline decoration-line-strong underline-offset-2 hover:text-ink"
-              href={client.client_uri}
+              href={clientUri}
               rel="noreferrer noopener"
               target="_blank"
             >
-              {safeHost(client.client_uri)}
+              {safeHost(clientUri)}
             </a>
           ) : null}
         </p>
@@ -300,6 +303,7 @@ function ClientHeader({
   );
 }
 
+/** Anonymous registration accepts any string here; only HTTPS URLs are rendered. */
 function safeHost(uri: string): string {
   try {
     return new URL(uri).host;

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "36107b71-eb79-4998-930e-4f13472d8f44",
+  "id": "41110994-0617-4112-a9e7-3237b58ee9d9",
   "prevId": "60fdf51e-92a9-4a94-b247-70fb7a31df12",
   "tables": {
     "account": {
@@ -145,6 +145,13 @@
         },
         "source_name": {
           "name": "source_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "agent_display": {
+          "name": "agent_display",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -3009,6 +3016,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "agent_display": {
+          "name": "agent_display",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "kind": {

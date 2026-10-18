@@ -19,6 +19,7 @@ import {
   upsertAsk,
   upsertNote,
   upsertWork,
+  workForToken,
 } from "../lib/board";
 import { type AgentEnv, requireApiToken, requireScopes } from "../middleware";
 
@@ -92,6 +93,11 @@ export const boardAgentRoute = new Hono<AgentEnv>()
     const requested = Number.parseInt(c.req.query("limit") ?? "100", 10);
     const limit = Math.min(Math.max(Number.isFinite(requested) ? requested : 100, 1), 100);
     return c.json(await answersForToken(c.get("apiToken"), since, limit));
+  })
+  .get("/work/:key", requireScopes("board:read"), async (c) => {
+    const row = await workForToken(c.get("apiToken"), c.req.param("key"));
+    if (!row) return c.json({ error: "Work item not found" }, 404);
+    return c.json({ work: toWorkDto(row) });
   })
   .put("/work", requireScopes("board:write"), async (c) => {
     const parsed = boardWorkUpsertSchema.safeParse(await c.req.json().catch(() => null));

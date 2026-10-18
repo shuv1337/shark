@@ -17,10 +17,19 @@ changes.
   metering, checkout, and portal surfaces are absent.
 - One fixed self-hosted entitlement enables multiple devices, routing, interactions, and Live
   Activities. Abuse limits are 300 requests per service per minute and 1,500 per account per minute.
-- Only `/api/health` is anonymously readable. Human-facing pages, docs exports, assets, and source
-  links require an admitted session. The exceptions are machine-facing and return no account
-  content: public signing keys (`/.well-known/jwks.json`), the MCP OAuth endpoints, and the team
-  invite preview. They are listed with what each one exposes in the teams and MCP sections below.
+- Human-facing pages, docs exports, source links, private assets (`/assets/*`, `/ogimage.png`),
+  and the team invite preview require an admitted session. Besides `/api/health`, anonymous
+  responses are limited to public infrastructure and static handoff content, none of which returns
+  account content:
+  - public signing keys (`/.well-known/jwks.json`) and the MCP OAuth endpoints, listed with what
+    each one exposes in the MCP section below;
+  - the Apple app-site association (`/.well-known/apple-app-site-association`) and the static
+    SSHuv handoff page (`/conversation/v1/:reference`), which never looks up, echoes, or logs the
+    reference (`routes/sshuv-handoff.ts`);
+  - the service worker, PWA manifest, and explicit app icons (`PUBLIC_APP_ASSETS` in `static.ts`:
+    `/sw.js`, `/favicon.png`, `/app-store-icon.png`, `/manifest.webmanifest`,
+    `/apple-touch-icon.png`, and the three named PWA icons under `/icons/`). No wildcard icon
+    directory is public.
 - Production uses the `shark-prod` deployment, attested immutable GHCR digests,
   1Password-fed secrets, exact-schema SQLite checkpoint validation, encrypted Restic snapshots,
   and operator promotion with no GitHub VM credential.
@@ -123,9 +132,11 @@ Deliberate merge resolutions:
   `rowid` (project-inbox read cursors depend on it), drops the durable inbox triggers first and
   recreates them afterwards, and lets the insert trigger materialize token-less notices (team
   invites, shared apps) with `source_name`.
-- No seat billing: `team-billing.ts` keeps upstream's exports but reports a free, unlimited plan,
-  and checkout or portal calls fail with "Billing is not configured". Seat and pricing UI, docs, and
-  the pricing page are removed. Team membership still requires an allowlisted Apple sign-in.
+- No seat billing: `team-billing.ts` reports a free, unlimited plan. The seat-limit error contract
+  and client notices are removed along with seat pricing UI, docs, and the pricing page.
+  The team billing checkout and portal routes are removed rather than stubbed because no SHark
+  client ever called them, so there is no client protocol dependency to preserve.
+  Team membership still requires an allowlisted Apple sign-in.
 - Join links use `shark://join/<code>`; the iPhone app also accepts legacy `hark://join` links.
   The website `/dashboard/teams/:id` and `/join/:code` shells sit behind `requireAuth`.
 - Upstream analytics (`trackAppEvent`), Google sign-in, and App Store links are not imported.
@@ -143,14 +154,15 @@ Deliberate merge resolutions:
   a team is deleted. An app's registering token name (`createdBy`) is shown only to the member who
   added it. `/apps/enter` accepts passes from consented current members of a team-shared SHark-origin
   app, not just its adder.
-- Anonymous exception to the private origin: `GET /api/team-invites/:code` returns an invite
-  preview without a session, so the join page can show what the invite is for before Apple
-  sign-in. It returns the team name, the inviter's display name, the offered role, the team's
-  member count, and the invite's expiry. It returns no email addresses, member list, or team ID.
-  An unknown, used, or expired code returns 404. Responses are `no-store` and limited to 30 a
-  minute per client IP and 600 a minute overall. The code is the secret: without it nothing is
-  returned, and with it a person learns only what they need to decide whether to join. Accepting
-  still requires an allowlisted session (`POST /api/team-invites/:code/accept`).
+- Invite preview: `GET /api/team-invites/:code` requires an allowlisted session, like the
+  `/join/:code` page and the iPhone join screen that call it (both send a signed-out person to
+  sign in first and reopen the invite afterwards). For a signed-in person it returns team
+  metadata: the team name, the inviter's display name, the offered role, the team's member count,
+  and the invite's expiry. It returns no email addresses, member list, or team ID. An unknown,
+  used, or expired code returns 404. Responses are `no-store` and limited to 30 a minute per
+  client IP and 600 a minute overall. Accepting also requires an allowlisted session
+  (`POST /api/team-invites/:code/accept`). Cookie-authenticated team, invite, on-call, and page
+  mutations refuse a foreign or `null` `Origin` with 403; the iPhone app sends no `Origin`.
 
 ## MCP server integration, 2026-10-09
 
@@ -180,18 +192,37 @@ Deliberate merge resolutions:
     per client IP. Registration grants nothing without an allowlisted user's consent.
   - `POST /api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, and `/api/auth/oauth2/introspect`.
     They take no session; a client authenticates with its client ID plus a PKCE-bound code, a
-    refresh token, or the token being revoked or introspected.
+    refresh token, or the token being revoked or introspected. Better Auth 1.6.25 checks the
+    RFC 8707 `resource` against `validAudiences` only when the client sends one and stores no
+    audience on opaque access tokens, so SHark's `hark-oauth-resource-binding` plugin in
+    `auth.ts` requires every `authorization_code` and `refresh_token` request to name
+    `https://shark.shuv.dev/mcp` exactly and answers anything else with 400 `invalid_target`
+    before the code or refresh token is spent; other bodies keep Better Auth's own answers. It
+    reads the raw form in `onRequest` because RFC 8707 lets `resource` repeat and every value
+    must be acceptable, while better-call's form parser keeps only the last one.
+    Better Auth adds `Cache-Control: no-store` and `Pragma: no-cache` only to successful token
+    responses, so `app.ts` adds them to every `/api/auth/oauth2/token` response (RFC 6749 §5.2),
+    including the 413 body-limit rejection and the 500 `server_error` it answers when the handler
+    or a middleware throws; a request body the plugin cannot read is 400 `invalid_request`. Every access token `/mcp` accepts was therefore
+    requested for `/mcp`; tokens issued before this rule expire within their one-hour TTL. MCP
+    (2025-06-18) requires clients to send `resource`; current Claude Code and OpenCode do through
+    the TypeScript SDK (which sends it once it has read the protected resource metadata `/mcp`
+    advertises in its 401 challenge), as do Cursor and Codex (since March 2026). Drop the plugin
+    if upstream requires `resource` itself.
   - `POST /api/auth/oauth2/public-client-prelogin`, which the consent page uses to show the
-    requesting client's registered name, URI, logo, policy links, and contacts. It requires a
-    validly signed authorize query (`oauth_query`), which anyone can obtain by starting an
-    authorization. Better Auth 1.6.25 doesn't bind the body's `client_id` to that query, so a
-    caller can read the same public registration fields for any client whose random ID it already
-    knows. Those fields include the registered `contacts`, which can contain email addresses.
+    requesting client's registered name, URI, logo, and policy links. It requires a validly
+    signed authorize query (`oauth_query`), which anyone can obtain by starting an authorization.
+    Better Auth 1.6.25 doesn't bind the body's `client_id` to that query, so SHark's
+    `hark-oauth-public-client-hardening` plugin in `auth.ts` does: the request is rejected with
+    400 `invalid_request` unless the query carries exactly one `client_id` and it equals the
+    body's. The same plugin removes the registered `contacts`, which can contain email
+    addresses, from this response and from the session-only `GET /api/auth/oauth2/public-client`.
+    Drop the binding check if upstream adds its own.
 
   `docs/operations.md` lists the response each one should give in its manual checks.
   `routes/mcp-oauth.integration.test.ts` runs the whole flow through the real Better Auth
-  handler: registration, S256 PKCE, consent, code exchange and reuse, `/mcp`, refresh rotation
-  and reuse detection, and revocation.
+  handler: registration, S256 PKCE, consent, code exchange and reuse, `resource` binding, `/mcp`,
+  refresh rotation and reuse detection, and revocation.
 - `/api/oauth/clients` mutations require a same-origin request, like the other session routes.
 - Better Auth rate limits read the client IP the app resolves from `TRUSTED_CLIENT_IP_HEADER` or
   `TRUSTED_FORWARDED_FOR_HOPS` (production: one exe.dev hop) per `docs/operations.md`. An hourly
@@ -222,6 +253,22 @@ Deliberate merge resolutions:
   a coarse `callback.lastError` (`blocked_destination`, `timeout`, `network_error`,
   `internal_error` for a row that couldn't be prepared, or `HTTP <status>`), never the underlying
   error text. Network-level egress filtering on the VM would be further defense in depth.
+- Browser Web Push endpoints are another server-side POST to a URL the user supplies, so
+  `webPushSubscriptionSchema` only accepts HTTPS endpoints on the default port at the push
+  services production browsers use (`WEB_PUSH_SERVICE_HOSTS` in
+  `packages/contracts/src/url.ts`): `fcm.googleapis.com`, `jmt17.google.com` (the GCM front
+  end some Chromium builds register through), `updates.push.services.mozilla.com`,
+  `*.notify.windows.com`, and `*.push.apple.com`. Delivery repeats that check on every stored
+  row; a row that fails it is never sent and is deactivated like an expired subscription. An
+  allowlisted host is then resolved through `lib/outbound.ts` and refused, without deactivating
+  the row, if any record isn't public, and `web-push` gets an `https.Agent` whose `lookup`
+  returns only the validated records, so TLS and `Host` keep the hostname while the socket
+  can't be rebound. Each subscription gets one 10-second deadline (`WEB_PUSH_TIMEOUT_MS` in
+  `lib/web-push.ts`) covering both the DNS resolution and the push request, since `web-push`'s
+  own `timeout` only starts once its socket exists. Subscriptions on the same push host share one
+  resolution per fan-out. A blocked address, a resolver failure, or the deadline expiring is
+  reported as a delivery error and never deactivates the row. Removing or testing an existing subscription still accepts any HTTPS
+  endpoint, so a row stored before the allowlist can be deleted.
 - Dependency footprint: `@modelcontextprotocol/sdk` is a production dependency of
   `@hark/website`. Per `pnpm-lock.yaml` it brings about 90 transitive packages, 54 of which
   nothing else in the website's production tree uses. They include `express@5`, `body-parser`,

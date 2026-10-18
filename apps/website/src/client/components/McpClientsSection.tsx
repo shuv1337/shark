@@ -1,20 +1,31 @@
 import { API_TOKEN_SCOPE_DESCRIPTIONS, type OAuthClientGrantDto } from "@hark/contracts";
 import { useCallback, useEffect, useState } from "react";
+import { offlineProps, useOffline } from "../lib/connection";
 import { oauthApi } from "../lib/oauth-api";
 import { useConfirm } from "./ConfirmDialog";
+import {
+  EmptyState,
+  ErrorText,
+  InlineCode,
+  LIST_PANEL,
+  SECTION,
+  SectionHeading,
+  SkeletonList,
+} from "./DashboardKit";
 import { rowDangerButton } from "./ui";
 
-const LIST_PANEL = "hark-glass divide-y divide-line rounded-3xl px-4 sm:px-5";
-
 /**
- * Dashboard section listing MCP/OAuth clients connected to the account
+ * Settings section listing MCP/OAuth clients connected to the account
  * (Claude, OpenCode, Cursor, …) with their permissions and a Disconnect
  * action that revokes their access and refresh tokens. Self-contained:
- * render `<McpClientsSection />` anywhere on the dashboard.
+ * render `<McpClientsSection />` anywhere.
  */
 export function McpClientsSection({ mcpUrl }: { mcpUrl?: string }) {
   const [clients, setClients] = useState<OAuthClientGrantDto[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Removing a device, disconnecting a client and the push handshake are all
+  // server writes, so they say why rather than failing on the tap.
+  const offline = useOffline();
   const [error, setError] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
   const endpoint = mcpUrl ?? `${window.location.origin}/mcp`;
@@ -53,27 +64,25 @@ export function McpClientsSection({ mcpUrl }: { mcpUrl?: string }) {
   };
 
   return (
-    <section className="mt-10 border-t border-line pt-8" aria-labelledby="mcp-clients-heading">
-      <div className="mb-5">
-        <h2
-          id="mcp-clients-heading"
-          className="text-[22px] leading-[1.2] font-medium tracking-[-0.01em] text-ink"
-        >
-          Connected MCP clients
-        </h2>
-        <p className="mt-1.5 text-ink-muted">
-          Add{" "}
-          <code className="rounded-md bg-surface-hover px-1 py-px font-mono text-[0.86em] text-ink">
-            {endpoint}
-          </code>{" "}
-          to Claude, OpenCode, Cursor, or any MCP client. It asks for your approval here first.
-        </p>
-      </div>
-      {clients === null ? <p className="py-4 text-ink-faint">Loading clients…</p> : null}
+    <section aria-labelledby="mcp-clients-heading" className={`${SECTION} scroll-mt-24`} id="mcp">
+      <SectionHeading
+        id="mcp-clients-heading"
+        title="Connected MCP clients"
+        description={
+          <>
+            Add <InlineCode>{endpoint}</InlineCode> to Claude, OpenCode, Cursor, or any MCP client.
+            It asks for your approval here first.
+          </>
+        }
+      />
+      {clients === null ? (
+        <SkeletonList label="Loading connected MCP clients" rowClassName="h-16" rows={2} />
+      ) : null}
       {clients?.length === 0 && !error ? (
-        <div className="rounded-3xl border border-dashed border-line-strong px-6 py-10 text-center">
-          <p className="font-medium text-ink">No MCP clients connected</p>
-        </div>
+        <EmptyState title="No MCP clients connected">
+          Point an MCP client at the URL above. SHark asks you to approve it here, then the agent
+          can send notifications and read your inbox with the permissions you granted.
+        </EmptyState>
       ) : null}
       {clients && clients.length > 0 ? (
         <ul className={LIST_PANEL}>
@@ -118,6 +127,7 @@ export function McpClientsSection({ mcpUrl }: { mcpUrl?: string }) {
                 disabled={busyId === client.clientId}
                 onClick={() => void disconnect(client)}
                 type="button"
+                {...offlineProps(offline)}
               >
                 Disconnect
               </button>
@@ -125,11 +135,7 @@ export function McpClientsSection({ mcpUrl }: { mcpUrl?: string }) {
           ))}
         </ul>
       ) : null}
-      {error ? (
-        <p className="mt-3 text-sm text-danger" role="alert">
-          {error}
-        </p>
-      ) : null}
+      <ErrorText>{error}</ErrorText>
       {dialog}
     </section>
   );

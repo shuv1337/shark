@@ -311,6 +311,27 @@ describe("agent OpenAPI document", () => {
     expect(registered.size).toBeGreaterThan(30);
   });
 
+  it("documents work read-back and optional agentDisplay on notify and interactions", () => {
+    expect(openApi.agentOperations["/board/work/{key}"]?.get?.scopes).toEqual(["board:read"]);
+    const document = openApi.agentOpenApiDocument as unknown as {
+      paths: Record<
+        string,
+        {
+          post?: {
+            requestBody?: {
+              content: Record<string, { schema: { properties?: object; required?: string[] } }>;
+            };
+          };
+        }
+      >;
+    };
+    for (const path of ["/notifications", "/interactions"]) {
+      const schema = document.paths[path]?.post?.requestBody?.content["application/json"]?.schema;
+      expect(schema?.properties).toHaveProperty("agentDisplay");
+      expect(schema?.required ?? []).not.toContain("agentDisplay");
+    }
+  });
+
   it("generates request bodies from the zod contracts", async () => {
     const document = openApi.agentOpenApiDocument as unknown as {
       paths: Record<
@@ -332,6 +353,48 @@ describe("agent OpenAPI document", () => {
 });
 
 describe("agent services", () => {
+  it("keeps a legacy image on a title-only update and reports invalid replacements", async () => {
+    const created = await call("POST", "/api/agent/services", FULL, {
+      title: "Legacy image service",
+      imageUrl: "https://example.com/legacy.png",
+    });
+    expect(created.status).toBe(201);
+    const { service } = (await created.json()) as ServiceCreatedResponse;
+    const legacyImageUrl = "https://localhost/legacy.png";
+    await db
+      .update(schema.service)
+      .set({ imageUrl: legacyImageUrl })
+      .where(sql`${schema.service.id} = ${service.id}`);
+
+    const renamed = await call("PATCH", `/api/agent/services/${service.id}`, FULL, {
+      title: "Renamed legacy image service",
+    });
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toMatchObject({
+      service: { title: "Renamed legacy image service", imageUrl: legacyImageUrl },
+    });
+
+    const invalid = await call("PATCH", `/api/agent/services/${service.id}`, FULL, {
+      imageUrl: "https://127.0.0.1/rejected.png",
+    });
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toMatchObject({
+      error: "Invalid service",
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          path: ["imageUrl"],
+          message: "Must be a public HTTPS URL",
+        }),
+      ]),
+    });
+
+    const cleared = await call("PATCH", `/api/agent/services/${service.id}`, FULL, {
+      imageUrl: null,
+    });
+    expect(cleared.status).toBe(200);
+    expect(await cleared.json()).toMatchObject({ service: { imageUrl: null } });
+  });
+
   it("gets, updates, rotates, and deletes an owned service", async () => {
     const created = await call("POST", "/api/agent/services", FULL, { title: "Deploys" });
     expect(created.status).toBe(201);

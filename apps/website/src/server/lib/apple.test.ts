@@ -1,6 +1,7 @@
+import { createServer } from "node:http";
 import { symmetricEncrypt } from "better-auth/crypto";
 import { decodeJwt, decodeProtectedHeader, exportPKCS8, generateKeyPair } from "jose";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 process.env.NODE_ENV = "test";
 process.env.DATABASE_URL = ":memory:";
@@ -68,4 +69,64 @@ describe("Apple client secrets", () => {
       "plain-refresh-token",
     );
   });
+});
+
+describe("Apple authorization code exchange", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("times out when headers arrive immediately and the body arrives after the deadline", async () => {
+    let bodyTimer: ReturnType<typeof setTimeout> | undefined;
+    const server = createServer((request, response) => {
+      request.on("error", () => {});
+      response.on("error", () => {});
+      request.resume();
+      response.writeHead(200, { "content-type": "application/json" });
+      response.write('{"refresh_token":"synthetic-refresh","id_token":"');
+      bodyTimer = setTimeout(() => {
+        response.end('synthetic"}');
+      }, apple.APPLE_TIMEOUT_MS + 5_000);
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("Apple token test server did not bind a TCP port");
+    }
+    const port = address.port;
+    const realFetch = globalThis.fetch;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const target = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+      target.protocol = "http:";
+      target.host = `127.0.0.1:${port}`;
+      return realFetch(target, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const error: unknown = await apple
+        .exchangeAppleAuthorizationCode(
+          "synthetic-auth-code",
+          "dev.shuv.shark",
+          "synthetic-subject",
+          {
+            teamId: "TEAM123",
+            keyId: "KEY123",
+            privateKey,
+          },
+        )
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(DOMException);
+      expect(error).toMatchObject({ name: "TimeoutError" });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      if (bodyTimer) clearTimeout(bodyTimer);
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+    }
+  }, 20_000);
 });

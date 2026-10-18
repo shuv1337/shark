@@ -110,7 +110,7 @@ export const DOC_CONTENT: DocSection[] = [
             items: [
               "Sign in at [shark.shuv.dev](https://shark.shuv.dev).",
               "Register your iPhone with the SHark app.",
-              "Create a service in the dashboard and give it a title, avatar, and tap URL.",
+              "Create a service in Settings and give it a title, avatar, and tap URL.",
               "Copy the secret webhook URL it returns.",
             ],
           },
@@ -166,7 +166,7 @@ export const DOC_CONTENT: DocSection[] = [
           },
           {
             kind: "p",
-            text: "`eventId` identifies the event in the dashboard activity log, can withdraw the delivered notification, and, for interactive notifications, is the handle used to read or cancel the pending response. `delivered` is the number of push requests accepted by Expo, browsers, and macOS.",
+            text: "`eventId` identifies the event in the inbox's Activity view, can withdraw the delivered notification, and, for interactive notifications, is the handle used to read or cancel the pending response. `delivered` is the number of push requests accepted by Expo, browsers, and macOS.",
           },
           {
             kind: "note",
@@ -249,8 +249,7 @@ export const DOC_CONTENT: DocSection[] = [
               {
                 name: "deviceIds",
                 type: "string[]",
-                detail:
-                  "1 to 50 device IDs from the dashboard. Omit to notify every active device.",
+                detail: "1 to 50 device IDs from Settings. Omit to notify every active device.",
               },
               {
                 name: "response",
@@ -288,7 +287,7 @@ export const DOC_CONTENT: DocSection[] = [
           },
           {
             kind: "p",
-            text: "Pass a non-empty `deviceIds` array to target specific iPhones. Copy the stable device IDs from the dashboard. IDs that do not belong to the account return `400 Invalid device selection`; owned but inactive or non-iOS devices in the list are skipped silently.",
+            text: "Pass a non-empty `deviceIds` array to target specific iPhones. Copy the stable device IDs from Settings. IDs that do not belong to the account return `400 Invalid device selection`; owned but inactive or non-iOS devices in the list are skipped silently.",
           },
           {
             kind: "code",
@@ -348,7 +347,7 @@ export const DOC_CONTENT: DocSection[] = [
           },
           {
             kind: "p",
-            text: "Provider errors can embed a device push token, so they are recorded in the dashboard activity log rather than returned to the caller. Use that log to find devices that are no longer registered.",
+            text: "Provider errors can embed a device push token, so they are recorded in the inbox's Activity view rather than returned to the caller. Use that log to find devices that are no longer registered.",
           },
         ],
       },
@@ -842,7 +841,7 @@ curl -X POST ${EXAMPLE_ENDPOINT}/events/evt_Cxns2IdbF4H0TJYq/cancel`,
           },
           {
             kind: "p",
-            text: "Each login appears under your dashboard's Services list as an agent connection, with its scopes, creation date, and last use. Revoking it there signs that agent out immediately. `sharkctl auth status` shows the active connection; `sharkctl auth logout` revokes and removes local credentials.",
+            text: "Each login appears under Settings, in Services and API tokens, as an agent connection, with its scopes, creation date, and last use. Revoking it there signs that agent out immediately. `sharkctl auth status` shows the active connection; `sharkctl auth logout` revokes and removes local credentials.",
           },
           {
             kind: "note",
@@ -1184,7 +1183,7 @@ sharkctl apps remove app_...`,
         blocks: [
           {
             kind: "p",
-            text: "Create a team in the dashboard or with `sharkctl teams create`. You become its owner. Each member has one role:",
+            text: "Create a team on the Teams page or with `sharkctl teams create`. You become its owner. Each member has one role:",
           },
           {
             kind: "table",
@@ -1496,7 +1495,7 @@ sharkctl apps remove app_...`,
         blocks: [
           {
             kind: "p",
-            text: "`PUT /api/agent/board/work` upserts a work item by key with `state` `queued`, `in_flight`, `review`, or `blocked`, plus an optional status label, detail, progress, host, links, and the key of an ask it is waiting on. Every upsert is a heartbeat; past `heartbeatTtlSeconds` (default six hours) the card says stale instead of lying. `POST …/work/:key/done` moves it to Recently done with a verb (`merged`, `shipped`, `done`, `closed`, `reported`) and an outcome (`done`, `failed`, `cancelled`), creating the item if it never existed.",
+            text: "`PUT /api/agent/board/work` upserts a work item by key with `state` `queued`, `in_flight`, `review`, or `blocked`, plus an optional status label, detail, progress, host, links, and the key of an ask it is waiting on. Re-posting a key keeps any optional field it omits, except that the waiting ask is dropped once the item leaves `blocked`; send `null` (or `links: []`) to clear one, and `heartbeatTtlSeconds: null` restores the default. `waitingAskKey` is looked up across every ask on the account, not only the calling token's, and one that matches none of them is refused with 400; once that ask is answered, cancelled, or expired the link is dropped for you, while the state waits on the agent's next heartbeat. Every upsert is a heartbeat; past `heartbeatTtlSeconds` (default six hours) the card says stale instead of lying. `GET /api/agent/board/work/:key` reads that work item back, scoped to the calling token; another token on the same account gets 404. `POST …/work/:key/done` moves it to Recently done with a verb (`merged`, `shipped`, `done`, `closed`, `reported`) and an outcome (`done`, `failed`, `cancelled`), creating the item if it never existed.",
           },
           {
             kind: "p",
@@ -1510,7 +1509,7 @@ sharkctl apps remove app_...`,
           {
             kind: "bullets",
             items: [
-              "Agents need the `board:write` and `board:read` scopes, which the default login does not request. Mint one token per agent so the board can say who asked and you can revoke one without the others.",
+              "Agents need the `board:write` and `board:read` scopes, which the default login does not request. Agents on one host can share a token if they prefix their keys and pass an agent name, but they can then read, ack, and cancel each other's asks, and revoking it signs out all of them. A token per agent isolates them, names each one on the board, and lets you revoke one without the others.",
               "Every agent read and write is limited to that token's own rows. Only your session sees the whole board.",
               "No token scope can answer. Answers, Later, and Dismiss need your admitted Apple session, a same-origin request, and the digest of the exact card you saw; a stale click returns `409` with the current question.",
               "Inside the SHark iPhone app the board opens as a registered web app (`sharkctl apps create --name Sharkboard --url https://shark.shuv.dev/board`); sign in once inside it.",
@@ -1585,7 +1584,7 @@ sharkctl apps remove app_...`,
           },
           {
             kind: "p",
-            text: 'Connected clients are listed on the dashboard; Disconnect revokes their access and refresh tokens at once. With `tokens:manage`, agents see them as `kind: "oauth"` entries from `GET /api/agent/tokens` and can revoke them too.',
+            text: 'Connected clients are listed in Settings; Disconnect revokes their access and refresh tokens at once. With `tokens:manage`, agents see them as `kind: "oauth"` entries from `GET /api/agent/tokens` and can revoke them too.',
           },
           {
             kind: "table",

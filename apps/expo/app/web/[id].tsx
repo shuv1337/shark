@@ -158,6 +158,7 @@ export default function WebAppScreen() {
     [appOriginValue],
   );
 
+  // Catches its own errors (sets the error phase), so the consent view fires and forgets it.
   const approve = async (sharing: { shareName: boolean; shareEmail: boolean }) => {
     if (!app) return;
     setPhase("loading");
@@ -306,7 +307,9 @@ export default function WebAppScreen() {
   };
 
   if (phase === "consent" && app) {
-    return <ConsentView app={app} onApprove={approve} onCancel={close} />;
+    return (
+      <ConsentView app={app} onApprove={(sharing) => void approve(sharing)} onCancel={close} />
+    );
   }
 
   if (phase === "error" || (phase === "ready" && !launchUrl)) {

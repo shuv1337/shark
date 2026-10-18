@@ -1,5 +1,4 @@
 import {
-  API_ERROR_CODE_SEAT_LIMIT,
   type AppDto,
   HARK_PAGE_CATEGORY_ID,
   type OncallPageDto,
@@ -20,12 +19,6 @@ import { ApiError } from "./api-error";
 /** A bare 404 without a server code: the server predates teams / on-call. */
 export function isUnsupportedRoute(error: unknown): boolean {
   return error instanceof ApiError && error.status === 404 && error.code === undefined;
-}
-
-export function isSeatLimitError(error: unknown): boolean {
-  return (
-    error instanceof ApiError && (error.code === API_ERROR_CODE_SEAT_LIMIT || error.status === 402)
-  );
 }
 
 export interface TeamSection {
@@ -77,12 +70,17 @@ export function seatsLabel(seats: TeamDto["seats"]): string {
   return `${seats.used} of ${seats.available} seat${seats.available === 1 ? "" : "s"}`;
 }
 
-export function seatsFull(seats: TeamDto["seats"]): boolean {
-  return seats.available !== null && seats.used >= seats.available;
-}
-
 export function roleLabel(role: TeamRole): string {
   return role === "owner" ? "Owner" : role === "admin" ? "Admin" : "Member";
+}
+
+/** The invite code to preview once auth has resolved to a signed-in session. */
+export function teamInvitePreviewCode(
+  code: string,
+  sessionPending: boolean,
+  hasSession: boolean,
+): string | null {
+  return code.length > 0 && !sessionPending && hasSession ? code : null;
 }
 
 export function canManageTeam(role: TeamRole | undefined): boolean {
@@ -201,6 +199,25 @@ export function joinCodeFromUrl(value: unknown): string | null {
   if (segments.length !== 2 || segments[0] !== "join") return null;
   const code = segments[1] ?? "";
   return /^[A-Za-z0-9_-]{4,128}$/.test(code) ? code : null;
+}
+
+/**
+ * Recognizes `shark://oncall` (optionally `?team=<id>`) from on-call notices. Returns the team id,
+ * `""` for a link without one, or null when the URL is not an on-call link.
+ */
+export function oncallTeamFromUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "shark:" && url.protocol !== "hark:") return null;
+  const segments = [url.host, ...url.pathname.split("/")].filter(Boolean);
+  if (segments.length !== 1 || segments[0] !== "oncall") return null;
+  const team = url.searchParams.get("team") ?? "";
+  return team === "" || /^[A-Za-z0-9_-]{1,128}$/.test(team) ? team : null;
 }
 
 export interface PagePush {

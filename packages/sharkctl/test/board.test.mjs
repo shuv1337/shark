@@ -3,7 +3,13 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { boardExitCode, findBoardSecret, parseLinks, parseOptions } from "../src/board.mjs";
+import {
+  BOARD_HELP,
+  boardExitCode,
+  findBoardSecret,
+  parseLinks,
+  parseOptions,
+} from "../src/board.mjs";
 import { execute, parseArgs } from "../src/cli.mjs";
 
 const env = { HARK_TOKEN: "hark_test", HARK_API_URL: "https://example.test" };
@@ -181,6 +187,27 @@ test("board ask refuses a secret before any request and validates enums", async 
   }
 });
 
+test("board wait sends a tenth-of-a-second wait timeout and never asks past its deadline", async () => {
+  const { calls, restore } = mockFetch((call) => {
+    if (call.url.includes("/wait")) return Response.json({ ask: { status: "open" } });
+    return Response.json({ ask: { status: "open" } });
+  });
+  // Deadline at 0 ms; the first request is built at 1 ms and the second at 20 600 ms, after
+  // which the clock reaches the deadline.
+  const ticks = [0, 1, 20_600, 20_600, 30_000];
+  try {
+    const waited = await execute(["board", "wait", "--key", "fm:x", "--timeout", "30s"], env, {
+      now: () => (ticks.length > 1 ? ticks.shift() : ticks[0]),
+    });
+    assert.equal(waited.exitCode, 4);
+    assert.equal(waited.body.timedOut, true);
+    const timeouts = calls.map((call) => call.url.match(/\/wait\?timeout=([\d.]+)$/)?.[1]);
+    assert.deepEqual(timeouts, ["25", "9.4"]);
+  } finally {
+    restore();
+  }
+});
+
 test("board wait, get, answers, ack, cancel map to their routes and exit codes", async () => {
   const { calls, restore } = mockFetch((call) => {
     if (call.url.includes("/wait")) return Response.json({ ask: { status: "cancelled" } });
@@ -282,7 +309,88 @@ test("board work, done, and note send the documented payloads", async () => {
       /--state/,
     );
     await assert.rejects(execute(["board", "done", "--key", "k", "--verb", "won"], env), /--verb/);
+    const read = await execute(["board", "work-get", "--key", "bro:sb-1"], env);
+    assert.equal(read.exitCode, 0);
+    assert.equal(calls.at(-1).method, "GET");
+    assert.equal(calls.at(-1).url, "https://example.test/api/agent/board/work/bro%3Asb-1");
+    await assert.rejects(execute(["board", "work-get"], env), /--key/);
     await assert.rejects(execute(["board", "frobnicate"], env), /board verbs/);
+  } finally {
+    restore();
+  }
+});
+
+test("board work forwards a {progress:null} clear from stdin", async () => {
+  const { calls, restore } = mockFetch(() => Response.json({ ok: true }, { status: 200 }));
+  try {
+    await execute(
+      ["board", "work", "--key", "k", "--title", "T", "--state", "in_flight", "--stdin"],
+      env,
+      { stdin: [JSON.stringify({ progress: null, links: [] })] },
+    );
+    assert.deepEqual(calls[0].body, {
+      progress: null,
+      links: [],
+      key: "k",
+      title: "T",
+      state: "in_flight",
+    });
+    await assert.rejects(
+      execute(
+        ["board", "work", "--key", "k", "--title", "T", "--state", "in_flight", "--stdin"],
+        env,
+        { stdin: [JSON.stringify({ progress: 2 })] },
+      ),
+      /--progress must be a number from 0 to 1/,
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("board work, done, and note send --agent and screen it before sending", async () => {
+  const { calls, restore } = mockFetch(() => Response.json({ ok: true }, { status: 200 }));
+  try {
+    const agent = ["--agent", "Synthetic Harness"];
+    await execute(
+      ["board", "work", "--key", "k", "--title", "T", "--state", "queued", ...agent],
+      env,
+    );
+    await execute(["board", "done", "--key", "k", ...agent], env);
+    await execute(["board", "note", "--key", "n", "Heads up", ...agent], env);
+    assert.deepEqual(
+      calls.map((call) => call.body.agentDisplay),
+      ["Synthetic Harness", "Synthetic Harness", "Synthetic Harness"],
+    );
+    const secret = ["--agent", `hark_${"s".repeat(43)}`];
+    for (const argv of [
+      ["board", "work", "--key", "k", "--title", "T", "--state", "queued", ...secret],
+      ["board", "done", "--key", "k", ...secret],
+      ["board", "note", "--key", "n", "Heads up", ...secret],
+    ]) {
+      await assert.rejects(execute(argv, env), /Refusing to send board content/);
+    }
+    assert.equal(calls.length, 3);
+  } finally {
+    restore();
+  }
+  for (const verb of ["ask", "work", "done", "note"]) {
+    const usage = BOARD_HELP.split("\n  sharkctl board ")
+      .map((block, index) => (index === 0 ? block.replace(/^\s*sharkctl board /, "") : block))
+      .filter((block) => block.startsWith(`${verb} `) && !block.includes("--clear"));
+    assert.ok(usage.length > 0 && usage.every((block) => block.includes("--agent <name>")), verb);
+  }
+});
+
+test("a board 403 names the scope the route requires", async () => {
+  const { restore } = mockFetch(() =>
+    Response.json({ error: "Insufficient scope", required: ["board:write"] }, { status: 403 }),
+  );
+  try {
+    await assert.rejects(
+      execute(["board", "work", "--key", "k", "--title", "T", "--state", "queued"], env),
+      (error) => error.status === 403 && /board:write/.test(error.message),
+    );
   } finally {
     restore();
   }

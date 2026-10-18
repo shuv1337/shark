@@ -188,8 +188,9 @@ const schemas: Record<string, JsonSchema> = {
       summary: nullableStr,
       bodyFormat: { enum: ["text", "markdown"] },
       appId: str,
+      agentDisplay: nullableStr,
     },
-    ["projectId", "summary", "bodyFormat", "appId"],
+    ["projectId", "summary", "bodyFormat", "appId", "agentDisplay"],
   ),
   AgentNotificationCreated: object(
     {
@@ -210,27 +211,31 @@ const schemas: Record<string, JsonSchema> = {
     },
     ["ok", "notificationId", "status", "accepted"],
   ),
-  Interaction: object({
-    id: str,
-    title: str,
-    prompt: str,
-    kind: { enum: [...INTERACTION_KINDS] },
-    presentation: { enum: ["notification", "live_activity"] },
-    status: { enum: [...INTERACTION_STATUSES] },
-    choices: arrayOf(str),
-    response: nullableStr,
-    imageUrl: nullableStr,
-    url: nullableStr,
-    actionDigest: str,
-    primaryLabel: nullableStr,
-    secondaryLabel: nullableStr,
-    accepted: int,
-    respondingDeviceId: nullableStr,
-    expiresAt: dateTime,
-    createdAt: dateTime,
-    respondedAt: nullableDateTime,
-    canceledAt: nullableDateTime,
-  }),
+  Interaction: object(
+    {
+      id: str,
+      title: str,
+      prompt: str,
+      kind: { enum: [...INTERACTION_KINDS] },
+      presentation: { enum: ["notification", "live_activity"] },
+      status: { enum: [...INTERACTION_STATUSES] },
+      choices: arrayOf(str),
+      response: nullableStr,
+      imageUrl: nullableStr,
+      url: nullableStr,
+      actionDigest: str,
+      primaryLabel: nullableStr,
+      secondaryLabel: nullableStr,
+      accepted: int,
+      respondingDeviceId: nullableStr,
+      expiresAt: dateTime,
+      createdAt: dateTime,
+      respondedAt: nullableDateTime,
+      canceledAt: nullableDateTime,
+      agentDisplay: nullableStr,
+    },
+    ["agentDisplay"],
+  ),
   InboxInteraction: {
     allOf: [
       ref("Interaction"),
@@ -441,6 +446,7 @@ const schemas: Record<string, JsonSchema> = {
     id: str,
     key: str,
     agent: str,
+    agentDisplay: nullableStr,
     text: str,
     detail: nullableStr,
     link: nullableStr,
@@ -670,6 +676,16 @@ export const agentOperations: Record<string, Partial<Record<AgentMethod, AgentOp
       response: object({ events: arrayOf(ref("BoardAnswer")), cursor: str }),
     },
   },
+  "/board/work/{key}": {
+    get: {
+      summary: "Get the calling token's work item",
+      scopes: ["board:read"],
+      params: [idParam("key")],
+      response: wrap("work", ref("BoardWork")),
+      description:
+        "Scoped to the calling token. A key owned by another token on the same account is not found.",
+    },
+  },
   "/board/work": {
     put: {
       summary: "Upsert the calling token's work item",
@@ -767,6 +783,8 @@ export const agentOperations: Record<string, Partial<Record<AgentMethod, AgentOp
     },
     patch: {
       summary: "Update a webhook service's title, avatar, or tap URL",
+      description:
+        "Only supplied fields change. Omit a field to keep its current value; send null for imageUrl or url to clear it.",
       scopes: ["services:write"],
       params: [idParam()],
       request: serviceUpdateSchema,
@@ -1046,7 +1064,7 @@ export const agentOperations: Record<string, Partial<Record<AgentMethod, AgentOp
       status: 201,
       response: ref("TeamInviteCreated"),
       description:
-        "SHark never limits seats, so the 402 `seat_limit` response is not returned. With `email`, only the account with that address (case-insensitive) can accept. Accepting an invite is human-only: there is no agent route for it.",
+        "With `email`, only the account with that address (case-insensitive) can accept. Accepting an invite is human-only: there is no agent route for it.",
     },
   },
   "/teams/{id}/invites/{inviteId}": {

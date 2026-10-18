@@ -142,11 +142,16 @@ export function toInviteDto(row: InviteRow): TeamInviteDto {
   };
 }
 
-/** Moves a team app back to the member who added it, keeping their own sign-in state. */
+/**
+ * Moves a team app back to the member who added it, keeping their own sign-in state. Re-reads the
+ * app, so a caller holding a row from before a concurrent return cannot write stale state back.
+ */
 export function returnAppToAdder(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
-  row: typeof app.$inferSelect,
+  loaded: typeof app.$inferSelect,
 ) {
+  const row = tx.select().from(app).where(eq(app.id, loaded.id)).get();
+  if (!row || row.teamId === null) return;
   const state = tx
     .select()
     .from(appMemberState)
@@ -294,32 +299,70 @@ export async function sendNotice(userIds: string[], notice: HarkNotice): Promise
       .select({ token: device.expoPushToken })
       .from(device)
       .where(and(eq(device.userId, userId), eq(device.active, true), eq(device.platform, "ios")));
-    if (devices.length === 0) continue;
-    const result = await sendPushMessages(
-      buildPushMessages({
-        to: devices.map((row) => row.token),
-        eventId: id,
-        serviceId: "hark-teams",
-        conversationKey: notice.conversationKey,
-        ...(notice.appId ? { appId: notice.appId } : {}),
-        resolved: {
-          title: notice.title,
-          body: notice.body,
-          ...(notice.url ? { url: notice.url } : {}),
-        },
-      }),
-    );
-    if (result.staleTokens.length > 0) {
+    if (devices.length === 0) {
       await db
-        .update(device)
-        .set({ active: false })
-        .where(inArray(device.expoPushToken, result.staleTokens));
+        .update(agentNotification)
+        .set({ status: "no_devices" })
+        .where(eq(agentNotification.id, id));
+      continue;
+    }
+    let delivered = 0;
+    try {
+      const result = await sendPushMessages(
+        buildPushMessages({
+          to: devices.map((row) => row.token),
+          eventId: id,
+          serviceId: "hark-teams",
+          conversationKey: notice.conversationKey,
+          ...(notice.appId ? { appId: notice.appId } : {}),
+          resolved: {
+            title: notice.title,
+            body: notice.body,
+            ...(notice.url ? { url: notice.url } : {}),
+          },
+        }),
+      );
+      delivered = result.accepted;
+      if (result.staleTokens.length > 0) {
+        await db
+          .update(device)
+          .set({ active: false })
+          .where(inArray(device.expoPushToken, result.staleTokens));
+      }
+    } catch (error) {
+      // Provider errors can embed push tokens, so only the error's class is logged.
+      console.error("[teams] Notice push threw", errorClass(error));
     }
     await db
       .update(agentNotification)
-      .set({ acceptedCount: result.accepted })
+      .set({
+        status: delivered === devices.length ? "accepted" : delivered > 0 ? "partial" : "failed",
+        acceptedCount: delivered,
+        failedCount: devices.length - delivered,
+        // Provider errors can embed push tokens, so the stored reason is deliberately coarse.
+        error: delivered < devices.length ? "Push delivery failed" : null,
+      })
       .where(eq(agentNotification.id, id));
-    accepted += result.accepted;
+    accepted += delivered;
   }
   return accepted;
+}
+
+const LOGGED_ERROR_CLASSES: ReadonlyArray<readonly [ErrorConstructor, string]> = [
+  [TypeError, "TypeError"],
+  [RangeError, "RangeError"],
+  [SyntaxError, "SyntaxError"],
+  [ReferenceError, "ReferenceError"],
+  [URIError, "URIError"],
+  [EvalError, "EvalError"],
+];
+
+/**
+ * A fixed label for an error's class, safe to log where its message could carry credentials.
+ * `name` and `constructor.name` are writable by whoever threw, so neither is read.
+ */
+export function errorClass(error: unknown): string {
+  if (!(error instanceof Error)) return error === null ? "null" : typeof error;
+  if (error instanceof AggregateError) return "AggregateError";
+  return LOGGED_ERROR_CLASSES.find(([type]) => error instanceof type)?.[1] ?? "Error";
 }
