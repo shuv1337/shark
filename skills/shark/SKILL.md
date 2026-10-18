@@ -1,6 +1,8 @@
 ---
 name: shark
 description: Use when a user wants SHark (its remote MCP server or sharkctl) for iPhone notifications, approvals, replies, Live Activities, the board, small web apps that open signed-in inside the SHark iPhone app, teams, on-call paging, persistent webhook services, authentication, task progress, or workflow integration.
+metadata:
+  version: "1.0.0"
 ---
 
 # SHark
@@ -12,8 +14,9 @@ webhook service when an external system needs a stable URL it can call later.
 ## Ground Rules
 
 - Use Node.js 22 or newer.
-- Use only a project-installed or user-installed `sharkctl` that the user already trusts. Version
-  `0.6.0` is reviewed for this skill. Never download packages, run `npx`/`pnpm dlx`, install or
+- Use only a project-installed or user-installed `sharkctl` that the user already trusts. This is
+  skill version `1.0.0`, reviewed with `sharkctl` `1.0.0`; both ship from the same SHark release.
+  Never download packages, run `npx`/`pnpm dlx`, install or
   upgrade the CLI, or execute a newly installed binary as part of this skill. If `sharkctl` is not
   available, stop and ask the user to install and review an exact version separately.
 - Treat SHark tokens and webhook URLs as secrets. Never commit, print, summarize, or paste them into
@@ -427,6 +430,8 @@ Identity:
   them. Prefix every key with your harness and host so agents on the same login never collide:
   `<harness>-<host>:<repo-or-area>:<task>[:<topic>]`, for example
   `codex-shuvdev:shark:upstream-merge` or `claude-shuvbot:shark:upstream-merge:conflicts`.
+  Agents sharing a token can read, ack, and cancel each other's asks, and revoking it signs out
+  every agent on the host. A token per agent isolates them when that matters.
 - Pass `--agent "<Harness> (<host>)"` on every `ask`, `work`, `done`, and `note`, for example
   `--agent "Codex (shuvdev)"`. The board's crew strip shows the token name; `--agent` says which
   harness posted the item.
@@ -437,10 +442,16 @@ Work lifecycle:
 
 - Post `board work --state in_flight` when you start, with a one-line `--status` and a link to the
   PR, issue, or doc when one exists. Re-run it with the same key at real milestones; each call is
-  also the heartbeat. Items quiet past `--heartbeat-ttl` (default 6h) show as stale, so set a
-  shorter TTL for work you expect to update often.
+  also the heartbeat. A re-run keeps the links, progress, status, detail, host, agent, and TTL it
+  does not repeat, and keeps the waiting ask only while the item stays `blocked`; to clear one,
+  pipe JSON such as `{"progress":null}` or `{"links":[]}` on stdin. Items quiet past `--heartbeat-ttl` (default 6h) show as stale, so set a shorter TTL for
+  work you expect to update often.
 - Use `--state review` while waiting on CI or review, `--state blocked --waiting-ask <ask-key>`
   while waiting on the user, and `--state queued` for work you have accepted but not started.
+  `--waiting-ask` is looked up across every ask on the account, not just your token's, so prefix
+  ask keys with your harness and host to avoid pointing at another agent's ask. Once that ask is
+  answered, cancelled, or expired the board drops the link by itself, but the item stays `blocked`
+  until your next heartbeat says otherwise.
 - End every item on every terminal path: `board done --outcome done` on success,
   `--outcome failed` with a short `--note-file` on failure, and `--outcome cancelled` when the user
   stops the work or it is superseded. Never leave an item in flight when you finish a turn that
@@ -556,7 +567,7 @@ export async function verifyPass(pass) {
 
 Teams share web apps and on-call groups between SHark accounts. Roles are `owner`, `admin`, and
 `member`. Every member still needs an allowlisted Apple sign-in. Team and on-call commands need the
-`teams:*` and `oncall:*` scopes, which logins created before `sharkctl` 0.6.0 lack; ask the user to
+`teams:*` and `oncall:*` scopes, which logins created before `sharkctl` 1.0.0 lack; ask the user to
 sign in again.
 
 ```bash

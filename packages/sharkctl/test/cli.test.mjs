@@ -1028,6 +1028,31 @@ test("notify ask --poll caps the wait at 20 seconds and maps a pending answer to
   }
 });
 
+test("notify ask --poll sends a whole-second wait timeout when the clock ticks before the first request", async () => {
+  const originalFetch = globalThis.fetch;
+  const urls = [];
+  globalThis.fetch = async (url) => {
+    urls.push(String(url));
+    if (String(url).endsWith("/api/agent/interactions")) {
+      return Response.json({ accepted: 1, interaction: { id: "int_tick", status: "pending" } });
+    }
+    return Response.json({ interaction: { id: "int_tick", status: "replied", response: "ok" } });
+  };
+  // The deadline is computed at 0 ms and the first wait request is built 1 ms later.
+  const ticks = [0, 1, 1];
+  try {
+    const result = await execute(
+      ["notify", "ask", "Deploy?", "--approval", "--poll"],
+      { HARK_TOKEN: "hark_test", HARK_API_URL: "https://example.test" },
+      { now: () => (ticks.length > 1 ? ticks.shift() : ticks[0]) },
+    );
+    assert.equal(result.exitCode, 0);
+    assert.match(urls[1], /\/api\/agent\/interactions\/int_tick\/wait\?timeout=20$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("notify ask --poll returns an instant terminal answer with wait exit codes", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) =>

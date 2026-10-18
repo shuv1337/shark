@@ -1,3 +1,4 @@
+import { HttpStatusError, withRetry, withTimeout } from "@hark/contracts/retry";
 import { symmetricDecrypt } from "better-auth/crypto";
 import { and, eq } from "drizzle-orm";
 import { createRemoteJWKSet, importPKCS8, jwtVerify, SignJWT } from "jose";
@@ -9,6 +10,7 @@ import { decryptAppleRefreshToken } from "./token";
 const APPLE_ISSUER = "https://appleid.apple.com";
 const APPLE_TOKEN_ENDPOINT = `${APPLE_ISSUER}/auth/token`;
 const APPLE_REVOKE_ENDPOINT = `${APPLE_ISSUER}/auth/revoke`;
+export const APPLE_TIMEOUT_MS = 10_000;
 const APPLE_CLIENT_SECRET_MAX_AGE_SECONDS = 180 * 24 * 60 * 60;
 const appleJwks = createRemoteJWKSet(new URL(`${APPLE_ISSUER}/auth/keys`));
 
@@ -90,26 +92,38 @@ export async function exchangeAppleAuthorizationCode(
   config: AppleAuthConfig,
 ): Promise<AppleTokenResponse> {
   const clientSecret = await generateAppleClientSecret(clientId, config);
-  const response = await fetch(APPLE_TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      code,
-      grant_type: "authorization_code",
-    }),
-  });
-  const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!response.ok) {
-    const code = typeof body.error === "string" ? body.error : undefined;
-    throw new AppleOAuthError("Apple rejected the authorization code", code);
-  }
-  if (typeof body.refresh_token !== "string" || typeof body.id_token !== "string") {
-    throw new AppleOAuthError("Apple token response was incomplete");
-  }
-  await verifyAppleIdentityToken(body.id_token, clientId, expectedSubject);
-  return { refreshToken: body.refresh_token, identityToken: body.id_token };
+  // Deadline only, no retry: an authorization code is single-use, so a retry
+  // after Apple consumed it would fail with invalid_grant. attempts stays 1.
+  const tokens = await withTimeout(async (signal) => {
+    const response = await fetch(APPLE_TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        code,
+        grant_type: "authorization_code",
+      }),
+      signal,
+    });
+    let body: Record<string, unknown>;
+    try {
+      body = (await response.json()) as Record<string, unknown>;
+    } catch (error) {
+      if (signal.aborted) throw error;
+      body = {};
+    }
+    if (!response.ok) {
+      const errorCode = typeof body.error === "string" ? body.error : undefined;
+      throw new AppleOAuthError("Apple rejected the authorization code", errorCode);
+    }
+    if (typeof body.refresh_token !== "string" || typeof body.id_token !== "string") {
+      throw new AppleOAuthError("Apple token response was incomplete");
+    }
+    return { refreshToken: body.refresh_token, identityToken: body.id_token };
+  }, APPLE_TIMEOUT_MS);
+  await verifyAppleIdentityToken(tokens.identityToken, clientId, expectedSubject);
+  return tokens;
 }
 
 export async function revokeAppleToken(
@@ -117,18 +131,35 @@ export async function revokeAppleToken(
   clientId: string,
   config: AppleAuthConfig,
 ): Promise<void> {
-  const response = await fetch(APPLE_REVOKE_ENDPOINT, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: await generateAppleClientSecret(clientId, config),
-      token,
-      token_type_hint: "refresh_token",
-    }),
-  });
-  if (!response.ok) {
-    throw new AppleOAuthError(`Apple token revocation failed with status ${response.status}`);
+  const clientSecret = await generateAppleClientSecret(clientId, config);
+  // Revocation is idempotent, so transient failures (timeouts, network, 5xx) are retried.
+  try {
+    await withRetry(
+      async (signal) => {
+        const response = await fetch(APPLE_REVOKE_ENDPOINT, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: clientId,
+            client_secret: clientSecret,
+            token,
+            token_type_hint: "refresh_token",
+          }),
+          signal,
+        });
+        try {
+          if (!response.ok) throw new HttpStatusError(response.status);
+        } finally {
+          // The attempt deadline is disarmed when this callback settles, so
+          // cancel the unread body instead of leaving the connection open.
+          await response.body?.cancel().catch(() => undefined);
+        }
+      },
+      { attempts: 3, timeoutMs: APPLE_TIMEOUT_MS },
+    );
+  } catch (error) {
+    const detail = error instanceof HttpStatusError ? `status ${error.status}` : String(error);
+    throw new AppleOAuthError(`Apple token revocation failed with ${detail}`);
   }
 }
 

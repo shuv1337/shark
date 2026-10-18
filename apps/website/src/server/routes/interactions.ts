@@ -4,6 +4,7 @@ import {
   type AgentNotificationWithdrawResponse,
   agentNotificationCreateSchema,
   type BillingDto,
+  findBoardSecret,
   type InboxInteractionDto,
   type InteractionDto,
   type InteractionKind,
@@ -136,6 +137,12 @@ function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+/** Refuses a per-bot name that looks like a pasted credential. */
+function displayNameRejection(value: string | undefined): string | undefined {
+  const hit = findBoardSecret(value);
+  return hit ? `agentDisplay looks like it contains a ${hit}` : undefined;
+}
+
 function toDto(row: InteractionRow): InteractionDto {
   return {
     id: row.id,
@@ -157,6 +164,7 @@ function toDto(row: InteractionRow): InteractionDto {
     createdAt: row.createdAt.toISOString(),
     respondedAt: row.respondedAt?.toISOString() ?? null,
     canceledAt: row.canceledAt?.toISOString() ?? null,
+    ...(row.agentDisplay ? { agentDisplay: row.agentDisplay } : {}),
   };
 }
 
@@ -219,6 +227,7 @@ function toNotificationDto(row: NotificationRow): AgentNotificationDto {
     url: row.url,
     createdAt: row.createdAt.toISOString(),
     ...(row.appId ? { appId: row.appId } : {}),
+    ...(row.agentDisplay ? { agentDisplay: row.agentDisplay } : {}),
   };
 }
 
@@ -318,7 +327,7 @@ async function listPendingInteractions(userId: string): Promise<InboxInteraction
     .limit(50);
   return rows.map(({ row, tokenName, serviceName, serviceImageUrl, projectId }) => ({
     ...toDto(row),
-    sourceName: serviceName ?? tokenName ?? row.title,
+    sourceName: serviceName ?? row.agentDisplay ?? tokenName ?? row.title,
     sourceImageUrl: row.imageUrl ?? serviceImageUrl,
     projectId,
   }));
@@ -392,6 +401,8 @@ export const agentRoute = new Hono<AgentEnv>()
     if (!parsed.success) {
       return c.json({ error: "Invalid notification", issues: parsed.error.issues }, 400);
     }
+    const displayName = displayNameRejection(parsed.data.agentDisplay);
+    if (displayName) return c.json({ error: displayName }, 422);
     const idempotencyKey = idempotencyKeyFrom(c.req.header("Idempotency-Key"));
     if (idempotencyKey === null) {
       return c.json({ error: "Idempotency-Key must contain between 1 and 200 characters" }, 400);
@@ -428,7 +439,7 @@ export const agentRoute = new Hono<AgentEnv>()
           ...(parsed.data.appId ? { appId: parsed.data.appId } : {}),
           ...(idempotencyKey ? { dedupKey: idempotencyKey } : {}),
         },
-        token.name,
+        parsed.data.agentDisplay ?? token.name,
         { requesterTokenId: token.id },
         agentAdmission(token, pageLimits),
       );
@@ -531,6 +542,7 @@ export const agentRoute = new Hono<AgentEnv>()
       projectId: null,
       summary: parsed.data.summary ?? null,
       bodyFormat: parsed.data.bodyFormat ?? null,
+      agentDisplay: parsed.data.agentDisplay ?? null,
       createdAt: new Date(),
     };
 
@@ -612,7 +624,7 @@ export const agentRoute = new Hono<AgentEnv>()
       webPayload: {
         title: parsed.data.title,
         body: parsed.data.summary ?? parsed.data.body,
-        url: parsed.data.url ?? "/dashboard",
+        url: parsed.data.url ?? "/inbox",
         ...(parsed.data.imageUrl ? { imageUrl: parsed.data.imageUrl } : {}),
         eventId: notificationId,
         tag: notificationEventTag(notificationId),
@@ -780,6 +792,8 @@ export const agentRoute = new Hono<AgentEnv>()
     if (!parsed.success) {
       return c.json({ error: "Invalid interaction", issues: parsed.error.issues }, 400);
     }
+    const displayName = displayNameRejection(parsed.data.agentDisplay);
+    if (displayName) return c.json({ error: displayName }, 422);
     const presentation = parsed.data.presentation ?? "notification";
     const idempotencyKey = idempotencyKeyFrom(c.req.header("Idempotency-Key"));
     if (idempotencyKey === null) {
@@ -886,6 +900,7 @@ export const agentRoute = new Hono<AgentEnv>()
       requesterTokenId: token.id,
       title: parsed.data.title,
       prompt: parsed.data.prompt,
+      agentDisplay: parsed.data.agentDisplay ?? null,
       kind: parsed.data.kind,
       presentation,
       status: "pending",
@@ -1077,7 +1092,7 @@ export const agentRoute = new Hono<AgentEnv>()
       webPayload: {
         title: parsed.data.title,
         body: parsed.data.prompt,
-        url: parsed.data.url ?? "/dashboard",
+        url: parsed.data.url ?? "/inbox",
         ...(parsed.data.imageUrl ? { imageUrl: parsed.data.imageUrl } : {}),
         tag: `interaction-${row.id}`,
       },

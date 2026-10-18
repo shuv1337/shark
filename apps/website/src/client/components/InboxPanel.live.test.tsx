@@ -2,8 +2,10 @@
 import type { InboxItemDto, InboxPageDto } from "@hark/contracts";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../lib/api";
+import { resetNavCounts } from "../lib/counts";
 import { InboxPanel } from "./InboxPanel";
 
 vi.mock("../lib/api", () => ({ api: { listInbox: vi.fn() } }));
@@ -62,7 +64,13 @@ describe("live inbox refresh", () => {
     });
   };
   const mount = async () => {
-    await act(async () => root.render(<InboxPanel />));
+    await act(async () =>
+      root.render(
+        <MemoryRouter initialEntries={["/inbox"]}>
+          <InboxPanel />
+        </MemoryRouter>,
+      ),
+    );
   };
 
   beforeEach(() => {
@@ -74,6 +82,7 @@ describe("live inbox refresh", () => {
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
+    resetNavCounts();
   });
 
   afterEach(async () => {

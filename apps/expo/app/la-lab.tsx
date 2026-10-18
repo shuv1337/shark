@@ -71,7 +71,8 @@ function Lab() {
   useEffect(() => {
     const styleParam = liveActivityStyleSchema.safeParse(params.style);
     if (!styleParam.success) return;
-    (async () => {
+    // Fire-and-forget: the IIFE catches its own errors.
+    void (async () => {
       try {
         const existing = HarkAgentActivity.getInstances();
         const isInteractive =
@@ -131,6 +132,7 @@ function Lab() {
     })();
   }, [params.style, params.ts, note]);
 
+  // start/update/end catch their own errors, so the buttons fire and forget them.
   const start = async () => {
     try {
       instance.current = await HarkAgentActivity.start(props());
@@ -174,9 +176,9 @@ function Lab() {
         </Text>
 
         <Row>
-          <Btn label="Start" onPress={start} kind="primary" />
-          <Btn label="Update" onPress={update} />
-          <Btn label="End" onPress={end} kind="danger" />
+          <Btn label="Start" onPress={() => void start()} kind="primary" />
+          <Btn label="Update" onPress={() => void update()} />
+          <Btn label="End" onPress={() => void end()} kind="danger" />
         </Row>
 
         <Section>

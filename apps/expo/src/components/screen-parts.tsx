@@ -150,31 +150,6 @@ export function SecondaryButton({
   );
 }
 
-/**
- * Shown if a server refuses a seat. SHark itself never limits seats or sells
- * them, so there is nothing to buy; the notice only says the join was refused.
- */
-export function SeatLimitNotice({
-  teamName,
-  admin,
-  title,
-}: {
-  teamName: string;
-  admin: boolean;
-  title?: string;
-}) {
-  return (
-    <View accessibilityRole="summary" style={ui.notice}>
-      <Text style={ui.noticeTitle}>{title ?? `${teamName} is out of seats`}</Text>
-      <Text style={ui.muted}>
-        {admin
-          ? "This server refused another member. Try inviting again later."
-          : "This server refused another member. Ask a team admin."}
-      </Text>
-    </View>
-  );
-}
-
 export const ui = StyleSheet.create({
   container: {
     flex: 1,
@@ -420,21 +395,6 @@ export const ui = StyleSheet.create({
   avatarLetter: {
     color: colors.accent,
     fontFamily: fonts.semibold,
-  },
-  notice: {
-    gap: 8,
-    marginTop: 14,
-    padding: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.line,
-    borderRadius: 12,
-    backgroundColor: colors.surface,
-  },
-  noticeTitle: {
-    color: colors.ink,
-    fontFamily: fonts.semibold,
-    fontSize: 14,
-    letterSpacing: tightTracking(14),
   },
   input: {
     minHeight: 44,

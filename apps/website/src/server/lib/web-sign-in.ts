@@ -21,7 +21,7 @@ function unavailable(): Response {
 export async function beginAppleWebSignIn(
   authHandler: AuthHandler,
   appUrl: string,
-  callbackURL = "/dashboard",
+  callbackURL = "/board",
   clientIp: string | null = null,
 ): Promise<Response> {
   const requestHeaders = new Headers({

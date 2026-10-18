@@ -18,6 +18,7 @@ import {
   isInboxItemActive,
   isInboxItemDeliveryFailure,
   isInboxItemWithdrawn,
+  isKnownWebPushEndpoint,
   LIVE_ACTIVITY_END_FIELDS,
   LIVE_ACTIVITY_SCHEMA_VERSION,
   LIVE_ACTIVITY_UPDATE_FIELDS,
@@ -622,12 +623,73 @@ describe("macOS companion contracts", () => {
   });
 });
 
+describe("isKnownWebPushEndpoint", () => {
+  it("accepts only production browser push services on the default HTTPS port", () => {
+    for (const endpoint of [
+      "https://fcm.googleapis.com/fcm/send/synthetic",
+      "https://jmt17.google.com/fcm/send/synthetic",
+      "https://updates.push.services.mozilla.com/wpush/v2/synthetic",
+      "https://wns2-synthetic.notify.windows.com/w/?token=synthetic",
+      "https://web.push.apple.com/synthetic",
+      "https://FCM.googleapis.com:443/fcm/send/synthetic",
+    ]) {
+      expect(isKnownWebPushEndpoint(endpoint), endpoint).toBe(true);
+    }
+    for (const endpoint of [
+      "http://fcm.googleapis.com/fcm/send/synthetic",
+      "https://fcm.googleapis.com:8443/fcm/send/synthetic",
+      "https://user:pass@fcm.googleapis.com/fcm/send/synthetic",
+      "https://fcm.googleapis.com.example.com/fcm/send/synthetic",
+      "https://google.com/fcm/send/synthetic",
+      "https://jmt17.google.com.example.com/fcm/send/synthetic",
+      "https://notify.windows.com/w/synthetic",
+      "https://push.apple.com/synthetic",
+      "https://evilpush.apple.com/synthetic",
+      "https://127.0.0.1:8443/internal",
+      "https://[::1]/internal",
+      "not a url",
+    ]) {
+      expect(isKnownWebPushEndpoint(endpoint), endpoint).toBe(false);
+    }
+  });
+
+  it("matches hostnames exactly after WHATWG normalization, without lookalikes", () => {
+    for (const endpoint of [
+      // Fullwidth letters normalize to the real ASCII hostname.
+      "https://\uff46\uff43\uff4d.googleapis.com/fcm/send/synthetic",
+      "https://xn--synthetic-tld.push.apple.com/synthetic",
+      // One trailing dot is the absolute form of the same name.
+      "https://fcm.googleapis.com./fcm/send/synthetic",
+      "https://web.push.apple.com./synthetic",
+      "https://wns2-synthetic.notify.windows.com./w/synthetic",
+    ]) {
+      expect(isKnownWebPushEndpoint(endpoint), endpoint).toBe(true);
+    }
+    for (const endpoint of [
+      "https://fcm.googleapis.com../fcm/send/synthetic",
+      "https://web.push.apple.com../synthetic",
+      "https://.push.apple.com/synthetic",
+      "https://*.push.apple.com/synthetic",
+      "https://evil.com..push.apple.com/synthetic",
+      "https://127.0.0.1.push.apple.com/synthetic",
+      "https://-web.push.apple.com/synthetic",
+      "https://synthetic_host.notify.windows.com/w/synthetic",
+      // Cyrillic homoglyphs become punycode, not the allowlisted name.
+      "https://f\u0441m.googleapis.com/fcm/send/synthetic",
+      "https://web.push.\u0430pple.com/synthetic",
+      "https://xn--fcm-synthetic.googleapis.com/fcm/send/synthetic",
+    ]) {
+      expect(isKnownWebPushEndpoint(endpoint), endpoint).toBe(false);
+    }
+  });
+});
+
 describe("webPushSubscriptionRegisterSchema", () => {
   it("requires an endpoint and both browser subscription keys", () => {
     expect(
       webPushSubscriptionRegisterSchema.safeParse({
         subscription: {
-          endpoint: "https://push.example.com/send/abc",
+          endpoint: "https://updates.push.services.mozilla.com/wpush/v2/abc",
           expirationTime: null,
           keys: { p256dh: "public-key", auth: "auth-secret" },
         },
@@ -637,7 +699,7 @@ describe("webPushSubscriptionRegisterSchema", () => {
     expect(
       webPushSubscriptionRegisterSchema.safeParse({
         subscription: {
-          endpoint: "https://push.example.com/send/abc",
+          endpoint: "https://updates.push.services.mozilla.com/wpush/v2/abc",
           keys: { p256dh: "public-key" },
         },
       }).success,
@@ -896,7 +958,39 @@ describe("cross-deploy request-hash stability", () => {
     for (const fixture of fixtures) {
       const parsed = agentNotificationCreateSchema.parse(fixture.input);
       expect(JSON.stringify(parsed)).toBe(fixture.expected);
+      expect(parsed).not.toHaveProperty("agentDisplay");
     }
+    const named = agentNotificationCreateSchema.parse({ body: "Done", agentDisplay: "Grok Bot" });
+    expect(JSON.stringify(named)).toBe('{"body":"Done","title":"SHark","agentDisplay":"Grok Bot"}');
+  });
+
+  it("keeps parsed interaction payloads identical when agentDisplay is omitted", () => {
+    const parsed = interactionCreateSchema.parse({
+      title: "Ship",
+      prompt: "Ship it?",
+      kind: "approval",
+    });
+    expect(JSON.stringify(parsed)).toBe(
+      '{"title":"Ship","prompt":"Ship it?","kind":"approval","expiresInSeconds":900}',
+    );
+    expect(parsed).not.toHaveProperty("agentDisplay");
+    const named = interactionCreateSchema.parse({
+      title: "Ship",
+      prompt: "Ship it?",
+      kind: "approval",
+      agentDisplay: "Grok Bot",
+    });
+    expect(JSON.stringify(named)).toBe(
+      '{"title":"Ship","prompt":"Ship it?","kind":"approval","expiresInSeconds":900,"agentDisplay":"Grok Bot"}',
+    );
+    expect(
+      interactionCreateSchema.safeParse({
+        title: "T",
+        prompt: "P",
+        kind: "approval",
+        agentDisplay: "x".repeat(61),
+      }).success,
+    ).toBe(false);
   });
 
   it("appends new optional fields after every legacy key", () => {

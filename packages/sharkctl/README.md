@@ -25,7 +25,7 @@ sharkctl
 Start a browser authorization flow and approve the requested scopes with your signed-in SHark account:
 
 ```sh
-npm install --global sharkctl@0.6.0
+npm install --global sharkctl@1.0.0
 sharkctl auth login
 sharkctl auth status
 sharkctl notify "Deploy finished ✅" --title "Deploy bot" --image https://example.com/bot.png \
@@ -179,8 +179,10 @@ default escalation (next person after 5 minutes, the whole group 10 minutes late
 `--stdin` JSON for a custom `escalation`. `oncall update <group_id>` changes any of those fields,
 keeping the rest. `oncall override <group_id> --user <user_id> --starts-at <iso> --ends-at <iso>`
 puts someone on call for a window (members can only hand off time they are on call for, from now
-on; a window partly covered by a later-starting override is refused, so split it around that) and
-`oncall remove-override <group_id> <override_id>` removes it.
+on; a window partly covered by a later-starting override is refused, so split it around that) and,
+unless you named yourself, notifies them with a SHark notice. `oncall remove-override <group_id>
+<override_id>` removes it (admins and owners: any override; members: one that names them or that
+they created).
 `oncall list --team <team_id>`, `oncall get <group_id>`, and `oncall me` show current and upcoming
 shifts.
 
@@ -197,10 +199,19 @@ person is on it.
 
 `board` feeds the captain's board at `/board`: durable questions that outlive their push, work in
 flight, and heads-up notes. It needs the `board:read` and `board:write` scopes, which the default
-login does not request; sign in once per agent with
+login does not request. Sign in with
 `sharkctl auth login --client-name "<Agent> (<host>)"` with `--scope board:read --scope board:write`
-plus every default scope you still need (`--scope` replaces the defaults; it does not add to them), so
-each agent has its own token and the board can say who asked.
+plus every default scope you still need (`--scope` replaces the defaults; it does not add to them).
+Agents on one host can share a token if each prefixes its keys with its harness and host and passes
+`--agent`; they can then read, ack, and cancel each other's asks, and revoking the token signs out
+all of them. A token per agent isolates them and lets the crew strip name each one.
+
+`board work` is an upsert and a heartbeat: re-posting a key keeps any optional field the call
+omits, except that the waiting ask is dropped once the item leaves `blocked`. `--waiting-ask` is
+matched against every ask on the account, not only the current token's, and a key that matches
+none of them is refused. Resolving that ask — answered, cancelled, or expired — also drops the
+link, leaving the state for your next heartbeat to decide. To clear one, pipe JSON on stdin, for
+example `{"progress":null}` or `{"links":[]}`.
 
 `board ask --key <key> --title <title>` is an upsert: repeating it unchanged only records that the
 agent still cares, changing the title, body, options, or links bumps the revision and sends one new

@@ -9,7 +9,7 @@ const apnsCalls = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 const apnsState = vi.hoisted(() => ({
   rejection: null as { status: number; reason: string | null } | null,
 }));
-const billingState = vi.hoisted(() => ({ pro: true }));
+const billingState = vi.hoisted(() => ({ pro: true, serviceRate: 1000 }));
 
 vi.mock("../auth", () => ({
   auth: {
@@ -36,7 +36,7 @@ vi.mock("../lib/billing", () => ({
     features: { deviceRouting: billingState.pro },
     limits: {
       devices: billingState.pro ? null : 1,
-      servicePerMinute: 1000,
+      servicePerMinute: billingState.serviceRate,
       accountPerMinute: 1000,
     },
   }),
@@ -125,7 +125,12 @@ beforeEach(async () => {
   apnsCalls.length = 0;
   apnsState.rejection = null;
   billingState.pro = true;
+  billingState.serviceRate = 1000;
   await db.delete(schema.liveActivity);
+  await db
+    .update(schema.device)
+    .set({ active: true })
+    .where(eq(schema.device.id, "hook_activity_device"));
 });
 
 function activityRequest(
@@ -673,6 +678,98 @@ describe("Live Activity webhook routes", () => {
       .where(eq(schema.liveActivity.id, firstBody.activityId))
       .get();
     expect(displaced).toMatchObject({ status: "ended" });
+  });
+
+  it("admits exactly the service limit of concurrent starts", async () => {
+    await db
+      .update(schema.device)
+      .set({ active: false })
+      .where(eq(schema.device.id, "hook_activity_device"));
+    billingState.serviceRate = 3;
+    const responses = await Promise.all(
+      Array.from({ length: 12 }, (_, index) =>
+        activityRequest(TOKEN, "", "POST", { title: `Deploy ${index}`, status: "Queued" }),
+      ),
+    );
+    expect(responses.filter((response) => response.status === 201)).toHaveLength(3);
+    const limited = responses.filter((response) => response.status === 429);
+    expect(limited).toHaveLength(9);
+    for (const response of limited) {
+      expect(response.headers.get("Retry-After")).toBe("60");
+      expect(await response.json()).toMatchObject({
+        ok: false,
+        error: "Service rate limit exceeded",
+        retryAfterSeconds: 60,
+      });
+    }
+    expect(db.select().from(schema.liveActivity).all()).toHaveLength(3);
+    expect(db.select().from(schema.liveActivityOperation).all()).toHaveLength(3);
+  });
+
+  it("admits exactly the service limit of concurrent updates and ends", async () => {
+    await db
+      .update(schema.device)
+      .set({ active: false })
+      .where(eq(schema.device.id, "hook_activity_device"));
+    const ids: string[] = [];
+    for (let index = 0; index < 24; index += 1) {
+      const response = await activityRequest(TOKEN, "", "POST", {
+        title: `Deploy ${index}`,
+        status: "Queued",
+      });
+      ids.push(((await response.json()) as { activityId: string }).activityId);
+    }
+    // Make every activity mutable and empty the window so only the
+    // concurrent mutations below count.
+    await db.update(schema.liveActivity).set({ status: "active" });
+    await db.delete(schema.liveActivityOperation);
+    billingState.serviceRate = 3;
+
+    const updates = await Promise.all(
+      ids.slice(0, 12).map((id) => activityRequest(TOKEN, `/${id}`, "PATCH", { status: "Next" })),
+    );
+    expect(updates.filter((response) => response.status === 200)).toHaveLength(3);
+    const limitedUpdates = updates.filter((response) => response.status === 429);
+    expect(limitedUpdates).toHaveLength(9);
+    for (const response of limitedUpdates) {
+      expect(response.headers.get("Retry-After")).toBe("60");
+    }
+    expect(
+      db
+        .select()
+        .from(schema.liveActivity)
+        .all()
+        .filter((row) => row.sequence === 1),
+    ).toHaveLength(3);
+
+    await db.delete(schema.liveActivityOperation);
+    const ends = await Promise.all(
+      ids.slice(12).map((id) => activityRequest(TOKEN, `/${id}/end`, "POST", {})),
+    );
+    expect(ends.filter((response) => response.status === 200)).toHaveLength(3);
+    expect(ends.filter((response) => response.status === 429)).toHaveLength(9);
+    expect(db.select().from(schema.liveActivityOperation).all()).toHaveLength(3);
+  });
+
+  it("refuses a replace start over the limit without ending the blocker", async () => {
+    const first = (await (await start()).json()) as { activityId: string };
+    apnsCalls.length = 0;
+    billingState.serviceRate = 1;
+    const refused = await activityRequest(TOKEN, "", "POST", {
+      title: "Deploy #185",
+      status: "Building",
+      replace: true,
+      deviceIds: ["hook_activity_device"],
+    });
+    expect(refused.status).toBe(429);
+    expect(apnsCalls).toHaveLength(0);
+    expect(
+      db
+        .select()
+        .from(schema.liveActivity)
+        .where(eq(schema.liveActivity.id, first.activityId))
+        .get(),
+    ).toMatchObject({ status: "active" });
   });
 
   it("requires Pro to start a Live Activity", async () => {

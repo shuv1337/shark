@@ -82,6 +82,9 @@ const singleLine = (max: number) =>
     )
     .refine(noFormatCharacters, "Format characters are not allowed");
 
+/** Per-bot label. No default: an omitted value must stay off the parsed object. */
+export const agentDisplaySchema = singleLine(60);
+
 export const boardKeySchema = z
   .string()
   .trim()
@@ -137,7 +140,7 @@ export const boardAskUpsertSchema = z
     allowLater: z.boolean().default(true),
     priority: boardPrioritySchema.default("p1"),
     taskId: singleLine(100).optional(),
-    agentDisplay: singleLine(60).optional(),
+    agentDisplay: agentDisplaySchema.optional(),
     links: z.array(boardLinkSchema).max(BOARD_MAX_LINKS).default([]),
     /** Null or omitted: the ask stays open until answered or cancelled. */
     expiresInSeconds: z.number().int().min(60).max(BOARD_MAX_EXPIRES_IN_SECONDS).nullish(),
@@ -178,24 +181,32 @@ export const boardAskCancelSchema = z.object({
   reason: singleLine(200).optional(),
 });
 
+/**
+ * Re-posting a work key is the heartbeat, so an omitted optional field keeps its stored value.
+ * `null` clears a field (`heartbeatTtlSeconds: null` restores the default) and `links: []` clears
+ * the links. The waiting ask is kept only while the work stays `blocked`, and an ask that is
+ * answered, cancelled, or expired drops the link on its own without waiting for a heartbeat.
+ */
 export const boardWorkUpsertSchema = z.object({
   key: boardKeySchema,
   title: singleLine(BOARD_TITLE_MAX_CHARS),
   state: z.enum(BOARD_WORK_ACTIVE_STATES),
-  statusLabel: singleLine(60).optional(),
-  detail: multiLine(240).optional(),
-  progress: z.number().min(0).max(1).optional(),
-  links: z.array(boardLinkSchema).max(BOARD_MAX_LINKS).default([]),
-  host: singleLine(60).optional(),
-  agentDisplay: singleLine(60).optional(),
-  /** Key of one of this token's asks that this work is waiting on. */
-  waitingAskKey: boardKeySchema.optional(),
+  statusLabel: singleLine(60).nullable().optional(),
+  detail: multiLine(240).nullable().optional(),
+  progress: z.number().min(0).max(1).nullable().optional(),
+  links: z.array(boardLinkSchema).max(BOARD_MAX_LINKS).optional(),
+  host: singleLine(60).nullable().optional(),
+  agentDisplay: agentDisplaySchema.nullable().optional(),
+  /** Key of one of this account's asks that this work is waiting on; an unknown key is refused. */
+  waitingAskKey: boardKeySchema.nullable().optional(),
+  /** Defaults to {@link BOARD_DEFAULT_HEARTBEAT_TTL_SECONDS} for a new work item. */
   heartbeatTtlSeconds: z
     .number()
     .int()
     .min(60)
     .max(7 * 86_400)
-    .default(BOARD_DEFAULT_HEARTBEAT_TTL_SECONDS),
+    .nullable()
+    .optional(),
 });
 export type BoardWorkUpsertInput = z.infer<typeof boardWorkUpsertSchema>;
 
@@ -207,7 +218,7 @@ export const boardDoneSchema = z.object({
   outcome: z.enum(["done", "failed", "cancelled"]).default("done"),
   links: z.array(boardLinkSchema).max(BOARD_MAX_LINKS).default([]),
   note: multiLine(600).optional(),
-  agentDisplay: singleLine(60).optional(),
+  agentDisplay: agentDisplaySchema.optional(),
 });
 export type BoardDoneInput = z.infer<typeof boardDoneSchema>;
 
@@ -217,7 +228,7 @@ export const boardNoteUpsertSchema = z.object({
   detail: multiLine(2000).optional(),
   link: httpsUrlSchema.optional(),
   expiresInSeconds: z.number().int().min(60).max(BOARD_MAX_EXPIRES_IN_SECONDS).nullish(),
-  agentDisplay: singleLine(60).optional(),
+  agentDisplay: agentDisplaySchema.optional(),
 });
 export type BoardNoteUpsertInput = z.infer<typeof boardNoteUpsertSchema>;
 
@@ -336,6 +347,7 @@ export interface BoardNoteDto {
   id: string;
   key: string;
   agent: string;
+  agentDisplay: string | null;
   text: string;
   detail: string | null;
   link: string | null;

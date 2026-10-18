@@ -1,6 +1,7 @@
 import {
   INBOX_FILTERS,
   type InboxActionDto,
+  type InboxCountsDto,
   type InboxDetailDto,
   type InboxFilter,
   type InboxItemDto,
@@ -242,6 +243,28 @@ export const inboxRoute = new Hono<AuthedEnv>()
       items: page.map(toItemDto),
       nextCursor: hasMore && last ? encodeCursor(last.occurredAt, last.id) : null,
       unresolvedCount: unresolved?.value ?? 0,
+    };
+    return c.json(response);
+  })
+  /*
+   * Badge numbers only. Registered before `/:id` so the word `counts` is not
+   * read as an item id, and kept separate from the list so the navigation can
+   * stay current without pulling a page of items on every poll.
+   */
+  .get("/counts", async (c) => {
+    const userId = c.get("user").id;
+    await syncInboxForUser(userId);
+    const [row] = await db
+      .select({
+        unread: sql<number>`sum(case when ${inboxItem.readAt} is null then 1 else 0 end)`,
+        needsAction: sql<number>`sum(case when ${inboxItem.needsAction} then 1 else 0 end)`,
+      })
+      .from(inboxItem)
+      .where(eq(inboxItem.userId, userId));
+    // An account with no inbox rows sums to NULL rather than 0.
+    const response: InboxCountsDto = {
+      unread: Number(row?.unread ?? 0),
+      needsAction: Number(row?.needsAction ?? 0),
     };
     return c.json(response);
   })

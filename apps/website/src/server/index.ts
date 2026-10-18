@@ -24,7 +24,8 @@ startOncallEscalationWorker();
 startOAuthSweeper();
 
 // In production the same process serves authenticated noindex application
-// shells. Unknown paths remain real 404s.
+// shells, including the 404 shell for unknown page addresses. API, hook and
+// asset misses stay real 404s.
 const clientDir = resolve(process.cwd(), "dist/client");
 mountPrivateStaticRoutes(app, clientDir);
 

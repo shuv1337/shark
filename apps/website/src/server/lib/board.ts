@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   BOARD_AGED_ASK_DAYS,
+  BOARD_DEFAULT_HEARTBEAT_TTL_SECONDS,
   BOARD_DONE_MAX_ITEMS,
   BOARD_DONE_WINDOW_DAYS,
   BOARD_MAX_OPEN_ASKS_PER_TOKEN,
@@ -37,7 +38,7 @@ import {
   or,
   sql,
 } from "drizzle-orm";
-import { db } from "../db";
+import { db, type Executor } from "../db";
 import { apiToken, boardAsk, boardAskEvent, boardNote, boardWorkItem } from "../db/schema";
 import { deliverBoardCallbacks } from "./board-callbacks";
 import { sendBoardAskPush, sweepBoardPushRetries } from "./board-push";
@@ -50,7 +51,12 @@ export type WorkRow = typeof boardWorkItem.$inferSelect;
 export type NoteRow = typeof boardNote.$inferSelect;
 export type TokenRow = typeof apiToken.$inferSelect;
 
-export type BoardFailure = { ok: false; status: 404 | 409 | 422; error: string; ask?: AskRow };
+export type BoardFailure = {
+  ok: false;
+  status: 400 | 404 | 409 | 422;
+  error: string;
+  ask?: AskRow;
+};
 
 const ACTIVE_WORK_STATES = ["queued", "in_flight", "review", "blocked"] as const;
 const TERMINAL_WORK_STATES = ["done", "failed", "cancelled"] as const;
@@ -195,6 +201,7 @@ export function toNoteDto(row: NoteRow): BoardNoteDto {
     id: row.id,
     key: row.noteKey,
     agent: row.agentLabel,
+    agentDisplay: row.agentDisplay,
     text: row.text,
     detail: row.detail,
     link: row.link,
@@ -554,6 +561,18 @@ function terminalFields(row: AskRow, status: "answered" | "expired" | "cancelled
   };
 }
 
+/**
+ * Drops the waiting link from every work item that was blocked on a now-terminal ask, so a card
+ * never points at a question the captain already settled. The state is left alone: whether the
+ * work is still blocked is the agent's call on its next heartbeat.
+ */
+function clearWaitingAskLinks(tx: Executor, row: AskRow, now: Date): void {
+  tx.update(boardWorkItem)
+    .set({ waitingAskId: null, updatedAt: now })
+    .where(and(eq(boardWorkItem.userId, row.userId), eq(boardWorkItem.waitingAskId, row.id)))
+    .run();
+}
+
 export async function cancelAsk(
   token: TokenRow,
   key: string,
@@ -566,14 +585,19 @@ export async function cancelAsk(
     return { ok: false, status: 404, error: "No open ask with that key" };
   }
   const now = new Date();
-  const [row] = await db
-    .update(boardAsk)
-    .set({
-      ...terminalFields(existing, "cancelled", now),
-      cancelReason: reason ?? "Cancelled by agent",
-    })
-    .where(and(eq(boardAsk.id, existing.id), eq(boardAsk.status, "open")))
-    .returning();
+  const row = db.transaction((tx) => {
+    const cancelled = tx
+      .update(boardAsk)
+      .set({
+        ...terminalFields(existing, "cancelled", now),
+        cancelReason: reason ?? "Cancelled by agent",
+      })
+      .where(and(eq(boardAsk.id, existing.id), eq(boardAsk.status, "open")))
+      .returning()
+      .get();
+    if (cancelled) clearWaitingAskLinks(tx, cancelled, now);
+    return cancelled;
+  });
   if (!row) return { ok: false, status: 409, error: "Ask is no longer open" };
   await appendAskEvent(row.id, {
     dedupeKey: `cancelled:r${row.revision}`,
@@ -623,6 +647,16 @@ export async function ackAsk(
   });
   notifyBoardChanged(token.userId);
   return { ok: true, row };
+}
+
+/** The calling token's work item for a key. Another token's row is invisible. */
+export async function workForToken(token: TokenRow, key: string): Promise<WorkRow | undefined> {
+  const [row] = await db
+    .select()
+    .from(boardWorkItem)
+    .where(and(eq(boardWorkItem.requesterTokenId, token.id), eq(boardWorkItem.workKey, key)))
+    .limit(1);
+  return row;
 }
 
 /** The open ask for a key, else the most recently resolved one. */
@@ -733,25 +767,30 @@ export async function answerAsk(
     return { ok: false, status: 422, error: "This ask does not take a typed reply" };
   }
   const now = new Date();
-  const [row] = await db
-    .update(boardAsk)
-    .set({
-      ...terminalFields(existing, "answered", now),
-      answerOptionId: input.optionId ?? null,
-      answerText: input.text ?? null,
-      answeredAt: now,
-      answeredVia: actor.via,
-      answeredSessionHash: actor.sessionHash ?? null,
-      answeredByDeviceId: actor.deviceId ?? null,
-    })
-    .where(
-      and(
-        eq(boardAsk.id, existing.id),
-        eq(boardAsk.status, "open"),
-        eq(boardAsk.revision, existing.revision),
-      ),
-    )
-    .returning();
+  const row = db.transaction((tx) => {
+    const answered = tx
+      .update(boardAsk)
+      .set({
+        ...terminalFields(existing, "answered", now),
+        answerOptionId: input.optionId ?? null,
+        answerText: input.text ?? null,
+        answeredAt: now,
+        answeredVia: actor.via,
+        answeredSessionHash: actor.sessionHash ?? null,
+        answeredByDeviceId: actor.deviceId ?? null,
+      })
+      .where(
+        and(
+          eq(boardAsk.id, existing.id),
+          eq(boardAsk.status, "open"),
+          eq(boardAsk.revision, existing.revision),
+        ),
+      )
+      .returning()
+      .get();
+    if (answered) clearWaitingAskLinks(tx, answered, now);
+    return answered;
+  });
   if (!row) return { ok: false, status: 409, error: "This ask changed concurrently" };
   await appendAskEvent(row.id, {
     dedupeKey: `answered:r${row.revision}`,
@@ -837,22 +876,27 @@ export async function dismissAsk(
     };
   }
   const now = new Date();
-  const [row] = await db
-    .update(boardAsk)
-    .set({
-      ...terminalFields(existing, "cancelled", now),
-      cancelReason: input.reason ?? "Dismissed by the captain",
-      answeredVia: actor.via,
-      answeredSessionHash: actor.sessionHash ?? null,
-    })
-    .where(
-      and(
-        eq(boardAsk.id, existing.id),
-        eq(boardAsk.status, "open"),
-        eq(boardAsk.revision, existing.revision),
-      ),
-    )
-    .returning();
+  const row = db.transaction((tx) => {
+    const dismissed = tx
+      .update(boardAsk)
+      .set({
+        ...terminalFields(existing, "cancelled", now),
+        cancelReason: input.reason ?? "Dismissed by the captain",
+        answeredVia: actor.via,
+        answeredSessionHash: actor.sessionHash ?? null,
+      })
+      .where(
+        and(
+          eq(boardAsk.id, existing.id),
+          eq(boardAsk.status, "open"),
+          eq(boardAsk.revision, existing.revision),
+        ),
+      )
+      .returning()
+      .get();
+    if (dismissed) clearWaitingAskLinks(tx, dismissed, now);
+    return dismissed;
+  });
   if (!row) return { ok: false, status: 409, error: "This ask changed concurrently" };
   await appendAskEvent(row.id, {
     dedupeKey: `cancelled:r${row.revision}`,
@@ -884,65 +928,112 @@ export async function upsertWork(
     input.statusLabel,
     input.host,
     input.agentDisplay,
-    ...input.links.flatMap((link) => [link.label, link.url]),
+    ...(input.links ?? []).flatMap((link) => [link.label, link.url]),
   ]);
   if (rejected) return rejected;
   const now = new Date();
-  const waitingAsk = input.waitingAskKey
-    ? await openAskByKey(token.userId, input.waitingAskKey)
-    : undefined;
-  const [existing] = await db
-    .select()
-    .from(boardWorkItem)
-    .where(and(eq(boardWorkItem.userId, token.userId), eq(boardWorkItem.workKey, input.key)))
-    .limit(1);
-  if (existing && existing.requesterTokenId !== token.id && existing.requesterTokenId !== null) {
-    return { ok: false, status: 409, error: "Another agent owns this work key" };
-  }
-  const fields = {
-    requesterTokenId: token.id,
-    agentLabel: token.name,
-    agentDisplay: input.agentDisplay ?? existing?.agentDisplay ?? null,
-    title: input.title,
-    state: input.state,
-    statusLabel: input.statusLabel ?? null,
-    detail: input.detail ?? null,
-    progress: input.progress ?? null,
-    links: input.links,
-    host: input.host ?? null,
-    waitingAskId: waitingAsk?.id ?? null,
-    heartbeatTtlSeconds: input.heartbeatTtlSeconds,
-    lastHeartbeatAt: now,
-    completedAt: null,
-    completionVerb: null,
-    updatedAt: now,
-  };
-  if (existing) {
-    const startedAt =
-      existing.startedAt ?? (input.state === "in_flight" || input.state === "review" ? now : null);
-    const [row] = await db
-      .update(boardWorkItem)
-      .set({ ...fields, startedAt })
-      .where(eq(boardWorkItem.id, existing.id))
-      .returning();
-    if (!row) return { ok: false, status: 409, error: "Work item changed concurrently" };
-    notifyBoardChanged(token.userId);
-    return { ok: true, row, created: false };
-  }
-  const [row] = await db
-    .insert(boardWorkItem)
-    .values({
-      id: newId("bwork"),
-      userId: token.userId,
-      workKey: input.key,
-      ...fields,
-      startedAt: input.state === "in_flight" || input.state === "review" ? now : null,
-      createdAt: now,
-    })
-    .returning();
-  if (!row) return { ok: false, status: 409, error: "Work item was created concurrently" };
-  notifyBoardChanged(token.userId);
-  return { ok: true, row, created: true };
+  // Read, merge, and write in one synchronous transaction so concurrent heartbeats on a key
+  // cannot copy each other's stale snapshot over a field the other just set.
+  const outcome = db.transaction(
+    (tx): { ok: true; row: WorkRow; created: boolean } | BoardFailure => {
+      const existing = tx
+        .select()
+        .from(boardWorkItem)
+        .where(and(eq(boardWorkItem.userId, token.userId), eq(boardWorkItem.workKey, input.key)))
+        .get();
+      if (
+        existing &&
+        existing.requesterTokenId !== token.id &&
+        existing.requesterTokenId !== null
+      ) {
+        return { ok: false, status: 409, error: "Another agent owns this work key" };
+      }
+      let waitingAskId: string | null;
+      if (input.waitingAskKey) {
+        const asks = tx
+          .select({ id: boardAsk.id, status: boardAsk.status })
+          .from(boardAsk)
+          .where(and(eq(boardAsk.userId, token.userId), eq(boardAsk.askKey, input.waitingAskKey)))
+          .all();
+        if (asks.length === 0) {
+          return { ok: false, status: 400, error: "No ask with that waitingAskKey" };
+        }
+        // An ask answered before the work reported it is no longer something to wait on.
+        waitingAskId = asks.find((ask) => ask.status === "open")?.id ?? null;
+      } else if (input.waitingAskKey === null || input.state !== "blocked") {
+        waitingAskId = null;
+      } else if (existing?.waitingAskId) {
+        // A resolved ask drops its links as it resolves, but a link stored before that shipped is
+        // only ever seen again here, so re-check the ask rather than carry a dead id forward.
+        const stored = tx
+          .select({ id: boardAsk.id })
+          .from(boardAsk)
+          .where(
+            and(
+              eq(boardAsk.id, existing.waitingAskId),
+              eq(boardAsk.userId, token.userId),
+              eq(boardAsk.status, "open"),
+            ),
+          )
+          .get();
+        waitingAskId = stored?.id ?? null;
+      } else {
+        waitingAskId = null;
+      }
+      // Omitted fields keep the stored value; null (or [] for links) clears them.
+      const kept = <T>(value: T | null | undefined, stored: T | null | undefined): T | null =>
+        value === undefined ? (stored ?? null) : value;
+      const fields = {
+        requesterTokenId: token.id,
+        agentLabel: token.name,
+        agentDisplay: kept(input.agentDisplay, existing?.agentDisplay),
+        title: input.title,
+        state: input.state,
+        statusLabel: kept(input.statusLabel, existing?.statusLabel),
+        detail: kept(input.detail, existing?.detail),
+        progress: kept(input.progress, existing?.progress),
+        links: input.links ?? existing?.links ?? [],
+        host: kept(input.host, existing?.host),
+        waitingAskId,
+        heartbeatTtlSeconds:
+          kept(input.heartbeatTtlSeconds, existing?.heartbeatTtlSeconds) ??
+          BOARD_DEFAULT_HEARTBEAT_TTL_SECONDS,
+        lastHeartbeatAt: now,
+        completedAt: null,
+        completionVerb: null,
+        updatedAt: now,
+      };
+      if (existing) {
+        const startedAt =
+          existing.startedAt ??
+          (input.state === "in_flight" || input.state === "review" ? now : null);
+        const row = tx
+          .update(boardWorkItem)
+          .set({ ...fields, startedAt })
+          .where(eq(boardWorkItem.id, existing.id))
+          .returning()
+          .get();
+        if (!row) return { ok: false, status: 409, error: "Work item changed concurrently" };
+        return { ok: true, row, created: false };
+      }
+      const row = tx
+        .insert(boardWorkItem)
+        .values({
+          id: newId("bwork"),
+          userId: token.userId,
+          workKey: input.key,
+          ...fields,
+          startedAt: input.state === "in_flight" || input.state === "review" ? now : null,
+          createdAt: now,
+        })
+        .returning()
+        .get();
+      if (!row) return { ok: false, status: 409, error: "Work item was created concurrently" };
+      return { ok: true, row, created: true };
+    },
+  );
+  if (outcome.ok) notifyBoardChanged(token.userId);
+  return outcome;
 }
 
 export async function markDone(
@@ -958,57 +1049,64 @@ export async function markDone(
   ]);
   if (rejected) return rejected;
   const now = new Date();
-  const [existing] = await db
-    .select()
-    .from(boardWorkItem)
-    .where(and(eq(boardWorkItem.userId, token.userId), eq(boardWorkItem.workKey, input.key)))
-    .limit(1);
-  if (existing && existing.requesterTokenId !== token.id && existing.requesterTokenId !== null) {
-    return { ok: false, status: 409, error: "Another agent owns this work key" };
-  }
-  if (!existing && !input.title) {
-    return { ok: false, status: 422, error: "A new done item needs a title" };
-  }
-  const links = existing
-    ? [
-        ...existing.links,
-        ...input.links.filter((link) => !existing.links.some((known) => known.url === link.url)),
-      ]
-    : input.links;
-  const fields = {
-    requesterTokenId: token.id,
-    agentLabel: token.name,
-    agentDisplay: input.agentDisplay ?? existing?.agentDisplay ?? null,
-    title: input.title ?? existing?.title ?? input.key,
-    state: input.outcome,
-    links,
-    note: input.note ?? null,
-    waitingAskId: null,
-    completedAt: now,
-    completionVerb: input.verb,
-    lastHeartbeatAt: now,
-    updatedAt: now,
-  };
-  const [row] = existing
-    ? await db
-        .update(boardWorkItem)
-        .set(fields)
-        .where(eq(boardWorkItem.id, existing.id))
-        .returning()
-    : await db
-        .insert(boardWorkItem)
-        .values({
-          id: newId("bwork"),
-          userId: token.userId,
-          workKey: input.key,
-          ...fields,
-          startedAt: null,
-          createdAt: now,
-        })
-        .returning();
-  if (!row) return { ok: false, status: 409, error: "Work item changed concurrently" };
-  notifyBoardChanged(token.userId);
-  return { ok: true, row };
+  // Same single synchronous transaction as upsertWork, so a heartbeat can't land between the
+  // read and the write and have its links or ownership overwritten by a stale snapshot.
+  const outcome = db.transaction((tx): { ok: true; row: WorkRow } | BoardFailure => {
+    const existing = tx
+      .select()
+      .from(boardWorkItem)
+      .where(and(eq(boardWorkItem.userId, token.userId), eq(boardWorkItem.workKey, input.key)))
+      .get();
+    if (existing && existing.requesterTokenId !== token.id && existing.requesterTokenId !== null) {
+      return { ok: false, status: 409, error: "Another agent owns this work key" };
+    }
+    if (!existing && !input.title) {
+      return { ok: false, status: 422, error: "A new done item needs a title" };
+    }
+    const links = existing
+      ? [
+          ...existing.links,
+          ...input.links.filter((link) => !existing.links.some((known) => known.url === link.url)),
+        ]
+      : input.links;
+    const fields = {
+      requesterTokenId: token.id,
+      agentLabel: token.name,
+      agentDisplay: input.agentDisplay ?? existing?.agentDisplay ?? null,
+      title: input.title ?? existing?.title ?? input.key,
+      state: input.outcome,
+      links,
+      note: input.note ?? null,
+      waitingAskId: null,
+      completedAt: now,
+      completionVerb: input.verb,
+      lastHeartbeatAt: now,
+      updatedAt: now,
+    };
+    const row = existing
+      ? tx
+          .update(boardWorkItem)
+          .set(fields)
+          .where(eq(boardWorkItem.id, existing.id))
+          .returning()
+          .get()
+      : tx
+          .insert(boardWorkItem)
+          .values({
+            id: newId("bwork"),
+            userId: token.userId,
+            workKey: input.key,
+            ...fields,
+            startedAt: null,
+            createdAt: now,
+          })
+          .returning()
+          .get();
+    if (!row) return { ok: false, status: 409, error: "Work item changed concurrently" };
+    return { ok: true, row };
+  });
+  if (outcome.ok) notifyBoardChanged(token.userId);
+  return outcome;
 }
 
 export async function upsertNote(
@@ -1089,11 +1187,16 @@ export async function sweepExpiredAsks(now = new Date()): Promise<number> {
   // `now` only decides what is due; the recorded transition time is the real clock.
   const recordedAt = new Date();
   for (const existing of due) {
-    const [row] = await db
-      .update(boardAsk)
-      .set(terminalFields(existing, "expired", recordedAt))
-      .where(and(eq(boardAsk.id, existing.id), eq(boardAsk.status, "open")))
-      .returning();
+    const row = db.transaction((tx) => {
+      const expired = tx
+        .update(boardAsk)
+        .set(terminalFields(existing, "expired", recordedAt))
+        .where(and(eq(boardAsk.id, existing.id), eq(boardAsk.status, "open")))
+        .returning()
+        .get();
+      if (expired) clearWaitingAskLinks(tx, expired, recordedAt);
+      return expired;
+    });
     if (!row) continue;
     await appendAskEvent(row.id, {
       dedupeKey: `expired:r${row.revision}`,

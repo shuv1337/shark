@@ -47,16 +47,25 @@ every surface uses:
 - Service window: the webhook service's events, Live Activity operations, and pages.
 - Requester window: the agent token's Live Activity operations, interactions, one-shot
   notifications (including board ask pushes and each board push retry), and pages.
-- Account window: every event from the owner's services, every interaction, agent notification,
+- Account window: every event from the owner's services, every interaction not tied to an event
+  (a webhook notification with `response` counts once, as its event), every agent notification,
   board push retry, and page, and every Live Activity operation not tied to an interaction (the
   interaction already counts).
 
-Each path checks the windows early to answer cheaply. The paths listed here then check again in
+Each path checks the windows early to answer cheaply. Every counted surface then checks again in
 the same synchronous better-sqlite3 transaction that inserts the counted row, so concurrent
-requests cannot overshoot them: webhook notifications and pages, agent notifications,
-interactions, agent pages (`/api/agent/oncall/:id/pages` and `/api/agent/notifications` with
-`oncall`), and board ask pushes. That is not every counted surface; the residuals below are not
-admitted this way. A request with an `Idempotency-Key` skips the early check and, inside the
+requests cannot overshoot them: webhook notifications (with the `response` interaction in the same
+transaction) and pages, agent notifications, interactions, agent pages
+(`/api/agent/oncall/:id/pages` and `/api/agent/notifications` with `oncall`), board ask pushes,
+and Live Activity starts, updates, and ends from agent tokens and activity webhooks. A Live
+Activity start runs admission, then ends any blocking activity, then inserts its activity and
+operation rows, all in one transaction, and sends pushes only after it commits, so a refused start
+ends no live activity and sends nothing (it may still mark rows that were already past expiry as
+ended). If a blocker changed after the start planned its replacement, the transaction ends it from
+its current row, or rolls back with `409 ACTIVE_ACTIVITY_CONFLICT`; updates and ends still
+compare-and-swap the activity sequence. `rate-windows.guard.test.ts` fails if a new insert into a
+counted table appears outside the known admitted call sites. A request with an `Idempotency-Key`
+skips the early check and, inside the
 transaction, replays a stored twin before admission, so a raced duplicate replays instead of
 answering `429`. A project named by a webhook or agent notification is created in that transaction
 only after admission, so a refused notification leaves no project behind.
@@ -71,17 +80,11 @@ a restart) is treated as abandoned and may be retried. Each on-call group also a
 new pages a minute, enforced the same way. These guarantees assume the deployed shape: one app
 process on one SQLite connection.
 
-Accepted residuals, which remain check-then-act and can be overshot by a concurrent burst:
+Accepted residuals:
 
-- Live Activity starts, updates, and ends, from agent tokens and activity webhooks. They use the
-  same window definition, but a start can end blocking activities before its rows are inserted, so
-  reserving capacity first would mean moving those side effects into the transaction. These pushes
-  reach only the owner's devices, each device holds one active activity, and updates and ends
-  compare-and-swap the activity sequence, so a burst against one activity records one operation.
 - Agent app sharing and team app creation check the agent budget but record nothing it counts.
-  Team notices have their own per-person cap.
-- A webhook notification with `response` is admitted as one event, then records its interaction
-  outside that transaction, so it adds two rows to the account window.
+- Team notices (invites, shared apps, on-call override notices) record an agent notification for
+  each recipient outside the windows; they have their own per-sender cap instead.
 
 ## Admission and identity
 
@@ -131,7 +134,13 @@ Expired push tokens are expected; reopening each iPhone re-registers it.
 The manual GitHub workflow on `main` verifies the monorepo, publishes
 `ghcr.io/shuv1337/shark:<full-sha>`, and attests the exact image digest. It has no VM credential and
 does not deploy. The operator invokes the production helper through their existing exe.dev
-identity with the reviewed SHA and digest. The host anonymously pulls the public image, verifies
+identity with the reviewed SHA and digest, detached from the SSH session with `setsid nohup` (see
+`deploy/README.md`). Abort a detached run with `SIGTERM` to its process group; it ignores `SIGHUP`.
+If the helper fails, or receives `SIGINT` or `SIGTERM`, after it starts to stop the current
+container and before it records the new release, it waits for the stop and restarts the previous
+release. A `SIGHUP` to an attached run after the new container has started leaves that release
+running but unrecorded, because its migrations may already have run; during the new `compose up`
+it does so only if the service container is already running the new image. The host anonymously pulls the public image, verifies
 its repository, signer workflow, `main` ref, source SHA, hosted runner, and digest, then fetches
 application and backup secrets through separate 1Password service accounts with disjoint vault
 access. It records the image
@@ -140,7 +149,9 @@ ID and digest, pre-deploy snapshot ID, source SHA, and timestamp.
 For rollback, stop the current container, select the previous recorded full SHA and image ID,
 restore the matching pre-deploy database only when migrations are incompatible, start the previous
 release, prove the running image ID, then verify readiness, authenticated dashboard access, and one
-test notification. Keep rollback manual until a real drill succeeds.
+test notification. Rollback stays a manual operator step; the schema-compatible case was drilled
+on 2026-10-10 (`docs/verification.md`), and a rollback that needs the database restore has not
+been.
 
 ## Manual checks
 
@@ -148,7 +159,16 @@ SHark v1 has no proactive monitoring or alerts. Check these manually after deplo
 operator review:
 
 - `https://shark.shuv.dev/api/health` returns 200 and only `{"ok":true}`.
-- Anonymous `/`, `/docs`, `/privacy`, `/terms`, `/dashboard`, and `/cli/authorize` are denied.
+- Anonymous `/`, `/docs`, `/privacy`, `/terms`, `/board`, `/inbox`, `/teams`, `/settings`,
+  `/dashboard`, and `/cli/authorize` are denied, as are the addresses that carry an id:
+  `/inbox/<id>`, `/teams/<id>`, `/board/ask/<id>`, and `/dashboard/teams/<id>`.
+- Any other page address — anything without a file extension, such as `/pricing` or a typo — is
+  also denied anonymously, and returns the application's 404 shell to a signed-in reader, so the
+  client renders its own not-found page. This is the only shell served for addresses that have no
+  page. It must not change what the rest of the boundary answers: `/api/*`, `/hooks/*`, `/mcp` and
+  anything under it, `/.well-known/*`, and a miss under `/assets/*` or any path ending in a file
+  extension all still return 404, signed in or not. Spot-check `/api/nope`, `/mcp/anything`,
+  `/.well-known/anything`, `/assets/missing.js`, and `/foo/bar.json`.
 - The OAuth endpoints for the MCP server are intentionally anonymous. They must not return account
   data:
   - `GET /.well-known/oauth-protected-resource`, `/.well-known/oauth-protected-resource/mcp`,
@@ -158,26 +178,39 @@ operator review:
     client IP and grants nothing without consent. An empty body returns 400.
   - `POST /api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, and `/api/auth/oauth2/introspect`
     authenticate with a client ID, code, or token instead of a session. An empty form body returns
-    400, and JSON returns 415.
+    400, and JSON returns 415. An `authorization_code` or `refresh_token` request whose
+    `resource` is missing or is not exactly `https://shark.shuv.dev/mcp` returns 400
+    `invalid_target` without spending the code or refresh token. Every `/api/auth/oauth2/token`
+    response, errors included, carries `Cache-Control: no-store` and `Pragma: no-cache`.
   - `POST /api/auth/oauth2/public-client-prelogin` accepts JSON and verifies a signed
-    `oauth_query` instead of a session. An empty JSON body returns 400, and valid JSON with a
-    validly signed query returns 200 with the client's public registration fields.
+    `oauth_query` instead of a session. An empty JSON body returns 400, a `client_id` that
+    differs from the signed query's returns 400, and valid JSON with a validly signed query for
+    the same client returns 200 with the client's public registration fields, without
+    `contacts`.
   - `/mcp` without a valid bearer token returns 401 with a `WWW-Authenticate` challenge that points
     to the protected-resource metadata.
-- The team invite preview `GET /api/team-invites/:code` is intentionally anonymous so the join
-  page can describe an invite before sign-in. For a valid code it returns only the team name,
-  inviter name, role, member count, and expiry, with `Cache-Control: no-store`. An unknown code
-  returns 404, and more than 30 requests a minute from one client returns 429. The access log
-  records it as `/api/team-invites/:code`. See `docs/upstream-delta.md` for why each anonymous
-  exception is acceptable.
+- The team invite preview `GET /api/team-invites/:code` returns 401 without a session. Signed in,
+  a valid code returns only the team name, inviter name, role, member count, and expiry, with
+  `Cache-Control: no-store`. An unknown code returns 404, and more than 30 requests a minute from
+  one client returns 429. The access log records it as `/api/team-invites/:code`. See
+  `docs/upstream-delta.md` for why each anonymous exception is acceptable.
 - The running container image ID matches the release provenance.
 - The latest nightly/pre-deploy Restic snapshot is verified.
 - Disk pressure, container restarts, and the capped local log files are healthy.
 - Expo receipts and APNs responses are reviewed; expired native tokens are deactivated per target.
-- `/sw.js` returns 200 with JavaScript content, and a signed-in browser can enable, test, disable,
-  and re-enable notifications without creating duplicate active subscriptions.
+- The anonymous app assets return their expected content types: `/sw.js`, `/favicon.png`,
+  `/app-store-icon.png`, `/manifest.webmanifest`, `/apple-touch-icon.png`, and the three explicit
+  files under `/icons/`. Any other `/icons/*` path and all `/assets/*` remain private.
+- Sign-in with no requested destination lands on `/board`, matching the manifest's `start_url`. A
+  notification that carries no URL of its own opens `/inbox`. `/dashboard` and
+  `/dashboard/teams/<id>` still redirect, so older push payloads and the iPhone app's registered
+  web app keep working.
+- A signed-in browser can enable, test, disable, and re-enable notifications without creating
+  duplicate active subscriptions.
 - Web Push responses with an expired subscription status deactivate only that browser target; they
-  do not prevent delivery to healthy iPhone or browser targets.
+  do not prevent delivery to healthy iPhone or browser targets. A push service that resolves to a
+  non-public address, fails DNS, or doesn't finish resolution plus the request within 10 seconds
+  is reported as a delivery error for that target and leaves the subscription active.
 - A signed macOS app can complete device-code authorization, register its APNs token, refresh the
   server-backed inbox, and submit each approval/reply at most once. Private-preview mode must redact
   APNs alert content and omit notification actions.

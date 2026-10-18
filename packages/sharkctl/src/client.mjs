@@ -164,3 +164,20 @@ export function cancelInteraction(config, id, { signal } = {}) {
     signal,
   });
 }
+
+/** Like {@link request}, but a 403 names the scopes the route requires and how to grant them. */
+export async function scopedRequest(config, path, init) {
+  try {
+    return await request(config, path, init);
+  } catch (error) {
+    const required = error instanceof RequestError ? error.body?.required : undefined;
+    if (error instanceof RequestError && error.status === 403 && Array.isArray(required)) {
+      throw new RequestError(
+        `${error.message}. Run sharkctl auth login --scope ... to grant ${required.join(", ")}.`,
+        error.status,
+        error.body,
+      );
+    }
+    throw error;
+  }
+}

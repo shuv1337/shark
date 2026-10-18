@@ -11,7 +11,6 @@ let sqlite: typeof import("../db")["sqlite"];
 let schema: typeof import("../db/schema");
 let env: typeof import("../env")["env"];
 let offboardPersistedAccess: typeof import("./offboarding")["offboardPersistedAccess"];
-let guardTokenResponse: typeof import("./oauth-token-admission")["guardTokenResponse"];
 let resource: string;
 
 const ORIGIN = "http://localhost:5173";
@@ -29,7 +28,6 @@ beforeAll(async () => {
   schema = await import("../db/schema");
   ({ env } = await import("../env"));
   ({ offboardPersistedAccess } = await import("./offboarding"));
-  ({ guardTokenResponse } = await import("./oauth-token-admission"));
   const { runMigrations } = await import("../db/migrate");
   runMigrations();
   resource = (await import("./oauth")).mcpResourceUrl();
@@ -122,7 +120,7 @@ async function token(body: Record<string, string>) {
     body: new URLSearchParams({ client_id: clientId, ...body }),
   });
   // Mirrors the /api/auth/* route in app.ts.
-  const response = await guardTokenResponse(request, await auth.handler(request));
+  const response = await auth.handler(request);
   const text = await response.text();
   let parsed: Record<string, unknown> = {};
   try {
@@ -184,14 +182,41 @@ describe("OAuth token endpoint admission", () => {
 
   it("rejects a refresh once the owner leaves the allowlist, without minting tokens", async () => {
     const refreshToken = await connected();
-    const before = await issuedTokens();
 
     removeFromAllowlist();
     const rejected = await refresh(refreshToken);
     expect(rejected.status).toBe(400);
     expect(rejected.body).toMatchObject({ error: "invalid_grant" });
     expect(rejected.body).not.toHaveProperty("access_token");
-    expect(await issuedTokens()).toEqual(before);
+    expect(await issuedTokens()).toEqual({ access: 0, refresh: 0 });
+    env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length);
+    expect((await refresh(refreshToken)).body).toMatchObject({ error: "invalid_grant" });
+  });
+
+  it("invalidates a rotated refresh family when replayed while denied", async () => {
+    const original = await connected();
+    const rotated = await refresh(original);
+    expect(rotated.status).toBe(200);
+    removeFromAllowlist();
+    expect((await refresh(original)).body).toMatchObject({ error: "invalid_grant" });
+    expect(await issuedTokens()).toEqual({ access: 0, refresh: 0 });
+    env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length);
+    expect((await refresh(rotated.body.refresh_token as string)).status).toBe(400);
+  });
+
+  it("keeps provider client validation when a denied refresh names another client", async () => {
+    const original = await connected();
+    removeFromAllowlist();
+    const rejected = await token({
+      grant_type: "refresh_token",
+      refresh_token: original,
+      resource,
+      client_id: "other-client",
+    });
+    expect(rejected.body).toMatchObject({ error: "invalid_client" });
+    env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length);
+    expect((await refresh(original)).body).toMatchObject({ error: "invalid_grant" });
+    expect(await issuedTokens()).toEqual({ access: 0, refresh: 0 });
   });
 
   it("rejects exchanging a pending code once the owner leaves the allowlist and spends it", async () => {
@@ -237,26 +262,33 @@ describe("OAuth token endpoint admission", () => {
     expect(await issuedTokens()).toEqual({ access: 0, refresh: 0 });
   });
 
-  it("rejects a code exchange when offboarding commits between the session check and the insert", async () => {
-    const pending = await authorize();
-    // The insert then references a deleted session and fails its foreign key.
-    const { adapter } = await auth.$context;
-    const findOne = adapter.findOne;
-    adapter.findOne = (async (args: Parameters<typeof findOne>[0]) => {
-      const found = await findOne(args);
-      if (args.model === "session") sqlite.exec(`DELETE FROM session WHERE user_id = '${USER_ID}'`);
-      return found;
-    }) as typeof findOne;
-    let rejected: Awaited<ReturnType<typeof exchange>>;
-    try {
-      rejected = await exchange(pending);
-    } finally {
-      adapter.findOne = findOne;
-    }
-    expect(rejected.status).toBe(400);
-    expect(rejected.body).toMatchObject({ error: "invalid_grant" });
-    expect(await issuedTokens()).toEqual({ access: 0, refresh: 0 });
-  });
+  it.each(["foreign-key", "unrelated storage"])(
+    "preserves a %s failure after the session disappears",
+    async (failure) => {
+      const pending = await authorize();
+      // The insert then references a deleted session and fails its foreign key.
+      const { adapter } = await auth.$context;
+      const findOne = adapter.findOne;
+      adapter.findOne = (async (args: Parameters<typeof findOne>[0]) => {
+        const found = await findOne(args);
+        if (args.model === "session") {
+          sqlite.exec(`DELETE FROM session WHERE user_id = '${USER_ID}'`);
+          if (failure === "unrelated storage") throw new Error("synthetic storage failure");
+        }
+        return found;
+      }) as typeof findOne;
+      let rejected: Awaited<ReturnType<typeof exchange>>;
+      try {
+        rejected = await exchange(pending);
+      } finally {
+        adapter.findOne = findOne;
+      }
+      // A 500 response carries no cause; do not mislabel an unknown storage
+      // failure as invalid_grant solely because the session disappeared.
+      expect(rejected.status).toBe(500);
+      expect(await issuedTokens()).toEqual({ access: 0, refresh: 0 });
+    },
+  );
 
   it("still reports a server error for an admitted owner", async () => {
     const pending = await authorize();

@@ -37,7 +37,7 @@ export function CopyField({ label, value }: Props) {
         </code>
         <button
           type="button"
-          onClick={copy}
+          onClick={() => void copy()}
           className="grid size-9 shrink-0 place-items-center rounded-lg text-ink-subtle transition hover:bg-surface-hover hover:text-ink"
           aria-label={copied ? "Webhook URL copied" : "Copy webhook URL"}
           title={copied ? "Copied" : "Copy webhook URL"}

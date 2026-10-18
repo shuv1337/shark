@@ -678,6 +678,378 @@ describe("work, notes, done", () => {
   });
 });
 
+describe("work read-back", () => {
+  it("returns the calling token's work item and hides everyone else's", async () => {
+    const created = await agent("/work", BRO, {
+      method: "PUT",
+      body: JSON.stringify({
+        key: "bro:readback",
+        title: "Mate",
+        state: "in_flight",
+        agentDisplay: "Synthetic Harness",
+      }),
+    });
+    expect(created.status).toBe(201);
+
+    const read = await agent("/work/bro:readback", BRO);
+    expect(read.status).toBe(200);
+    expect(await read.json()).toMatchObject({
+      work: { key: "bro:readback", state: "in_flight", agentDisplay: "Synthetic Harness" },
+    });
+
+    expect((await agent("/work/bro:readback", FM)).status).toBe(404);
+    expect(await (await agent("/work/bro:readback", FM)).json()).toEqual({
+      error: "Work item not found",
+    });
+    expect((await agent("/work/missing-key", BRO)).status).toBe(404);
+    expect((await agent("/work/bro:readback", READ_ONLY)).status).toBe(404);
+
+    const { hashApiToken } = await import("../lib/token");
+    const writer = `hark_${"w".repeat(43)}`;
+    await db.insert(schema.apiToken).values({
+      id: "tok_write_only",
+      userId: "cap",
+      name: "Writer",
+      tokenHash: hashApiToken(writer),
+      prefix: writer.slice(0, 13),
+      scopes: ["board:write"],
+      createdAt: new Date(),
+    });
+    expect((await agent("/work/bro:readback", writer)).status).toBe(403);
+  });
+});
+
+describe("work re-posts", () => {
+  type Work = {
+    statusLabel: string | null;
+    detail: string | null;
+    progress: number | null;
+    links: Array<{ url: string }>;
+    host: string | null;
+    waitingAskId: string | null;
+    heartbeatTtlSeconds: number;
+    agentDisplay: string | null;
+  };
+  const put = async (body: Record<string, unknown>) => {
+    const response = await agent("/work", FM, { method: "PUT", body: JSON.stringify(body) });
+    expect(response.status).toBeLessThan(300);
+    return ((await response.json()) as { work: Work }).work;
+  };
+
+  it("keeps omitted fields on a heartbeat and clears only what is sent as null or []", async () => {
+    const { body: asked } = await createAsk({ key: "fm:keep:ask" });
+    const base = { key: "fm:keep", title: "Keep fields" };
+    const first = await put({
+      ...base,
+      state: "in_flight",
+      statusLabel: "Building",
+      detail: "Step 2 of 3",
+      progress: 0.6,
+      links: [{ kind: "pr", url: "https://github.com/x/y/pull/9" }],
+      host: "synthetic-host",
+      waitingAskKey: "fm:keep:ask",
+      heartbeatTtlSeconds: 600,
+    });
+    expect(first.waitingAskId).toBe(asked.ask.id);
+
+    const blocked = await put({ ...base, state: "blocked" });
+    expect(blocked).toMatchObject({
+      statusLabel: "Building",
+      detail: "Step 2 of 3",
+      progress: 0.6,
+      links: [{ url: "https://github.com/x/y/pull/9" }],
+      host: "synthetic-host",
+      waitingAskId: asked.ask.id,
+      heartbeatTtlSeconds: 600,
+    });
+
+    const cleared = await put({
+      ...base,
+      state: "in_flight",
+      statusLabel: null,
+      detail: null,
+      progress: null,
+      links: [],
+      host: null,
+      waitingAskKey: null,
+    });
+    expect(cleared).toMatchObject({
+      statusLabel: null,
+      detail: null,
+      progress: null,
+      links: [],
+      host: null,
+      waitingAskId: null,
+      heartbeatTtlSeconds: 600,
+    });
+
+    const created = await put({ key: "fm:fresh", title: "Fresh", state: "queued" });
+    expect(created).toMatchObject({ links: [], progress: null, heartbeatTtlSeconds: 21_600 });
+  });
+
+  it("keeps both of two concurrent partial heartbeats", async () => {
+    const base = { key: "fm:concurrent-keep", title: "Concurrent", state: "in_flight" };
+    await put({ ...base, detail: "old", progress: 0.1 });
+    await Promise.all([put({ ...base, detail: "new" }), put({ ...base, progress: 0.9 })]);
+    expect(await put(base)).toMatchObject({ detail: "new", progress: 0.9 });
+  });
+
+  it("serializes a done with a heartbeat that races it", async () => {
+    const [token] = await db.select().from(schema.apiToken).where(eq(schema.apiToken.id, "tok_fm"));
+    if (!token) throw new Error("missing synthetic token");
+    const pr = { kind: "pr", url: "https://github.com/x/y/pull/7" } as const;
+    const ci = { kind: "other", url: "https://ci.example.com/run/7" } as const;
+    const release = { kind: "doc", url: "https://releases.example.com/7" } as const;
+    // Land the heartbeat at several points while the done is in progress.
+    for (let ticks = 0; ticks < 8; ticks++) {
+      const key = `fm:done-race:${ticks}`;
+      await board.upsertWork(token, { key, title: "Race", state: "in_flight", links: [pr] });
+      const done = board.markDone(token, {
+        key,
+        verb: "merged",
+        outcome: "done",
+        links: [release],
+      });
+      for (let i = 0; i < ticks; i++) await Promise.resolve();
+      const beat = await board.upsertWork(token, {
+        key,
+        title: "Race",
+        state: "review",
+        links: [pr, ci],
+      });
+      expect((await done).ok && beat.ok).toBe(true);
+      const [row] = await db
+        .select()
+        .from(schema.boardWorkItem)
+        .where(eq(schema.boardWorkItem.workKey, key));
+      // Either serial order is fine; a done built from the pre-heartbeat snapshot is not.
+      if (row?.completedAt) {
+        expect(
+          row.links.map((link) => link.url),
+          `ticks=${ticks}`,
+        ).toEqual([pr.url, ci.url, release.url]);
+      } else {
+        expect(row, `ticks=${ticks}`).toMatchObject({ state: "review", links: [pr, ci] });
+      }
+    }
+  });
+
+  it("clears agentDisplay with null and restores the default TTL with null", async () => {
+    const base = { key: "fm:nullable", title: "Nullable", state: "queued" };
+    await put({ ...base, agentDisplay: "Synthetic Harness", heartbeatTtlSeconds: 600 });
+    expect(await put(base)).toMatchObject({
+      agentDisplay: "Synthetic Harness",
+      heartbeatTtlSeconds: 600,
+    });
+    expect(await put({ ...base, agentDisplay: null, heartbeatTtlSeconds: null })).toMatchObject({
+      agentDisplay: null,
+      heartbeatTtlSeconds: 21_600,
+    });
+  });
+
+  it("refuses an unknown waiting ask and drops the link once the work leaves blocked", async () => {
+    const base = { key: "fm:waiting", title: "Waiting" };
+    const unknown = await agent("/work", FM, {
+      method: "PUT",
+      body: JSON.stringify({ ...base, state: "blocked", waitingAskKey: "fm:waiting:none" }),
+    });
+    expect(unknown.status).toBe(400);
+
+    const { body: asked } = await createAsk({ key: "fm:waiting:ask" });
+    const blocked = await put({ ...base, state: "blocked", waitingAskKey: "fm:waiting:ask" });
+    expect(blocked.waitingAskId).toBe(asked.ask.id);
+    expect((await put({ ...base, state: "blocked" })).waitingAskId).toBe(asked.ask.id);
+    expect((await put({ ...base, state: "in_flight" })).waitingAskId).toBeNull();
+
+    const cancelled = await agent("/asks/fm:waiting:ask/cancel", FM, {
+      method: "POST",
+      body: JSON.stringify({ reason: "Decided in chat" }),
+    });
+    expect(cancelled.status).toBe(200);
+    const late = await put({ ...base, state: "blocked", waitingAskKey: "fm:waiting:ask" });
+    expect(late.waitingAskId).toBeNull();
+  });
+
+  it("shows the harness name a note was posted with", async () => {
+    const note = await agent("/notes", FM, {
+      method: "PUT",
+      body: JSON.stringify({ key: "fm:who", text: "Heads up", agentDisplay: "Synthetic Harness" }),
+    });
+    expect(note.status).toBe(201);
+    expect(((await note.json()) as { note: { agentDisplay: string } }).note.agentDisplay).toBe(
+      "Synthetic Harness",
+    );
+  });
+});
+
+describe("waiting-ask links", () => {
+  const putWork = async (body: Record<string, unknown>, token = FM) => {
+    const response = await agent("/work", token, { method: "PUT", body: JSON.stringify(body) });
+    expect(response.status).toBeLessThan(300);
+    return ((await response.json()) as { work: { waitingAskId: string | null } }).work;
+  };
+  const stored = async (key: string) => {
+    const [row] = await db
+      .select()
+      .from(schema.boardWorkItem)
+      .where(eq(schema.boardWorkItem.workKey, key));
+    if (!row) throw new Error("missing synthetic work item");
+    return row;
+  };
+  /** A work item parked on a fresh open ask, the shape every case below starts from. */
+  const blockOn = async (workKey: string, askKey: string, askOverrides = {}) => {
+    const { body } = await createAsk({ key: askKey, ...askOverrides });
+    const work = await putWork({
+      key: workKey,
+      title: "Blocked on a question",
+      state: "blocked",
+      waitingAskKey: askKey,
+    });
+    expect(work.waitingAskId).toBe(body.ask.id);
+    return body.ask;
+  };
+  /** Writes a link the API would no longer create, standing in for a pre-fix row. */
+  const seedLink = async (
+    workKey: string,
+    askId: string,
+    owner: { userId: string; tokenId: string; agentLabel: string },
+  ) => {
+    const now = new Date();
+    await db.insert(schema.boardWorkItem).values({
+      id: `bwork_seed_${workKey.replace(/\W/g, "_")}`,
+      userId: owner.userId,
+      requesterTokenId: owner.tokenId,
+      agentLabel: owner.agentLabel,
+      workKey,
+      title: "Blocked on a question",
+      state: "blocked",
+      links: [],
+      waitingAskId: askId,
+      lastHeartbeatAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+  };
+
+  it("drops the link when the captain answers, and leaves the state to the agent", async () => {
+    const ask = await blockOn("fm:link:answered", "fm:link:answered:ask");
+    const answered = await session(`/asks/${ask.id}/answer`, {
+      method: "POST",
+      body: JSON.stringify({ digest: ask.digest, optionId: "ship" }),
+    });
+    expect(answered.status).toBe(200);
+    expect(await stored("fm:link:answered")).toMatchObject({
+      waitingAskId: null,
+      state: "blocked",
+    });
+  });
+
+  it("drops the link when the captain dismisses the ask", async () => {
+    const ask = await blockOn("fm:link:dismissed", "fm:link:dismissed:ask");
+    const dismissed = await session(`/asks/${ask.id}/dismiss`, {
+      method: "POST",
+      body: JSON.stringify({ digest: ask.digest, reason: "Not needed" }),
+    });
+    expect(dismissed.status).toBe(200);
+    expect(await stored("fm:link:dismissed")).toMatchObject({
+      waitingAskId: null,
+      state: "blocked",
+    });
+  });
+
+  it("clears every item on the account that pointed at the ask, and nobody else's", async () => {
+    const ask = await blockOn("fm:link:first", "fm:link:shared:ask");
+    // A second item on the same ask, and a third from another token on the same account.
+    expect(
+      (
+        await putWork({
+          key: "fm:link:second",
+          title: "Also blocked",
+          state: "blocked",
+          waitingAskKey: "fm:link:shared:ask",
+        })
+      ).waitingAskId,
+    ).toBe(ask.id);
+    expect(
+      (
+        await putWork(
+          {
+            key: "bro:link:third",
+            title: "Blocked too",
+            state: "blocked",
+            waitingAskKey: "fm:link:shared:ask",
+          },
+          BRO,
+        )
+      ).waitingAskId,
+    ).toBe(ask.id);
+    // Another account's row cannot be created through the API, so seed it to pin the user filter.
+    await seedLink("other:link:foreign", ask.id, {
+      userId: "other",
+      tokenId: "tok_other",
+      agentLabel: "Stranger",
+    });
+
+    const answered = await session(`/asks/${ask.id}/answer`, {
+      method: "POST",
+      body: JSON.stringify({ digest: ask.digest, optionId: "ship" }),
+    });
+    expect(answered.status).toBe(200);
+    for (const key of ["fm:link:first", "fm:link:second", "bro:link:third"]) {
+      expect(await stored(key), key).toMatchObject({ waitingAskId: null, state: "blocked" });
+    }
+    expect(await stored("other:link:foreign")).toMatchObject({ waitingAskId: ask.id });
+  });
+
+  it("drops a link stored before this shipped on the next heartbeat", async () => {
+    const { body } = await createAsk({ key: "fm:link:legacy:ask" });
+    const cancelled = await agent("/asks/fm:link:legacy:ask/cancel", FM, { method: "POST" });
+    expect(cancelled.status).toBe(200);
+    await seedLink("fm:link:legacy", body.ask.id, {
+      userId: "cap",
+      tokenId: "tok_fm",
+      agentLabel: "Firstmate (box)",
+    });
+    // A heartbeat that stays blocked and names no ask used to carry the dead id forward.
+    const beat = await putWork({ key: "fm:link:legacy", title: "Legacy", state: "blocked" });
+    expect(beat.waitingAskId).toBeNull();
+  });
+
+  it("drops the link when the agent cancels the ask", async () => {
+    await blockOn("fm:link:cancelled", "fm:link:cancelled:ask");
+    const cancelled = await agent("/asks/fm:link:cancelled:ask/cancel", FM, {
+      method: "POST",
+      body: JSON.stringify({ reason: "Decided in chat" }),
+    });
+    expect(cancelled.status).toBe(200);
+    expect(await stored("fm:link:cancelled")).toMatchObject({
+      waitingAskId: null,
+      state: "blocked",
+    });
+  });
+
+  it("drops the link when the sweep expires the ask", async () => {
+    await blockOn("fm:link:expired", "fm:link:expired:ask", { expiresInSeconds: 60 });
+    expect(await board.sweepExpiredAsks(new Date(Date.now() + 120_000))).toBe(1);
+    expect(await stored("fm:link:expired")).toMatchObject({ waitingAskId: null, state: "blocked" });
+  });
+
+  it("leaves a work item waiting on a different ask alone", async () => {
+    await blockOn("fm:link:other", "fm:link:other:ask");
+    const kept = await blockOn("fm:link:kept", "fm:link:kept:ask");
+    const cancelled = await agent("/asks/fm:link:other:ask/cancel", FM, {
+      method: "POST",
+      body: JSON.stringify({ reason: "Decided in chat" }),
+    });
+    expect(cancelled.status).toBe(200);
+    expect(await stored("fm:link:other")).toMatchObject({ waitingAskId: null });
+    expect(await stored("fm:link:kept")).toMatchObject({
+      waitingAskId: kept.id,
+      state: "blocked",
+    });
+  });
+});
+
 describe("expiry and callbacks", () => {
   it("expires due asks and delivers every terminal status to the callback with retries", async () => {
     stubCallbackTransport();

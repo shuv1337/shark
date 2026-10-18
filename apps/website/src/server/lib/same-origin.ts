@@ -1,3 +1,4 @@
+import { createMiddleware } from "hono/factory";
 import { env } from "../env";
 
 /**
@@ -20,3 +21,11 @@ export function isSameOrigin(request: Request): boolean {
 export function isSameOriginOrNative(request: Request): boolean {
   return request.headers.get("origin") === null || isSameOrigin(request);
 }
+
+/** Refuses state-changing requests that fail {@link isSameOriginOrNative}. */
+export const requireSameOriginOrNative = createMiddleware(async (c, next) => {
+  if (c.req.method !== "GET" && c.req.method !== "HEAD" && !isSameOriginOrNative(c.req.raw)) {
+    return c.json({ error: "Invalid request origin" }, 403);
+  }
+  await next();
+});

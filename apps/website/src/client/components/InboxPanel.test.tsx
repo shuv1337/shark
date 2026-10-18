@@ -1,14 +1,21 @@
 import type { InboxDetailDto, InboxItemDto } from "@hark/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 import {
   InboxDetailContent,
   InboxPanel,
   InboxRow,
+  inboxItemPath,
   inboxKindLabel,
   inboxStateDot,
   inboxStateLabel,
 } from "./InboxPanel";
+
+/** The panel and its rows link, so they need a router even to render. */
+function markup(node: React.ReactNode): string {
+  return renderToStaticMarkup(<MemoryRouter initialEntries={["/inbox"]}>{node}</MemoryRouter>);
+}
 
 const item: InboxItemDto = {
   id: "ibox:interaction:int_1",
@@ -40,21 +47,38 @@ const item: InboxItemDto = {
 
 describe("web inbox", () => {
   it("renders the first-class inbox controls", () => {
-    const html = renderToStaticMarkup(<InboxPanel />);
+    const html = markup(<InboxPanel />);
     expect(html).toContain("Inbox");
     expect(html).toContain("Complete notification, interaction, and Live Activity history.");
     expect(html).toContain("Needs action");
     expect(html).toContain("Notifications");
+    // Activity is a filter of the inbox, not a page of its own.
+    expect(html).toContain("Activity");
+  });
+
+  /**
+   * The UA stylesheet gives `fieldset` a `min-inline-size: min-content`, which
+   * `overflow-x-auto` does not clear on its own. Without `min-w-0` the filter
+   * chips set a min-content floor on the whole document: at 320px the page laid
+   * out at 370px and the fixed tab bar overhung the screen.
+   */
+  it("lets the filter row scroll instead of widening the page", () => {
+    const fieldset = /<fieldset class="([^"]*)"/.exec(markup(<InboxPanel />))?.[1];
+    expect(fieldset).toBeDefined();
+    expect(fieldset).toContain("overflow-x-auto");
+    expect(fieldset).toContain("min-w-0");
   });
 
   it("renders unread rows with source, body, kind, and state", () => {
-    const html = renderToStaticMarkup(<InboxRow item={item} onOpen={() => {}} />);
+    const html = markup(<InboxRow item={item} to={inboxItemPath(item.id)} />);
     expect(html).toContain("Production approval");
     expect(html).toContain("Approve the reviewed release");
     expect(html).toContain("Deploy Agent");
     expect(html).toContain("Interaction");
     expect(html).toContain("Needs action");
     expect(html).toContain("Unread");
+    // The row is a link, so an item is deep-linkable and opens in a new tab.
+    expect(html).toContain('href="/inbox/ibox%3Ainteraction%3Aint_1"');
   });
 
   it("renders full detail, links, action guidance, and timeline", () => {
@@ -72,7 +96,7 @@ describe("web inbox", () => {
         },
       ],
     };
-    const html = renderToStaticMarkup(<InboxDetailContent detail={detail} />);
+    const html = markup(<InboxDetailContent detail={detail} />);
     expect(html).toContain("Production approval");
     expect(html).toContain("Open link");
     expect(html).toContain("registered iPhone or the macOS menu bar app");

@@ -5,6 +5,357 @@ logs. Unchecked release evidence keeps the goal active.
 
 ## Source baseline
 
+- 2026-10-10: host CLI, broker, and skill install of SHark 1.0.0 from
+  `dfe3a27f5ff04df9183db2768b2ebe3e959dcd7a` (#132, unified product version) on the operator Mac
+  (launchd `dev.shuv.shark.broker`) and the Linux host (user systemd `sharkd.service`). The
+  production service was not touched.
+  - Tarballs were packed on the operator Mac (Darwin 27.2.0 arm64, Homebrew Node 26.5.0, pnpm
+    11.10.0) from a clean detached checkout of the merge commit: `pnpm install --frozen-lockfile`
+    at the root, then `pnpm pack` in `packages/sharkctl` and `packages/shark-broker`. They were
+    copied to the Linux host and checked by hash: `sharkctl-1.0.0.tgz` (SHA-256
+    `e41320ce1d8806773a61f11d3cd01b27d2a738a1e5c6642141e4c285918367a4`) and
+    `hark-shark-broker-1.0.0.tgz` (SHA-256
+    `abb99d08aeff75999c30538f569a5e957190dd01debfed1a91efaac01e251298`). These are the digests of
+    the tarballs that were installed on both hosts. The retained copies on the operator Mac still
+    hash to these values, and re-packing the merge commit on the same Mac reproduced both tarballs
+    byte for byte.
+  - Re-packing in another environment can produce different tarball bytes. The same commit packed
+    with pnpm 11.10.0 in Linux arm64 `node:22` (Node 22.23.3) and `node:26` (Node 26.11.1)
+    containers gave `sharkctl-1.0.0.tgz` SHA-256
+    `1e989006e3d5c3160c60187a4145b6f835df936a3a436e7ed8b6a14c3ca4cf19` and
+    `hark-shark-broker-1.0.0.tgz` SHA-256
+    `f6045cac999b38cdbe67ca61ae1e5a6ae77287b7ef687175eaeb3f1062e875b4`, which match an
+    independent re-pack on another machine. Only the gzip layer differs. The decompressed tar
+    streams are byte-identical across all of these packs (SHA-256
+    `c52863a1bf12687eb60b09c1bff9db623954603e4a591c6cf424f2c954288cd1` for `sharkctl` and
+    `dbe37abf1bd28191864424a399d0f3f3d350966b7bdf1b8e4bf158ef8da5571d` for the broker), with the
+    same files, modes, sizes, and fixed 1985 timestamps. The gzip header records the packing OS
+    (`0x13` for macOS, `0x03` for Unix), and the compressed streams differ in length because the
+    Mac's Homebrew Node uses zlib 1.2.12 while the Linux Node builds use their bundled zlib 1.3. To
+    compare a re-pack from another environment, hash the `gzip -dc` output, not the `.tgz`.
+  - Before the change, both hosts ran `sharkctl` 0.5.0 and `sharkd` 0.1.0, with healthy services,
+    empty `sharkd queue list`, and no status counts. The operator Mac ran the
+    `~/.local/lib/shark-broker/e405b22180a47ab55bb4070d585017f979bc9553/` bundle, and the Linux
+    host ran `~/.local/lib/shark-broker/25e1649b18d1bac87b4475b74459ef3afd8537bb/`. Both are kept
+    for rollback.
+  - On each host, both tarballs were installed with `npm install` into
+    `~/.local/lib/shark-broker/dfe3a27f5ff04df9183db2768b2ebe3e959dcd7a/`, the `~/.local/bin`
+    `sharkctl` and `sharkd` links were moved to it, and `sharkd service install` was run again
+    without ambient `HARK_*` overrides. On the Linux host, `/usr/local/bin/sharkd` links to
+    `~/.local/bin/sharkd`, so it follows the new bundle without a root change.
+  - After the change, both hosts run `sharkctl` 1.0.0 and `sharkd` 1.0.0. `sharkd service status`
+    reported installed, loaded, running, and healthy, with no last error class and no counts, and it
+    still did about a minute later with the same PID. The launchd job and the systemd unit
+    reference only the new bundle, and the Linux host's unit is `active` with 0 restarts.
+  - `sharkctl auth status` reported authenticated, and `sharkctl interaction list` succeeded with
+    no interactions, on both hosts. No notification or Live Activity was sent.
+  - The skill at `~/.agents/skills/shark` was replaced with `skills/shark` from the merge commit on
+    both hosts. Its frontmatter shows `metadata.version: "1.0.0"`, and `SKILL.md` has SHA-256
+    `ce2671a15993c2604e6910240564318612acca63af9a4a746b0a8a64edd4e9da` on both, which matches
+    `skills/shark/SKILL.md` at the merge commit. The previous copy (`SKILL.md` SHA-256
+    `a5026a8588f6ecabbbb3b2c7b253eef1a5869ee75b77ebd73d6bf1c1f8e07012`) was moved to
+    `~/.agents/skills/shark.bak-20261010`. That digest is `skills/shark/SKILL.md` at `e43f432`
+    ("docs(shark): make the board the default agent status surface", parent `e405b22`), the local
+    working commit for #95 before it was squash-merged. It was never pushed. In the operator Mac's
+    repository it survives only under `refs/jj/keep/e43f4329c5e11b93e855493401efb38b86a4a8ee` and
+    the T3 checkpoint commit `97d46e1`, whose `skills/shark/SKILL.md` is the same blob
+    (`d810dd7626504c194cc3b9877e57accf87587c4a`, same digest). No commit other than `e43f432` and
+    `97d46e1` in any ref has that file. The merged #95
+    (`20e14e1a49c8cb8187e92c56c26dc7f8c6473208`) ships a different `SKILL.md` (SHA-256
+    `f2830ede7c1740f825889e9762191db8cf797c0aec57d1e0acf74f933f991011`), and so does each host's
+    previous bundle revision (`e405b22` ships SHA-256
+    `683ef5edb09b5e7b0a4af2795e3ab4989a55b895f5b45c2687a0419fa4363034`, and `25e1649` ships
+    `c96e5e045c4651ee2e59f5ebc00207777c336d99f8ab8cc9a059d9f90333cc00`). The installed copy
+    therefore came from that unpublished working state, not from either bundle revision.
+    `~/.claude/skills/shark` still links to `../../.agents/skills/shark`.
+- 2026-10-11: production was promoted from `2f79498` to
+  `6882c7d708d0564380ec83c13583cadf0d4be426` (#154, the `jmt17.google.com` push endpoint and a
+  recoverable refused browser subscription) at image digest
+  `sha256:90366534562a74ddc7f75c5853b631a78fcc11f853c65587287b07137c2bf042` from publisher run
+  `38174055682`. No helper, Compose, or migration change. `shark-deploy` ran detached at
+  20:56:26 UTC, verified pre-deploy snapshot
+  `e3a59712fa63cc4d65e116a97c29af1273c65abd0daf6562a8663a22e0007ee1`, and recorded the release at
+  `2026-10-11T20:58:10Z` with about 90 seconds of downtime, no `rollback.log`, no `op daemon`
+  left behind, a healthy container with 0 restarts and no logged errors or warnings, migrations
+  unchanged at 28 with integrity `ok`. Health, manifest, and service worker returned 200;
+  `/board`, `/settings`, and `/api/inbox/counts` 401; `/api/nope` 404. A labeled test
+  notification was accepted for 4 targets.
+  - Cause of the owner's report: the Linux Chromium subscription's endpoint host is
+    `jmt17.google.com`, a Google FCM front end that the #127 allowlist did not include. To
+    diagnose it, the two stored subscriptions were decrypted inside the container and only the
+    endpoint hostname, path length, key lengths, and `expirationTime` were printed (hosts
+    `web.push.apple.com`, active, and `jmt17.google.com`, inactive since 2026-10-07 21:05 UTC);
+    no capability URL or key left the container.
+  - Not yet checked: that the Linux browser's existing subscription registers on reload; the
+    owner reports this from the device.
+- 2026-10-11: production was promoted from `239f441` to
+  `2f79498bc5c5b0be4c54fd99153b1155103e13f0` (web app shell, navigation, pages, and PWA: #147,
+  #148, #149, #150, #151) at image digest
+  `sha256:4bd39347096511ba680d6bcc701d3da7eb2c9961e8393397b1bf5ec3ebb5689e` from publisher run
+  `38168920632`. No helper, Compose, or migration change. `shark-deploy` ran detached at
+  19:41:59 UTC, verified pre-deploy snapshot
+  `9aa2d2d776572e5ceed8e8d5b8403178d856793c17625504c71085a9d16c6e4a`, and recorded the release at
+  `2026-10-11T19:43:40Z`; the loopback probe saw 88 non-200 seconds (19:42:09 to 19:43:37). The
+  running image ID matches the digest, the container is healthy with 0 restarts and logged no
+  errors or warnings, migrations are unchanged at 28 with integrity `ok` and no foreign-key
+  violations, no `rollback.log` exists, and no `op daemon` was left behind. Post-deploy checks
+  through `https://shark.shuv.dev`:
+  - **New anonymous surface, exactly as allowlisted** (`PUBLIC_APP_ASSETS`):
+    `/manifest.webmanifest` (200, `application/manifest+json`; `name` SHark, `start_url`
+    `/board`, `display` standalone, `scope` `/`, three icons including a maskable 512, no `@` or
+    account content), `/apple-touch-icon.png`, `/icons/icon-192.png`, `/icons/icon-512.png`,
+    `/icons/icon-maskable-512.png` (200 `image/png`), plus the existing `/sw.js`, `/favicon.png`,
+    and `/app-store-icon.png`. `/icons/other.png` and `/ogimage.png` return 401.
+  - The built service worker (7,156 bytes) has no `__PRECACHE__`/`__VERSION__` placeholders,
+    lists 3 hashed `/assets/*` files, excludes `/api`, `/hooks`, `/mcp`, and `/.well-known` from
+    the navigation fallback, waits for the `hark:skip-waiting` message, and defaults
+    notification taps to `/inbox`.
+  - Anonymous `/`, `/board`, `/inbox`, `/inbox/x`, `/teams`, `/teams/x`, `/settings`, `/docs`,
+    `/dashboard`, `/dashboard/teams/x`, `/assets/index.js`, and unknown page paths (`/pricing`,
+    `/nope`) return 401 (the authenticated catch-all shell from #148). `/api/nope`,
+    `/hooks/nope`, `/mcp/x`, `/.well-known/nope`, `/foo/bar.json`, `/robots.txt`, and
+    `/sitemap.xml` return 404. `/api/inbox/counts` (new in #148) returns 401 anonymously.
+  - `/api/health` returned `{"ok":true}`; `/mcp` with a forged bearer 401; a token request
+    without `resource` still 400.
+  - A labeled test notification at 19:44:12 UTC was accepted for 4 targets.
+  - Not yet checked: signed-in use of the new pages, iOS Add to Home Screen and the standalone
+    run, the Chromium install prompt, and the update bar on the next promotion. These are the
+    owner's checks on real devices.
+- 2026-10-11: production was promoted from `4b68efc` to
+  `239f44129b2df16d384ea6b629df14d880432565` (#145, the `/mcp` resource-binding runtime fix) at
+  image digest `sha256:189877bcab70232f9c4764b85f289dff5d7067e1ec0a23249acbfa5471da5a8a` from
+  publisher run `38125396094`. No helper, Compose, or migration change. `shark-deploy` ran
+  detached at 08:39:17 UTC, verified pre-deploy snapshot
+  `aaa409aac4646f54b2d097c3d2173a4f20767f951aed238407c64df7856d76b0`, and recorded the release at
+  `2026-10-11T08:41:03Z`; the loopback probe saw 93 non-200 seconds (08:39:27 to 08:41:00). The
+  running image ID matches the digest, the container is healthy with 0 restarts, migrations are
+  unchanged at 28 with integrity `ok` and no foreign-key violations, no `rollback.log` exists, and
+  no `op daemon` was left behind. Post-deploy checks, on the VM and through
+  `https://shark.shuv.dev`:
+  - **The #141 binding is now enforced.** A code exchange without `resource`, and a refresh
+    naming `https://attacker.example/mcp` together with the canonical resource, each returned
+    `400 {"error":"invalid_target",…}` with `Cache-Control: no-store` and `Pragma: no-cache`. A
+    code exchange naming `https://shark.shuv.dev/mcp` reached the endpoint and returned `401
+    invalid_grant` for the fake code. JSON returned 415, an empty form 400, and `/mcp` with a
+    forged bearer 401 with the protected-resource challenge.
+  - The usual anonymous checks held: 401 for `/`, `/docs`, `/dashboard`, `/cli/authorize`,
+    `/join/x`, and `/api/team-invites/<unknown>`; 404 for `/robots.txt`, `/sitemap.xml`, and
+    `/pricing`; `/sw.js` 200 JavaScript; the four OAuth discovery documents 200 without `watch:*`
+    or `macos:*`; `register` and `public-client-prelogin` 400 on an empty body; `revoke` and
+    `introspect` 400 for an empty form and 415 for JSON; anonymous web-push subscription 401.
+  - A labeled test notification at 08:41:36 UTC was accepted for 4 targets. Signed-in dashboard
+    access, on-device delivery, and the macOS companion were not re-checked.
+  - The container logged one `WARN` from Better Auth's rate limiter: the loopback probes carry no
+    forwarded client IP, so it fell back to a shared per-path bucket for them. Real traffic
+    arrives through exe.dev with the one trusted hop, so this only reflects the probes.
+- 2026-10-11: production was promoted from `6b59406` to
+  `4b68efc27f8a88f5d49548b9451fff9d2f88edc4` (deploy helper follow-ups #143, `/mcp` resource
+  binding #141, board waiting-ask links #138, dashboard partial updates #142, seat-limit removal
+  #137, regression tests #139, `sharkctl` wait flake #144, ledger #140) at image digest
+  `sha256:d83a4cf8348f1bf84fa8b7f06431fb1bcc77639c4c501b514d537e8a1aa7f5d6` from publisher run
+  `38124292600`. Before the deploy, `deploy/test-helpers` passed locally at `4b68efc`, and
+  `shark-deploy`, `shark-materialize-secrets`, and `shark-restic-backup` were installed from
+  `main` root-owned with hashes checked on both ends; `shark-backup` and `compose.yaml` were
+  unchanged. `shark-deploy` ran detached at 08:20:36 UTC, verified pre-deploy snapshot
+  `0bd15ff37bbe1f3ee3e0356fef3984194381487c09e9bbd1024faa32561a9450`, and recorded the release at
+  `2026-10-11T08:22:18Z`; the loopback probe saw 88 non-200 seconds (08:20:46 to 08:22:14). The
+  running image ID matches the digest, the container was healthy with 0 restarts and logged no
+  errors or warnings, migrations are unchanged at 28 with integrity `ok` and no foreign-key
+  violations, and no `rollback.log` exists. **The #143 helpers left no `op daemon` behind**, the
+  first deploy on this VM for which that holds. The anonymous checks listed under `239f441` all
+  held, the removed `POST /api/teams/:id/billing/checkout` answered 401 anonymously, a board
+  heartbeat through the new server succeeded, and a labeled test notification at 08:28:25 UTC was
+  accepted for 4 targets.
+  - **Finding: the #141 `/mcp` resource requirement was not in effect on this image.** A code
+    exchange without `resource` returned the endpoint's own `401 invalid_grant`, and a refresh
+    with a foreign plus canonical `resource` reached the endpoint, through the public URL as well
+    as loopback. The hook ran and built its refusal, but better-call only honors a hook's response
+    when it is `instanceof` the global `Response`, and `@hono/node-server`'s `serve()` replaces
+    that global with a lightweight class whose inherited `Response.json` still returns the
+    original one. `app.request()` under vitest never swaps the global, so every #141 test passed.
+    The endpoint's `validAudiences` check still refused a wrong `resource`, so nothing was weaker
+    than before #141; the new requirement that `resource` be present was simply not applied for
+    the 18 minutes until `239f441` replaced it. Fixed in #145 with a test that runs the real Node
+    server.
+- 2026-10-10: production was promoted from `de5f9fe` to
+  `6b594067d00aeab5f61e0097b4a9b98dd42be66b` (signal-safe `shark-deploy` rollback #134, Cursor
+  review code fixes #136, ledger corrections #135) at image digest
+  `sha256:c47c9119a3317eae20a9eb53ccb13b16e055c5825c51630861ea89e0ec38e817` from publisher run
+  `38093252648`. This was the first run of the #134 helper. Before the deploy:
+  - Read-only VM checks for the #134 follow-up: `systemd-analyze cat-config systemd/logind.conf`
+    shows only the commented default `#KillUserProcesses=no`, and the live logind property
+    (`busctl get-property org.freedesktop.login1 /org/freedesktop/login1
+    org.freedesktop.login1.Manager KillUserProcesses`) is `false` on Ubuntu 24.04.4 with systemd
+    255. With `KillUserProcesses=false`, logout sends no signal to a detached run, so the
+    `SIGTERM`-after-`up` rollback concern does not apply on this VM. `loginctl show-user` also
+    reports `Linger=yes`, which only keeps the user manager running and is not what protects a
+    `setsid` run.
+  - `deploy/test-helpers` passed locally at `6b59406`. The three helpers that #134 changed
+    (`shark-deploy`, `shark-materialize-secrets`, `shark-restic-backup`) were copied to the VM,
+    hash-checked against `main`, syntax-checked, and installed root-owned with mode `0755`.
+    `shark-backup` and `/etc/shark/compose.yaml` already hash-matched `main`. The replaced
+    `shark-deploy` was blob `1e6738ea15c4e8953172dd4df8186f9e4bc139f3`, the revision on `main`
+    from `f56d7cd` through `de5f9fe`.
+  - The `op daemon` left by the `de5f9fe` deploy (started 06:35:43 UTC) was stopped. No deploy,
+    backup, or Restic process was running. The 09:00 UTC `shark-backup.timer` run had completed.
+  `shark-deploy` ran detached with `setsid nohup` at 22:59:51 UTC and printed its PID as its
+  first line; the SSH session that started it ended at once, and the helper survived. It verified
+  the pre-deploy encrypted Restic snapshot
+  `e0180679d0e8c80d4616ee37ae6ba2d6b30ec2d980609bc09825e427bff17536` in `repos/shark-prod`. That
+  snapshot holds the schema-0027 database. `6b59406` adds no migration, so the live database
+  stays at schema 0027 and a `de5f9fe` rollback would not need it. Docker events show the old container killed at
+  23:00:01 and the new one started at 23:01:32 UTC; a one-second loopback health probe saw 91
+  non-200 responses and the first 200 at 23:01:33, so production was down for about 92 seconds,
+  spent in the checkpoint and Restic snapshot. The helper printed `Deployed SHark …` and exited;
+  no `rollback.log` exists. `current` records the SHA, digest, image ID, backup ID, and
+  `2026-10-10T23:01:35Z`, and the running image ID matches the digest. Migrations are unchanged
+  at 28 (last `1791610113104`). Integrity is `ok` with no foreign-key violations. The container
+  has `TRUSTED_FORWARDED_FOR_HOPS=1` and no `TRUSTED_CLIENT_IP_HEADER`. Post-deploy checks:
+  - Health returned 200 with only `{"ok":true}` on the VM and through `https://shark.shuv.dev`.
+    The container was healthy with 0 restarts and logged no errors or warnings.
+  - Anonymous `/`, `/docs`, `/privacy`, `/terms`, `/dashboard`, `/cli/authorize`,
+    `/dashboard/teams/x`, `/join/x`, and `/api/team-invites/<unknown>` returned 401.
+    `/robots.txt`, `/sitemap.xml`, and `/pricing` returned 404, and `/sw.js` returned 200
+    JavaScript. The access-log redaction of the invite probes was not re-checked.
+  - `/mcp` returned 401 with no token and with a forged one, with a challenge that points to the
+    protected-resource metadata.
+  - The four OAuth discovery documents returned 200 without `watch:*` or `macos:*` scopes.
+  - Empty requests to `/api/auth/oauth2/register` and `/api/auth/oauth2/public-client-prelogin`
+    returned 400. Each of `/api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, and
+    `/api/auth/oauth2/introspect` returned 400 for an empty form and 415 for JSON. Anonymous
+    `POST /api/web-push/subscriptions` returned 401, as did an anonymous `POST /api/teams` with a
+    foreign `Origin`; that is the `requireAuth` answer, not the #136 same-origin check, which
+    only a cookie-authenticated request reaches.
+  - One labeled test notification was sent at 23:02:53 UTC through the existing `sharkctl` login,
+    returned exit 0, and was accepted for 4 targets. On-device delivery was not separately
+    confirmed.
+  - Not re-checked for `6b59406`: signed-in dashboard access, the #136 same-origin refusal for
+    a signed-in cross-origin mutation, and the macOS companion.
+  - **`OP_CACHE=false` did not prevent the daemon.** A new `op daemon` (1Password CLI 2.35.0)
+    started at 22:59:57 UTC, 6 seconds into the run while `shark-materialize-secrets` ran, and
+    was still running after the helper exited. The `deploy/README.md` sentence and the wrapper
+    comments that claim the helpers leave no daemon behind are wrong for this CLI version. The
+    daemon held no deploy lock. It was stopped by hand after the checks.
+- 2026-10-10: first real rollback drill on `shark-prod`, approved by the owner through a board ask
+  and run right after the `6b59406` promotion, while `6b59406` and `de5f9fe` share schema 0027 so
+  no database restore was needed. Under the deploy lock, the recorded `de5f9fe` SHA and image
+  (`provenance/de5f9fe….json`) were started the way `shark-deploy`'s own rollback does:
+  `compose stop`, then `compose up --detach` with that SHA and image. The container stopped at
+  23:11:56 UTC and the loopback health probe returned 200 again at 23:12:07, so the rollback cost
+  about 11 seconds of downtime. The running image ID matched the `de5f9fe` record
+  (`sha256:dc5c4188…dbb02`), the container was healthy with 0 restarts and logged no errors, the
+  database still reported 28 migrations and integrity `ok`, anonymous `/`, `/dashboard`, and
+  `/mcp` returned 401, `/sw.js` 200, `/robots.txt` 404, `https://shark.shuv.dev/api/health`
+  returned `{"ok":true}`, and a labeled test notification at 23:12:19 UTC was accepted for 4
+  targets. `current` was left at `6b59406` throughout, which is the documented state for a manual
+  rollback. Signed-in dashboard access was not re-checked during the 35-second window. The roll
+  forward re-ran `shark-deploy` detached for `6b59406` at 23:12:30 UTC. It verified attestation
+  again, took and verified a new pre-deploy snapshot
+  `d13517c6914eaf1dd3dc38a1000350acfe73755fdecafaacf5bd16faceb21d91`, and recorded the release
+  at `2026-10-10T23:14:02Z` with about 82 seconds of downtime (23:12:38 to 23:14:00) and no
+  `rollback.log`. After it, the running image ID matched the `6b59406` digest, integrity was `ok`
+  with no foreign-key violations, the anonymous boundary checks held, and a test notification at
+  23:14:24 UTC was accepted for 4 targets. The helper left another `op daemon` behind, which was
+  stopped by hand. The drill proves the manual rollback path in `docs/operations.md` for a
+  schema-compatible previous release; a rollback across an incompatible migration, which needs the
+  pre-deploy database restore, has not been drilled.
+- 2026-10-10: production was promoted from `6dcb736` to
+  `de5f9fe6da7a84d41da00d8dc30eb917bd822acd` (on-call override creator and recipient notice #126,
+  atomic Live Activity and webhook-response admission #129, Web Push service allowlist with pinned
+  delivery and prelogin `client_id` binding #127) at image digest
+  `sha256:dc5c4188c05589138665c1b56f38aa6f00fa9de05102a688009987e9839dbb02` from publisher run
+  `38031269236`. Before the deploy, the orphaned `op daemon` left by the killed `6dcb736` attempt
+  was stopped. It held no deploy lock, and no deploy, backup, or Restic process was running.
+  `shark-deploy` ran detached from the SSH session. It verified the pre-deploy encrypted Restic
+  snapshot `59eda0076967033dd05e10d9a959a77ba0f0c49573cfccb05e04091ab52b4a57` in
+  `repos/shark-prod`. That snapshot holds the schema-0026 database a `6dcb736` rollback needs.
+  A loopback health probe failed from 06:35:46 to 06:37:06 UTC, while the helper stopped the old
+  container, backed it up, and started the new one, and returned 200 from 06:37:07, so production
+  was down for about 81 seconds. The running image ID and the provenance record match the digest.
+  Startup applied migration 0027 (`1791610113104`), for 28 recorded migrations.
+  `oncall_override` gained `created_by_user_id`, which references `user(id)` with
+  `ON DELETE SET NULL`. Integrity is `ok` with no foreign-key violations. The deploy changed no
+  helpers or Compose definition. All four installed helpers and `/etc/shark/compose.yaml`
+  hash-match `main`. The container has `TRUSTED_FORWARDED_FOR_HOPS=1` and no
+  `TRUSTED_CLIENT_IP_HEADER`. Post-deploy checks:
+  - Health returned 200 with only `{"ok":true}` on the VM and through `https://shark.shuv.dev`. The
+    container was healthy with 0 restarts and logged no errors or warnings.
+  - Anonymous `/`, `/docs`, `/privacy`, `/terms`, `/dashboard`, `/cli/authorize`,
+    `/dashboard/teams/x`, and `/join/x` returned 401. `/robots.txt`, `/sitemap.xml`, and `/pricing`
+    returned 404, and `/sw.js` returned 200 JavaScript.
+  - An unknown team invite code returned 404. The access log recorded the probes as `/join/:code`
+    and `/api/team-invites/:code`.
+  - `/mcp` returned 401 with no token and with a forged one, with a challenge that points to the
+    protected-resource metadata.
+  - The four OAuth discovery documents returned 200 without `watch:*` or `macos:*` scopes.
+  - Empty requests to `/api/auth/oauth2/register` and `/api/auth/oauth2/public-client-prelogin`
+    returned 400. Each of `/api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, and
+    `/api/auth/oauth2/introspect` returned 400 for an empty form and 415 for JSON. Anonymous
+    `POST /api/web-push/subscriptions` returned 401.
+  - The 1Password CLI started a new `op daemon` during this deploy and left it running afterward,
+    without the deploy lock. This appears to be normal CLI behavior, not a sign of a killed run.
+  - The test notification, signed-in dashboard access, and macOS companion check are recorded in
+    the operator checks that follow.
+- 2026-10-10: post-deploy operator checks for `de5f9fe`:
+  - One labeled test notification was sent at 06:45:16 UTC through the existing `sharkctl` login
+    and returned exit 0. It was accepted for 4 targets. SHark records only the total, but the
+    active-target counts make that 2 iOS, 1 macOS, and 1 web. The second web subscription seen at
+    `20e14e1` was already inactive before this send.
+  - The owner confirmed on iPhone that the notification arrived and shows status Accepted
+    (Accepted 4), with a Created, Accepted, and Processing timeline.
+  - Since the deploy, the container logged no errors, warnings, or rejected receipts, and it stayed
+    healthy with 0 restarts. Web Push failures are stored on the delivery result, not logged, and a
+    failed target is not counted as accepted. Accepted 4 for the 4 targets means the web target
+    recorded none of "resolved to a blocked destination", "could not resolve its push service", "timed
+    out resolving its push service", or "timed out".
+  - Web Push subscriptions were 1 active of 2 total both before and after the send, so nothing was
+    pruned. iOS (2 active), macOS (1 active), and on-call overrides (0) were unchanged.
+  - The existing signed-in dashboard session carried over the deploy. No fresh Apple passkey
+    sign-in was performed for this deploy. A fresh reload made 14 successful requests with 0 page
+    errors. All 9 of its API requests (inbox, devices, events, activities, services, teams, OAuth
+    clients, API tokens, and session) returned 200. The test notification appeared in the inbox,
+    and the "This browser" notifications section showed its normal "Enable notifications" state.
+    The owner has no teams, so the on-call page and the "· added by" label could not be exercised.
+  - The installed macOS companion (`dev.shuv.shark.macos`) has a stored keychain credential and 1
+    active registered device, and the app was running. The owner reported that it works. Whether
+    its menu-bar inbox showed this send was not separately confirmed, so this check is partial.
+
+- 2026-10-10: production was promoted from `20e14e1` to
+  `6dcb7367936a8d43b5772baf5b667767fb180c8e` (auth and MCP OAuth follow-ups #111, MCP OAuth
+  end-to-end test #112, teams follow-ups #110, callback SSRF pinning #117, on-call overrides and
+  atomic rate windows #114) at image digest
+  `sha256:d56a3c61033d3814e3f7a3cb303079b435ad0eff68b13a02c546abbc53307d82` from publisher run
+  `38027629316`. A first `shark-deploy` attempt was killed when its operator session ended. It had
+  already stopped the `20e14e1` container, and because it was killed by a signal, its rollback trap
+  never ran. The new image never started, so the database stayed at schema 0025. Before it was
+  killed, it had written pre-deploy snapshot
+  `1a667909835d0c4c96107627aaee5dea6c8f26782084fbc011fd6998c15e92d8`, which also holds schema 0025
+  but is not the recorded backup. Production was down from about 05:31 to 05:35 UTC. A re-run of `shark-deploy`, detached from the SSH session,
+  verified the pre-deploy encrypted Restic snapshot
+  `0bbc347db385ff9a5749a99995fd54350868070a1f38fbfe0f224c8fd151c50c` in `repos/shark-prod`. That
+  snapshot holds the schema-0025 database a `20e14e1` rollback needs. The running image ID and the
+  provenance record match the digest. Startup applied migration 0026 (`1791602325119`), for 27
+  recorded migrations. The new `agent_notification_retry` table and its 3 indexes exist, and
+  `agent_notification` gained `claim_id` and `claimed_at`. Integrity is `ok` with no foreign-key
+  violations. The deploy changed no helpers or Compose definition. All four installed helpers and
+  `/etc/shark/compose.yaml` hash-match `main`. The container has `TRUSTED_FORWARDED_FOR_HOPS=1` and
+  no `TRUSTED_CLIENT_IP_HEADER`. Post-deploy checks:
+  - Health returned 200 with only `{"ok":true}`. The container was healthy with 0 restarts and
+    logged no errors.
+  - Anonymous `/`, `/docs`, `/privacy`, `/terms`, `/dashboard`, `/cli/authorize`,
+    `/dashboard/teams/x`, and `/join/x` returned 401. `/robots.txt`, `/sitemap.xml`, and `/pricing`
+    returned 404, and `/sw.js` returned 200 JavaScript.
+  - An unknown team invite code returned 404. The access log recorded the probes as `/join/:code`
+    and `/api/team-invites/:code`.
+  - `/mcp` returned 401 with no token and with a forged one, with a challenge that points to the
+    protected-resource metadata.
+  - The four OAuth discovery documents returned 200 without `watch:*` or `macos:*` scopes.
+  - Empty requests to `/api/auth/oauth2/register` and `/api/auth/oauth2/public-client-prelogin`
+    returned 400. Each of `/api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, and
+    `/api/auth/oauth2/introspect` returned 400 for an empty form and 415 for JSON.
+  - Not yet done for `6dcb736`: a test notification, signed-in dashboard access, and the macOS
+    companion check.
+
 - 2026-10-09: production was promoted from `e405b22` to
   `20e14e1a49c8cb8187e92c56c26dc7f8c6473208` (upstream teams/on-call #96, MCP server with OAuth
   #97, board skill guidance #95) at image digest
@@ -17,7 +368,9 @@ logs. Unchecked release evidence keeps the goal active.
   The rebuilt `agent_notification` table kept its row count and inbox triggers, with integrity `ok`
   and no foreign-key violations. After `deploy/test-helpers` passed, `/etc/shark/compose.yaml` and
   `/usr/local/sbin/shark-materialize-secrets` were reinstalled. Their only changes were the fixed
-  `APNS_MACOS_BUNDLE_ID` and `TRUSTED_FORWARDED_FOR_HOPS=1`. Both kept their owners and modes and
+  `APNS_MACOS_BUNDLE_ID` in `compose.yaml` and `TRUSTED_FORWARDED_FOR_HOPS=1` in both. That diff is
+  the one from the `2896741` (#26) revision of both files, not from `e405b22`, so the installed
+  copies predated the macOS companion (#31). Both kept their owners and modes and
   hash-match `main`. The container has `TRUSTED_FORWARDED_FOR_HOPS=1` and no
   `TRUSTED_CLIENT_IP_HEADER`. Post-deploy checks:
   - Health returned 200 with only `{"ok":true}`. The container was healthy with 0 restarts.
@@ -35,8 +388,8 @@ logs. Unchecked release evidence keeps the goal active.
   - The local checkout fast-forwarded cleanly to `20e14e1`.
   - Empty requests to the anonymous OAuth endpoints returned validation errors, not content. Each of
     `/api/auth/oauth2/register` and `/api/auth/oauth2/public-client-prelogin` returned 400. Each
-    of `/api/auth/oauth2/token`, `/revoke`, and `/introspect` returned 400 for an empty form and
-    415 for JSON.
+    of `/api/auth/oauth2/token`, `/api/auth/oauth2/revoke`, and `/api/auth/oauth2/introspect`
+    returned 400 for an empty form and 415 for JSON.
   - One labeled test notification sent through the existing `sharkctl` login returned exit 0. It was
     accepted for 5 targets: 2 iOS, 1 macOS, and 2 web. Afterward, the container logged no push
     errors or rejected receipts and still had 0 restarts.
@@ -219,7 +572,9 @@ logs. Unchecked release evidence keeps the goal active.
   commit `74b4b21ae39dfa1a9d6ba1948465340458ff468c`.
 - Sqim development artifact, HTTPS install page, signed entitlements, and two-iPhone acceptance:
   pending operator-owned identities and assets.
-- `shark-prod` no-op deployment and rollback rehearsal: not yet proven. DNS/TLS, immutable running
-  image, verified off-host snapshot, and byte-for-byte restore are proven above.
+- `shark-prod` rollback across an incompatible migration, with the pre-deploy database restore:
+  not yet proven. A schema-compatible rollback to the previous recorded release and the roll
+  forward were drilled on 2026-10-10 (above). DNS/TLS, immutable running image, verified off-host
+  snapshot, and byte-for-byte restore are proven above.
 - EAS/App Store Connect build, internal TestFlight installation, release tag, and final provenance:
   not yet proven.

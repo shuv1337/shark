@@ -1,16 +1,16 @@
 {
   "name": "@hark/website",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "concurrently -n api,web -c blue,magenta \"NODE_ENV=development PORT=8788 node --env-file=../../.env --import tsx --watch src/server/index.ts\" \"vite\"",
     "dev:api": "NODE_ENV=development PORT=8788 node --env-file=../../.env --import tsx --watch src/server/index.ts",
     "dev:web": "vite",
-    "build": "vite build && node --import tsx scripts/prerender-docs.tsx && node scripts/build-server.mjs",
+    "build": "vite build && node scripts/build-sw.mjs && node --import tsx scripts/prerender-docs.tsx && node scripts/build-server.mjs",
     "start": "node dist/server/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "node --test scripts/build-sw.test.mjs && vitest run",
     "db:generate": "drizzle-kit generate",
     "offboard": "node --import tsx scripts/offboard-user.ts",
     "backup:database": "node --import tsx scripts/backup-database.ts"

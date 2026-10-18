@@ -5,7 +5,6 @@ import type {
   ApiTokenDto,
   AppDto,
   AppShareInput,
-  BillingRedirectResponse,
   BoardAnswerInput,
   BoardAskDto,
   BoardAskEventDto,
@@ -15,6 +14,7 @@ import type {
   DeviceAuthorizationRequestDto,
   DeviceDto,
   EventDto,
+  InboxCountsDto,
   InboxDetailDto,
   InboxFilter,
   InboxPageDto,
@@ -42,6 +42,7 @@ import type {
   TeamMemberUpdateInput,
   TeamUpdateInput,
 } from "@hark/contracts";
+import { reportNetworkFailure, reportNetworkSuccess } from "./connection";
 
 export class ApiRequestError extends Error {
   status: number;
@@ -66,10 +67,25 @@ export function isMissingRoute(error: unknown): boolean {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    headers: { "content-type": "application/json", ...init?.headers },
-    ...init,
-  });
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      headers: { "content-type": "application/json", ...init?.headers },
+      ...init,
+    });
+  } catch (reason) {
+    /*
+     * `fetch` rejects with a `TypeError` only when the request never reached
+     * the server: no network, DNS failure, a connection dropped mid-flight.
+     * That is the signal the shell's offline banner trusts, because
+     * `navigator.onLine` cannot see a network that routes nowhere. Anything
+     * else (an abort, a bad argument) is this app's own bug and stays quiet.
+     */
+    if (reason instanceof TypeError) reportNetworkFailure();
+    throw reason;
+  }
+  // A 4xx or 5xx still proves the server is reachable.
+  reportNetworkSuccess();
   const body = (await response.json().catch(() => ({ error: "Request failed" }))) as T & ApiError;
   if (!response.ok) {
     throw new ApiRequestError(response.status, body);
@@ -156,6 +172,7 @@ export const api = {
     if (cursor) params.set("cursor", cursor);
     return request<InboxPageDto>(`/api/inbox?${params}`);
   },
+  getInboxCounts: () => request<InboxCountsDto>("/api/inbox/counts"),
   getInboxItem: (id: string) => request<InboxDetailDto>(`/api/inbox/${encodeURIComponent(id)}`),
   markInboxItemRead: (id: string) =>
     request<{ ok: true }>(`/api/inbox/${encodeURIComponent(id)}/read`, { method: "POST" }),
@@ -215,10 +232,6 @@ export const api = {
   acceptTeamInvite: (code: string) =>
     send<TeamJoinResponse>(`/api/team-invites/${id(code)}/accept`, "POST"),
   listTeamApps: (teamId: string) => request<{ apps: AppDto[] }>(`/api/teams/${id(teamId)}/apps`),
-  startTeamCheckout: (teamId: string) =>
-    send<BillingRedirectResponse>(`/api/teams/${id(teamId)}/billing/checkout`, "POST"),
-  openTeamBillingPortal: (teamId: string) =>
-    send<BillingRedirectResponse>(`/api/teams/${id(teamId)}/billing/portal`, "POST"),
 
   // On-call
   listOncallGroups: (teamId: string) =>

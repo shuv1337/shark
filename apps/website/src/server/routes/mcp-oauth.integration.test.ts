@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 const ORIGIN = "http://localhost:5173";
 const USER = { id: "user_e2e", email: "e2e-operator@example.com" };
@@ -13,6 +13,7 @@ const FIXTURE_ENV = {
   APP_URL: ORIGIN,
   BETTER_AUTH_SECRET: "synthetic-e2e-auth-secret-not-real-0123456789",
   ALLOWED_EMAILS: USER.email,
+  TRUSTED_FORWARDED_FOR_HOPS: "1",
 } as const;
 const inheritedEnv = Object.fromEntries(
   Object.keys(FIXTURE_ENV).map((key) => [key, process.env[key]]),
@@ -169,26 +170,56 @@ async function token(params: Record<string, string>) {
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(params).toString(),
   });
-  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  return {
+    status: response.status,
+    headers: response.headers,
+    body: (await response.json()) as Record<string, unknown>,
+  };
 }
 
-function exchange(clientId: string, code: string, verifier?: string) {
+/** Posts a form body verbatim, for parameters `URLSearchParams` from a record cannot repeat. */
+async function rawToken(pairs: Array<[string, string]>) {
+  const response = await app.request("/api/auth/oauth2/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: pairs.map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join("&"),
+  });
+  return {
+    status: response.status,
+    headers: response.headers,
+    body: (await response.json().catch(() => ({}))) as Record<string, unknown>,
+  };
+}
+
+/** RFC 6749 §5.1–5.2: every token endpoint response, errors included, is uncacheable. */
+function expectUncacheable(headers: Headers, label: string) {
+  expect(headers.get("cache-control"), label).toBe("no-store");
+  expect(headers.get("pragma"), label).toBe("no-cache");
+}
+
+/** `resource: null` omits RFC 8707's resource indicator from the request. */
+function exchange(
+  clientId: string,
+  code: string,
+  verifier?: string,
+  resource: string | null = RESOURCE,
+) {
   return token({
     grant_type: "authorization_code",
     client_id: clientId,
     code,
     ...(verifier ? { code_verifier: verifier } : {}),
     redirect_uri: REDIRECT_URI,
-    resource: RESOURCE,
+    ...(resource === null ? {} : { resource }),
   });
 }
 
-function refresh(clientId: string, refreshToken: string) {
+function refresh(clientId: string, refreshToken: string, resource: string | null = RESOURCE) {
   return token({
     grant_type: "refresh_token",
     client_id: clientId,
     refresh_token: refreshToken,
-    resource: RESOURCE,
+    ...(resource === null ? {} : { resource }),
   });
 }
 
@@ -208,6 +239,9 @@ async function connectClient(clientName: string) {
   expect(exchanged.status, String(exchanged.body.error_description)).toBe(200);
   return { clientId, tokens: exchanged.body as unknown as TokenSet };
 }
+
+/** A bearer that authenticates reaches the MCP transport, which refuses this bare request with 406. */
+const MCP_REACHED = 406;
 
 async function mcpStatus(accessToken: string): Promise<number> {
   const response = await app.request("/mcp", {
@@ -254,14 +288,122 @@ describe("MCP OAuth end to end", () => {
     });
   });
 
-  it("rate-limits anonymous client registration per client IP", async () => {
+  it("rate-limits anonymous client registration per trusted client IP", async () => {
     (await auth.$context).rateLimit.enabled = true;
-    const from = (ip: string) => registration("Flood", { "x-forwarded-for": ip });
+    // As in production, the edge appends the real address after whatever the client sent, and
+    // only that last hop is trusted, so a forged leftmost entry never gets its own bucket.
+    let forged = 0;
+    const from = (ip: string) => {
+      forged += 1;
+      return registration("Flood", { "x-forwarded-for": `203.0.113.${forged}, ${ip}` });
+    };
     for (let attempt = 0; attempt < 5; attempt += 1) {
       expect((await from("198.51.100.7")).status).toBe(200);
     }
     expect((await from("198.51.100.7")).status).toBe(429);
     expect((await from("198.51.100.8")).status).toBe(200);
+  });
+
+  it("only shows a signed query's own client on the consent page, without contacts", async () => {
+    const response = await app.request("/api/auth/oauth2/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "Prelogin B",
+        redirect_uris: [REDIRECT_URI],
+        token_endpoint_auth_method: "none",
+        contacts: ["synthetic-owner@example.com"],
+      }),
+    });
+    const registered = (await response.json()) as { client_id: string; contacts?: string[] };
+    expect(response.status).toBe(200);
+    expect(registered.contacts).toEqual(["synthetic-owner@example.com"]);
+    const clientA = await register("Prelogin A");
+    const clientB = registered.client_id;
+    const queryA = await authorize(clientA, pkce().challenge);
+    const queryB = await authorize(clientB, pkce().challenge);
+
+    const prelogin = (body: Record<string, unknown>) =>
+      app.request("/api/auth/oauth2/public-client-prelogin", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: ORIGIN },
+        body: JSON.stringify(body),
+      });
+
+    const bindingError = "client_id does not match the signed authorization request";
+    const crossed = await prelogin({ client_id: clientB, oauth_query: queryA });
+    expect(crossed.status).toBe(400);
+    const crossedBody = JSON.stringify(await crossed.json());
+    expect(crossedBody).not.toContain("Prelogin B");
+    expect(crossedBody).toContain(bindingError);
+    expect((await prelogin({ client_id: clientB })).status).toBe(400);
+
+    // Re-sign the way Better Auth does, so a second client_id passes the signature check and only
+    // the binding check can refuse it.
+    const { makeSignature } = await import("better-auth/crypto");
+    const resign = async (query: string) => {
+      const params = new URLSearchParams(query);
+      params.delete("sig");
+      const canonical = new URLSearchParams(
+        [...params.entries()].sort(([a, x], [b, y]) => (a < b ? -1 : a > b ? 1 : x < y ? -1 : 1)),
+      );
+      params.set("sig", await makeSignature(canonical.toString(), FIXTURE_ENV.BETTER_AUTH_SECRET));
+      return params.toString();
+    };
+    expect((await prelogin({ client_id: clientA, oauth_query: await resign(queryA) })).status).toBe(
+      200,
+    );
+    const doubled = await prelogin({
+      client_id: clientB,
+      oauth_query: await resign(`client_id=${encodeURIComponent(clientB)}&${queryA}`),
+    });
+    expect(doubled.status).toBe(400);
+    const doubledBody = JSON.stringify(await doubled.json());
+    expect(doubledBody).toContain(bindingError);
+    expect(doubledBody).not.toContain("Prelogin B");
+
+    const own = await prelogin({ client_id: clientB, oauth_query: queryB });
+    expect(own.status).toBe(200);
+    const shown = (await own.json()) as Record<string, unknown>;
+    expect(shown).toMatchObject({ client_id: clientB, client_name: "Prelogin B" });
+    expect(shown).not.toHaveProperty("contacts");
+    expect(JSON.stringify(shown)).not.toContain("synthetic-owner@example.com");
+
+    const sessionView = await app.request(
+      `/api/auth/oauth2/public-client?client_id=${encodeURIComponent(clientB)}`,
+      signedIn(),
+    );
+    expect(sessionView.status).toBe(200);
+    const sessionShown = (await sessionView.json()) as Record<string, unknown>;
+    expect(sessionShown).toMatchObject({ client_id: clientB, client_name: "Prelogin B" });
+    expect(sessionShown).not.toHaveProperty("contacts");
+    expect(JSON.stringify(sessionShown)).not.toContain("synthetic-owner@example.com");
+  });
+
+  it("rejects malformed or unsigned prelogin requests without revealing the client", async () => {
+    const clientId = await register("Prelogin Malformed");
+    const query = await authorize(clientId, pkce().challenge);
+    const tampered = new URLSearchParams(query);
+    tampered.set("sig", `${tampered.get("sig")?.slice(0, -2)}AA`);
+    const scopeChanged = new URLSearchParams(query);
+    scopeChanged.set("scope", "teams:read teams:write");
+
+    for (const body of [
+      "{not json",
+      JSON.stringify({ client_id: 42, oauth_query: query }),
+      JSON.stringify({ client_id: clientId, oauth_query: 42 }),
+      JSON.stringify({ client_id: clientId, oauth_query: tampered.toString() }),
+      JSON.stringify({ client_id: clientId, oauth_query: scopeChanged.toString() }),
+    ]) {
+      const response = await app.request("/api/auth/oauth2/public-client-prelogin", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: ORIGIN },
+        body,
+      });
+      expect(response.status, body).toBeGreaterThanOrEqual(400);
+      expect(response.status, body).toBeLessThan(500);
+      expect(await response.text(), body).not.toContain("Prelogin Malformed");
+    }
   });
 
   it("requires the PKCE verifier and spends a code on its first use", async () => {
@@ -289,6 +431,194 @@ describe("MCP OAuth end to end", () => {
     expect(String(first.body.refresh_token)).toMatch(/^hark_mrt_/);
     const reused = await exchange(second.clientId, second.code, second.verifier);
     expect(reused.body.error).toBe("invalid_grant");
+  });
+
+  it("issues tokens only to requests that name /mcp as their resource", async () => {
+    const { clientId, verifier, code } = await codeFor("Resource Client");
+
+    // A request without a resource indicator, or for another resource, gets RFC 8707's
+    // invalid_target before the endpoint runs, so the code is not spent.
+    const missing = await exchange(clientId, code, verifier, null);
+    expect(missing.status).toBe(400);
+    expect(missing.body).toMatchObject({ error: "invalid_target" });
+    expect(String(missing.body.error_description)).toContain(RESOURCE);
+    expectUncacheable(missing.headers, "missing resource");
+
+    for (const foreign of [
+      `${ORIGIN}/`,
+      `${ORIGIN}/mcp/`,
+      `${ORIGIN}/api/auth`,
+      "https://attacker.example/mcp",
+    ]) {
+      const refused = await exchange(clientId, code, verifier, foreign);
+      expect(refused.status, foreign).toBe(400);
+      expect(refused.body.error, foreign).toBe("invalid_target");
+      expectUncacheable(refused.headers, foreign);
+    }
+
+    const exchanged = await exchange(clientId, code, verifier);
+    expect(exchanged.status, String(exchanged.body.error_description)).toBe(200);
+    expectUncacheable(exchanged.headers, "exchange");
+    const tokens = exchanged.body as unknown as TokenSet;
+    expect(await mcpStatus(tokens.access_token)).toBe(MCP_REACHED);
+
+    // Refreshing binds the new token the same way, and a refused refresh is not a reuse.
+    const unbound = await refresh(clientId, tokens.refresh_token, null);
+    expect(unbound.status).toBe(400);
+    expect(unbound.body.error).toBe("invalid_target");
+    const elsewhere = await refresh(clientId, tokens.refresh_token, "https://attacker.example/mcp");
+    expect(elsewhere.body.error).toBe("invalid_target");
+    const rotated = await refresh(clientId, tokens.refresh_token);
+    expect(rotated.status, String(rotated.body.error_description)).toBe(200);
+    expectUncacheable(rotated.headers, "refresh");
+    expect(await mcpStatus(String(rotated.body.access_token))).toBe(MCP_REACHED);
+
+    // Better Auth's own errors are uncacheable too, and the resource check only applies to
+    // the grant types SHark issues, so the documented answers for other bodies are unchanged.
+    const replayed = await exchange(clientId, code, verifier);
+    expect(replayed.status).toBe(400);
+    expect(replayed.body.error).toBe("invalid_grant");
+    expectUncacheable(replayed.headers, "replayed code");
+    const empty = await token({});
+    expect(empty.status).toBe(400);
+    expect(empty.body).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(empty.body.error).toBeUndefined();
+    expectUncacheable(empty.headers, "empty form");
+    const unsupported = await token({ grant_type: "client_credentials", client_id: clientId });
+    expect(unsupported.status).toBe(400);
+    expect(unsupported.body.error).toBe("unsupported_grant_type");
+    expectUncacheable(unsupported.headers, "unsupported grant");
+    const asJson = await app.request("/api/auth/oauth2/token", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ grant_type: "refresh_token", resource: RESOURCE }),
+    });
+    expect(asJson.status).toBe(415);
+  });
+
+  it("requires every repeated resource value to name /mcp", async () => {
+    const { clientId, verifier, code } = await codeFor("Repeated Resource Client");
+    const base: Array<[string, string]> = [
+      ["grant_type", "authorization_code"],
+      ["client_id", clientId],
+      ["code", code],
+      ["code_verifier", verifier],
+      ["redirect_uri", REDIRECT_URI],
+    ];
+    const foreign = "https://attacker.example/mcp";
+
+    // RFC 8707 allows repeating resource and requires every value to be acceptable; the
+    // parsed body keeps only the last one, so both orders must be refused without spending
+    // the code.
+    for (const order of [
+      [foreign, RESOURCE],
+      [RESOURCE, foreign],
+    ]) {
+      const refused = await rawToken([
+        ...base,
+        ...order.map((r): [string, string] => ["resource", r]),
+      ]);
+      expect(refused.status, order.join(" ")).toBe(400);
+      expect(refused.body.error, order.join(" ")).toBe("invalid_target");
+      expectUncacheable(refused.headers, order.join(" "));
+    }
+    const twice = await rawToken([...base, ["resource", RESOURCE], ["resource", RESOURCE]]);
+    expect(twice.status, String(twice.body.error_description)).toBe(200);
+    const tokens = twice.body as unknown as TokenSet;
+    expect(await mcpStatus(tokens.access_token)).toBe(MCP_REACHED);
+
+    const refreshBase: Array<[string, string]> = [
+      ["grant_type", "refresh_token"],
+      ["client_id", clientId],
+      ["refresh_token", tokens.refresh_token],
+    ];
+    for (const order of [
+      [foreign, RESOURCE],
+      [RESOURCE, foreign],
+    ]) {
+      const refused = await rawToken([
+        ...refreshBase,
+        ...order.map((r): [string, string] => ["resource", r]),
+      ]);
+      expect(refused.status, order.join(" ")).toBe(400);
+      expect(refused.body.error, order.join(" ")).toBe("invalid_target");
+    }
+    // The refusals neither rotated nor revoked the refresh token.
+    const rotated = await rawToken([
+      ...refreshBase,
+      ["resource", RESOURCE],
+      ["resource", RESOURCE],
+    ]);
+    expect(rotated.status, String(rotated.body.error_description)).toBe(200);
+    expect(await mcpStatus(String(rotated.body.access_token))).toBe(MCP_REACHED);
+  });
+
+  it("answers an unreadable or failing token request with an uncacheable error", async () => {
+    const { clientId, verifier, code } = await codeFor("Broken Body Client");
+    const headers = { "content-type": "application/x-www-form-urlencoded" };
+
+    const failingBody = (extra: Record<string, string>) =>
+      new Request(`${ORIGIN}/api/auth/oauth2/token`, {
+        method: "POST",
+        headers: { ...headers, ...extra },
+        body: new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.error(new Error("synthetic body failure"));
+          },
+        }),
+        // @ts-expect-error Node requires duplex for stream bodies; lib.dom lacks the option.
+        duplex: "half",
+      });
+
+    // With a Content-Length the body-limit middleware passes the stream through, so the
+    // resource check is what reads it; a stream that fails is refused, not passed on.
+    const unreadable = await app.request(failingBody({ "content-length": "64" }));
+    expect(unreadable.status).toBe(400);
+    expect(await unreadable.json()).toMatchObject({ error: "invalid_request" });
+    expectUncacheable(unreadable.headers, "unreadable body");
+
+    // Without one the middleware reads the body first and the failure reaches app.onError.
+    // Thrown errors can carry request material, so the log records only their class.
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const upstream = await app.request(failingBody({}));
+      expect(upstream.status).toBe(500);
+      expect(await upstream.json()).toMatchObject({ error: "server_error" });
+      expectUncacheable(upstream.headers, "middleware failure");
+      expect(logged).toHaveBeenCalledWith("[oauth] token request failed", "Error");
+      expect(JSON.stringify(logged.mock.calls)).not.toContain("synthetic body failure");
+    } finally {
+      logged.mockRestore();
+    }
+
+    // The body-size limit's own rejection is uncacheable too.
+    const oversized = await rawToken([
+      ["grant_type", "authorization_code"],
+      ["code", "x".repeat(70 * 1024)],
+    ]);
+    expect(oversized.status).toBe(413);
+    expectUncacheable(oversized.headers, "oversized");
+
+    // Better Auth throwing instead of answering still yields a token error response.
+    const handler = vi
+      .spyOn(auth, "handler")
+      .mockRejectedValueOnce(new TypeError("synthetic handler crash code=hark_mat_leak"));
+    const loggedThrow = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const failed = await rawToken([["grant_type", "authorization_code"]]);
+      expect(failed.status).toBe(500);
+      expect(failed.body).toMatchObject({ error: "server_error" });
+      expectUncacheable(failed.headers, "thrown");
+      expect(loggedThrow).toHaveBeenCalledWith("[oauth] token endpoint threw", "TypeError");
+      expect(JSON.stringify(loggedThrow.mock.calls)).not.toContain("hark_mat_leak");
+    } finally {
+      loggedThrow.mockRestore();
+      handler.mockRestore();
+    }
+
+    // Neither failure spent the code.
+    const exchanged = await exchange(clientId, code, verifier);
+    expect(exchanged.status, String(exchanged.body.error_description)).toBe(200);
   });
 
   it("denying consent sends access_denied and no code", async () => {
@@ -350,7 +680,7 @@ describe("MCP OAuth end to end", () => {
 
   it("returns 401 from /mcp once the access token is revoked", async () => {
     const { clientId, tokens } = await connectClient("Revoked Client");
-    expect(await mcpStatus(tokens.access_token)).not.toBe(401);
+    expect(await mcpStatus(tokens.access_token)).toBe(MCP_REACHED);
 
     const revoke = (value: string, hint: string) =>
       app.request("/api/auth/oauth2/revoke", {
@@ -371,7 +701,7 @@ describe("MCP OAuth end to end", () => {
 
   it("returns 401 from /mcp once the dashboard disconnects the client", async () => {
     const { clientId, tokens } = await connectClient("Dashboard Client");
-    expect(await mcpStatus(tokens.access_token)).not.toBe(401);
+    expect(await mcpStatus(tokens.access_token)).toBe(MCP_REACHED);
 
     const listed = await app.request("/api/oauth/clients", signedIn());
     expect(((await listed.json()) as { clients: unknown[] }).clients).toEqual(
@@ -390,7 +720,7 @@ describe("MCP OAuth end to end", () => {
 
   it("stops a connected client as soon as its owner leaves the allowlist", async () => {
     const { tokens } = await connectClient("Allowlist Client");
-    expect(await mcpStatus(tokens.access_token)).not.toBe(401);
+    expect(await mcpStatus(tokens.access_token)).toBe(MCP_REACHED);
 
     env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length, "someone-else@example.com");
     expect(await mcpStatus(tokens.access_token)).toBe(401);

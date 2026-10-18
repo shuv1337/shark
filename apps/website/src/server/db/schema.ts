@@ -273,6 +273,8 @@ export const agentNotification = sqliteTable(
     }),
     /** Sender label for token-less notices; token rows use the token name. */
     sourceName: text("source_name"),
+    /** Per-bot name from the request. Null keeps the token name. */
+    agentDisplay: text("agent_display"),
     title: text("title").notNull(),
     body: text("body").notNull(),
     imageUrl: text("image_url"),
@@ -498,6 +500,10 @@ export const oncallOverride = sqliteTable(
       .references(() => user.id, { onDelete: "cascade" }),
     startsAt: integer("starts_at", { mode: "timestamp_ms" }).notNull(),
     endsAt: integer("ends_at", { mode: "timestamp_ms" }).notNull(),
+    /** Null for overrides created before creators were recorded, or whose creator was deleted. */
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => [index("oncall_override_group_ends_idx").on(table.groupId, table.endsAt)],
@@ -647,6 +653,8 @@ export const interaction = sqliteTable(
     eventId: text("event_id").references(() => event.id, { onDelete: "cascade" }),
     title: text("title").notNull(),
     prompt: text("prompt").notNull(),
+    /** Per-bot name from the request. Null keeps the token name. */
+    agentDisplay: text("agent_display"),
     kind: text("kind").notNull(),
     presentation: text("presentation").notNull().default("notification"),
     primaryLabel: text("primary_label"),

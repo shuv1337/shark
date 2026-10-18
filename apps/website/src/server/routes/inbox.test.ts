@@ -379,3 +379,38 @@ describe("durable inbox", () => {
     ]);
   });
 });
+
+/**
+ * The navigation badge reads these, so they have to be exact: the unread total
+ * is every unread row, not a page of them, and it is independent of whatever
+ * still needs an answer.
+ */
+describe("inbox counts", () => {
+  const counts = async () => {
+    const response = await app.request("/api/inbox/counts");
+    expect(response.status).toBe(200);
+    return (await response.json()) as { unread: number; needsAction: number };
+  };
+
+  it("counts unread and needs-action separately, even when the sets are disjoint", async () => {
+    // Three unread items, one of which is the pending interaction.
+    expect(await counts()).toEqual({ unread: 3, needsAction: 1 });
+
+    // Reading the interaction leaves it needing an answer but no longer unread.
+    await app.request("/api/inbox/ibox%3Ainteraction%3Aint_inbox/read", { method: "POST" });
+    expect(await counts()).toEqual({ unread: 2, needsAction: 1 });
+  });
+
+  it("drops to zero unread once everything is marked read", async () => {
+    await app.request("/api/inbox/read-all", { method: "POST" });
+    expect(await counts()).toEqual({ unread: 0, needsAction: 1 });
+  });
+
+  it("counts only the reader's own inbox", async () => {
+    await db.delete(schema.inboxItem).where(eq(schema.inboxItem.userId, "inbox_user"));
+    await db.delete(schema.event).where(eq(schema.event.serviceId, "svc_inbox"));
+    await db.delete(schema.agentNotification).where(eq(schema.agentNotification.id, "anot_inbox"));
+    await db.delete(schema.interaction).where(eq(schema.interaction.id, "int_inbox"));
+    expect(await counts()).toEqual({ unread: 0, needsAction: 0 });
+  });
+});

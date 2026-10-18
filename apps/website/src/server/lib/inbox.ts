@@ -76,7 +76,8 @@ export async function syncInboxForUser(userId: string): Promise<void> {
     )
     select
       'ibox:agent_notification:' || n.id, n.user_id, 'agent_notification', n.id,
-      'notification', t.name, n.image_url, n.title, n.body, n.image_url, n.url,
+      'notification', coalesce(n.agent_display, n.source_name, t.name, n.title), n.image_url, n.title, n.body,
+      n.image_url, n.url,
       n.status,
       case when n.status = 'accepted' then 'Accepted'
            when n.status = 'partial' then 'Partially accepted'
@@ -87,7 +88,7 @@ export async function syncInboxForUser(userId: string): Promise<void> {
            else 'Processing' end,
       n.accepted_count, n.failed_count, 0, n.created_at, n.created_at
     from agent_notification n
-    inner join api_token t on t.id = n.requester_token_id
+    left join api_token t on t.id = n.requester_token_id
     where n.user_id = ${userId}
     on conflict(entity_type, entity_id) do update set
       status = excluded.status,
@@ -105,7 +106,7 @@ export async function syncInboxForUser(userId: string): Promise<void> {
     )
     select
       'ibox:interaction:' || i.id, i.user_id, 'interaction', i.id, 'interaction',
-      coalesce(s.title, t.name, 'SHark'), coalesce(i.image_url, s.image_url),
+      coalesce(s.title, i.agent_display, t.name, 'SHark'), coalesce(i.image_url, s.image_url),
       i.title, i.prompt, i.image_url, i.url,
       case when i.status = 'pending' and i.expires_at <= ${now} then 'expired' else i.status end,
       case

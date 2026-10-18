@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { agentDisplaySchema } from "./board";
 
 /** Version of the push `data` payload schema understood by the iOS extension. */
 export const PUSH_SCHEMA_VERSION = 1 as const;
@@ -87,9 +88,16 @@ const projectNameSchema = z
     "Project names must be a single line",
   );
 
-import { isPublicHttpsUrl, publicHttpsUrlSchema } from "./url";
+import {
+  isKnownWebPushEndpoint,
+  isPublicHttpsUrl,
+  publicHttpsHref,
+  publicHttpsUrlSchema,
+  WEB_PUSH_SERVICE_HOSTS,
+} from "./url";
 
-export { isPublicHttpsUrl };
+export { isPublicAddress } from "./ip";
+export { isKnownWebPushEndpoint, isPublicHttpsUrl, publicHttpsHref, WEB_PUSH_SERVICE_HOSTS };
 
 /**
  * Tap destinations are handed to the iOS app and opened with `Linking.openURL`,
@@ -378,6 +386,15 @@ export interface InboxDetailDto {
   events: InboxItemEventDto[];
 }
 
+/**
+ * The two inbox numbers a navigation badge needs, without reading a page of
+ * items: everything unread, and everything still waiting on a response.
+ */
+export interface InboxCountsDto {
+  unread: number;
+  needsAction: number;
+}
+
 // ---------------------------------------------------------------------------
 // Devices
 // ---------------------------------------------------------------------------
@@ -435,7 +452,8 @@ export const webPushSubscriptionSchema = z.object({
   endpoint: z
     .url()
     .max(2048)
-    .refine((value) => new URL(value).protocol === "https:", "Push endpoint must use HTTPS"),
+    .refine((value) => new URL(value).protocol === "https:", "Push endpoint must use HTTPS")
+    .refine(isKnownWebPushEndpoint, "Push endpoint must use a known browser push service"),
   expirationTime: z.number().int().nonnegative().nullable().optional(),
   keys: z.object({
     p256dh: z.string().min(1).max(512),
@@ -1131,6 +1149,11 @@ export const interactionCreateSchema = z
     style: interactiveLiveActivityStyleSchema.optional(),
     primaryLabel: interactionActionLabelSchema.optional(),
     secondaryLabel: interactionActionLabelSchema.optional(),
+    /**
+     * Per-bot name shown in place of the token's client name. Optional and
+     * without a default so idempotent retries of older requests still match.
+     */
+    agentDisplay: agentDisplaySchema.optional(),
   })
   .superRefine((value, context) => {
     const presentation = value.presentation ?? "notification";
@@ -1298,6 +1321,8 @@ export interface InteractionDto {
   secondaryLabel: string | null;
   accepted: number;
   respondingDeviceId: string | null;
+  /** Set when the creating request named a bot. Absent on rows written before that. */
+  agentDisplay?: string | null;
   expiresAt: string;
   createdAt: string;
   respondedAt: string | null;
@@ -1369,6 +1394,11 @@ export const agentNotificationCreateSchema = z.object({
    * `deviceIds`; the response is then an `OncallPageCreateResponse`.
    */
   oncall: oncallGroupIdSchema.optional(),
+  /**
+   * Per-bot name shown in place of the token's client name. Optional and
+   * without a default so idempotent retries of older requests still match.
+   */
+  agentDisplay: agentDisplaySchema.optional(),
 });
 export type AgentNotificationCreateInput = z.infer<typeof agentNotificationCreateSchema>;
 
@@ -1383,6 +1413,8 @@ export interface AgentNotificationDto {
   url: string | null;
   createdAt: string;
   appId?: string | null;
+  /** Set when the request named a bot. Absent on rows written before that. */
+  agentDisplay?: string | null;
 }
 
 export interface AgentNotificationCreateResponse {
@@ -1550,10 +1582,6 @@ export type TeamRole = z.infer<typeof teamRoleSchema>;
 export const TEAM_NAME_MAX_CHARS = 60 as const;
 export const MAX_TEAMS_PER_ACCOUNT = 20 as const;
 export const MAX_MEMBERS_PER_TEAM = 500 as const;
-/** Seats included without a paid team plan (the creator's own seat). */
-export const TEAM_FREE_SEATS = 1 as const;
-/** Monthly price per seat beyond the free one, in USD. */
-export const TEAM_SEAT_PRICE_MONTHLY = 5 as const;
 export const TEAM_INVITE_TTL_SECONDS = 604_800 as const;
 
 const singleLine = (value: string) =>
@@ -1588,9 +1616,9 @@ export interface TeamDto extends TeamSummaryDto {
   oncallGroupCount: number;
   seats: {
     used: number;
-    /** Seats covered without payment (TEAM_FREE_SEATS) plus paid seats. */
+    /** Seats included free plus paid seats; null means unlimited. */
     available: number | null;
-    /** Seats billed at TEAM_SEAT_PRICE_MONTHLY. */
+    /** Paid seats. */
     billable: number;
   };
   plan: "free" | "team";
@@ -1653,9 +1681,6 @@ export interface TeamJoinResponse {
   /** `false` when the viewer was already a member. */
   joined: boolean;
 }
-
-/** `code` returned when a team has no free seat and no paid team plan. */
-export const API_ERROR_CODE_SEAT_LIMIT = "seat_limit" as const;
 
 // ---------------------------------------------------------------------------
 // On-call groups and pages
@@ -1744,6 +1769,8 @@ export interface OncallOverrideDto {
   person: OncallPersonDto;
   startsAt: string;
   endsAt: string;
+  /** Who scheduled it; null for overrides that predate creator tracking or whose creator was deleted. */
+  createdBy: OncallPersonDto | null;
 }
 
 export interface OncallGroupDto {

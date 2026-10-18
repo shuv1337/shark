@@ -79,19 +79,6 @@ async function revokedDuringGrant(owner: GrantOwner): Promise<boolean> {
 }
 
 /**
- * A grant that throws a non-API error (for example a foreign-key failure when
- * offboarding deletes the session mid-exchange) skips the after hook. If its
- * owner was offboarded, answer invalid_grant; other server errors pass through.
- */
-export async function guardTokenResponse(request: Request, response: Response) {
-  if (response.status < 500) return response;
-  const owner = grantOwners.get(request);
-  if (!owner || !(await revokedDuringGrant(owner))) return response;
-  console.warn("[auth] grant=token outcome=revoked_mid_grant");
-  return errorResponse(invalidGrant().body);
-}
-
-/**
  * Refresh and code exchange re-check the allowlist, so neither a surviving
  * refresh token nor a pending authorization code can mint tokens for someone
  * who was offboarded. Before the grant: reject owners who are no longer
@@ -117,7 +104,13 @@ export const oauthTokenAdmission = {
             if (!row) return;
             if (!(await isUserAllowed(row.userId))) {
               console.warn("[auth] grant=refresh_token outcome=admission_denied");
-              throw invalidGrant();
+              // Burn the presented token even if the owner is later re-admitted.
+              // Let the provider validate the client/expiry and perform its normal
+              // revoked-token family invalidation; do not bypass replay detection.
+              await db
+                .update(oauthRefreshToken)
+                .set({ revoked: new Date() })
+                .where(eq(oauthRefreshToken.token, stored));
             }
             if (ctx.request) {
               grantOwners.set(ctx.request, { userId: row.userId, refreshToken: stored });
@@ -150,11 +143,20 @@ export const oauthTokenAdmission = {
         matcher: (ctx) => ctx.path === TOKEN_PATH,
         handler: createAuthMiddleware(async (ctx) => {
           const returned = ctx.context.returned as
-            | { access_token?: unknown; statusCode?: unknown; body?: { error?: unknown } }
+            | {
+                access_token?: unknown;
+                statusCode?: unknown;
+                body?: { error?: unknown; error_description?: unknown };
+              }
             | undefined;
           const owner = ctx.request ? grantOwners.get(ctx.request) : undefined;
           if (returned?.body?.error) {
-            if (owner && (await revokedDuringGrant(owner))) {
+            if (
+              returned.body.error === "invalid_request" &&
+              returned.body.error_description === "session no longer exists" &&
+              owner?.sessionId &&
+              (await revokedDuringGrant(owner))
+            ) {
               console.warn("[auth] grant=token outcome=revoked_mid_grant");
               return errorResponse(invalidGrant().body);
             }

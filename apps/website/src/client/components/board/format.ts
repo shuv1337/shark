@@ -1,16 +1,6 @@
 import type { BoardAskDto, BoardPriority, BoardWorkItemDto } from "@hark/contracts";
 
-export function relativeTime(iso: string, now = Date.now()): string {
-  const delta = Math.max(0, now - Date.parse(iso));
-  const minutes = Math.floor(delta / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  if (days < 14) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
+export { relativeTime } from "../../lib/format";
 
 export function priorityLabel(priority: BoardPriority): string {
   return priority === "p0" ? "Blocking" : priority === "p1" ? "Today" : "Whenever";

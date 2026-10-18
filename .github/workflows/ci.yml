@@ -45,6 +45,7 @@ jobs:
           pnpm lint
           pnpm build
           pnpm brand:check
+          pnpm version:check
           bash -n deploy/shark-deploy deploy/shark-backup \
             deploy/shark-materialize-secrets deploy/shark-restic-backup deploy/test-helpers
           deploy/test-helpers

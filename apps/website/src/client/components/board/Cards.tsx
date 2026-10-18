@@ -1,5 +1,6 @@
 import type { BoardCrewEntryDto, BoardNoteDto, BoardWorkItemDto } from "@hark/contracts";
 import type { ReactNode } from "react";
+import { focusRing, surfacePanel } from "../ui";
 import { AgentChip, LinkChips } from "./AskCard";
 import { relativeTime, workStateLabel } from "./format";
 
@@ -49,10 +50,7 @@ function stateDot(item: BoardWorkItemDto): string {
 export function WorkCard({ item }: { item: BoardWorkItemDto }) {
   const terminal = item.state === "done" || item.state === "failed" || item.state === "cancelled";
   return (
-    <article
-      className="rounded-2xl border border-line bg-surface p-4 shadow-xs"
-      data-work-id={item.id}
-    >
+    <article className={`${surfacePanel} rounded-2xl p-4`} data-work-id={item.id}>
       <header className="flex flex-wrap items-center gap-1.5 text-[11px] text-ink-faint">
         <AgentChip agent={item.agent} display={item.agentDisplay} />
         {item.host ? <span className="font-mono">{item.host}</span> : null}
@@ -93,9 +91,9 @@ export function WorkCard({ item }: { item: BoardWorkItemDto }) {
 
 export function NoteCard({ note }: { note: BoardNoteDto }) {
   return (
-    <article className="rounded-2xl border border-line bg-surface p-4 shadow-xs">
+    <article className={`${surfacePanel} rounded-2xl p-4`}>
       <header className="flex items-center gap-1.5 text-[11px] text-ink-faint">
-        <AgentChip agent={note.agent} display={null} />
+        <AgentChip agent={note.agent} display={note.agentDisplay} />
         <time className="ml-auto" dateTime={note.updatedAt}>
           {relativeTime(note.updatedAt)}
         </time>
@@ -106,7 +104,7 @@ export function NoteCard({ note }: { note: BoardNoteDto }) {
       ) : null}
       {note.link ? (
         <a
-          className="mt-2 inline-block text-xs font-medium text-accent-text"
+          className={`mt-2 inline-block rounded-md text-xs font-medium text-accent-text ${focusRing}`}
           href={note.link}
           rel="noreferrer"
           target="_blank"

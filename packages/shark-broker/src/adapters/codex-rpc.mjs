@@ -78,7 +78,7 @@ export async function connectCodex(session, { timeout = 5000 } = {}) {
       ws.once("error", reject);
     });
     await request("initialize", {
-      clientInfo: { name: "shark_reply_broker", version: "0.1.0" },
+      clientInfo: { name: "shark_reply_broker", version: "1.0.0" },
       capabilities: { experimentalApi: true },
     });
     ws.send(JSON.stringify({ method: "initialized" }));
