@@ -5,6 +5,20 @@ logs. Unchecked release evidence keeps the goal active.
 
 ## Source baseline
 
+- 2026-10-18, 3:38 AM PDT: read-only production reconciliation found `shark-prod`
+  already running `1756421c457f143725738cc644f5e725d15d5c99` (#159). The retained
+  `current` record dates promotion to 2026-10-17, 3:45 PM PDT, with image
+  `ghcr.io/shuv1337/shark@sha256:0653efe96398ebb8975e0c3fa157168129a75bec2523d49334b8d14cbc484b8f`.
+  Docker's running image ID and OCI revision label match that record. The container is
+  running and healthy with zero restarts; its current start time is 2026-10-18,
+  2:01:32 AM PDT, later than the promotion record. This check did not establish why
+  it was recreated. Loopback and public `/api/health` returned `{"ok":true}`;
+  anonymous `/board` returned 401. Publisher run `39075952232` passed verification
+  and image publication on October 17; it does not itself perform deployment.
+  No deployment, notification test, database inspection, or device acceptance was
+  performed in this reconciliation. The October 11 signed-in/PWA checks below and
+  the native release evidence at the end remain unverified by this check.
+
 - 2026-10-10: host CLI, broker, and skill install of SHark 1.0.0 from
   `dfe3a27f5ff04df9183db2768b2ebe3e959dcd7a` (#132, unified product version) on the operator Mac
   (launchd `dev.shuv.shark.broker`) and the Linux host (user systemd `sharkd.service`). The
