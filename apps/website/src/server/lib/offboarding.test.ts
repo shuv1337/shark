@@ -121,6 +121,7 @@ describe("operator offboarding", () => {
       userId: "usr_offboard",
       step: 0,
       responseTokenHash: "page-credential-hash",
+      previousResponseTokenHash: "previous-page-credential-hash",
       notifiedAt: now,
     });
 
@@ -134,6 +135,7 @@ describe("operator offboarding", () => {
     const [recipient] = await db.select().from(schema.oncallPageRecipient);
     expect(recipient?.responseTokenHash).not.toBe("page-credential-hash");
     expect(recipient?.responseTokenHash).toMatch(/^offboarded_/);
+    expect(recipient?.previousResponseTokenHash).toBeNull();
 
     expect(await db.select().from(schema.user)).toHaveLength(1);
     expect(await db.select().from(schema.session)).toHaveLength(0);

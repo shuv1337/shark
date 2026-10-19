@@ -579,15 +579,34 @@ export const oncallPageRecipient = sqliteTable(
     /** 0 for the initial notification, then the escalation step number. */
     step: integer("step").notNull(),
     responseTokenHash: text("response_token_hash").notNull(),
+    /**
+     * A random credential issued before credentials were derived per
+     * recipient, kept when a retry moves to the derived one because its alert
+     * may already be on the phone. Either is accepted; they share one use.
+     */
+    previousResponseTokenHash: text("previous_response_token_hash"),
     /** Set on the credential's first successful use; it is single-use. */
     responseTokenUsedAt: integer("response_token_used_at", { mode: "timestamp_ms" }),
     acceptedCount: integer("accepted_count").notNull().default(0),
+    /**
+     * `pending` while a push is in flight, then `delivered` (Expo accepted at
+     * least one push), `failed`, `skipped` (no active device), or
+     * `undeliverable` (Expo refused it permanently). Only `delivered`
+     * recipients count as paged; the rest stay eligible for escalation steps.
+     */
+    deliveryStatus: text("delivery_status").notNull().default("pending"),
+    /** Delivery attempts started, including the first. */
+    deliveryAttempts: integer("delivery_attempts").notNull().default(0),
+    /** When the worker may next retry a `failed` or `skipped` recipient; null when none is due. */
+    nextAttemptAt: integer("next_attempt_at", { mode: "timestamp_ms" }),
+    /** Start of the latest delivery attempt. */
     notifiedAt: integer("notified_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => [
     uniqueIndex("oncall_page_recipient_page_user_unique").on(table.pageId, table.userId),
     uniqueIndex("oncall_page_recipient_token_unique").on(table.responseTokenHash),
     index("oncall_page_recipient_user_idx").on(table.userId, table.notifiedAt),
+    index("oncall_page_recipient_delivery_idx").on(table.deliveryStatus, table.nextAttemptAt),
   ],
 );
 

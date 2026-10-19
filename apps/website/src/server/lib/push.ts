@@ -11,6 +11,7 @@ import {
   type WebhookRequest,
 } from "@hark/contracts";
 import { Expo, type ExpoPushMessage, type ExpoPushTicket } from "expo-server-sdk";
+import { Agent } from "undici";
 import type { macosDevice, webPushSubscription } from "../db/schema";
 import { env } from "../env";
 import type { NotificationPayloadInput } from "./apns";
@@ -203,6 +204,8 @@ export function buildPagePushMessages(input: BuildPagePushInput): ExpoPushMessag
       sound: "default",
       interruptionLevel: "time-sensitive",
       mutableContent: true,
+      // apns-collapse-id: a retry replaces the page's banner instead of stacking another.
+      collapseId: input.pageId,
       data,
     }),
   );
@@ -218,10 +221,27 @@ export function buildPageClaimedPushMessages(
   return to.map((token) => ({ to: token, data, _contentAvailable: true }));
 }
 
+/**
+ * Per-phase limits for one Expo request. Undici's defaults wait up to five
+ * minutes for headers and again for the body, so one hung request could
+ * stall the on-call worker. With up to three tries on 429, a send settles
+ * within about two and a half minutes, well inside the on-call
+ * `DELIVERY_STALE_MS`, so an attempt is only presumed lost after a crash.
+ */
+export const EXPO_CONNECT_TIMEOUT_MS = 10_000;
+export const EXPO_RESPONSE_TIMEOUT_MS = 20_000;
+
 let expoClient: Expo | undefined;
 function getExpo(): Expo {
   if (!expoClient) {
-    expoClient = new Expo(env.EXPO_ACCESS_TOKEN ? { accessToken: env.EXPO_ACCESS_TOKEN } : {});
+    expoClient = new Expo({
+      ...(env.EXPO_ACCESS_TOKEN ? { accessToken: env.EXPO_ACCESS_TOKEN } : {}),
+      httpAgent: new Agent({
+        connect: { timeout: EXPO_CONNECT_TIMEOUT_MS },
+        headersTimeout: EXPO_RESPONSE_TIMEOUT_MS,
+        bodyTimeout: EXPO_RESPONSE_TIMEOUT_MS,
+      }),
+    });
   }
   return expoClient;
 }
@@ -236,6 +256,12 @@ export interface SendResult {
   staleSubscriptionIds: string[];
   /** Native macOS devices whose APNs capability token is no longer valid. */
   staleMacosDeviceIds: string[];
+  /**
+   * One code per Expo message that was not accepted: Expo's ticket error
+   * (for example `MessageRateExceeded`), `MessageTooBig` or `InvalidPayload`
+   * for a message refused before sending, or `RequestFailed`.
+   */
+  errorCodes?: string[];
 }
 
 export async function sendPushMessages(messages: ExpoPushMessage[]): Promise<SendResult> {
@@ -247,6 +273,8 @@ export async function sendPushMessages(messages: ExpoPushMessage[]): Promise<Sen
     staleSubscriptionIds: [],
     staleMacosDeviceIds: [],
   };
+  const errorCodes: string[] = [];
+  result.errorCodes = errorCodes;
 
   const previews: ExpoPushMessage[] = [];
   for (const message of messages) {
@@ -258,9 +286,9 @@ export async function sendPushMessages(messages: ExpoPushMessage[]): Promise<Sen
           fitPushMessage(typeof message.to === "string" ? message : { ...message, to }),
         );
       } catch (error) {
-        result.errors.push(
-          error instanceof PushPreviewTooLargeError ? error.message : "Invalid Expo push payload",
-        );
+        const tooLarge = error instanceof PushPreviewTooLargeError;
+        result.errors.push(tooLarge ? error.message : "Invalid Expo push payload");
+        errorCodes.push(tooLarge ? "MessageTooBig" : "InvalidPayload");
       }
     }
   }
@@ -271,6 +299,7 @@ export async function sendPushMessages(messages: ExpoPushMessage[]): Promise<Sen
       tickets = await expo.sendPushNotificationsAsync(chunk);
     } catch (error) {
       result.errors.push(error instanceof Error ? error.message : "Expo push request failed");
+      errorCodes.push(...chunk.map(() => "RequestFailed"));
       continue;
     }
     tickets.forEach((ticket, index) => {
@@ -279,6 +308,7 @@ export async function sendPushMessages(messages: ExpoPushMessage[]): Promise<Sen
         return;
       }
       result.errors.push(ticket.message ?? "Unknown push error");
+      errorCodes.push(ticket.details?.error ?? "Unknown");
       const to = chunk[index]?.to;
       if (ticket.details?.error === "DeviceNotRegistered" && typeof to === "string") {
         result.staleTokens.push(to);
