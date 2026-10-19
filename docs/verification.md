@@ -11,8 +11,10 @@ logs. Unchecked release evidence keeps the goal active.
   `ghcr.io/shuv1337/shark@sha256:0653efe96398ebb8975e0c3fa157168129a75bec2523d49334b8d14cbc484b8f`.
   Docker's running image ID and OCI revision label match that record. The container is
   running and healthy with zero restarts; its current start time is 2026-10-18,
-  2:01:32 AM PDT, later than the promotion record. This check did not establish why
-  it was recreated. Loopback and public `/api/health` returned `{"ok":true}`;
+  2:01:32 AM PDT, later than the promotion record. The documented nightly backup
+  starts at 2:00 AM America/Los_Angeles and stops/starts Compose, which fits this
+  timing. This check did not read its backup log or snapshot ID to confirm the
+  cause; a later start time alone does not establish container recreation. Loopback and public `/api/health` returned `{"ok":true}`;
   anonymous `/board` returned 401. Publisher run `39075952232` passed verification
   and image publication on October 17; it does not itself perform deployment.
   No deployment, notification test, database inspection, or device acceptance was
