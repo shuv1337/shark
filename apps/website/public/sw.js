@@ -9,6 +9,135 @@ const PRECACHE_PATHS = new Set(PRECACHE);
  * Privacy rule: no authenticated JSON is ever cached. Only the build's exact
  * hashed asset allowlist and the four HTML shell documents may enter this cache.
  */
+
+function cacheKey(path) {
+  return new Request(path, { credentials: "same-origin" });
+}
+
+async function cacheHolds(cache, path) {
+  return Boolean(await cache.match(path));
+}
+
+async function shellCacheComplete(cache) {
+  if (!(await cacheHolds(cache, "/board"))) return false;
+  for (const path of PRECACHE) {
+    if (!(await cacheHolds(cache, path))) return false;
+  }
+  return true;
+}
+
+async function previousShellCacheNames() {
+  const names = await caches.keys();
+  return names.filter((name) => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME);
+}
+
+async function dropPreviousShellCaches() {
+  await Promise.all((await previousShellCacheNames()).map((name) => caches.delete(name)));
+}
+
+/* Keep old documents with their own hashed assets until a fresh shell is ready.
+ * Copying old HTML into this build's cache can mark a mixed-version cache
+ * complete and delete the only copies of the assets that HTML references. */
+async function retainPreviousUntilComplete() {
+  const current = await caches.open(CACHE_NAME);
+  if (await shellCacheComplete(current)) await dropPreviousShellCaches();
+}
+
+function shellDocument(pathname) {
+  if (SHELL_DOCUMENTS.includes(pathname)) return pathname;
+  if (pathname.startsWith("/board/")) return "/board";
+  if (pathname.startsWith("/inbox/")) return "/inbox";
+  if (pathname.startsWith("/teams/")) return "/teams";
+  return null;
+}
+
+function responsePath(response) {
+  try {
+    const url = new URL(response.url);
+    if (url.origin !== self.location.origin) return null;
+    return url.pathname;
+  } catch {
+    return null;
+  }
+}
+
+function contentType(response) {
+  try {
+    return (response.headers?.get("content-type") || "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function storableShell(response) {
+  if (!response?.ok || response.redirected) return false;
+  const path = responsePath(response);
+  if (!path || path === "/login" || path.startsWith("/login/")) return false;
+  return contentType(response).includes("text/html");
+}
+
+function storableAsset(response) {
+  if (!response?.ok || response.redirected) return false;
+  const path = responsePath(response);
+  if (path === null || path === "/login" || path.startsWith("/login/")) return false;
+  return !contentType(response).includes("text/html");
+}
+
+async function remember(path, response) {
+  const current = await caches.open(CACHE_NAME);
+  await current.put(cacheKey(path), response);
+  if (await shellCacheComplete(current)) await dropPreviousShellCaches();
+}
+
+async function matchPrevious(path) {
+  for (const name of (await previousShellCacheNames()).reverse()) {
+    const hit = await (await caches.open(name)).match(path);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+async function matchAny(path) {
+  if (!path) return undefined;
+  const current = await caches.open(CACHE_NAME);
+  return (await current.match(path)) || matchPrevious(path);
+}
+
+async function respondWithAsset(path, request) {
+  const cached = await matchAny(path);
+  if (cached) return cached;
+  const response = await fetch(request);
+  if (storableAsset(response)) {
+    try {
+      await remember(path, response.clone());
+    } catch {
+      // The page still needs the response when the cache refuses it.
+    }
+  }
+  return response;
+}
+
+async function respondWithNavigation(pathname, request) {
+  try {
+    const response = await fetch(request);
+    const shell = shellDocument(pathname);
+    if (shell && storableShell(response)) {
+      try {
+        await remember(shell, response.clone());
+      } catch {
+        // The page still loads; the next visit can try again.
+      }
+    }
+    return response;
+  } catch {
+    const shell =
+      (await matchAny(pathname)) ||
+      (await matchAny(shellDocument(pathname))) ||
+      (await matchAny("/board"));
+    return shell || offlineResponse();
+  }
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (cache) => {
@@ -26,15 +155,10 @@ self.addEventListener("install", (event) => {
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches
-      .keys()
-      .then((names) =>
-        Promise.all(
-          names
-            .filter((name) => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME)
-            .map((name) => caches.delete(name)),
-        ),
-      )
+    retainPreviousUntilComplete()
+      .catch(() => {
+        // A cache failure must not keep the new push handlers from taking over.
+      })
       .then(() => clients.claim()),
   );
 });
@@ -55,13 +179,14 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  if (url.pathname.startsWith("/assets/") && PRECACHE_PATHS.has(url.pathname)) {
+  if (url.pathname.startsWith("/assets/")) {
     event.respondWith(
-      caches
-        .open(CACHE_NAME)
-        .then((cache) => cache.match(request))
-        .then((cached) => cached || fetch(request)),
+      PRECACHE_PATHS.has(url.pathname)
+        ? respondWithAsset(url.pathname, request)
+        : matchPrevious(url.pathname).then((cached) => cached || fetch(request)),
     );
+    // Old build assets may be read from retained caches, but only this build's
+    // explicit precache allowlist can introduce new asset responses to storage.
     return;
   }
 
@@ -72,13 +197,7 @@ self.addEventListener("fetch", (event) => {
   if (networkOnlyNavigation) return;
 
   if (request.mode === "navigate") {
-    event.respondWith(
-      fetch(request).catch(async () => {
-        const cache = await caches.open(CACHE_NAME);
-        const shell = (await cache.match(url.pathname)) || (await cache.match("/board"));
-        return shell || offlineResponse();
-      }),
-    );
+    event.respondWith(respondWithNavigation(url.pathname, request));
   }
 });
 
