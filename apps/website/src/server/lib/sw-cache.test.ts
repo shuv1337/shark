@@ -8,7 +8,7 @@ const source = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), "../../../public/sw.js"),
   "utf8",
 )
-  .replace("/* __PRECACHE__ */ []", '["/assets/x.js"]')
+  .replace("/* __PRECACHE__ */ []", '["/assets/x.js", "/assets/y.css"]')
   .replace('"__VERSION__"', '"test-version"');
 
 function harness() {
@@ -151,6 +151,7 @@ describe("service worker cache boundary", () => {
     await Promise.all(pending);
     expect(worker.cache.add.mock.calls.map(([request]) => request.url)).toEqual([
       "/assets/x.js",
+      "/assets/y.css",
       "/board",
       "/inbox",
       "/teams",
@@ -172,6 +173,411 @@ describe("service worker cache boundary", () => {
     });
     await Promise.all(pending);
     expect(worker.skipWaiting).toHaveBeenCalledOnce();
+  });
+});
+
+const CACHE_NAME = "shark-shell-test-version";
+
+/**
+ * A response the worker can judge the way a browser fetch result is judged.
+ * `url` and `redirected` are otherwise fixed by the platform, and `clone()`
+ * does not keep own properties, so the worker must decide before it clones.
+ */
+function page(
+  body: string,
+  init: { status?: number; type?: string; url?: string; redirected?: boolean } = {},
+) {
+  const response = new Response(body, {
+    status: init.status === 0 ? 200 : (init.status ?? 200),
+    headers: { "content-type": init.type ?? "text/html; charset=utf-8" },
+  });
+  if (init.status === 0) {
+    Object.defineProperties(response, {
+      status: { value: 0 },
+      ok: { value: false },
+      type: { value: "opaqueredirect" },
+    });
+  }
+  if (init.url !== undefined) Object.defineProperty(response, "url", { value: init.url });
+  if (init.redirected !== undefined) {
+    Object.defineProperty(response, "redirected", { value: init.redirected });
+  }
+  return response;
+}
+
+function storageHarness(options: { addFails?: boolean; putFails?: boolean } = {}) {
+  const listeners = new Map<string, (event: Record<string, unknown>) => void>();
+  const stores = new Map<string, Map<string, Response>>();
+  const deleted: string[] = [];
+  let claims = 0;
+
+  const pathOf = (request: string | { url: string }) => {
+    const url = typeof request === "string" ? request : request.url;
+    return url.startsWith("http") ? new URL(url).pathname : url;
+  };
+
+  const open = (name: string) => {
+    let entries = stores.get(name);
+    if (!entries) {
+      entries = new Map();
+      stores.set(name, entries);
+    }
+    const bucket = entries;
+    return {
+      async add(request: { url: string }) {
+        if (options.addFails) throw new TypeError("unauthorized");
+        const path = pathOf(request);
+        bucket.set(
+          path,
+          new Response(`stored ${path}`, {
+            headers: {
+              "content-type": path.startsWith("/assets/")
+                ? path.endsWith(".css")
+                  ? "text/css"
+                  : "text/javascript"
+                : "text/html",
+            },
+          }),
+        );
+      },
+      async match(request: string | { url: string }) {
+        const hit = bucket.get(pathOf(request));
+        return hit ? hit.clone() : undefined;
+      },
+      async put(request: string | { url: string }, response: Response) {
+        if (options.putFails) throw new TypeError("quota");
+        const body = await response.text();
+        bucket.set(
+          pathOf(request),
+          new Response(body, { status: response.status, headers: response.headers }),
+        );
+      },
+    };
+  };
+
+  class WorkerRequest {
+    url: string;
+
+    constructor(path: string) {
+      this.url = path;
+    }
+  }
+
+  const fetchMock = vi.fn();
+  runInNewContext(source, {
+    self: {
+      addEventListener: (name: string, listener: (event: Record<string, unknown>) => void) =>
+        listeners.set(name, listener),
+      location: { origin: "https://shark.example" },
+      registration: { showNotification: vi.fn(), getNotifications: vi.fn() },
+      skipWaiting: vi.fn().mockResolvedValue(undefined),
+    },
+    clients: {
+      matchAll: vi.fn().mockResolvedValue([{ url: "https://shark.example/board" }]),
+      claim: () => {
+        claims += 1;
+        return Promise.resolve();
+      },
+      openWindow: vi.fn(),
+    },
+    caches: {
+      open: async (name: string) => open(name),
+      keys: async () => [...stores.keys()],
+      match: async (request: string | { url: string }, options?: { cacheName?: string }) => {
+        if (options?.cacheName) {
+          const entries = stores.get(options.cacheName);
+          const hit = entries?.get(pathOf(request));
+          return hit ? hit.clone() : undefined;
+        }
+        for (const entries of stores.values()) {
+          const hit = entries.get(pathOf(request));
+          if (hit) return hit.clone();
+        }
+        return undefined;
+      },
+      delete: async (name: string) => {
+        deleted.push(name);
+        return stores.delete(name);
+      },
+    },
+    fetch: fetchMock,
+    Request: WorkerRequest,
+    Response,
+    URL,
+    Set,
+  });
+
+  async function dispatch(name: string, event: Record<string, unknown> = {}) {
+    const pending: Promise<unknown>[] = [];
+    listeners.get(name)?.({
+      ...event,
+      waitUntil: (promise: Promise<unknown>) => pending.push(promise),
+    });
+    await Promise.all(pending);
+  }
+
+  async function dispatchFetch(path: string, mode = "cors") {
+    let responsePromise: Promise<Response> | undefined;
+    listeners.get("fetch")?.({
+      request: { method: "GET", mode, url: `https://shark.example${path}` },
+      respondWith: (promise: Promise<Response>) => {
+        responsePromise = promise;
+      },
+    });
+    return responsePromise;
+  }
+
+  return {
+    deleted,
+    claims: () => claims,
+    names: () => [...stores.keys()],
+    body: async (name: string, path: string) => {
+      const hit = stores.get(name)?.get(path);
+      return hit ? hit.clone().text() : undefined;
+    },
+    fetchMock,
+    dispatch,
+    dispatchFetch,
+    seed(name: string, bodies: Record<string, string>) {
+      const entries = new Map<string, Response>();
+      for (const [path, body] of Object.entries(bodies)) {
+        entries.set(
+          path,
+          new Response(body, {
+            headers: {
+              "content-type": path.startsWith("/assets/")
+                ? path.endsWith(".css")
+                  ? "text/css"
+                  : "text/javascript"
+                : "text/html",
+            },
+          }),
+        );
+      }
+      stores.set(name, entries);
+    },
+  };
+}
+
+const PREVIOUS = "shark-shell-previous";
+const PREVIOUS_SHELLS = {
+  "/board": "previous board",
+  "/inbox": "previous inbox",
+  "/teams": "previous teams",
+  "/settings": "previous settings",
+  "/assets/x.js": "previous asset",
+  "/assets/y.css": "previous styles",
+};
+
+/**
+ * Install records a new shark-shell cache even when every `cache.add` fails,
+ * which is what a signed-out browser does: pages and assets answer 401, and
+ * that failure is swallowed so the push worker can still install. Activation
+ * used to delete every other shark-shell cache anyway.
+ */
+describe("service worker shell retention", () => {
+  it("keeps an old shell and its differently hashed assets together until a fresh shell is ready", async () => {
+    const worker = storageHarness({ addFails: true });
+    worker.seed(PREVIOUS, {
+      "/board": '<script src="/assets/old.js"></script>',
+      "/assets/old.js": "old bundle",
+    });
+    await worker.dispatch("install");
+    await worker.dispatch("activate");
+    worker.fetchMock.mockRejectedValue(new Error("offline"));
+    expect(await (await worker.dispatchFetch("/board", "navigate"))?.text()).toContain("old.js");
+    expect(await (await worker.dispatchFetch("/assets/old.js"))?.text()).toBe("old bundle");
+
+    // Fetching only part of the new build cannot make an old document stale.
+    worker.fetchMock.mockResolvedValue(
+      page("new bundle", {
+        type: "text/javascript",
+        url: "https://shark.example/assets/x.js",
+      }),
+    );
+    await worker.dispatchFetch("/assets/x.js");
+    expect(worker.names()).toContain(PREVIOUS);
+    expect(await worker.body(CACHE_NAME, "/board")).toBeUndefined();
+    worker.fetchMock.mockResolvedValue(
+      page('<link href="/assets/y.css"><script src="/assets/x.js"></script>', {
+        url: "https://shark.example/board",
+      }),
+    );
+    const onlineBoard = await worker.dispatchFetch("/board", "navigate");
+    expect(await onlineBoard?.text()).toContain("y.css");
+    expect(worker.names()).toContain(PREVIOUS);
+
+    // If the radio drops before the final asset, the complete old generation
+    // wins over the partial current /board entry.
+    worker.fetchMock.mockRejectedValue(new Error("offline"));
+    expect(await (await worker.dispatchFetch("/board", "navigate"))?.text()).toContain("old.js");
+
+    worker.fetchMock.mockResolvedValue(
+      page("new styles", {
+        type: "text/css",
+        url: "https://shark.example/assets/y.css",
+      }),
+    );
+    await worker.dispatchFetch("/assets/y.css");
+    expect(worker.names()).not.toContain(PREVIOUS);
+    worker.fetchMock.mockRejectedValue(new Error("offline"));
+    expect(await (await worker.dispatchFetch("/inbox", "navigate"))?.text()).toContain("y.css");
+  });
+
+  it("copies only an allowlisted unchanged hashed asset into the current generation", async () => {
+    const worker = storageHarness({ addFails: true });
+    worker.seed(PREVIOUS, PREVIOUS_SHELLS);
+    await worker.dispatch("install");
+    await worker.dispatch("activate");
+
+    expect(await worker.body(CACHE_NAME, "/assets/x.js")).toBeUndefined();
+    expect(await (await worker.dispatchFetch("/assets/x.js"))?.text()).toBe("previous asset");
+    expect(await worker.body(CACHE_NAME, "/assets/x.js")).toBe("previous asset");
+    expect(await worker.body(CACHE_NAME, "/board")).toBeUndefined();
+
+    expect(await (await worker.dispatchFetch("/assets/old.js"))?.text()).toBeUndefined();
+    expect(await worker.body(CACHE_NAME, "/assets/old.js")).toBeUndefined();
+  });
+
+  it("does not delete the previous shell cache when the new one stored nothing", async () => {
+    const worker = storageHarness({ addFails: true, putFails: true });
+    worker.seed(PREVIOUS, PREVIOUS_SHELLS);
+    await worker.dispatch("install");
+    await worker.dispatch("activate");
+
+    expect(worker.deleted).toEqual([]);
+    expect(worker.names()).toContain(PREVIOUS);
+    expect(await worker.body(CACHE_NAME, "/board")).toBeUndefined();
+    expect(worker.claims()).toBe(1);
+
+    worker.fetchMock.mockRejectedValue(new Error("offline"));
+    const board = await worker.dispatchFetch("/board", "navigate");
+    expect(await board?.text()).toBe("previous board");
+    const inbox = await worker.dispatchFetch("/inbox", "navigate");
+    expect(await inbox?.text()).toBe("previous inbox");
+  });
+
+  it("removes empty old generations without recreating them during lookup", async () => {
+    const worker = storageHarness({ addFails: true });
+    worker.seed(PREVIOUS, PREVIOUS_SHELLS);
+    worker.seed("shark-shell-empty", {});
+    await worker.dispatch("install");
+    await worker.dispatch("activate");
+
+    expect(worker.deleted).toEqual(["shark-shell-empty"]);
+    expect(worker.names()).toContain(PREVIOUS);
+    expect(worker.names()).not.toContain("shark-shell-empty");
+  });
+
+  it("does not copy previous documents into the current build cache", async () => {
+    const worker = storageHarness({ addFails: true });
+    worker.seed(PREVIOUS, PREVIOUS_SHELLS);
+    await worker.dispatch("install");
+    await worker.dispatch("activate");
+
+    expect(worker.deleted).toEqual([]);
+    expect(worker.names()).toContain(PREVIOUS);
+    expect(await worker.body(CACHE_NAME, "/inbox")).toBeUndefined();
+    expect(await worker.body(CACHE_NAME, "/assets/x.js")).toBeUndefined();
+
+    worker.fetchMock.mockRejectedValue(new Error("offline"));
+    const inbox = await worker.dispatchFetch("/inbox", "navigate");
+    expect(await inbox?.text()).toBe("previous inbox");
+  });
+
+  it("deletes the previous cache when install itself stored /board and the precache", async () => {
+    const worker = storageHarness();
+    worker.seed(PREVIOUS, PREVIOUS_SHELLS);
+    await worker.dispatch("install");
+    await worker.dispatch("activate");
+
+    expect(worker.deleted).toEqual([PREVIOUS]);
+    expect(await worker.body(CACHE_NAME, "/board")).toBe("stored /board");
+    expect(await worker.body(CACHE_NAME, "/assets/x.js")).toBe("stored /assets/x.js");
+  });
+
+  it("refills an empty shell from a later signed-in navigation, then drops the stale cache", async () => {
+    const worker = storageHarness({ addFails: true });
+    worker.seed(PREVIOUS, PREVIOUS_SHELLS);
+    await worker.dispatch("install");
+    await worker.dispatch("activate");
+    expect(worker.deleted).toEqual([]);
+
+    worker.fetchMock.mockImplementation(async (request: { url: string }) => {
+      const path = new URL(request.url).pathname;
+      if (path === "/board/ask/bask_1") {
+        return page("<!doctype html>signed-in board", {
+          url: "https://shark.example/board/ask/bask_1",
+        });
+      }
+      if (path === "/assets/x.js") {
+        return page("signed-in asset", {
+          type: "text/javascript",
+          url: "https://shark.example/assets/x.js",
+        });
+      }
+      if (path === "/assets/y.css") {
+        return page("signed-in styles", {
+          type: "text/css",
+          url: "https://shark.example/assets/y.css",
+        });
+      }
+      throw new Error(`unexpected ${request.url}`);
+    });
+
+    await worker.dispatchFetch("/board/ask/bask_1", "navigate");
+    expect(await worker.body(CACHE_NAME, "/board")).toContain("signed-in board");
+    expect(worker.deleted).toEqual([]);
+    expect(worker.names()).toContain(PREVIOUS);
+
+    await worker.dispatchFetch("/assets/x.js");
+    expect(worker.deleted).toEqual([]);
+    await worker.dispatchFetch("/assets/y.css");
+    expect(worker.deleted).toEqual([PREVIOUS]);
+    expect(worker.names()).not.toContain(PREVIOUS);
+
+    worker.fetchMock.mockRejectedValue(new Error("offline"));
+    const settings = await worker.dispatchFetch("/settings", "navigate");
+    expect(await settings?.text()).toContain("signed-in board");
+  });
+
+  it("does not cache an asset outside the current precache", async () => {
+    const worker = storageHarness({ addFails: true });
+    worker.fetchMock.mockResolvedValue(
+      page("unlisted", {
+        type: "text/javascript",
+        url: "https://shark.example/assets/unlisted.js",
+      }),
+    );
+    expect(await (await worker.dispatchFetch("/assets/unlisted.js"))?.text()).toBe("unlisted");
+    expect(await worker.body(CACHE_NAME, "/assets/unlisted.js")).toBeUndefined();
+  });
+
+  it("does not cache a signed-out page or a document outside the four shells", async () => {
+    const worker = storageHarness({ addFails: true });
+    await worker.dispatch("install");
+    await worker.dispatch("activate");
+    worker.fetchMock.mockImplementation(async (request: { url: string }) => {
+      const path = new URL(request.url).pathname;
+      if (path === "/board") return page("denied", { status: 401, url: request.url });
+      if (path === "/settings") {
+        return page("", {
+          status: 0,
+          url: request.url,
+          redirected: false,
+        });
+      }
+      return page("docs", { url: request.url });
+    });
+
+    await worker.dispatchFetch("/board", "navigate");
+    await worker.dispatchFetch("/settings", "navigate");
+    await worker.dispatchFetch("/docs", "navigate");
+
+    expect(await worker.body(CACHE_NAME, "/board")).toBeUndefined();
+    expect(await worker.body(CACHE_NAME, "/settings")).toBeUndefined();
+    expect(await worker.body(CACHE_NAME, "/docs")).toBeUndefined();
+    expect(worker.names()).toEqual([CACHE_NAME]);
   });
 });
 
