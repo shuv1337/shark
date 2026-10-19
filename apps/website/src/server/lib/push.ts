@@ -204,6 +204,8 @@ export function buildPagePushMessages(input: BuildPagePushInput): ExpoPushMessag
       sound: "default",
       interruptionLevel: "time-sensitive",
       mutableContent: true,
+      // apns-collapse-id: a retry replaces the page's banner instead of stacking another.
+      collapseId: input.pageId,
       data,
     }),
   );

@@ -88,7 +88,7 @@ export function offboardPersistedAccess(userId: string): OffboardingResult {
       .all();
     for (const { pageId } of pageCredentials) {
       tx.update(oncallPageRecipient)
-        .set({ responseTokenHash: revokedCredential() })
+        .set({ responseTokenHash: revokedCredential(), previousResponseTokenHash: null })
         .where(and(eq(oncallPageRecipient.pageId, pageId), eq(oncallPageRecipient.userId, userId)))
         .run();
     }

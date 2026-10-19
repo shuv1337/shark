@@ -62,6 +62,14 @@ describe("oncall delivery status migration", () => {
     }>;
     const byKey = new Map(rows.map((row) => [`${row.page_id}/${row.user_id}`, row]));
     expect(rows.every((row) => row.delivery_attempts === 1)).toBe(true);
+    // Existing credentials stay current; none has an earlier one yet.
+    expect(
+      database
+        .prepare(
+          "select count(*) as n from oncall_page_recipient where previous_response_token_hash is not null",
+        )
+        .get(),
+    ).toEqual({ n: 0 });
     expect(byKey.get("recent/reached")).toMatchObject({
       delivery_status: "delivered",
       next_attempt_at: null,

@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "node:crypto";
 import { env } from "../env";
 
 const ENCRYPTION_VERSION = "v1";
@@ -204,9 +204,18 @@ export function hashTeamInviteCode(code: string): string {
     .digest("hex");
 }
 
-/** One-shot lock-screen credential for acknowledging an on-call page. */
-export function generatePageResponseToken(): string {
-  return randomBytes(32).toString("base64url");
+/**
+ * The one-shot lock-screen credential for one recipient of one page. It is derived,
+ * not random, so every delivery attempt carries the same one and an alert
+ * already on the phone stays usable however many retries follow.
+ */
+export function pageResponseTokenFor(pageId: string, userId: string): string {
+  return createHmac("sha256", env.BETTER_AUTH_SECRET)
+    .update("hark:page-response-credential:v1\0", "utf8")
+    .update(pageId, "utf8")
+    .update("\0", "utf8")
+    .update(userId, "utf8")
+    .digest("base64url");
 }
 
 export function hashPageResponseToken(token: string): string {

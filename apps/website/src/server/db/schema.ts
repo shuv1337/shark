@@ -579,6 +579,12 @@ export const oncallPageRecipient = sqliteTable(
     /** 0 for the initial notification, then the escalation step number. */
     step: integer("step").notNull(),
     responseTokenHash: text("response_token_hash").notNull(),
+    /**
+     * A random credential issued before credentials were derived per
+     * recipient, kept when a retry moves to the derived one because its alert
+     * may already be on the phone. Either is accepted; they share one use.
+     */
+    previousResponseTokenHash: text("previous_response_token_hash"),
     /** Set on the credential's first successful use; it is single-use. */
     responseTokenUsedAt: integer("response_token_used_at", { mode: "timestamp_ms" }),
     acceptedCount: integer("accepted_count").notNull().default(0),

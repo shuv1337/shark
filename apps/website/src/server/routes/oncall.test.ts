@@ -11,10 +11,14 @@ process.env.DATABASE_URL = ":memory:";
 
 const authState = vi.hoisted(() => ({ userId: "user_a" as string | null }));
 const sent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
-/** Expo send outcomes: each queued gate settles one send; otherwise `fail` decides. `crash` throws. */
+/**
+ * Expo send outcomes: each queued gate settles one send; otherwise `fail` decides. `crash` throws.
+ * `lost` records the send in `rejected`, then throws, like a request that timed out after Expo got it.
+ */
 const pushControl = vi.hoisted(() => ({
   fail: false,
   crash: false,
+  lost: false,
   gates: [] as Array<Promise<"ok" | "fail">>,
 }));
 /** Expo push tokens whose sends Expo rejects; rejected messages are not in `sent`. */
@@ -62,6 +66,10 @@ vi.mock("expo-server-sdk", () => {
       const interleaved = duringSend.run;
       duringSend.run = null;
       await interleaved?.();
+      if (pushControl.lost) {
+        rejected.push(...messages);
+        throw new Error("Synthetic request timeout");
+      }
       const isRejected = (message: Record<string, unknown>) => failing.has(message.to as string);
       rejected.push(...messages.filter(isRejected));
       sent.push(...messages.filter((message) => !isRejected(message)));
@@ -138,6 +146,7 @@ afterEach(() => {
   sent.length = 0;
   pushControl.fail = false;
   pushControl.crash = false;
+  pushControl.lost = false;
   pushControl.gates.length = 0;
   rejected.length = 0;
   failing.clear();
@@ -2209,17 +2218,14 @@ describe("undelivered pages", () => {
     await runDueEscalation(first.page.id);
     expect(pushesTo("user_b")).toHaveLength(1);
 
-    // Each attempt carries a fresh credential; only the delivered one works.
-    const undeliveredToken = (
-      rejectedTo("user_b")[0]?.data as { responseToken?: string } | undefined
-    )?.responseToken;
+    // Every attempt carries the same credential.
     expect(
-      (
-        await call("POST", `/api/page-responses/${first.page.id}/acknowledge`, {
-          responseToken: undeliveredToken,
-        })
-      ).status,
-    ).toBe(404);
+      new Set(
+        [...rejectedTo("user_b"), ...pushesTo("user_b")].map(
+          (message) => (message.data as { responseToken?: string }).responseToken,
+        ),
+      ).size,
+    ).toBe(1);
     const acked = await call("POST", `/api/page-responses/${first.page.id}/acknowledge`, {
       responseToken: responseTokenFor("user_b"),
     });
@@ -2331,30 +2337,46 @@ describe("undelivered pages", () => {
     await call("POST", `/api/pages/${created.page.id}/resolve`, {});
   });
 
-  it("binds lock-screen claims to the credential presented, not just the recipient", async () => {
-    const group = await createGroup("Solo rotated", [], ["user_a"]);
+  it("keeps a credential issued before derived credentials usable after a retry", async () => {
+    const { and, eq } = await import("drizzle-orm");
+    const { hashPageResponseToken } = await import("../lib/token");
+    const group = await createGroup("Solo legacy", [], ["user_a"]);
     failing.add("ExponentPushToken[user_a]");
     const created = (await (
       await page(group.id, { title: "Replica lag" })
     ).json()) as OncallPageCreateResponse;
-    const undelivered = (rejectedTo("user_a")[0]?.data as { responseToken?: string } | undefined)
-      ?.responseToken;
-    expect(undelivered).toBeTruthy();
     failing.clear();
+    // As if paged by the previous release, which issued a random credential.
+    const legacy = "L".repeat(43);
+    const mine = and(
+      eq(schema.oncallPageRecipient.pageId, created.page.id),
+      eq(schema.oncallPageRecipient.userId, "user_a"),
+    );
+    await db
+      .update(schema.oncallPageRecipient)
+      .set({ responseTokenHash: hashPageResponseToken(legacy) })
+      .where(mine);
     await ageAttempts(created.page.id);
     await oncall.processDueEscalations();
     const current = responseTokenFor("user_a");
+    expect(current).not.toBe(legacy);
+    // A second retry keeps the legacy credential rather than overwriting it with the derived one.
+    await db.update(schema.oncallPageRecipient).set({ deliveryStatus: "failed" }).where(mine);
+    await ageAttempts(created.page.id);
+    await oncall.processDueEscalations();
+    expect(responseTokenFor("user_a")).toBe(current);
 
-    // A credential looked up before a retry replaced it cannot spend or release the new one.
-    expect(
-      await oncall.claimPageResponseToken(created.page.id, "user_a", undelivered as string),
-    ).toBe(false);
-    expect(await oncall.claimPageResponseToken(created.page.id, "user_a", current)).toBe(true);
-    await oncall.releasePageResponseToken(created.page.id, "user_a", undelivered as string);
-    expect((await recipient(created.page.id, "user_a"))?.responseTokenUsedAt).not.toBeNull();
-    await oncall.releasePageResponseToken(created.page.id, "user_a", current);
-    expect((await recipient(created.page.id, "user_a"))?.responseTokenUsedAt).toBeNull();
-    await call("POST", `/api/pages/${created.page.id}/resolve`, {});
+    // Both credentials resolve, but they share one use, and a foreign one does not.
+    expect(await oncall.claimPageResponseToken(created.page.id, "user_a", "x".repeat(43))).toBe(
+      false,
+    );
+    expect(await oncall.claimPageResponseToken(created.page.id, "user_a", legacy)).toBe(true);
+    expect(await oncall.claimPageResponseToken(created.page.id, "user_a", current)).toBe(false);
+    await oncall.releasePageResponseToken(created.page.id, "user_a", legacy);
+    const acked = await call("POST", `/api/page-responses/${created.page.id}/acknowledge`, {
+      responseToken: current,
+    });
+    expect(await acked.json()).toEqual({ ok: true, status: "acknowledged" });
   });
 
   it("does not retry a page acknowledged while the worker is running", async () => {
@@ -2485,7 +2507,8 @@ describe("undelivered pages", () => {
 
   it("never replaces a credential claimed by a lock-screen action in progress", async () => {
     const group = await createGroup("Solo claimed", [], ["user_a"]);
-    failing.add("ExponentPushToken[user_a]");
+    // Timed out, so the alert may be on the phone and its credential stays usable.
+    pushControl.lost = true;
     const created = (await (
       await page(group.id, { title: "Claimed" })
     ).json()) as OncallPageCreateResponse;
@@ -2493,7 +2516,7 @@ describe("undelivered pages", () => {
       ?.responseToken as string;
     expect(await oncall.claimPageResponseToken(created.page.id, "user_a", presented)).toBe(true);
     const before = await recipient(created.page.id, "user_a");
-    failing.clear();
+    pushControl.lost = false;
     await ageAttempts(created.page.id);
     await oncall.processDueEscalations();
     expect(pushesTo("user_a")).toHaveLength(0);
@@ -2507,19 +2530,87 @@ describe("undelivered pages", () => {
     await call("POST", `/api/pages/${created.page.id}/resolve`, {});
   });
 
+  it("keeps an alert that may be on the phone usable while a retry is in flight", async () => {
+    const group = await createGroup("Solo timed out", [], ["user_a"]);
+    pushControl.lost = true;
+    const created = (await (
+      await page(group.id, { title: "Timed out" })
+    ).json()) as OncallPageCreateResponse;
+    pushControl.lost = false;
+    const shown = (rejectedTo("user_a")[0]?.data as { responseToken?: string } | undefined)
+      ?.responseToken as string;
+    expect(await recipient(created.page.id, "user_a")).toMatchObject({ deliveryStatus: "failed" });
+
+    await ageAttempts(created.page.id);
+    let settleSend: (outcome: "ok" | "fail") => void = () => {};
+    pushControl.gates.push(new Promise((resolve) => (settleSend = resolve)));
+    const pass = oncall.processDueEscalations();
+    await settle();
+    // The retry replaces the same banner rather than stacking a second alert.
+    expect(pushesTo("user_a")).toHaveLength(1);
+    expect(pushesTo("user_a")[0]).toMatchObject({ collapseId: created.page.id });
+    expect(rejectedTo("user_a")[0]).toMatchObject({ collapseId: created.page.id });
+
+    const acked = await call("POST", `/api/page-responses/${created.page.id}/acknowledge`, {
+      responseToken: shown,
+    });
+    expect(await acked.json()).toEqual({ ok: true, status: "acknowledged" });
+    settleSend("ok");
+    await pass;
+    // The replacement was accepted after the acknowledgement, so it is withdrawn.
+    expect(
+      sent.filter(
+        (message) =>
+          (message.data as { command?: string } | undefined)?.command === "page.claimed" &&
+          message.to === "ExponentPushToken[user_a]",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("keeps the first alert usable through repeated sends whose outcome is unknown", async () => {
+    const group = await createGroup("Solo repeated timeouts", [], ["user_a"]);
+    // Each send times out after Expo may have accepted it; any of them may be on the phone.
+    pushControl.lost = true;
+    const created = (await (
+      await page(group.id, { title: "Repeated timeouts" })
+    ).json()) as OncallPageCreateResponse;
+    for (let retry = 0; retry < 2; retry += 1) {
+      await ageAttempts(created.page.id);
+      await oncall.processDueEscalations();
+    }
+    pushControl.lost = false;
+    await ageAttempts(created.page.id);
+    await oncall.processDueEscalations();
+    expect(rejectedTo("user_a")).toHaveLength(3);
+    expect(pushesTo("user_a")).toHaveLength(1);
+    expect(await recipient(created.page.id, "user_a")).toMatchObject({
+      deliveryStatus: "delivered",
+      deliveryAttempts: 4,
+    });
+
+    const credentials = [...rejectedTo("user_a"), ...pushesTo("user_a")].map(
+      (message) => (message.data as { responseToken?: string }).responseToken,
+    );
+    expect(new Set(credentials).size).toBe(1);
+    const acked = await call("POST", `/api/page-responses/${created.page.id}/acknowledge`, {
+      responseToken: credentials[0],
+    });
+    expect(await acked.json()).toEqual({ ok: true, status: "acknowledged" });
+  });
+
   it("gives an escalation step back when it could not start an attempt for anyone", async () => {
     const group = await createGroup(
       "Solo step held",
       [{ afterMinutes: 30, target: "group" }],
       ["user_a"],
     );
-    failing.add("ExponentPushToken[user_a]");
+    pushControl.lost = true;
     const created = (await (
       await page(group.id, { title: "Held step" })
     ).json()) as OncallPageCreateResponse;
     const presented = (rejectedTo("user_a")[0]?.data as { responseToken?: string } | undefined)
       ?.responseToken as string;
-    failing.clear();
+    pushControl.lost = false;
     // Not in flight, so the step is claimed, but the lock-screen claim blocks a new attempt.
     expect(await oncall.claimPageResponseToken(created.page.id, "user_a", presented)).toBe(true);
     as("user_a");

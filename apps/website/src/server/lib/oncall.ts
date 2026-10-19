@@ -54,7 +54,7 @@ import {
 import { buildPageClaimedPushMessages, buildPagePushMessages, sendPushMessages } from "./push";
 import { RATE_LIMIT_ERRORS, type RateAdmission, type RateWindow } from "./rate-windows";
 import { memberIds } from "./teams";
-import { generatePageResponseToken, hashPageResponseToken } from "./token";
+import { hashPageResponseToken, pageResponseTokenFor } from "./token";
 
 export type GroupRow = typeof oncallGroup.$inferSelect;
 export type PageRow = typeof oncallPage.$inferSelect;
@@ -80,6 +80,11 @@ export const UNDELIVERED_RETRY_MAX_AGE_MS = 24 * 3_600_000;
 export const DELIVERY_STALE_MS = 5 * 60_000;
 /** Retries per worker pass, so a backlog after a deploy drains gradually. */
 export const RETRIES_PER_PASS = 10;
+/**
+ * No new retry starts after a pass has spent this long on retries, so slow
+ * Expo requests delay the next pass's escalation steps by at most one send.
+ */
+export const RETRY_PASS_BUDGET_MS = 30_000;
 /** Expo refusals that repeating the same page cannot fix. */
 const PERMANENT_PUSH_ERRORS = new Set([
   "MessageTooBig",
@@ -414,19 +419,23 @@ function pageIsTriggered(pageId: string): SQL {
   );
 }
 
+/** A claimed delivery attempt: the recipient's credential and the attempt's number. */
+interface DeliveryClaim {
+  responseToken: string;
+  attempt: number;
+}
+
 /**
- * Starts a delivery attempt for `userId` with a fresh one-shot credential.
- * A recipient already delivered, or with an attempt in flight, is not
- * claimed. An undelivered recipient's earlier credential never reached a
- * device, so replacing it is safe. Returns the credential, or null.
+ * Starts a delivery attempt for `userId`. A recipient already delivered, or
+ * with an attempt in flight, is not claimed. Returns the claim, or null.
  */
 async function claimDelivery(
   pageId: string,
   userId: string,
   step: number,
   now: number,
-): Promise<string | null> {
-  const responseToken = generatePageResponseToken();
+): Promise<DeliveryClaim | null> {
+  const responseToken = pageResponseTokenFor(pageId, userId);
   // Synchronous, so a page acknowledged or resolved meanwhile gains no new recipient.
   const outcome = db.transaction((tx) => {
     const open = tx
@@ -452,26 +461,32 @@ async function claimDelivery(
     return inserted ? ("inserted" as const) : ("exists" as const);
   });
   if (outcome === "closed") return null;
-  if (outcome === "inserted") return responseToken;
+  if (outcome === "inserted") return { responseToken, attempt: 1 };
   return reclaimDelivery(pageId, userId, now, redeliverableByStep(now));
 }
 
 /**
  * Claims another attempt for an existing undelivered recipient matching
- * `eligible`. A credential claimed by a lock-screen action in progress is
- * never replaced, and a page closed meanwhile is not paged again.
+ * `eligible`. The attempt reuses the recipient's credential, since an earlier
+ * attempt that timed out or was cut off may still have reached the phone. A
+ * random credential from before credentials were derived is kept as the
+ * previous one for the same reason. A recipient whose credential is claimed
+ * by a lock-screen action in progress is not paged, nor is a page closed
+ * meanwhile.
  */
 async function reclaimDelivery(
   pageId: string,
   userId: string,
   now: number,
   eligible: SQL,
-): Promise<string | null> {
-  const responseToken = generatePageResponseToken();
-  const reclaimed = await db
+): Promise<DeliveryClaim | null> {
+  const responseToken = pageResponseTokenFor(pageId, userId);
+  const hash = hashPageResponseToken(responseToken);
+  const [reclaimed] = await db
     .update(oncallPageRecipient)
     .set({
-      responseTokenHash: hashPageResponseToken(responseToken),
+      responseTokenHash: hash,
+      previousResponseTokenHash: sql`case when ${oncallPageRecipient.responseTokenHash} = ${hash} then ${oncallPageRecipient.previousResponseTokenHash} else ${oncallPageRecipient.responseTokenHash} end`,
       acceptedCount: 0,
       deliveryStatus: "pending",
       deliveryAttempts: sql`${oncallPageRecipient.deliveryAttempts} + 1`,
@@ -487,8 +502,8 @@ async function reclaimDelivery(
         pageIsTriggered(pageId),
       ),
     )
-    .returning({ userId: oncallPageRecipient.userId });
-  return reclaimed.length > 0 ? responseToken : null;
+    .returning({ attempt: oncallPageRecipient.deliveryAttempts });
+  return reclaimed ? { responseToken, attempt: reclaimed.attempt } : null;
 }
 
 /**
@@ -500,7 +515,7 @@ async function deliver(
   page: PageRow,
   groupName: string,
   userId: string,
-  responseToken: string,
+  { responseToken, attempt }: DeliveryClaim,
   tokens: string[],
 ): Promise<number> {
   let accepted = 0;
@@ -547,26 +562,19 @@ async function deliver(
       deliveryStatus = "failed";
     }
   }
-  const hash = hashPageResponseToken(responseToken);
-  const attempt = and(
-    eq(oncallPageRecipient.pageId, page.id),
-    eq(oncallPageRecipient.userId, userId),
-    eq(oncallPageRecipient.responseTokenHash, hash),
-  );
-  // Scoped to this attempt's credential so a slower, superseded attempt cannot overwrite a newer one.
-  const [row] = await db
-    .select({ attempts: oncallPageRecipient.deliveryAttempts })
-    .from(oncallPageRecipient)
-    .where(attempt)
-    .limit(1);
   const nextAttemptAt =
-    deliveryStatus === "delivered" || !retry || !row
-      ? null
-      : new Date(Date.now() + retryDelayMs(row.attempts));
+    deliveryStatus === "delivered" || !retry ? null : new Date(Date.now() + retryDelayMs(attempt));
+  // Scoped to this attempt so a slower, superseded attempt cannot overwrite a newer one.
   await db
     .update(oncallPageRecipient)
     .set({ acceptedCount: accepted, deliveryStatus, nextAttemptAt })
-    .where(attempt);
+    .where(
+      and(
+        eq(oncallPageRecipient.pageId, page.id),
+        eq(oncallPageRecipient.userId, userId),
+        eq(oncallPageRecipient.deliveryAttempts, attempt),
+      ),
+    );
   await deactivateStale(staleTokens);
   if (accepted > 0) {
     const reached = tokens.filter((token) => !staleTokens.includes(token));
@@ -616,11 +624,11 @@ async function notifyRecipients(
   let attempted = 0;
   const targets = await devicesOf(userIds);
   for (const userId of userIds) {
-    const responseToken = await claimDelivery(page.id, userId, step, Date.now());
-    if (!responseToken) continue;
+    const claim = await claimDelivery(page.id, userId, step, Date.now());
+    if (!claim) continue;
     attempted += 1;
     const tokens = targets.filter((target) => target.userId === userId).map((t) => t.token);
-    accepted += await deliver(page, groupName, userId, responseToken, tokens);
+    accepted += await deliver(page, groupName, userId, claim, tokens);
   }
   return { accepted, attempted };
 }
@@ -1069,6 +1077,15 @@ export async function resolvePage(
   return { ok: true, page: updated };
 }
 
+/** A recipient's credential, or the random one it was paged with before credentials were derived. */
+function matchesResponseToken(responseToken: string): SQL {
+  const hash = hashPageResponseToken(responseToken);
+  return or(
+    eq(oncallPageRecipient.responseTokenHash, hash),
+    eq(oncallPageRecipient.previousResponseTokenHash, hash),
+  ) as SQL;
+}
+
 /** Resolves a lock-screen credential to its page and a still-admitted recipient. */
 export async function pageRecipientByToken(pageId: string, responseToken: string) {
   const [row] = await db
@@ -1088,12 +1105,7 @@ export async function pageRecipientByToken(pageId: string, responseToken: string
       ),
     )
     .innerJoin(userTable, eq(userTable.id, oncallPageRecipient.userId))
-    .where(
-      and(
-        eq(oncallPageRecipient.pageId, pageId),
-        eq(oncallPageRecipient.responseTokenHash, hashPageResponseToken(responseToken)),
-      ),
-    )
+    .where(and(eq(oncallPageRecipient.pageId, pageId), matchesResponseToken(responseToken)))
     .limit(1);
   if (!row || !isEmailAllowed(row.email)) return undefined;
   return { page: row.page, userId: row.userId, usedAt: row.usedAt };
@@ -1217,7 +1229,9 @@ async function retryUndelivered(now: Date): Promise<void> {
     .orderBy(asc(oncallPageRecipient.notifiedAt))
     .limit(RETRIES_PER_PASS);
   const pageable = new Map<string, Set<string>>();
+  const started = Date.now();
   for (const { page, groupName, userId } of due) {
+    if (Date.now() - started >= RETRY_PASS_BUDGET_MS) break;
     try {
       let team = pageable.get(page.teamId);
       if (!team) {
@@ -1241,10 +1255,10 @@ async function retryUndelivered(now: Date): Promise<void> {
           );
         continue;
       }
-      const responseToken = await reclaimDelivery(page.id, userId, Date.now(), dueForRetry(at));
-      if (!responseToken) continue;
+      const claim = await reclaimDelivery(page.id, userId, Date.now(), dueForRetry(at));
+      if (!claim) continue;
       const tokens = (await devicesOf([userId])).map((target) => target.token);
-      const accepted = await deliver(page, groupName, userId, responseToken, tokens);
+      const accepted = await deliver(page, groupName, userId, claim, tokens);
       if (accepted > 0 && page.createdByUserId) {
         await trackNotification(page.createdByUserId, `${page.id}:retry:${userId}`);
       }
@@ -1312,7 +1326,7 @@ export async function claimPageResponseToken(
       and(
         eq(oncallPageRecipient.pageId, pageId),
         eq(oncallPageRecipient.userId, userId),
-        eq(oncallPageRecipient.responseTokenHash, hashPageResponseToken(responseToken)),
+        matchesResponseToken(responseToken),
         isNull(oncallPageRecipient.responseTokenUsedAt),
       ),
     )
@@ -1333,7 +1347,7 @@ export async function releasePageResponseToken(
       and(
         eq(oncallPageRecipient.pageId, pageId),
         eq(oncallPageRecipient.userId, userId),
-        eq(oncallPageRecipient.responseTokenHash, hashPageResponseToken(responseToken)),
+        matchesResponseToken(responseToken),
       ),
     );
 }
