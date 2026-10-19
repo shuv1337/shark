@@ -476,7 +476,7 @@ describe("MCP OAuth end to end", () => {
     // Better Auth's own errors are uncacheable too, and the resource check only applies to
     // the grant types SHark issues, so the documented answers for other bodies are unchanged.
     const replayed = await exchange(clientId, code, verifier);
-    expect(replayed.status).toBe(401);
+    expect(replayed.status).toBe(400);
     expect(replayed.body.error).toBe("invalid_grant");
     expectUncacheable(replayed.headers, "replayed code");
     const empty = await token({});
