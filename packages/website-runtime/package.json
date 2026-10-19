@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "better-sqlite3": "^13.0.1",
-    "expo-server-sdk": "^6.1.0"
+    "expo-server-sdk": "^6.1.0",
+    "undici": "^7.28.0"
   }
 }
