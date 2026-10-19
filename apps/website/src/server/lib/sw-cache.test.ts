@@ -8,7 +8,7 @@ const source = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), "../../../public/sw.js"),
   "utf8",
 )
-  .replace("/* __PRECACHE__ */ []", '["/assets/x.js"]')
+  .replace("/* __PRECACHE__ */ []", '["/assets/x.js", "/assets/y.css"]')
   .replace('"__VERSION__"', '"test-version"');
 
 function harness() {
@@ -151,6 +151,7 @@ describe("service worker cache boundary", () => {
     await Promise.all(pending);
     expect(worker.cache.add.mock.calls.map(([request]) => request.url)).toEqual([
       "/assets/x.js",
+      "/assets/y.css",
       "/board",
       "/inbox",
       "/teams",
@@ -187,9 +188,16 @@ function page(
   init: { status?: number; type?: string; url?: string; redirected?: boolean } = {},
 ) {
   const response = new Response(body, {
-    status: init.status ?? 200,
+    status: init.status === 0 ? 200 : (init.status ?? 200),
     headers: { "content-type": init.type ?? "text/html; charset=utf-8" },
   });
+  if (init.status === 0) {
+    Object.defineProperties(response, {
+      status: { value: 0 },
+      ok: { value: false },
+      type: { value: "opaqueredirect" },
+    });
+  }
   if (init.url !== undefined) Object.defineProperty(response, "url", { value: init.url });
   if (init.redirected !== undefined) {
     Object.defineProperty(response, "redirected", { value: init.redirected });
@@ -223,7 +231,11 @@ function storageHarness(options: { addFails?: boolean; putFails?: boolean } = {}
           path,
           new Response(`stored ${path}`, {
             headers: {
-              "content-type": path.endsWith(".js") ? "text/javascript" : "text/html",
+              "content-type": path.startsWith("/assets/")
+                ? path.endsWith(".css")
+                  ? "text/css"
+                  : "text/javascript"
+                : "text/html",
             },
           }),
         );
@@ -234,7 +246,11 @@ function storageHarness(options: { addFails?: boolean; putFails?: boolean } = {}
       },
       async put(request: string | { url: string }, response: Response) {
         if (options.putFails) throw new TypeError("quota");
-        bucket.set(pathOf(request), response.clone());
+        const body = await response.text();
+        bucket.set(
+          pathOf(request),
+          new Response(body, { status: response.status, headers: response.headers }),
+        );
       },
     };
   };
@@ -267,6 +283,18 @@ function storageHarness(options: { addFails?: boolean; putFails?: boolean } = {}
     caches: {
       open: async (name: string) => open(name),
       keys: async () => [...stores.keys()],
+      match: async (request: string | { url: string }, options?: { cacheName?: string }) => {
+        if (options?.cacheName) {
+          const entries = stores.get(options.cacheName);
+          const hit = entries?.get(pathOf(request));
+          return hit ? hit.clone() : undefined;
+        }
+        for (const entries of stores.values()) {
+          const hit = entries.get(pathOf(request));
+          if (hit) return hit.clone();
+        }
+        return undefined;
+      },
       delete: async (name: string) => {
         deleted.push(name);
         return stores.delete(name);
@@ -317,7 +345,11 @@ function storageHarness(options: { addFails?: boolean; putFails?: boolean } = {}
           path,
           new Response(body, {
             headers: {
-              "content-type": path.endsWith(".js") ? "text/javascript" : "text/html",
+              "content-type": path.startsWith("/assets/")
+                ? path.endsWith(".css")
+                  ? "text/css"
+                  : "text/javascript"
+                : "text/html",
             },
           }),
         );
@@ -334,6 +366,7 @@ const PREVIOUS_SHELLS = {
   "/teams": "previous teams",
   "/settings": "previous settings",
   "/assets/x.js": "previous asset",
+  "/assets/y.css": "previous styles",
 };
 
 /**
@@ -355,7 +388,7 @@ describe("service worker shell retention", () => {
     expect(await (await worker.dispatchFetch("/board", "navigate"))?.text()).toContain("old.js");
     expect(await (await worker.dispatchFetch("/assets/old.js"))?.text()).toBe("old bundle");
 
-    // Fetching new assets alone cannot make an old document a current shell.
+    // Fetching only part of the new build cannot make an old document stale.
     worker.fetchMock.mockResolvedValue(
       page("new bundle", {
         type: "text/javascript",
@@ -366,14 +399,44 @@ describe("service worker shell retention", () => {
     expect(worker.names()).toContain(PREVIOUS);
     expect(await worker.body(CACHE_NAME, "/board")).toBeUndefined();
     worker.fetchMock.mockResolvedValue(
-      page('<script src="/assets/x.js"></script>', {
+      page('<link href="/assets/y.css"><script src="/assets/x.js"></script>', {
         url: "https://shark.example/board",
       }),
     );
-    await worker.dispatchFetch("/board", "navigate");
+    const onlineBoard = await worker.dispatchFetch("/board", "navigate");
+    expect(await onlineBoard?.text()).toContain("y.css");
+    expect(worker.names()).toContain(PREVIOUS);
+
+    // If the radio drops before the final asset, the complete old generation
+    // wins over the partial current /board entry.
+    worker.fetchMock.mockRejectedValue(new Error("offline"));
+    expect(await (await worker.dispatchFetch("/board", "navigate"))?.text()).toContain("old.js");
+
+    worker.fetchMock.mockResolvedValue(
+      page("new styles", {
+        type: "text/css",
+        url: "https://shark.example/assets/y.css",
+      }),
+    );
+    await worker.dispatchFetch("/assets/y.css");
     expect(worker.names()).not.toContain(PREVIOUS);
     worker.fetchMock.mockRejectedValue(new Error("offline"));
-    expect(await (await worker.dispatchFetch("/inbox", "navigate"))?.text()).toContain("x.js");
+    expect(await (await worker.dispatchFetch("/inbox", "navigate"))?.text()).toContain("y.css");
+  });
+
+  it("copies only an allowlisted unchanged hashed asset into the current generation", async () => {
+    const worker = storageHarness({ addFails: true });
+    worker.seed(PREVIOUS, PREVIOUS_SHELLS);
+    await worker.dispatch("install");
+    await worker.dispatch("activate");
+
+    expect(await worker.body(CACHE_NAME, "/assets/x.js")).toBeUndefined();
+    expect(await (await worker.dispatchFetch("/assets/x.js"))?.text()).toBe("previous asset");
+    expect(await worker.body(CACHE_NAME, "/assets/x.js")).toBe("previous asset");
+    expect(await worker.body(CACHE_NAME, "/board")).toBeUndefined();
+
+    expect(await (await worker.dispatchFetch("/assets/old.js"))?.text()).toBeUndefined();
+    expect(await worker.body(CACHE_NAME, "/assets/old.js")).toBeUndefined();
   });
 
   it("does not delete the previous shell cache when the new one stored nothing", async () => {
@@ -392,6 +455,18 @@ describe("service worker shell retention", () => {
     expect(await board?.text()).toBe("previous board");
     const inbox = await worker.dispatchFetch("/inbox", "navigate");
     expect(await inbox?.text()).toBe("previous inbox");
+  });
+
+  it("removes empty old generations without recreating them during lookup", async () => {
+    const worker = storageHarness({ addFails: true });
+    worker.seed(PREVIOUS, PREVIOUS_SHELLS);
+    worker.seed("shark-shell-empty", {});
+    await worker.dispatch("install");
+    await worker.dispatch("activate");
+
+    expect(worker.deleted).toEqual(["shark-shell-empty"]);
+    expect(worker.names()).toContain(PREVIOUS);
+    expect(worker.names()).not.toContain("shark-shell-empty");
   });
 
   it("does not copy previous documents into the current build cache", async () => {
@@ -423,7 +498,7 @@ describe("service worker shell retention", () => {
 
   it("refills an empty shell from a later signed-in navigation, then drops the stale cache", async () => {
     const worker = storageHarness({ addFails: true });
-    worker.seed(PREVIOUS, { "/inbox": "previous inbox" });
+    worker.seed(PREVIOUS, PREVIOUS_SHELLS);
     await worker.dispatch("install");
     await worker.dispatch("activate");
     expect(worker.deleted).toEqual([]);
@@ -441,6 +516,12 @@ describe("service worker shell retention", () => {
           url: "https://shark.example/assets/x.js",
         });
       }
+      if (path === "/assets/y.css") {
+        return page("signed-in styles", {
+          type: "text/css",
+          url: "https://shark.example/assets/y.css",
+        });
+      }
       throw new Error(`unexpected ${request.url}`);
     });
 
@@ -450,6 +531,8 @@ describe("service worker shell retention", () => {
     expect(worker.names()).toContain(PREVIOUS);
 
     await worker.dispatchFetch("/assets/x.js");
+    expect(worker.deleted).toEqual([]);
+    await worker.dispatchFetch("/assets/y.css");
     expect(worker.deleted).toEqual([PREVIOUS]);
     expect(worker.names()).not.toContain(PREVIOUS);
 
@@ -478,9 +561,10 @@ describe("service worker shell retention", () => {
       const path = new URL(request.url).pathname;
       if (path === "/board") return page("denied", { status: 401, url: request.url });
       if (path === "/settings") {
-        return page("sign in", {
-          url: "https://shark.example/login?next=%2Fsettings",
-          redirected: true,
+        return page("", {
+          status: 0,
+          url: request.url,
+          redirected: false,
         });
       }
       return page("docs", { url: request.url });

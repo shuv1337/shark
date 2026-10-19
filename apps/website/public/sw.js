@@ -40,7 +40,16 @@ async function dropPreviousShellCaches() {
  * complete and delete the only copies of the assets that HTML references. */
 async function retainPreviousUntilComplete() {
   const current = await caches.open(CACHE_NAME);
-  if (await shellCacheComplete(current)) await dropPreviousShellCaches();
+  if (await shellCacheComplete(current)) {
+    await dropPreviousShellCaches();
+    return;
+  }
+
+  // Signed-out installs leave an empty generation behind. It is not a usable
+  // fallback, and retaining it makes lookup cost grow after every update.
+  for (const name of await previousShellCacheNames()) {
+    if (!(await caches.match("/board", { cacheName: name }))) await caches.delete(name);
+  }
 }
 
 function shellDocument(pathname) {
@@ -90,22 +99,37 @@ async function remember(path, response) {
 }
 
 async function matchPrevious(path) {
+  if (!path) return undefined;
   for (const name of (await previousShellCacheNames()).reverse()) {
-    const hit = await (await caches.open(name)).match(path);
+    // CacheStorage.match does not recreate a cache that cleanup just deleted.
+    const hit = await caches.match(path, { cacheName: name });
     if (hit) return hit;
   }
   return undefined;
 }
 
-async function matchAny(path) {
+async function matchCurrent(path) {
   if (!path) return undefined;
-  const current = await caches.open(CACHE_NAME);
-  return (await current.match(path)) || matchPrevious(path);
+  return (await caches.open(CACHE_NAME)).match(path);
 }
 
 async function respondWithAsset(path, request) {
-  const cached = await matchAny(path);
-  if (cached) return cached;
+  const current = await matchCurrent(path);
+  if (current) return current;
+
+  const previous = await matchPrevious(path);
+  if (previous) {
+    try {
+      // `path` is in this build's exact precache allowlist. Copying the same
+      // content-hashed bytes forward lets this generation become complete;
+      // shell documents are never copied between generations.
+      await remember(path, previous.clone());
+    } catch {
+      // The retained response can still serve this request.
+    }
+    return previous;
+  }
+
   const response = await fetch(request);
   if (storableAsset(response)) {
     try {
@@ -130,10 +154,28 @@ async function respondWithNavigation(pathname, request) {
     }
     return response;
   } catch {
-    const shell =
-      (await matchAny(pathname)) ||
-      (await matchAny(shellDocument(pathname))) ||
-      (await matchAny("/board"));
+    const current = await caches.open(CACHE_NAME);
+    const document = shellDocument(pathname);
+    let shell;
+    if (await shellCacheComplete(current)) {
+      shell =
+        (await current.match(pathname)) ||
+        (document ? await current.match(document) : undefined) ||
+        (await current.match("/board")) ||
+        (await matchPrevious(pathname)) ||
+        (await matchPrevious(document)) ||
+        (await matchPrevious("/board"));
+    } else {
+      // A partial current generation may contain new HTML without all of its
+      // hashed assets. Prefer one complete retained generation as a unit.
+      shell =
+        (await matchPrevious(pathname)) ||
+        (await matchPrevious(document)) ||
+        (await matchPrevious("/board")) ||
+        (await current.match(pathname)) ||
+        (document ? await current.match(document) : undefined) ||
+        (await current.match("/board"));
+    }
     return shell || offlineResponse();
   }
 }
