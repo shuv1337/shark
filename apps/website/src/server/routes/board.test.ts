@@ -676,6 +676,100 @@ describe("work, notes, done", () => {
     expect((await agent("/notes/fm:n", BRO, { method: "DELETE" })).status).toBe(404);
     expect((await agent("/notes/fm:n", FM, { method: "DELETE" })).status).toBe(200);
   });
+
+  it("clears the in-flight status label on done unless a final label is sent", async () => {
+    const start = async (key: string) => {
+      const created = await agent("/work", FM, {
+        method: "PUT",
+        body: JSON.stringify({
+          key,
+          title: "Acceptance",
+          state: "in_flight",
+          statusLabel: "Acceptance test running",
+          detail: "Still on the last step",
+        }),
+      });
+      expect(created.status).toBe(201);
+    };
+    const finish = (key: string, body: Record<string, unknown> = {}) =>
+      agent(`/work/${key}/done`, FM, { method: "POST", body: JSON.stringify(body) });
+    const read = async (key: string) =>
+      ((await (await agent(`/work/${key}`, FM)).json()) as { work: Record<string, unknown> }).work;
+
+    await start("fm:done-clear");
+    const cleared = await finish("fm:done-clear", { outcome: "done" });
+    expect(cleared.status).toBe(200);
+    expect(await cleared.json()).toMatchObject({
+      work: {
+        state: "done",
+        statusLabel: null,
+        completionVerb: "done",
+        detail: "Still on the last step",
+      },
+    });
+    expect(await read("fm:done-clear")).toMatchObject({ state: "done", statusLabel: null });
+
+    await start("fm:done-failed");
+    expect((await finish("fm:done-failed", { outcome: "failed" })).status).toBe(200);
+    expect(await read("fm:done-failed")).toMatchObject({ state: "failed", statusLabel: null });
+
+    await start("fm:done-null");
+    expect((await finish("fm:done-null", { statusLabel: null })).status).toBe(200);
+    expect(await read("fm:done-null")).toMatchObject({ statusLabel: null });
+
+    await start("fm:done-final");
+    const finalLabel = await finish("fm:done-final", {
+      statusLabel: "  Shipped  ",
+      verb: "shipped",
+    });
+    expect(finalLabel.status).toBe(200);
+    expect(await read("fm:done-final")).toMatchObject({
+      state: "done",
+      statusLabel: "Shipped",
+      completionVerb: "shipped",
+    });
+    expect((await finish("fm:done-final", { verb: "shipped" })).status).toBe(200);
+    expect(await read("fm:done-final")).toMatchObject({
+      statusLabel: null,
+      completionVerb: "shipped",
+    });
+    const restored = await finish("fm:done-final", { statusLabel: "Shipped", verb: "shipped" });
+    expect(restored.status).toBe(200);
+    expect(await read("fm:done-final")).toMatchObject({ statusLabel: "Shipped" });
+
+    await start("fm:done-blank");
+    expect((await finish("fm:done-blank", { statusLabel: "   " })).status).toBe(400);
+    expect((await finish("fm:done-blank", { statusLabel: `a\nb` })).status).toBe(400);
+    expect((await finish("fm:done-blank", { statusLabel: "a".repeat(61) })).status).toBe(400);
+    const stolen = await agent("/work/fm:done-blank/done", BRO, {
+      method: "POST",
+      body: JSON.stringify({ outcome: "done", statusLabel: "Taken" }),
+    });
+    expect(stolen.status).toBe(409);
+    expect(await read("fm:done-blank")).toMatchObject({
+      state: "in_flight",
+      statusLabel: "Acceptance test running",
+    });
+
+    await start("fm:done-secret");
+    const secret = await finish("fm:done-secret", { statusLabel: `hark_${"s".repeat(43)}` });
+    expect(secret.status).toBe(422);
+    expect(await read("fm:done-secret")).toMatchObject({
+      state: "in_flight",
+      statusLabel: "Acceptance test running",
+    });
+
+    const fresh = await finish("fm:done-fresh", { title: "One shot", statusLabel: "Noted" });
+    expect(fresh.status).toBe(200);
+    expect(await read("fm:done-fresh")).toMatchObject({
+      state: "done",
+      statusLabel: "Noted",
+      title: "One shot",
+    });
+    const bare = await finish("fm:done-bare", { title: "No label" });
+    expect(bare.status).toBe(200);
+    expect(await read("fm:done-bare")).toMatchObject({ statusLabel: null });
+  });
 });
 
 describe("work read-back", () => {

@@ -1044,6 +1044,7 @@ export async function markDone(
     input.key,
     input.title,
     input.note,
+    input.statusLabel,
     input.agentDisplay,
     ...input.links.flatMap((link) => [link.label, link.url]),
   ]);
@@ -1077,6 +1078,10 @@ export async function markDone(
       state: input.outcome,
       links,
       note: input.note ?? null,
+      // A completion always replaces the label. Undefined and null both clear it; only an
+      // explicit string keeps a status line, and that string is the final label, not the
+      // in-flight one from the last heartbeat.
+      statusLabel: input.statusLabel ?? null,
       waitingAskId: null,
       completedAt: now,
       completionVerb: input.verb,

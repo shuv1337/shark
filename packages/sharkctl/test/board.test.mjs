@@ -309,6 +309,22 @@ test("board work, done, and note send the documented payloads", async () => {
       /--state/,
     );
     await assert.rejects(execute(["board", "done", "--key", "k", "--verb", "won"], env), /--verb/);
+    await execute(["board", "done", "--key", "bro:sb-1", "--status", "Shipped"], env);
+    assert.deepEqual(calls.at(-1).body, { statusLabel: "Shipped" });
+    await execute(["board", "done", "--key", "bro:sb-1", "--stdin"], env, {
+      stdin: [JSON.stringify({ statusLabel: null })],
+    });
+    assert.deepEqual(calls.at(-1).body, { statusLabel: null });
+    await assert.rejects(
+      execute(["board", "done", "--key", "k", "--status", `hark_${"s".repeat(43)}`], env),
+      /Refusing to send board content/,
+    );
+    await assert.rejects(
+      execute(["board", "done", "--key", "k", "--stdin"], env, {
+        stdin: [JSON.stringify({ statusLabel: { text: "nope" } })],
+      }),
+      /--status must be text/,
+    );
     const read = await execute(["board", "work-get", "--key", "bro:sb-1"], env);
     assert.equal(read.exitCode, 0);
     assert.equal(calls.at(-1).method, "GET");

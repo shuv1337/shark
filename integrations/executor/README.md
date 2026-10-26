@@ -20,6 +20,9 @@ Wraps the SHark agent API (`https://shark.shuv.dev/api/agent/*`) for Executor ag
 - notify `oncall` pages that group, needs `oncall:write`, and cannot be combined with
   deviceIds. Omit unset notify fields; do not send null.
 - `agentDisplay` (max 60 characters) on board writes, notify, and ask is the per-bot name.
+- `board_done` clears `statusLabel`, so a finished item does not keep a line such as
+  "Acceptance test running". Pass a string to store a final label, or null to clear it explicitly.
+  A later `board_done` replaces that label again.
 - Every activity_start must be paired with activity_end.
 - `SHARK_ORIGIN` overrides the API origin for local testing. HTTPS, or HTTP on localhost
   only. Unset means `https://shark.shuv.dev`.
