@@ -9,7 +9,7 @@ import { env } from "./env";
 import { accessLog } from "./lib/access-log";
 import { trustedClientIp, withTrustedClientIp } from "./lib/client-ip";
 import { OAUTH_TOKEN_ENDPOINT_PATH } from "./lib/oauth";
-import { releaseConsentSignature, reserveConsentSignature } from "./lib/oauth-consent-replay";
+import { guardOAuthConsentReplay } from "./lib/oauth-consent-replay";
 import { databaseIsReady } from "./lib/readiness";
 import { safeReturnPath } from "./lib/return-path";
 import { errorClass } from "./lib/teams";
@@ -87,6 +87,8 @@ app.use(
       usb: [],
       payment: [],
     },
+    // Hono's default. Browsers honor it when the TLS edge forwards the header.
+    strictTransportSecurity: "max-age=15552000; includeSubDomains",
   }),
 );
 
@@ -204,29 +206,9 @@ app.on(["GET", "POST"], "/api/auth/expo-authorization-proxy", async (c, next) =>
 // The signed consent request carries no nonce upstream, so back/refresh could
 // approve it again and mint another authorization code.
 const usedConsentSignatures = new Map<string, number>();
-app.post("/api/auth/oauth2/consent", async (c, next) => {
-  let oauthQuery: unknown;
-  try {
-    const request = c.req.raw.clone();
-    const type = request.headers.get("content-type") ?? "";
-    oauthQuery = type.includes("application/json")
-      ? ((await request.json()) as { oauth_query?: unknown } | null)?.oauth_query
-      : (await request.formData()).get("oauth_query");
-  } catch {
-    oauthQuery = undefined;
-  }
-  const decision = reserveConsentSignature(usedConsentSignatures, oauthQuery);
-  if (decision.status === "replay") {
-    return c.json(
-      { error: "invalid_request", error_description: "This request was already decided" },
-      400,
-    );
-  }
-  await next();
-  if (decision.status === "reserved" && !c.res.ok) {
-    releaseConsentSignature(usedConsentSignatures, decision.signature);
-  }
-});
+app.post("/api/auth/oauth2/consent", (c, next) =>
+  guardOAuthConsentReplay(c, next, usedConsentSignatures),
+);
 
 app.on(["GET", "POST"], "/api/auth/*", async (c) => {
   const request = withTrustedClientIp(c.req.raw);

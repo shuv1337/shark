@@ -313,7 +313,9 @@ Landed, adapted to SHark:
   are refused. Google is not an allowed target: SHark has no Google sign-in. There is no legacy
   host redirect; SHark has one public origin.
 - `9e0523e` — `secureHeaders` (frame denial, CSP with `form-action 'self'`, nosniff, referrer,
-  permissions policy), pattern-based access-log redaction (existing `/conversation/v1/` redaction
+  permissions policy, and `Strict-Transport-Security: max-age=15552000; includeSubDomains`).
+  The process still listens on plain HTTP; browsers honor that HSTS header when the TLS edge
+  forwards it. Pattern-based access-log redaction (existing `/conversation/v1/` redaction
   kept), `requireAuth` rejects unsafe methods with a foreign `Origin` or `Sec-Fetch-Site: cross-site`,
   dynamic OAuth client metadata is bounded to https links, and `/.well-known` CORS lists
   `allowHeaders` explicitly. Better Auth rate limits read only `x-shark-client-ip`, which the app
@@ -323,6 +325,8 @@ Landed, adapted to SHark:
   handler already set one. HTML shells revalidate; Vite's hashed `/assets/*` are
   `private, immutable` because those files stay behind `requireAuth`.
 - `5b67ee8` — a signed OAuth consent `sig` can succeed only once (`lib/oauth-consent-replay.ts`).
+  The guard reads JSON with Better Auth's case-insensitive `application/json` and `+json`
+  matcher, so `Application/JSON` cannot skip the reservation.
 - `2abb0d0`, `b93794b` — a device row moves to another account only when the request's APNs token
   matches the stored one, or the row has no APNs token and Expo has already cleared `active`.
   The 30-day idle takeover is not adopted. The active-device recount inside the registration
@@ -333,8 +337,10 @@ Landed, adapted to SHark:
   token's origin (exit 3), requires https except on loopback, opens the login page only when it is
   that same origin, and revokes a minted token that was not saved. Permission setup warns when
   `sharkctl` is running from an npx cache.
-- `7a79b9e` — `hono` ^4.13.11, `@hono/node-server` ^1.19.15, and overrides for `undici` ^7.29.1
-  and `fast-uri` ^3.1.8. `minimumReleaseAge` is 7 days. The runtime image is digest-pinned,
+- `7a79b9e` — `hono` ^4.13.11, `@hono/node-server` ^2.1.3 (`GHSA-rmxm-3fg6-px4f` still
+  affects 1.19.17; 2.1.3 is the fixed 2.x floor and keeps the `hono` ^4 peer), and overrides for
+  `undici` ^7.29.1 and `fast-uri` ^3.1.9 (`GHSA-w74x-v6f9-j3xg`, `GHSA-wjr9-j795-jxcr`).
+  `minimumReleaseAge` is 7 days. The runtime image is digest-pinned,
   root-owned, and read-only except `/data`; `compose.yaml` drops all capabilities, sets
   `no-new-privileges`, and keeps the publish address on loopback. The image is still the GHCR
   digest named by `SHARK_IMAGE`, not a local build of Hark's compose file.

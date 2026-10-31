@@ -687,5 +687,8 @@ describe("Expo authorization proxy", () => {
     expect(health.headers.get("cache-control")).toBe("no-store");
     expect(health.headers.get("x-frame-options")).toBe("DENY");
     expect(health.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(health.headers.get("strict-transport-security")).toBe(
+      "max-age=15552000; includeSubDomains",
+    );
   });
 });
