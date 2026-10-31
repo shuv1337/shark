@@ -16,5 +16,13 @@ sqlite.pragma("foreign_keys = ON");
 
 export const db = drizzle(sqlite, { schema });
 
+// Transactions take the write lock up front (BEGIN IMMEDIATE). A deferred one
+// that reads first and then writes fails at once with SQLITE_BUSY_SNAPSHOT
+// ("database is locked", no busy wait) whenever another connection to the same
+// file committed in between; an immediate one waits its turn instead.
+const transaction = db.transaction.bind(db);
+db.transaction = ((run, config) =>
+  transaction(run, { behavior: "immediate", ...config })) as typeof db.transaction;
+
 /** The connection or a transaction on it; synchronous `.get()`/`.run()` work on both. */
 export type Executor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
