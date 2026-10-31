@@ -299,6 +299,66 @@ rejection. Its fixture must be updated deliberately if upstream wording changes.
 These are protocol or persistence identities, not
 visible incomplete branding.
 
+## Security-first sync, 2026-10-31
+
+Selective port of Hark's October 22 hardening batch and the October 28 Expo authorization-proxy
+follow-ons. This is not a merge of `upstream/main`. Feature drift (landing, billing, Live Activity
+layouts, the `hark.fyi` move, AWS CDK) stays on Hark.
+
+Landed, adapted to SHark:
+
+- `9e0523e`, `0a3410d`, `aa6a046` — `/api/auth/expo-authorization-proxy` accepts a single
+  `authorizationURL` whose origin is `https://appleid.apple.com` and, when the browser sends them,
+  only `Sec-Fetch-Mode: navigate` and `Sec-Fetch-Dest: document`. Cross-site and same-site fetches
+  are refused. Google is not an allowed target: SHark has no Google sign-in. There is no legacy
+  host redirect; SHark has one public origin.
+- `9e0523e` — `secureHeaders` (frame denial, CSP with `form-action 'self'`, nosniff, referrer,
+  permissions policy), pattern-based access-log redaction (existing `/conversation/v1/` redaction
+  kept), `requireAuth` rejects unsafe methods with a foreign `Origin` or `Sec-Fetch-Site: cross-site`,
+  dynamic OAuth client metadata is bounded to https links, and `/.well-known` CORS lists
+  `allowHeaders` explicitly. Better Auth rate limits read only `x-shark-client-ip`, which the app
+  sets from `TRUSTED_CLIENT_IP_HEADER` or `TRUSTED_FORWARDED_FOR_HOPS` and otherwise strips.
+  Production refuses to start when neither is set.
+- `5b67ee8`, `eda403f` — `/api/*`, `/hooks/*`, and `/mcp` send `Cache-Control: no-store` unless the
+  handler already set one. HTML shells revalidate; Vite's hashed `/assets/*` are
+  `private, immutable` because those files stay behind `requireAuth`.
+- `5b67ee8` — a signed OAuth consent `sig` can succeed only once (`lib/oauth-consent-replay.ts`).
+- `2abb0d0`, `b93794b` — a device row moves to another account only when the request's APNs token
+  matches the stored one, or the row has no APNs token and Expo has already cleared `active`.
+  The 30-day idle takeover is not adopted. The active-device recount inside the registration
+  transaction includes web and macOS endpoints, matching SHark's existing cap.
+- `9e0523e` — OAuth grant rows (`api_token.oauth_client_id`) do not count toward the CLI token cap.
+- `7a79b9e` — MCP read results that quote other senders, including board answers, start with an
+  untrusted-content notice. `sharkctl` refuses `HARK_API_URL` when it disagrees with the stored
+  token's origin (exit 3), requires https except on loopback, opens the login page only when it is
+  that same origin, and revokes a minted token that was not saved. Permission setup warns when
+  `sharkctl` is running from an npx cache.
+- `7a79b9e` — `hono` ^4.13.11, `@hono/node-server` ^1.19.15, and overrides for `undici` ^7.29.1
+  and `fast-uri` ^3.1.8. `minimumReleaseAge` is 7 days. The runtime image is digest-pinned,
+  root-owned, and read-only except `/data`; `compose.yaml` drops all capabilities, sets
+  `no-new-privileges`, and keeps the publish address on loopback. The image is still the GHCR
+  digest named by `SHARK_IMAGE`, not a local build of Hark's compose file.
+
+Already present in SHark, so not re-ported: webhook and on-call admission inside one SQLite
+transaction, callback DNS pinning in `lib/outbound.ts`, Apple-only allowlist auth, and https-only
+consent logos (`publicHttpsHref`).
+
+Deferred on purpose:
+
+- `4c75b31` iOS link confirmation, avatar fetch bounds, and website-data clearing. Those edits sit
+  on rebranded Expo routes and the SSHuv handoff, which stays HTTP(S)-only and prefix-scoped.
+- `7a79b9e` `sharkctl --stdin` key allowlist. Hark's allowlist does not cover SHark board,
+  permission-bridge, or broker commands; a blind port would drop legitimate fields.
+- `5b67ee8` self-hosted Inter/Geist fonts and the CLI authorize confirmation screen. SHark does not
+  load Google Fonts, and the authorize page is the fork's own shell.
+- `bb2e160` invite quotas, display-name sanitizing, and owner-deletion succession.
+- `3392b72` Autumn fail-open. SHark has no billing runtime. Device-cap recount is the part that
+  applied, and it landed with the device claim above.
+- `4373cb2`, `dac00d8`, `f98b172` AWS CDK, IMDS, Litestream, and the immutable OIDC deploy subject.
+  Production stays the Docker/GHCR/`shark-prod` path. GitHub Action SHA pins on
+  `production-update.yml` were not copied.
+- `3ec02d3` and every later landing, pricing, dashboard, and Live Activity commit.
+
 ## Upstream review
 
 Before importing upstream changes, fetch upstream, inspect commits and the full diff, resolve the
