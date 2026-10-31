@@ -7,7 +7,13 @@ allowBuilds:
   esbuild: true
   "@biomejs/biome": true
 
-minimumReleaseAge: 0
+# Only install releases that have been public for a week (minutes).
+minimumReleaseAge: 10080
+
+# Security floors for transitive dependencies (undici via expo-server-sdk, fast-uri via ajv).
+overrides:
+  undici: "^7.29.1"
+  fast-uri: "^3.1.9"
 
 packageExtensions:
   "@bacons/apple-targets@5.0.0":

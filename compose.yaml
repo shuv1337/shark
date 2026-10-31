@@ -1,9 +1,22 @@
+# The server listens on plain HTTP. The edge must terminate TLS, forward to
+# 127.0.0.1:8787, and append the client IP (exe.dev is one hop;
+# TRUSTED_FORWARDED_FOR_HOPS). Responses include
+# Strict-Transport-Security: max-age=15552000; includeSubDomains, which browsers
+# honor when the edge forwards that header on HTTPS.
 services:
   shark:
     image: ${SHARK_IMAGE:?set SHARK_IMAGE to the reviewed immutable GHCR digest}
     ports:
       # Bind publicly only behind a trusted proxy; auth rate limits use its client-IP headers.
       - "127.0.0.1:8787:8787"
+    # Only /data (the volume) and /tmp are writable.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     environment:
       NODE_ENV: production
       DEPLOYMENT_MODE: self_hosted

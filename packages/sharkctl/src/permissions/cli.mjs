@@ -98,6 +98,12 @@ export async function main(argv = process.argv.slice(2), options = {}) {
         : [
             "Skipped OpenCode permission setup because its background connector currently requires macOS.",
           ];
+    // npx caches can be replaced by any later `npx sharkctl` run, silently changing the hooks.
+    if (/[\\/]_npx[\\/]/.test(entrypoint)) {
+      warnings.push(
+        "sharkctl is running from an npx cache, which a later npx run can replace. Install the reviewed sharkctl build and run setup again.",
+      );
+    }
     const results = [];
     for (const agent of installable) {
       const input = { entrypoint, ...(home ? { home } : {}), ...options.install };

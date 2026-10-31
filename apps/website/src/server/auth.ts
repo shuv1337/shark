@@ -160,6 +160,54 @@ const oauthPublicClientHardening = {
   },
 } satisfies BetterAuthPlugin;
 
+const CLIENT_METADATA_URIS = ["client_uri", "logo_uri", "tos_uri", "policy_uri"] as const;
+
+function isHttpsUrl(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Dynamic registration is unauthenticated and the consent page shows what a
+ * client registers, so bound its name and contacts and keep only https links
+ * (a `javascript:` or `http:` URI is dropped rather than stored).
+ */
+const oauthClientMetadataLimits = {
+  id: "hark-oauth-client-metadata-limits",
+  hooks: {
+    before: [
+      {
+        matcher: (ctx) => ctx.path === "/oauth2/register",
+        handler: createAuthMiddleware(async (ctx) => {
+          const body = ctx.body as Record<string, unknown> | undefined;
+          if (!body || typeof body !== "object") return;
+          if (typeof body.client_name === "string" && body.client_name.length > 100) {
+            throw new APIError("BAD_REQUEST", {
+              error: "invalid_client_metadata",
+              error_description: "client_name must be at most 100 characters",
+            });
+          }
+          if (Array.isArray(body.contacts) && body.contacts.length > 5) {
+            throw new APIError("BAD_REQUEST", {
+              error: "invalid_client_metadata",
+              error_description: "contacts must list at most 5 entries",
+            });
+          }
+          // In place: a returned context is merged with defu, which would restore
+          // deleted keys from the original body.
+          for (const key of CLIENT_METADATA_URIS) {
+            if (key in body && !isHttpsUrl(body[key])) delete body[key];
+          }
+        }),
+      },
+    ],
+  },
+} satisfies BetterAuthPlugin;
+
 export const auth = betterAuth({
   appName: "SHark",
   baseURL: env.APP_URL,
@@ -272,17 +320,17 @@ export const auth = betterAuth({
     oauthDefaultScopes,
     oauthResourceBinding,
     oauthPublicClientHardening,
+    oauthClientMetadataLimits,
     oauthTokenAdmission,
     webViewSessionPlugin(),
   ],
   trustedOrigins: [env.APP_URL, "https://appleid.apple.com", "shark://", "shark://*"],
   advanced: {
-    // Rate limits (e.g. OAuth client registration) key on the client IP. When the
-    // edge is configured, app.ts resolves it once and passes it in CLIENT_IP_HEADER;
-    // otherwise Better Auth only trusts a single-entry X-Forwarded-For.
-    ...(env.TRUSTED_CLIENT_IP_HEADER || env.TRUSTED_FORWARDED_FOR_HOPS > 0
-      ? { ipAddress: { ipAddressHeaders: [CLIENT_IP_HEADER] } }
-      : {}),
+    // Rate limits (e.g. OAuth client registration) key on the client IP. The app
+    // resolves it once from the trusted edge and passes it in CLIENT_IP_HEADER.
+    // Without that, no header is read at all: Better Auth would otherwise default
+    // to X-Forwarded-For, which a client can forge.
+    ipAddress: { ipAddressHeaders: [CLIENT_IP_HEADER] },
     ...(env.APP_URL.startsWith("https://")
       ? {
           // Apple returns OAuth callbacks with a cross-site form POST. Better Auth

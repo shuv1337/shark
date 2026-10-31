@@ -1,5 +1,12 @@
 # SHark Upstream Integration Plan
 
+## Security-first slice (2026-10-31)
+
+The September feature sequence below is historical. The open sync is a selective port of Hark's
+October 22 security batch and the October 28 Expo authorization-proxy guard, recorded in
+`docs/upstream-delta.md`. It does not merge `upstream/main` and does not include landing, billing,
+AWS, or Live Activity feature commits. Do not merge that pull request without an explicit yes.
+
 Status: ready for handoff. This is a read-only integration plan based on `main` at
 `602bc3b242821e594fa8d32d6db49999eaaf6305` and upstream Hark `main` at
 `c98ccfaeea8e5c41698565ba328443735b0a1710` (reviewed 2026-09-03). Re-fetch both remotes before
