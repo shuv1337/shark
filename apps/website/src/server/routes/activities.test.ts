@@ -122,6 +122,7 @@ beforeAll(async () => {
       id: "activity_dev_2",
       userId: "activity_user_1",
       expoPushToken: "ExponentPushToken[activity-2]",
+      apnsToken: "apns-activity-2",
       platform: "ios",
       active: true,
       liveActivityPushToStartTokenCiphertext: encryptLiveActivityToken("bb".repeat(32)),
@@ -1030,6 +1031,7 @@ describe("Live Activity agent routes", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         expoPushToken: "ExponentPushToken[activity-2]",
+        apnsToken: "apns-activity-2",
         platform: "ios",
         deviceName: "Transferred phone",
       }),
@@ -1106,6 +1108,7 @@ describe("Live Activity agent routes", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         expoPushToken: "ExponentPushToken[activity-2]",
+        apnsToken: "apns-activity-2",
         platform: "ios",
         deviceName: "Transferred phone",
       }),
