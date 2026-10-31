@@ -147,6 +147,11 @@ export function runtimeEnvIssues(runtime: RuntimeEnv): string[] {
     if (!runtime.APP_URL.startsWith("https://")) {
       issues.push("Production APP_URL must use HTTPS.");
     }
+    if (!runtime.TRUSTED_CLIENT_IP_HEADER && runtime.TRUSTED_FORWARDED_FOR_HOPS === 0) {
+      issues.push(
+        "Production requires TRUSTED_CLIENT_IP_HEADER or TRUSTED_FORWARDED_FOR_HOPS so rate limits are not keyed on a client-supplied X-Forwarded-For.",
+      );
+    }
   }
   return issues;
 }

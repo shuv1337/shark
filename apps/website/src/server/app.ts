@@ -1,13 +1,15 @@
 import { MCP_PATH } from "@hark/contracts";
 import { APIError } from "better-auth/api";
-import { Hono } from "hono";
+import { type Context, Hono, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
+import { secureHeaders } from "hono/secure-headers";
 import { auth, TOKEN_RESPONSE_HEADERS, tokenErrorResponse } from "./auth";
 import { env } from "./env";
 import { accessLog } from "./lib/access-log";
 import { trustedClientIp, withTrustedClientIp } from "./lib/client-ip";
 import { OAUTH_TOKEN_ENDPOINT_PATH } from "./lib/oauth";
+import { releaseConsentSignature, reserveConsentSignature } from "./lib/oauth-consent-replay";
 import { databaseIsReady } from "./lib/readiness";
 import { safeReturnPath } from "./lib/return-path";
 import { errorClass } from "./lib/teams";
@@ -56,6 +58,38 @@ import { webPushRoute } from "./routes/web-push";
 
 export const app = new Hono();
 
+// Anti-framing matters most on /oauth/consent and /cli/authorize, which grant
+// access in one click. Images may come from any https origin (avatars, app
+// icons, OAuth client logos); prerendered pages carry inline style attributes.
+app.use(
+  "*",
+  secureHeaders({
+    xFrameOptions: "DENY",
+    referrerPolicy: "no-referrer",
+    // Discovery documents, MCP and public images are read cross-origin.
+    crossOriginResourcePolicy: false,
+    contentSecurityPolicy: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      fontSrc: ["'self'", "data:"],
+      imgSrc: ["'self'", "https:", "data:", "blob:"],
+      connectSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+      frameAncestors: ["'none'"],
+    },
+    permissionsPolicy: {
+      camera: [],
+      microphone: [],
+      geolocation: [],
+      usb: [],
+      payment: [],
+    },
+  }),
+);
+
 // Bounds memory use for unauthenticated POST bodies; accepted payloads are far smaller.
 // MCP tool calls wrap agent payloads in JSON-RPC, so /mcp gets more headroom.
 const defaultBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
@@ -65,6 +99,25 @@ app.use("*", (c, next) => (c.req.path === MCP_PATH ? mcpBodyLimit : defaultBodyL
 if (process.env.NODE_ENV !== "test") {
   app.use("*", accessLog);
 }
+
+/**
+ * API, webhook, and MCP responses are private and must never be stored by a
+ * browser or the edge. Routes that set their own Cache-Control keep it.
+ */
+async function noStoreByDefault(c: Context, next: Next): Promise<void> {
+  await next();
+  if (c.res.headers.has("Cache-Control")) return;
+  try {
+    c.res.headers.set("Cache-Control", "no-store");
+  } catch {
+    // Responses passed through from fetch have immutable headers; copy them.
+    c.res = new Response(c.res.body, c.res);
+    c.res.headers.set("Cache-Control", "no-store");
+  }
+}
+app.use("/api/*", noStoreByDefault);
+app.use("/hooks/*", noStoreByDefault);
+app.use(MCP_PATH, noStoreByDefault);
 
 app.get("/api/health", (c) =>
   databaseIsReady() ? c.json({ ok: true }) : c.json({ ok: false }, 503),
@@ -113,6 +166,67 @@ app.route("/", docsTextRoute);
 // Anonymous by design: web apps verify passes against these public keys.
 app.route("/", appPassJwksRoute);
 app.route("/", sshuvHandoffRoute);
+
+// The Expo plugin's proxy sets a signed OAuth state cookie from the URL it is
+// given and then redirects there. SHark signs in with Apple only, so that is
+// the only allowed target; anything else is an open redirect and login CSRF.
+const EXPO_PROXY_ORIGINS = new Set(["https://appleid.apple.com"]);
+app.on(["GET", "POST"], "/api/auth/expo-authorization-proxy", async (c, next) => {
+  // Exactly one value, so a second one cannot be what Better Auth reads.
+  const targets = c.req.queries("authorizationURL") ?? [];
+  let origin: string | null = null;
+  try {
+    origin = targets.length === 1 && targets[0] ? new URL(targets[0]).origin : null;
+  } catch {
+    origin = null;
+  }
+  if (!origin || !EXPO_PROXY_ORIGINS.has(origin)) {
+    return c.json({ error: "Invalid authorizationURL" }, 400);
+  }
+  // The app opens this in a fresh auth session (Sec-Fetch-Site: none). A page
+  // on another site linking here could still plant its own state cookie. It
+  // is also a top-level page load, never a subresource, fetch, or frame.
+  // Older browsers omit Sec-Fetch-Mode and Sec-Fetch-Dest.
+  const site = c.req.header("sec-fetch-site")?.toLowerCase();
+  const mode = c.req.header("sec-fetch-mode")?.toLowerCase();
+  const dest = c.req.header("sec-fetch-dest")?.toLowerCase();
+  if (
+    site === "cross-site" ||
+    site === "same-site" ||
+    (mode !== undefined && mode !== "navigate") ||
+    (dest !== undefined && dest !== "document")
+  ) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+  await next();
+});
+
+// The signed consent request carries no nonce upstream, so back/refresh could
+// approve it again and mint another authorization code.
+const usedConsentSignatures = new Map<string, number>();
+app.post("/api/auth/oauth2/consent", async (c, next) => {
+  let oauthQuery: unknown;
+  try {
+    const request = c.req.raw.clone();
+    const type = request.headers.get("content-type") ?? "";
+    oauthQuery = type.includes("application/json")
+      ? ((await request.json()) as { oauth_query?: unknown } | null)?.oauth_query
+      : (await request.formData()).get("oauth_query");
+  } catch {
+    oauthQuery = undefined;
+  }
+  const decision = reserveConsentSignature(usedConsentSignatures, oauthQuery);
+  if (decision.status === "replay") {
+    return c.json(
+      { error: "invalid_request", error_description: "This request was already decided" },
+      400,
+    );
+  }
+  await next();
+  if (decision.status === "reserved" && !c.res.ok) {
+    releaseConsentSignature(usedConsentSignatures, decision.signature);
+  }
+});
 
 app.on(["GET", "POST"], "/api/auth/*", async (c) => {
   const request = withTrustedClientIp(c.req.raw);
