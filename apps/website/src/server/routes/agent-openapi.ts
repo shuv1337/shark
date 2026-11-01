@@ -698,6 +698,9 @@ export const agentOperations: Record<string, Partial<Record<AgentMethod, AgentOp
   "/board/work/{key}/done": {
     post: {
       summary: "Complete the calling token's work item",
+      description:
+        "Omitting statusLabel, or sending null, clears the in-flight status label. " +
+        "A string stores that final label instead. A later completion replaces it again.",
       scopes: ["board:write"],
       params: [idParam("key")],
       request: boardDoneSchema.omit({ key: true }),

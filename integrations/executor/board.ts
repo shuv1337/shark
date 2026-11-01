@@ -73,6 +73,8 @@ export interface BoardDoneInput {
   outcome?: string;
   links?: BoardLinkInput[];
   note?: string;
+  /** Final label. Null clears; omit it and the server clears the in-flight label. */
+  statusLabel?: string | null;
   agentDisplay?: string;
 }
 
@@ -213,6 +215,7 @@ export function boardDoneCall(key: string, input: BoardDoneInput): BoardCall {
   screenFields([
     input.title,
     input.note,
+    input.statusLabel,
     typeof agentDisplay === "string" ? agentDisplay : undefined,
     ...(input.links ?? []).flatMap((link) => [link.label, link.url]),
   ]);
@@ -222,6 +225,7 @@ export function boardDoneCall(key: string, input: BoardDoneInput): BoardCall {
   if (input.outcome !== undefined) body.outcome = input.outcome;
   if (input.links !== undefined) body.links = input.links;
   if (input.note !== undefined) body.note = input.note;
+  if (input.statusLabel !== undefined) body.statusLabel = input.statusLabel;
   if (agentDisplay !== undefined) body.agentDisplay = agentDisplay;
   return { method: "POST", path: `/api/agent/board/work/${segment(key)}/done`, body };
 }
@@ -313,6 +317,37 @@ export const boardToolSchemas = {
       heartbeatTtlSeconds: {
         anyOf: [{ type: "integer", minimum: 60, maximum: 7 * 86_400 }, { type: "null" }],
       },
+    },
+  },
+  // Unknown fields are left off the request. The previous tool schema omitted them rather than
+  // rejecting the call, so this object does not set additionalProperties: false.
+  done: {
+    type: "object",
+    required: ["key"],
+    properties: {
+      key: { type: "string", minLength: 1 },
+      title: { type: "string", minLength: 1 },
+      verb: { type: "string" },
+      outcome: { type: "string" },
+      links: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["url"],
+          properties: {
+            url: { type: "string", minLength: 1 },
+            kind: { type: "string" },
+            label: { type: "string" },
+          },
+        },
+      },
+      note: { type: "string" },
+      statusLabel: {
+        description:
+          "Final label of at most 60 characters. Omit or null clears the in-flight status label.",
+        anyOf: [{ type: "string", minLength: 1, maxLength: 60 }, { type: "null" }],
+      },
+      agentDisplay: { type: "string", minLength: 1 },
     },
   },
   note: {
