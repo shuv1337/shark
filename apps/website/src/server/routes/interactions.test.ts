@@ -146,6 +146,7 @@ const READ_SECRET = `hark_${"b".repeat(43)}`;
 const OTHER_SECRET = `hark_${"c".repeat(43)}`;
 const EXPIRED_SECRET = `hark_${"d".repeat(43)}`;
 const WATCH_SECRET = `hark_${"w".repeat(43)}`;
+const BOARD_SECRET = `hark_${"e".repeat(43)}`;
 
 beforeAll(async () => {
   ({ app } = await import("../app"));
@@ -263,6 +264,15 @@ beforeAll(async () => {
       tokenHash: hashApiToken(WATCH_SECRET),
       prefix: WATCH_SECRET.slice(0, 13),
       scopes: ["watch:read", "watch:respond"],
+      createdAt: now,
+    },
+    {
+      id: "tok_board",
+      userId: "user_1",
+      name: "Board agent",
+      tokenHash: hashApiToken(BOARD_SECRET),
+      prefix: BOARD_SECRET.slice(0, 13),
+      scopes: ["board:write"],
       createdAt: now,
     },
   ]);
@@ -529,6 +539,29 @@ describe("Apple Watch MVP surface", () => {
       expect.objectContaining({ title: "Agent task", status: "In progress", detail: null }),
     );
     await db.delete(schema.liveActivity).where(eq(schema.liveActivity.id, "act_watch_private"));
+  });
+
+  it("shows in-flight board work when no Live Activity is running", async () => {
+    const posted = await agent("/board/work", BOARD_SECRET, {
+      method: "PUT",
+      body: JSON.stringify({
+        key: "watch-board-work",
+        title: "Port the importer",
+        state: "in_flight",
+        statusLabel: "Running tests",
+        progress: 0.5,
+      }),
+    });
+    expect(posted.status).toBe(201);
+    const body = (await (await watch("/snapshot")).json()) as {
+      activeWork: { title: string; status: string; progress: number | null } | null;
+    };
+    expect(body.activeWork).toMatchObject({
+      title: "Port the importer",
+      status: "Running tests",
+      progress: 0.5,
+    });
+    await db.delete(schema.boardWorkItem).where(eq(schema.boardWorkItem.workKey, "watch-board-work"));
   });
 });
 
