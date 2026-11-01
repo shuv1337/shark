@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { notificationEventTag } from "../lib/notification-withdrawal";
 
@@ -146,6 +146,7 @@ const READ_SECRET = `hark_${"b".repeat(43)}`;
 const OTHER_SECRET = `hark_${"c".repeat(43)}`;
 const EXPIRED_SECRET = `hark_${"d".repeat(43)}`;
 const WATCH_SECRET = `hark_${"w".repeat(43)}`;
+const BOARD_SECRET = `hark_${"e".repeat(43)}`;
 
 beforeAll(async () => {
   ({ app } = await import("../app"));
@@ -263,6 +264,15 @@ beforeAll(async () => {
       tokenHash: hashApiToken(WATCH_SECRET),
       prefix: WATCH_SECRET.slice(0, 13),
       scopes: ["watch:read", "watch:respond"],
+      createdAt: now,
+    },
+    {
+      id: "tok_board",
+      userId: "user_1",
+      name: "Board agent",
+      tokenHash: hashApiToken(BOARD_SECRET),
+      prefix: BOARD_SECRET.slice(0, 13),
+      scopes: ["board:write"],
       createdAt: now,
     },
   ]);
@@ -529,6 +539,255 @@ describe("Apple Watch MVP surface", () => {
       expect.objectContaining({ title: "Agent task", status: "In progress", detail: null }),
     );
     await db.delete(schema.liveActivity).where(eq(schema.liveActivity.id, "act_watch_private"));
+  });
+
+  it("shows in-flight board work when no Live Activity is running", async () => {
+    const posted = await agent("/board/work", BOARD_SECRET, {
+      method: "PUT",
+      body: JSON.stringify({
+        key: "watch-board-work",
+        title: "Port the importer",
+        state: "in_flight",
+        statusLabel: "Running tests",
+        progress: 0.5,
+      }),
+    });
+    expect(posted.status).toBe(201);
+    const body = (await (await watch("/snapshot")).json()) as {
+      activeWork: { title: string; status: string; progress: number | null } | null;
+    };
+    expect(body.activeWork).toMatchObject({
+      title: "Port the importer",
+      status: "Running tests",
+      progress: 0.5,
+    });
+    await db
+      .delete(schema.boardWorkItem)
+      .where(eq(schema.boardWorkItem.workKey, "watch-board-work"));
+  });
+
+  it("lists open work with queued work last and the newest messages", async () => {
+    const putWork = (key: string, title: string, state: string) =>
+      agent("/board/work", BOARD_SECRET, {
+        method: "PUT",
+        body: JSON.stringify({ key, title, state }),
+      });
+    expect((await putWork("watch-queued", "Queued later", "queued")).status).toBe(201);
+    expect((await putWork("watch-review", "Awaiting review", "review")).status).toBe(201);
+    expect((await putWork("watch-blocked", "Needs a key", "blocked")).status).toBe(201);
+    const sentMessage = await agent("/notifications", SECRET, {
+      method: "POST",
+      body: JSON.stringify({ title: "Build finished", body: "All green" }),
+    });
+    expect(sentMessage.status).toBeLessThan(300);
+
+    const body = (await (await watch("/snapshot")).json()) as {
+      activeWork: { title: string } | null;
+      work: Array<{ title: string; status: string }>;
+      recentMessages: Array<{ title: string; body: string }>;
+    };
+    expect(body.work).toHaveLength(3);
+    expect(body.work.slice(0, 2)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ title: "Needs a key", status: "Blocked" }),
+        expect.objectContaining({ title: "Awaiting review", status: "In review" }),
+      ]),
+    );
+    expect(body.work[2]).toMatchObject({ title: "Queued later", status: "Queued" });
+    expect(body.activeWork).toEqual(body.work[0]);
+    expect(body.recentMessages[0]).toMatchObject({ title: "Build finished", body: "All green" });
+    await db
+      .delete(schema.boardWorkItem)
+      .where(eq(schema.boardWorkItem.requesterTokenId, "tok_board"));
+  });
+
+  it("merges a task's Live Activity into its board item so it takes one slot", async () => {
+    const putWork = (body: Record<string, unknown>) =>
+      agent("/board/work", BOARD_SECRET, { method: "PUT", body: JSON.stringify(body) });
+    expect(
+      (await putWork({ key: "watch-merge", title: "Port the importer", state: "in_flight" }))
+        .status,
+    ).toBe(201);
+    expect(
+      (
+        await putWork({
+          key: "watch-merge-title",
+          title: "Rebuild  Index",
+          state: "review",
+          statusLabel: "Awaiting CI",
+          progress: 0.9,
+        })
+      ).status,
+    ).toBe(201);
+    const now = new Date();
+    const activity = (
+      id: string,
+      key: string,
+      requesterTokenId: string,
+      props: Record<string, unknown>,
+    ): typeof schema.liveActivity.$inferInsert => ({
+      id,
+      userId: "user_1",
+      requesterTokenId,
+      key,
+      schemaVersion: 1,
+      props,
+      status: "active",
+      sequence: 1,
+      acceptedCount: 1,
+      failedCount: 0,
+      expiresAt: new Date(now.getTime() + 60_000),
+      createdAt: now,
+      updatedAt: new Date(now.getTime() + 1000),
+    });
+    await db.insert(schema.liveActivity).values([
+      activity("act_watch_merge_key", "watch-merge", "tok_full", {
+        title: "Importer",
+        status: "Compiling",
+        progress: 0.4,
+      }),
+      activity("act_watch_merge_title", "rebuild-la", "tok_board", {
+        title: " rebuild index ",
+        status: "Indexing",
+        progress: 0.2,
+      }),
+      activity("act_watch_merge_other", "rebuild-other", "tok_full", {
+        title: "Rebuild index",
+        status: "Unrelated",
+      }),
+    ]);
+
+    const body = (await (await watch("/snapshot")).json()) as {
+      activeWork: { id: string } | null;
+      work: Array<{ id: string; title: string; status: string; progress: number | null }>;
+    };
+    const [merged] = await db
+      .select()
+      .from(schema.boardWorkItem)
+      .where(eq(schema.boardWorkItem.workKey, "watch-merge"));
+    const [titled] = await db
+      .select()
+      .from(schema.boardWorkItem)
+      .where(eq(schema.boardWorkItem.workKey, "watch-merge-title"));
+    expect(body.work).toHaveLength(3);
+    expect(body.work).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: merged?.id,
+          title: "Port the importer",
+          status: "Compiling",
+          progress: 0.4,
+        }),
+        expect.objectContaining({
+          id: titled?.id,
+          title: "Rebuild  Index",
+          status: "Awaiting CI",
+          progress: 0.9,
+        }),
+        expect.objectContaining({ id: "act_watch_merge_other", status: "Unrelated" }),
+      ]),
+    );
+    expect(body.activeWork).toEqual(body.work[0]);
+    await db
+      .delete(schema.liveActivity)
+      .where(
+        inArray(schema.liveActivity.id, [
+          "act_watch_merge_key",
+          "act_watch_merge_title",
+          "act_watch_merge_other",
+        ]),
+      );
+    await db
+      .delete(schema.boardWorkItem)
+      .where(eq(schema.boardWorkItem.requesterTokenId, "tok_board"));
+  });
+
+  it("labels work past its heartbeat deadline Stale and lists it after queued work", async () => {
+    const putWork = (key: string, title: string, state: string) =>
+      agent("/board/work", BOARD_SECRET, {
+        method: "PUT",
+        body: JSON.stringify({ key, title, state, statusLabel: "Running tests" }),
+      });
+    expect((await putWork("watch-stale", "Abandoned run", "in_flight")).status).toBe(201);
+    expect((await putWork("watch-fresh-queued", "Next up", "queued")).status).toBe(201);
+    await db
+      .update(schema.boardWorkItem)
+      .set({ lastHeartbeatAt: new Date(Date.now() - 21_601_000) })
+      .where(eq(schema.boardWorkItem.workKey, "watch-stale"));
+
+    const body = (await (await watch("/snapshot")).json()) as {
+      work: Array<{ title: string; status: string }>;
+    };
+    expect(body.work).toEqual([
+      expect.objectContaining({ title: "Next up", status: "Running tests" }),
+      expect.objectContaining({ title: "Abandoned run", status: "Stale" }),
+    ]);
+    await db
+      .delete(schema.boardWorkItem)
+      .where(eq(schema.boardWorkItem.requesterTokenId, "tok_board"));
+  });
+
+  it("shows blocked work parked on an ask as waiting for the user's answer", async () => {
+    const asked = await agent("/board/asks", BOARD_SECRET, {
+      method: "PUT",
+      body: JSON.stringify({
+        key: "watch-waiting:ask",
+        title: "Which region?",
+        options: [
+          { id: "us", label: "US", style: "primary" },
+          { id: "eu", label: "EU" },
+        ],
+        push: "none",
+      }),
+    });
+    expect(asked.status).toBe(201);
+    const blocked = await agent("/board/work", BOARD_SECRET, {
+      method: "PUT",
+      body: JSON.stringify({
+        key: "watch-waiting",
+        title: "Provision cluster",
+        state: "blocked",
+        waitingAskKey: "watch-waiting:ask",
+      }),
+    });
+    expect(blocked.status).toBe(201);
+
+    const body = (await (await watch("/snapshot")).json()) as {
+      work: Array<{ title: string; status: string }>;
+    };
+    expect(body.work).toEqual([
+      expect.objectContaining({ title: "Provision cluster", status: "Waiting for your answer" }),
+    ]);
+    await db
+      .delete(schema.boardWorkItem)
+      .where(eq(schema.boardWorkItem.requesterTokenId, "tok_board"));
+    await db.delete(schema.boardAsk).where(eq(schema.boardAsk.askKey, "watch-waiting:ask"));
+  });
+
+  it("leaves withdrawn notifications out of recent messages", async () => {
+    for (const title of ["Kept message", "Withdrawn message", "Partly withdrawn message"]) {
+      const sent = await agent("/notifications", SECRET, {
+        method: "POST",
+        body: JSON.stringify({ title, body: "Synthetic" }),
+      });
+      expect(sent.status).toBeLessThan(300);
+    }
+    await db
+      .update(schema.agentNotification)
+      .set({ status: "withdrawn" })
+      .where(eq(schema.agentNotification.title, "Withdrawn message"));
+    await db
+      .update(schema.agentNotification)
+      .set({ status: "withdraw_partial" })
+      .where(eq(schema.agentNotification.title, "Partly withdrawn message"));
+
+    const body = (await (await watch("/snapshot")).json()) as {
+      recentMessages: Array<{ title: string }>;
+    };
+    const titles = body.recentMessages.map((message) => message.title);
+    expect(titles).toContain("Kept message");
+    expect(titles).not.toContain("Withdrawn message");
+    expect(titles).not.toContain("Partly withdrawn message");
   });
 });
 

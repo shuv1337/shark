@@ -1266,10 +1266,22 @@ export interface WatchInteractionDto {
   secondaryLabel: string | null;
 }
 
+export interface WatchMessageDto {
+  id: string;
+  source: string;
+  title: string;
+  body: string;
+  occurredAt: string;
+}
+
 export interface WatchSnapshotDto {
   generatedAt: string;
+  /** The first entry of `work`, for Watch builds that read only this field. */
   activeWork: WatchWorkItemDto | null;
+  /** Live Activities and open board work, newest first, with queued board work last. */
+  work: WatchWorkItemDto[];
   pendingInteraction: WatchInteractionDto | null;
+  recentMessages: WatchMessageDto[];
 }
 
 export const watchInteractionResponseSchema = z.object({
