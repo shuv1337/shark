@@ -4,11 +4,12 @@ import {
   type WatchWorkItemDto,
   watchInteractionResponseSchema,
 } from "@hark/contracts";
-import { and, desc, eq, gt, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, notInArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
 import { boardWorkItem, inboxItem, interaction, liveActivity } from "../db/schema";
 import { track } from "../lib/analytics";
+import { isWorkStale } from "../lib/board";
 import { syncInboxForUser } from "../lib/inbox";
 import { deliverInteractionCallbacks } from "../lib/interaction-callbacks";
 import { type AgentEnv, requireApiToken, requireScopes } from "../middleware";
@@ -23,15 +24,25 @@ const BOARD_STATE_LABELS: Record<(typeof BOARD_WORK_ACTIVE_STATES)[number], stri
   review: "In review",
   blocked: "Blocked",
 };
+const STALE_LABEL = "Stale";
+const WAITING_ANSWER_LABEL = "Waiting for your answer";
+const WITHDRAWN_STATUSES = ["withdrawn", "withdraw_partial", "withdraw_processing"];
 
-function toLiveActivityWork(row: typeof liveActivity.$inferSelect): WatchWorkItemDto {
-  const props = row.props as {
+type LiveActivityRow = typeof liveActivity.$inferSelect;
+type BoardWorkRow = typeof boardWorkItem.$inferSelect;
+
+function liveActivityProps(row: LiveActivityRow) {
+  return row.props as {
     title?: string;
     status?: string;
     detail?: string;
     progress?: number;
     privacyMode?: string;
   };
+}
+
+function toLiveActivityWork(row: LiveActivityRow): WatchWorkItemDto {
+  const props = liveActivityProps(row);
   const isPrivate = props.privacyMode === "private";
   return {
     id: row.id,
@@ -44,19 +55,63 @@ function toLiveActivityWork(row: typeof liveActivity.$inferSelect): WatchWorkIte
   };
 }
 
-function toBoardWork(row: typeof boardWorkItem.$inferSelect): WatchWorkItemDto {
+/**
+ * A board item and the Live Activity its agent runs for the same task share one
+ * slot. The board row wins; the activity only fills progress and status it lacks.
+ */
+function toBoardWork(row: BoardWorkRow, stale: boolean, activity?: LiveActivityRow) {
+  const props = activity ? liveActivityProps(activity) : {};
+  const activityStatus = props.privacyMode === "private" ? undefined : props.status;
+  const updatedAt =
+    activity && activity.updatedAt > row.updatedAt ? activity.updatedAt : row.updatedAt;
+  let status: string;
+  if (stale) status = STALE_LABEL;
+  else if (row.statusLabel) status = row.statusLabel;
+  else if (row.state === "blocked" && row.waitingAskId) status = WAITING_ANSWER_LABEL;
+  else
+    status =
+      activityStatus ??
+      BOARD_STATE_LABELS[row.state as keyof typeof BOARD_STATE_LABELS] ??
+      row.state;
   return {
     id: row.id,
     title: row.title,
-    status:
-      row.statusLabel ??
-      BOARD_STATE_LABELS[row.state as keyof typeof BOARD_STATE_LABELS] ??
-      row.state,
+    status,
     detail: row.detail,
-    progress: row.progress,
-    updatedAt: row.updatedAt.toISOString(),
+    progress: row.progress ?? (typeof props.progress === "number" ? props.progress : null),
+    updatedAt: updatedAt.toISOString(),
     private: false,
-  };
+  } satisfies WatchWorkItemDto;
+}
+
+const normalizeTitle = (title: string | undefined) =>
+  (title ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+
+/** Pairs each board row with at most one activity: same key first, then same token and title. */
+function pairActivities(board: BoardWorkRow[], activities: LiveActivityRow[]) {
+  const pairs = new Map<string, LiveActivityRow>();
+  const unpaired = new Set(activities);
+  for (const row of board) {
+    const match = [...unpaired].find((activity) => activity.key === row.workKey);
+    if (match) {
+      pairs.set(row.id, match);
+      unpaired.delete(match);
+    }
+  }
+  for (const row of board) {
+    if (pairs.has(row.id) || !row.requesterTokenId) continue;
+    const title = normalizeTitle(row.title);
+    const match = [...unpaired].find(
+      (activity) =>
+        activity.requesterTokenId === row.requesterTokenId &&
+        normalizeTitle(liveActivityProps(activity).title) === title,
+    );
+    if (match) {
+      pairs.set(row.id, match);
+      unpaired.delete(match);
+    }
+  }
+  return { pairs, unpaired: [...unpaired] };
 }
 
 async function snapshotFor(userId: string): Promise<WatchSnapshotDto> {
@@ -87,19 +142,33 @@ async function snapshotFor(userId: string): Promise<WatchSnapshotDto> {
     )
     .orderBy(desc(boardWorkItem.updatedAt))
     .all();
+  const { pairs, unpaired } = pairActivities(boardWork, activities);
+  const running: WatchWorkItemDto[] = unpaired.map(toLiveActivityWork);
+  const queued: WatchWorkItemDto[] = [];
+  const stale: WatchWorkItemDto[] = [];
+  for (const row of boardWork) {
+    const isStale = isWorkStale(row, now);
+    const item = toBoardWork(row, isStale, pairs.get(row.id));
+    if (isStale) stale.push(item);
+    else if (row.state === "queued") queued.push(item);
+    else running.push(item);
+  }
   const byRecency = (a: WatchWorkItemDto, b: WatchWorkItemDto) =>
     Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
-  const work = [
-    ...[
-      ...activities.map(toLiveActivityWork),
-      ...boardWork.filter((row) => row.state !== "queued").map(toBoardWork),
-    ].sort(byRecency),
-    ...boardWork.filter((row) => row.state === "queued").map(toBoardWork),
-  ].slice(0, WATCH_WORK_LIMIT);
+  const work = [...running.sort(byRecency), ...queued, ...stale.sort(byRecency)].slice(
+    0,
+    WATCH_WORK_LIMIT,
+  );
   const messages = db
     .select()
     .from(inboxItem)
-    .where(and(eq(inboxItem.userId, userId), eq(inboxItem.kind, "notification")))
+    .where(
+      and(
+        eq(inboxItem.userId, userId),
+        eq(inboxItem.kind, "notification"),
+        notInArray(inboxItem.status, WITHDRAWN_STATUSES),
+      ),
+    )
     .orderBy(desc(inboxItem.occurredAt), desc(inboxItem.id))
     .limit(WATCH_MESSAGE_LIMIT)
     .all();
