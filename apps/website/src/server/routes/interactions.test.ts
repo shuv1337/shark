@@ -561,7 +561,44 @@ describe("Apple Watch MVP surface", () => {
       status: "Running tests",
       progress: 0.5,
     });
-    await db.delete(schema.boardWorkItem).where(eq(schema.boardWorkItem.workKey, "watch-board-work"));
+    await db
+      .delete(schema.boardWorkItem)
+      .where(eq(schema.boardWorkItem.workKey, "watch-board-work"));
+  });
+
+  it("lists open work with queued work last and the newest messages", async () => {
+    const putWork = (key: string, title: string, state: string) =>
+      agent("/board/work", BOARD_SECRET, {
+        method: "PUT",
+        body: JSON.stringify({ key, title, state }),
+      });
+    expect((await putWork("watch-queued", "Queued later", "queued")).status).toBe(201);
+    expect((await putWork("watch-review", "Awaiting review", "review")).status).toBe(201);
+    expect((await putWork("watch-blocked", "Needs a key", "blocked")).status).toBe(201);
+    const sentMessage = await agent("/notifications", SECRET, {
+      method: "POST",
+      body: JSON.stringify({ title: "Build finished", body: "All green" }),
+    });
+    expect(sentMessage.status).toBeLessThan(300);
+
+    const body = (await (await watch("/snapshot")).json()) as {
+      activeWork: { title: string } | null;
+      work: Array<{ title: string; status: string }>;
+      recentMessages: Array<{ title: string; body: string }>;
+    };
+    expect(body.work).toHaveLength(3);
+    expect(body.work.slice(0, 2)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ title: "Needs a key", status: "Blocked" }),
+        expect.objectContaining({ title: "Awaiting review", status: "In review" }),
+      ]),
+    );
+    expect(body.work[2]).toMatchObject({ title: "Queued later", status: "Queued" });
+    expect(body.activeWork).toEqual(body.work[0]);
+    expect(body.recentMessages[0]).toMatchObject({ title: "Build finished", body: "All green" });
+    await db
+      .delete(schema.boardWorkItem)
+      .where(eq(schema.boardWorkItem.requesterTokenId, "tok_board"));
   });
 });
 

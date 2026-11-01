@@ -1,18 +1,68 @@
-import { type WatchSnapshotDto, watchInteractionResponseSchema } from "@hark/contracts";
+import {
+  BOARD_WORK_ACTIVE_STATES,
+  type WatchSnapshotDto,
+  type WatchWorkItemDto,
+  watchInteractionResponseSchema,
+} from "@hark/contracts";
 import { and, desc, eq, gt, inArray, isNull } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
-import { interaction, liveActivity } from "../db/schema";
+import { boardWorkItem, inboxItem, interaction, liveActivity } from "../db/schema";
 import { track } from "../lib/analytics";
+import { syncInboxForUser } from "../lib/inbox";
 import { deliverInteractionCallbacks } from "../lib/interaction-callbacks";
 import { type AgentEnv, requireApiToken, requireScopes } from "../middleware";
 import { resolveInteractionLiveActivity } from "./activities";
 
 const LIVE_STATUSES = ["starting", "active", "partial"] as const;
+const WATCH_WORK_LIMIT = 5;
+const WATCH_MESSAGE_LIMIT = 5;
+const BOARD_STATE_LABELS: Record<(typeof BOARD_WORK_ACTIVE_STATES)[number], string> = {
+  queued: "Queued",
+  in_flight: "In progress",
+  review: "In review",
+  blocked: "Blocked",
+};
 
-function snapshotFor(userId: string): WatchSnapshotDto {
+function toLiveActivityWork(row: typeof liveActivity.$inferSelect): WatchWorkItemDto {
+  const props = row.props as {
+    title?: string;
+    status?: string;
+    detail?: string;
+    progress?: number;
+    privacyMode?: string;
+  };
+  const isPrivate = props.privacyMode === "private";
+  return {
+    id: row.id,
+    title: isPrivate ? "Agent task" : (props.title ?? "Active work"),
+    status: isPrivate ? "In progress" : (props.status ?? "In progress"),
+    detail: isPrivate ? null : (props.detail ?? null),
+    progress: typeof props.progress === "number" ? props.progress : null,
+    updatedAt: row.updatedAt.toISOString(),
+    private: isPrivate,
+  };
+}
+
+function toBoardWork(row: typeof boardWorkItem.$inferSelect): WatchWorkItemDto {
+  return {
+    id: row.id,
+    title: row.title,
+    status:
+      row.statusLabel ??
+      BOARD_STATE_LABELS[row.state as keyof typeof BOARD_STATE_LABELS] ??
+      row.state,
+    detail: row.detail,
+    progress: row.progress,
+    updatedAt: row.updatedAt.toISOString(),
+    private: false,
+  };
+}
+
+async function snapshotFor(userId: string): Promise<WatchSnapshotDto> {
+  await syncInboxForUser(userId);
   const now = new Date();
-  const work = db
+  const activities = db
     .select()
     .from(liveActivity)
     .where(
@@ -24,8 +74,35 @@ function snapshotFor(userId: string): WatchSnapshotDto {
       ),
     )
     .orderBy(desc(liveActivity.updatedAt))
-    .limit(1)
-    .get();
+    .limit(WATCH_WORK_LIMIT)
+    .all();
+  const boardWork = db
+    .select()
+    .from(boardWorkItem)
+    .where(
+      and(
+        eq(boardWorkItem.userId, userId),
+        inArray(boardWorkItem.state, [...BOARD_WORK_ACTIVE_STATES]),
+      ),
+    )
+    .orderBy(desc(boardWorkItem.updatedAt))
+    .all();
+  const byRecency = (a: WatchWorkItemDto, b: WatchWorkItemDto) =>
+    Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
+  const work = [
+    ...[
+      ...activities.map(toLiveActivityWork),
+      ...boardWork.filter((row) => row.state !== "queued").map(toBoardWork),
+    ].sort(byRecency),
+    ...boardWork.filter((row) => row.state === "queued").map(toBoardWork),
+  ].slice(0, WATCH_WORK_LIMIT);
+  const messages = db
+    .select()
+    .from(inboxItem)
+    .where(and(eq(inboxItem.userId, userId), eq(inboxItem.kind, "notification")))
+    .orderBy(desc(inboxItem.occurredAt), desc(inboxItem.id))
+    .limit(WATCH_MESSAGE_LIMIT)
+    .all();
   const pending = db
     .select()
     .from(interaction)
@@ -41,30 +118,10 @@ function snapshotFor(userId: string): WatchSnapshotDto {
     .limit(1)
     .get();
 
-  let activeWork: WatchSnapshotDto["activeWork"] = null;
-  if (work) {
-    const props = work.props as {
-      title?: string;
-      status?: string;
-      detail?: string;
-      progress?: number;
-      privacyMode?: string;
-    };
-    const isPrivate = props.privacyMode === "private";
-    activeWork = {
-      id: work.id,
-      title: isPrivate ? "Agent task" : (props.title ?? "Active work"),
-      status: isPrivate ? "In progress" : (props.status ?? "In progress"),
-      detail: isPrivate ? null : (props.detail ?? null),
-      progress: typeof props.progress === "number" ? props.progress : null,
-      updatedAt: work.updatedAt.toISOString(),
-      private: isPrivate,
-    };
-  }
-
   return {
     generatedAt: now.toISOString(),
-    activeWork,
+    activeWork: work[0] ?? null,
+    work,
     pendingInteraction: pending
       ? {
           id: pending.id,
@@ -77,6 +134,13 @@ function snapshotFor(userId: string): WatchSnapshotDto {
           secondaryLabel: pending.secondaryLabel,
         }
       : null,
+    recentMessages: messages.map((row) => ({
+      id: row.id,
+      source: row.sourceName,
+      title: row.title,
+      body: row.body,
+      occurredAt: row.occurredAt.toISOString(),
+    })),
   };
 }
 
@@ -86,8 +150,8 @@ function snapshotFor(userId: string): WatchSnapshotDto {
  */
 export const watchRoute = new Hono<AgentEnv>()
   .use("*", requireApiToken)
-  .get("/snapshot", requireScopes("watch:read"), (c) =>
-    c.json(snapshotFor(c.get("apiToken").userId)),
+  .get("/snapshot", requireScopes("watch:read"), async (c) =>
+    c.json(await snapshotFor(c.get("apiToken").userId)),
   )
   .post("/interactions/:id/respond", requireScopes("watch:respond"), async (c) => {
     const parsed = watchInteractionResponseSchema.safeParse(await c.req.json().catch(() => null));
@@ -130,7 +194,7 @@ export const watchRoute = new Hono<AgentEnv>()
       .returning();
     if (!resolved) {
       return c.json(
-        { error: "Interaction is already terminal", snapshot: snapshotFor(token.userId) },
+        { error: "Interaction is already terminal", snapshot: await snapshotFor(token.userId) },
         409,
       );
     }
@@ -142,5 +206,9 @@ export const watchRoute = new Hono<AgentEnv>()
     });
     void deliverInteractionCallbacks();
     void resolveInteractionLiveActivity(resolved);
-    return c.json({ ok: true, status: resolved.status, snapshot: snapshotFor(token.userId) });
+    return c.json({
+      ok: true,
+      status: resolved.status,
+      snapshot: await snapshotFor(token.userId),
+    });
   });
