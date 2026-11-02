@@ -328,9 +328,17 @@ export async function boardCommand(action, positionals, options, context) {
       ...(options.outcome ? { outcome: options.outcome } : {}),
       ...(options.link.length > 0 ? { links: parseLinks(options.link) } : {}),
       ...(note ? { note } : {}),
+      ...(options.status ? { statusLabel: options.status } : {}),
       ...(options.agent ? { agentDisplay: options.agent } : {}),
     };
-    screen([payload.title, payload.note, payload.agentDisplay]);
+    if (
+      payload.statusLabel !== undefined &&
+      payload.statusLabel !== null &&
+      typeof payload.statusLabel !== "string"
+    ) {
+      throw new BoardUsageError("--status must be text");
+    }
+    screen([payload.title, payload.note, payload.statusLabel, payload.agentDisplay]);
     const body = await scopedRequest(
       config,
       `/api/agent/board/work/${encodeURIComponent(key)}/done`,
@@ -396,8 +404,8 @@ export const BOARD_HELP = `  sharkctl board ask --key <key> --title <title> [--b
                       [--agent <name>]
   sharkctl board work-get --key <key>
   sharkctl board done --key <key> [--title <title>] [--verb <merged|shipped|done|closed|reported>]
-                      [--outcome <done|failed|cancelled>] [--link <[kind=]url>]... [--note-file <path>]
-                      [--agent <name>]
+                      [--outcome <done|failed|cancelled>] [--status <label>] [--link <[kind=]url>]...
+                      [--note-file <path>] [--agent <name>]
   sharkctl board note --key <key> <text> [--detail-file <path>] [--link <url>] [--expires-in <duration>]
                       [--agent <name>]
   sharkctl board note --key <key> --clear`;

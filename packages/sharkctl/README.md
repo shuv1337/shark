@@ -229,7 +229,9 @@ applying an answer so the board shows it landed. `board cancel --key` withdraws 
 `board work --key <key> --title <title> --state <queued|in_flight|review|blocked>` upserts a work
 item and counts as its heartbeat; items past `--heartbeat-ttl` (default 6h) show as stale. `board
 done --key <key> [--verb merged|shipped|done|closed|reported]` moves it to Recently done, creating it
-if needed with `--title`. `board note --key <key> <text>` keeps a heads-up note; `--clear` removes it.
+if needed with `--title`. That call clears the in-flight status label; `--status` stores a final
+label instead, and a later `board done` replaces it again. Piping `{"statusLabel":null}` also
+clears it. `board note --key <key> <text>` keeps a heads-up note; `--clear` removes it.
 
 Only the captain's signed-in browser or phone can answer; no token scope resolves an ask. Content
 is screened locally and server-side for tokens, keys, and webhook URLs: link to them, never paste.

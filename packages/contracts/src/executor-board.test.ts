@@ -8,6 +8,7 @@ import {
   boardGetCall,
   boardNoteCall,
   boardNoteClearCall,
+  boardToolSchemas,
   boardWaitCall,
   boardWorkCall,
   boardWorkGetCall,
@@ -96,6 +97,18 @@ describe("Executor board calls", () => {
       outcome: "done",
       agentDisplay: "Grok Bot",
     });
+    expect(boardDoneCall("spike", { statusLabel: "Shipped" }).body).toEqual({
+      statusLabel: "Shipped",
+    });
+    expect(boardDoneCall("spike", { statusLabel: null }).body).toEqual({ statusLabel: null });
+    expect(() => boardDoneCall("spike", { statusLabel: `hark_${"a".repeat(43)}` })).toThrow(
+      /credential/,
+    );
+    expect(boardToolSchemas.done.required).toEqual(["key"]);
+    expect(boardToolSchemas.done.properties.statusLabel.anyOf).toEqual([
+      { type: "string", minLength: 1, maxLength: 60 },
+      { type: "null" },
+    ]);
     expect(boardNoteCall({ key: "n", text: "Heads up", agentDisplay: "Grok Bot" }).body).toEqual({
       key: "n",
       text: "Heads up",

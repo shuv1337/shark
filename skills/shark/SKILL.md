@@ -444,7 +444,8 @@ Work lifecycle:
   PR, issue, or doc when one exists. Re-run it with the same key at real milestones; each call is
   also the heartbeat. A re-run keeps the links, progress, status, detail, host, agent, and TTL it
   does not repeat, and keeps the waiting ask only while the item stays `blocked`; to clear one,
-  pipe JSON such as `{"progress":null}` or `{"links":[]}` on stdin. Items quiet past `--heartbeat-ttl` (default 6h) show as stale, so set a shorter TTL for
+  pipe JSON such as `{"progress":null}` or `{"links":[]}` on stdin. That keep-on-omit rule is only
+  for `board work`. Items quiet past `--heartbeat-ttl` (default 6h) show as stale, so set a shorter TTL for
   work you expect to update often.
 - Use `--state review` while waiting on CI or review, `--state blocked --waiting-ask <ask-key>`
   while waiting on the user, and `--state queued` for work you have accepted but not started.
@@ -456,6 +457,11 @@ Work lifecycle:
   `--outcome failed` with a short `--note-file` on failure, and `--outcome cancelled` when the user
   stops the work or it is superseded. Never leave an item in flight when you finish a turn that
   ends the task.
+- `board done` clears the in-flight status label. Omit `--status` and `board work-get` does not
+  keep a label such as "Running tests"; pass `--status` to store a closing label in that field.
+  The board card's status chip does not use it: a finished item shows its verb, or Failed or
+  Cancelled. A later `board done` on the same key replaces the label again, so a retry that should
+  keep it sends `--status` again. Piping `{"statusLabel":null}` also clears it.
 - A long-running visible task can also own a Live Activity; the board item is still required,
   since the activity disappears and the board is the record.
 
