@@ -22,6 +22,7 @@ const production = {
   APNS_SANDBOX_PRIVATE_KEY: "sandbox-private-key",
   APNS_BUNDLE_ID: "dev.shuv.shark",
   APNS_ENVIRONMENT: "production",
+  TRUSTED_FORWARDED_FOR_HOPS: "1",
 };
 
 describe("SHark runtime environment", () => {
@@ -64,6 +65,9 @@ describe("SHark runtime environment", () => {
     );
     expect(issues).toContain("APNS_KEY_ID / APPLE_TEAM_ID / APNS_PRIVATE_KEY are not all set.");
     expect(issues).toContain("APNS_SANDBOX_KEY_ID / APNS_SANDBOX_PRIVATE_KEY are not all set.");
+    expect(issues).toContain(
+      "Production requires TRUSTED_CLIENT_IP_HEADER or TRUSTED_FORWARDED_FOR_HOPS so rate limits are not keyed on a client-supplied X-Forwarded-For.",
+    );
   });
 
   it("rejects a non-empty legacy Autumn key", () => {

@@ -26,7 +26,9 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 11.10.0
+          # Version comes from package.json packageManager, including its integrity hash.
+          # Setting version here as well makes action-setup fail with
+          # "Multiple versions of pnpm specified".
           run_install: false
 
       - name: Set up Node.js

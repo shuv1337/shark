@@ -6,7 +6,7 @@ import {
   liveActivityPushToStartTokenSchema,
   liveActivityUpdateTokenSchema,
 } from "@hark/contracts";
-import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
 import {
@@ -31,6 +31,28 @@ import {
   requireScopes,
 } from "../middleware";
 import { replayLateTerminalDelivery, unsentTerminalDelivery } from "./activities";
+
+/**
+ * Whether a registration may move a device row off another account. A push
+ * token alone is not proof of holding the phone (it can leak through logs or
+ * another app), so it never moves a device by itself, however long the row
+ * has sat unused. The phone proves itself with the APNs token it registered
+ * with. A row without one can only be taken over once Expo has reported its
+ * push token as no longer registered (`active` is cleared only on a
+ * `DeviceNotRegistered` ticket), since nobody else can receive pushes on it.
+ */
+function mayClaimDevice(
+  previous: { active: boolean; apnsToken: string | null },
+  apnsToken: string | undefined,
+): "apns_token" | "unregistered" | null {
+  if (previous.apnsToken !== null) {
+    return apnsToken === previous.apnsToken ? "apns_token" : null;
+  }
+  return previous.active ? null : "unregistered";
+}
+
+const deviceOwnedElsewhereError =
+  "This device is registered to another SHark account. Sign out of SHark there first.";
 
 function toDto(row: typeof device.$inferSelect): DeviceDto {
   return {
@@ -303,7 +325,12 @@ export const devicesRoute = new Hono<AuthedEnv>()
     const [existing, activeDevices, activeWebDevices, activeMacosDevices, billing] =
       await Promise.all([
         db
-          .select({ id: device.id, userId: device.userId, active: device.active })
+          .select({
+            id: device.id,
+            userId: device.userId,
+            active: device.active,
+            apnsToken: device.apnsToken,
+          })
           .from(device)
           .where(eq(device.expoPushToken, parsed.data.expoPushToken))
           .limit(1),
@@ -323,6 +350,19 @@ export const devicesRoute = new Hono<AuthedEnv>()
           .where(and(eq(macosDevice.userId, user.id), eq(macosDevice.active, true))),
         getBilling(user),
       ]);
+    // Signing out removes the row; otherwise the phone must prove it holds the
+    // device before it moves off another account (see `mayClaimDevice`).
+    const previousOwner = existing[0];
+    if (previousOwner && previousOwner.userId !== user.id) {
+      const reason = mayClaimDevice(previousOwner, parsed.data.apnsToken);
+      if (!reason) return c.json({ error: deviceOwnedElsewhereError }, 409);
+      console.warn("[devices] Device moved to another account", {
+        deviceId: previousOwner.id,
+        fromUserId: previousOwner.userId,
+        toUserId: user.id,
+        reason,
+      });
+    }
     const isAlreadyActiveForUser = existing[0]?.userId === user.id && existing[0].active;
     if (
       !isAlreadyActiveForUser &&
@@ -335,10 +375,44 @@ export const devicesRoute = new Hono<AuthedEnv>()
     const now = new Date();
     const registration = db.transaction((tx) => {
       const previous = tx
-        .select({ id: device.id, userId: device.userId })
+        .select({
+          id: device.id,
+          userId: device.userId,
+          active: device.active,
+          apnsToken: device.apnsToken,
+        })
         .from(device)
         .where(eq(device.expoPushToken, parsed.data.expoPushToken))
         .get();
+      // Re-checked here: the row may have changed owner since the read above.
+      if (
+        previous &&
+        previous.userId !== user.id &&
+        !mayClaimDevice(previous, parsed.data.apnsToken)
+      ) {
+        return { kind: "conflict" as const };
+      }
+      // Re-counted here, after `getBilling` resolved: concurrent registrations
+      // cannot all pass the check above before any of them has inserted.
+      if (billing.limits.devices !== null && !(previous?.userId === user.id && previous.active)) {
+        const ios = tx
+          .select({ value: count() })
+          .from(device)
+          .where(and(eq(device.userId, user.id), eq(device.active, true)))
+          .get();
+        const web = tx
+          .select({ value: count() })
+          .from(webPushSubscription)
+          .where(and(eq(webPushSubscription.userId, user.id), eq(webPushSubscription.active, true)))
+          .get();
+        const macos = tx
+          .select({ value: count() })
+          .from(macosDevice)
+          .where(and(eq(macosDevice.userId, user.id), eq(macosDevice.active, true)))
+          .get();
+        const active = (ios?.value ?? 0) + (web?.value ?? 0) + (macos?.value ?? 0);
+        if (active >= billing.limits.devices) return { kind: "limited" as const };
+      }
       const ownerChanged = Boolean(previous && previous.userId !== user.id);
       const registered = tx
         .insert(device)
@@ -400,8 +474,18 @@ export const devicesRoute = new Hono<AuthedEnv>()
         .where(and(eq(userTable.id, user.id), isNull(userTable.welcomeNotificationSentAt)))
         .returning({ id: userTable.id })
         .get();
-      return { row: registered, shouldSendWelcome: Boolean(welcomeClaim) };
+      return {
+        kind: "registered" as const,
+        row: registered,
+        shouldSendWelcome: Boolean(welcomeClaim),
+      };
     });
+    if (registration.kind === "conflict") {
+      return c.json({ error: deviceOwnedElsewhereError }, 409);
+    }
+    if (registration.kind === "limited") {
+      return c.json({ error: "This account has reached its active device limit." }, 402);
+    }
     const { row, shouldSendWelcome } = registration;
     if (!row) {
       return c.json({ error: "Failed to register device" }, 500);

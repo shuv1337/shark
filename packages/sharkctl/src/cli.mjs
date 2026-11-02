@@ -246,11 +246,46 @@ export function configPath(env = process.env) {
   return join(env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "hark", "config.json");
 }
 
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+function isLoopbackHost(hostname) {
+  return LOOPBACK_HOSTS.has(hostname.toLowerCase());
+}
+
+/** Tokens travel only over HTTPS; plain HTTP is allowed for loopback development servers. */
+function assertApiUrl(value, label) {
+  let url;
+  try {
+    url = new URL(String(value));
+  } catch {
+    throw new UsageError(`${label} must be an absolute URL`);
+  }
+  if (url.protocol === "https:") return;
+  if (url.protocol === "http:" && isLoopbackHost(url.hostname)) return;
+  throw new UsageError(`${label} must use https:// (http:// is allowed only for localhost)`);
+}
+
+const normalizeApiUrl = (value) => String(value).replace(/\/+$/, "");
+
+/** Only opens authorization pages served by the API the token is being minted for. */
+function isSameOriginWebUrl(value, apiUrl) {
+  try {
+    const url = new URL(String(value));
+    const okScheme =
+      url.protocol === "https:" || (url.protocol === "http:" && isLoopbackHost(url.hostname));
+    return okScheme && url.origin === new URL(apiUrl).origin;
+  } catch {
+    return false;
+  }
+}
+
 export async function loadConfig(env = process.env) {
   if (env.HARK_TOKEN) {
+    const apiUrl = env.HARK_API_URL ?? DEFAULT_API_URL;
+    assertApiUrl(apiUrl, "HARK_API_URL");
     return {
       token: env.HARK_TOKEN,
-      apiUrl: env.HARK_API_URL ?? DEFAULT_API_URL,
+      apiUrl,
       source: "environment",
     };
   }
@@ -282,9 +317,23 @@ export async function loadConfig(env = process.env) {
   if (typeof parsed.token !== "string" || !parsed.token.startsWith("hark_")) {
     throw new RequestError(`Missing SHark token in ${path}.`, 401);
   }
+  const apiUrl = typeof parsed.apiUrl === "string" ? parsed.apiUrl : DEFAULT_API_URL;
+  // The stored token is bound to the API it was minted for; an environment
+  // override must not silently send it anywhere else.
+  if (
+    env.HARK_API_URL !== undefined &&
+    normalizeApiUrl(env.HARK_API_URL) !== normalizeApiUrl(apiUrl)
+  ) {
+    throw new RequestError(
+      `Refusing HARK_API_URL=${env.HARK_API_URL}: the token in ${path} belongs to ${apiUrl}. ` +
+        "Unset HARK_API_URL, set HARK_TOKEN for that API, or run sharkctl auth login with it.",
+      401,
+    );
+  }
+  assertApiUrl(apiUrl, `apiUrl in ${path}`);
   return {
     token: parsed.token,
-    apiUrl: env.HARK_API_URL ?? parsed.apiUrl ?? DEFAULT_API_URL,
+    apiUrl,
     tokenId: typeof parsed.tokenId === "string" ? parsed.tokenId : undefined,
     source: "file",
     path,
@@ -340,6 +389,7 @@ async function login(options, env, runtime) {
     throw new UsageError("--open and --no-open cannot be used together");
   }
   const apiUrl = env.HARK_API_URL ?? DEFAULT_API_URL;
+  assertApiUrl(apiUrl, "HARK_API_URL");
   const expiresInSeconds = parseDuration(options["expires-in"] ?? "90d");
   const timeoutSeconds = parseDuration(options.timeout ?? "10m");
   const clientName = options["client-name"] ?? "sharkctl";
@@ -352,7 +402,9 @@ async function login(options, env, runtime) {
   runtime.stderr(`Code: ${started.userCode}`);
   runtime.stderr(`Authorize at: ${started.verificationUri}`);
   const shouldOpen = options.open || (!options["no-open"] && runtime.stderrIsTTY);
-  if (shouldOpen) {
+  if (shouldOpen && !isSameOriginWebUrl(started.verificationUriComplete, apiUrl)) {
+    runtime.stderr(`Not opening the browser: the authorization URL is not on ${apiUrl}`);
+  } else if (shouldOpen) {
     try {
       runtime.openBrowser(started.verificationUriComplete);
     } catch (error) {
@@ -387,23 +439,32 @@ async function login(options, env, runtime) {
     }
 
     const path = configPath(env);
+    const accessToken = typeof response?.accessToken === "string" ? response.accessToken : null;
+    let saved = false;
     try {
-      await runtime.writeConfig(path, {
-        apiUrl,
-        token: response.accessToken,
-        tokenId: response.token.id,
-      });
-    } catch (error) {
-      await request({ apiUrl, token: response.accessToken }, "/api/agent/auth/revoke", {
-        method: "POST",
-      }).catch(() => {});
-      throw error;
+      if (
+        !accessToken?.startsWith("hark_") ||
+        typeof response.token !== "object" ||
+        response.token === null ||
+        typeof response.token.id !== "string"
+      ) {
+        throw new RequestError("Malformed authorization response", 502);
+      }
+      await runtime.writeConfig(path, { apiUrl, token: accessToken, tokenId: response.token.id });
+      saved = true;
+      return {
+        authenticated: true,
+        token: response.token,
+        configPath: path,
+      };
+    } finally {
+      // Never leave a minted token alive that was not stored.
+      if (!saved && accessToken) {
+        await request({ apiUrl, token: accessToken }, "/api/agent/auth/revoke", {
+          method: "POST",
+        }).catch(() => {});
+      }
     }
-    return {
-      authenticated: true,
-      token: response.token,
-      configPath: path,
-    };
   }
   throw new RequestError("Authorization timed out", 408, { error: "expired_token" });
 }

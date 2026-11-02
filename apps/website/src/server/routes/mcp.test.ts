@@ -166,6 +166,7 @@ describe("MCP discovery and authentication", () => {
       body: "{}",
     });
     expect(response.status).toBe(401);
+    expect(response.headers.get("cache-control")).toBe("no-store");
     const challenge = response.headers.get("www-authenticate") ?? "";
     expect(challenge).toContain(
       'resource_metadata="http://localhost:5173/.well-known/oauth-protected-resource/mcp"',
@@ -322,6 +323,7 @@ describe("MCP tool catalog", () => {
     expect(listed).toHaveLength(tools.MCP_TOOLS.length);
     expect(client.getServerVersion()?.name).toBe("shark");
     expect(client.getInstructions()).toContain("Human-only boundary");
+    expect(client.getInstructions()).toContain("Untrusted content");
 
     const byName = new Map(listed.map((tool) => [tool.name, tool]));
     expect(byName.get("teams_list")?.annotations).toMatchObject({ readOnlyHint: true });
@@ -606,5 +608,87 @@ describe("MCP tools", () => {
       body: "{}",
     });
     expect(response.status).toBe(401);
+  });
+});
+
+describe("Expo authorization proxy", () => {
+  const apple = `/api/auth/expo-authorization-proxy?authorizationURL=${encodeURIComponent(
+    "https://appleid.apple.com/auth/authorize?client_id=dev.shuv.shark.web",
+  )}&oauthState=y`;
+  const open = (headers: Record<string, string> = {}) => app.request(apple, { headers });
+
+  it("passes a header-less and top-level Apple sign-in through", async () => {
+    const passes: Record<string, string>[] = [
+      {},
+      {
+        "sec-fetch-site": "none",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-dest": "document",
+      },
+    ];
+    for (const headers of passes) {
+      const response = await open(headers);
+      const body = await response
+        .clone()
+        .json()
+        .catch(() => null);
+      const guardError =
+        body && typeof body === "object" && "error" in body
+          ? (body as { error?: unknown }).error
+          : null;
+      expect(guardError).not.toBe("Invalid authorizationURL");
+      expect(guardError).not.toBe("Forbidden");
+    }
+  });
+
+  it("rejects targets other than Apple and a second authorizationURL", async () => {
+    for (const target of [
+      "https://evil.example/auth",
+      "https://accounts.google.com/o/oauth2/v2/auth?client_id=x",
+      "javascript:alert(1)",
+    ]) {
+      const response = await app.request(
+        `/api/auth/expo-authorization-proxy?authorizationURL=${encodeURIComponent(target)}`,
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: "Invalid authorizationURL" });
+    }
+    const doubled = await app.request(
+      `/api/auth/expo-authorization-proxy?authorizationURL=${encodeURIComponent(
+        "https://appleid.apple.com/auth/authorize",
+      )}&authorizationURL=${encodeURIComponent("https://evil.example/auth")}`,
+    );
+    expect(doubled.status).toBe(400);
+    expect(await doubled.json()).toEqual({ error: "Invalid authorizationURL" });
+  });
+
+  it("rejects cross-site loads and anything that is not a top-level page load", async () => {
+    const forbidden: Record<string, string>[] = [
+      {
+        "sec-fetch-site": "cross-site",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-dest": "document",
+      },
+      { "sec-fetch-site": "same-site", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" },
+      { "sec-fetch-site": "none", "sec-fetch-mode": "no-cors", "sec-fetch-dest": "image" },
+      { "sec-fetch-site": "none", "sec-fetch-mode": "navigate", "sec-fetch-dest": "iframe" },
+      { "sec-fetch-mode": "cors" },
+      { "sec-fetch-dest": "script" },
+    ];
+    for (const headers of forbidden) {
+      const response = await open(headers);
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: "Forbidden" });
+    }
+  });
+
+  it("sends no-store and framing headers on API responses", async () => {
+    const health = await app.request("/api/health");
+    expect(health.headers.get("cache-control")).toBe("no-store");
+    expect(health.headers.get("x-frame-options")).toBe("DENY");
+    expect(health.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(health.headers.get("strict-transport-security")).toBe(
+      "max-age=15552000; includeSubDomains",
+    );
   });
 });

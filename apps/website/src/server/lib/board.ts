@@ -170,8 +170,18 @@ export function toAskDto(row: AskRow, now = new Date()): BoardAskDto {
   };
 }
 
+/** Open work whose agent has missed its own heartbeat deadline. */
+export function isWorkStale(
+  row: Pick<WorkRow, "state" | "lastHeartbeatAt" | "heartbeatTtlSeconds">,
+  now = new Date(),
+): boolean {
+  return (
+    (ACTIVE_WORK_STATES as readonly string[]).includes(row.state) &&
+    now.getTime() - row.lastHeartbeatAt.getTime() > row.heartbeatTtlSeconds * 1000
+  );
+}
+
 export function toWorkDto(row: WorkRow, now = new Date()): BoardWorkItemDto {
-  const active = (ACTIVE_WORK_STATES as readonly string[]).includes(row.state);
   return {
     id: row.id,
     key: row.workKey,
@@ -188,7 +198,7 @@ export function toWorkDto(row: WorkRow, now = new Date()): BoardWorkItemDto {
     startedAt: row.startedAt?.toISOString() ?? null,
     lastHeartbeatAt: row.lastHeartbeatAt.toISOString(),
     heartbeatTtlSeconds: row.heartbeatTtlSeconds,
-    stale: active && now.getTime() - row.lastHeartbeatAt.getTime() > row.heartbeatTtlSeconds * 1000,
+    stale: isWorkStale(row, now),
     completedAt: row.completedAt?.toISOString() ?? null,
     completionVerb: row.completionVerb as BoardWorkItemDto["completionVerb"],
     note: row.note,

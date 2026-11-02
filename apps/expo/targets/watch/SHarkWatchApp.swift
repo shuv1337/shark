@@ -25,9 +25,21 @@ private struct Snapshot: Codable {
     let primaryLabel: String?
     let secondaryLabel: String?
   }
+  struct Message: Codable, Identifiable {
+    let id: String
+    let source: String
+    let title: String
+    let body: String
+    let occurredAt: Date
+  }
   let generatedAt: Date
   let activeWork: Work?
+  // Optional so a cached snapshot from an earlier build still decodes.
+  let work: [Work]?
   let pendingInteraction: Interaction?
+  let recentMessages: [Message]?
+
+  var openWork: [Work] { work ?? activeWork.map { [$0] } ?? [] }
 }
 
 private struct AuthorizationStart: Decodable {
@@ -180,12 +192,15 @@ private struct WatchRoot: View {
       VStack(alignment: .leading, spacing: 10) {
         Text("SHark").font(.headline).foregroundStyle(.orange)
         if stale { Text("Last known state — refresh before responding.").font(.caption2).foregroundStyle(.yellow) }
-        if let work = snapshot.activeWork {
-          Text(model.hideDetails || work.private ? "Agent task" : work.title).font(.headline)
-          Text(model.hideDetails || work.private ? "In progress" : work.status).font(.caption).foregroundStyle(.secondary)
-          if !model.hideDetails, !work.private, let detail = work.detail { Text(detail).font(.caption2).lineLimit(2) }
-          if let progress = work.progress { ProgressView(value: progress) }
-        } else { Text("No active work").foregroundStyle(.secondary) }
+        if snapshot.openWork.isEmpty { Text("No active work").foregroundStyle(.secondary) }
+        ForEach(snapshot.openWork) { work in
+          VStack(alignment: .leading, spacing: 2) {
+            Text(model.hideDetails || work.private ? "Agent task" : work.title).font(.headline)
+            Text(model.hideDetails || work.private ? "In progress" : work.status).font(.caption).foregroundStyle(.secondary)
+            if !model.hideDetails, !work.private, let detail = work.detail { Text(detail).font(.caption2).lineLimit(2) }
+            if let progress = work.progress { ProgressView(value: progress) }
+          }
+        }
         if let item = snapshot.pendingInteraction {
           Divider(); Text("Needs your answer").font(.caption).foregroundStyle(.orange)
           Text(model.hideDetails ? "An approval is waiting" : item.title).font(.headline)
@@ -200,6 +215,20 @@ private struct WatchRoot: View {
             Button("Cancel", role: .cancel) { requestedAction = nil }
           }
           if model.isSubmitting { ProgressView("Sending…") }
+        }
+        if let messages = snapshot.recentMessages, !messages.isEmpty {
+          Divider(); Text("Recent").font(.caption).foregroundStyle(.orange)
+          ForEach(messages) { message in
+            VStack(alignment: .leading, spacing: 2) {
+              if model.hideDetails {
+                Text("Message").font(.caption)
+              } else {
+                Text(message.source).font(.caption2).foregroundStyle(.secondary)
+                Text(message.title).font(.caption).lineLimit(2)
+                if !message.body.isEmpty { Text(message.body).font(.caption2).lineLimit(2) }
+              }
+            }
+          }
         }
         Toggle("Hide details", isOn: Binding(get: { model.hideDetails }, set: model.setPrivacy))
         Button("Refresh") { Task { await model.refresh() } }

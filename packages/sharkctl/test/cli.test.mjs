@@ -196,15 +196,17 @@ test("auth login polls through pending and slow_down without opening a non-TTY b
 test("auth login opens only when interactive or explicitly requested", async () => {
   const originalFetch = globalThis.fetch;
   let opened = 0;
+  let foreignVerification = false;
   const mockFetch = async (url, init) => {
     if (String(url).endsWith("/start")) {
       assert.equal(JSON.parse(init.body).clientName, "sharkctl");
+      const origin = foreignVerification ? "https://evil.example" : "https://shark.shuv.dev";
       return Response.json(
         {
           deviceCode: "o".repeat(43),
           userCode: "OPEN-2345",
-          verificationUri: "https://example.test/cli/authorize",
-          verificationUriComplete: "https://example.test/cli/authorize?code=OPEN-2345",
+          verificationUri: `${origin}/cli/authorize`,
+          verificationUriComplete: `${origin}/cli/authorize?code=OPEN-2345`,
           expiresIn: 600,
           interval: 5,
         },
@@ -230,6 +232,9 @@ test("auth login opens only when interactive or explicitly requested", async () 
     await execute(["auth", "login", "--open"], {}, overrides);
     assert.equal(opened, 1);
     await execute(["auth", "login", "--no-open"], {}, { ...overrides, stderrIsTTY: true });
+    assert.equal(opened, 1);
+    foreignVerification = true;
+    await execute(["auth", "login", "--open"], {}, overrides);
     assert.equal(opened, 1);
   } finally {
     globalThis.fetch = originalFetch;
@@ -2198,4 +2203,31 @@ test("oncall update keeps unchanged rotation fields, including the original star
       });
     },
   );
+});
+
+test("refuses to send a stored token to a different HARK_API_URL", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sharkctl-api-url-"));
+  const path = join(directory, "config.json");
+  await writeFile(
+    path,
+    JSON.stringify({ token: `hark_${"t".repeat(43)}`, apiUrl: "https://shark.shuv.dev" }),
+  );
+  await chmod(path, 0o600);
+  try {
+    const result = await run(["auth", "status"], {
+      HARK_CONFIG: path,
+      HARK_API_URL: "http://evil.example",
+    });
+    assert.equal(result, 3);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("refuses a non-loopback http API URL from the environment", async () => {
+  const result = await run(["auth", "status"], {
+    HARK_TOKEN: `hark_${"t".repeat(43)}`,
+    HARK_API_URL: "http://evil.example",
+  });
+  assert.equal(result, 2);
 });

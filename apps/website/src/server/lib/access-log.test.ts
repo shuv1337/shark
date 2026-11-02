@@ -20,6 +20,12 @@ describe("access log redaction", () => {
       "/api/team-invites/:code/accept",
     );
     expect(redactedRequestPath("/api/teams/team_1/invites")).toBe("/api/teams/team_1/invites");
+    expect(redactedRequestPath("/api/device-authorization/requests/ABCD2345")).toBe(
+      "/api/device-authorization/requests/:code",
+    );
+    expect(redactedRequestPath("/HOOKS/whk_synthetic")).toBe("/HOOKS/:redacted");
+    expect(redactedRequestPath("/api/echo/hark_synthetic")).toBe("/api/echo/:redacted");
+    expect(redactedRequestPath("/%2Fhooks%2Fwhk_synthetic")).toBe(":redacted");
   });
 
   it("never writes an invite code to the log sink", async () => {
