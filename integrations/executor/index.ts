@@ -406,24 +406,15 @@ const board_done = mutation(
     ...writes,
     description:
       "Finish this token's work item. verb is merged, shipped, done, closed, or reported. " +
-      "outcome is done, failed, or cancelled. agentDisplay is the per-bot name, at most 60 characters.",
-    input: object({
-      key: string({ minLength: 1 }),
-      title: string({ minLength: 1 }).optional(),
-      verb: string().optional(),
-      outcome: string().optional(),
-      links: array(
-        object({
-          url: string({ minLength: 1 }),
-          kind: string().optional(),
-          label: string().optional(),
-        }),
-      ).optional(),
-      note: string().optional(),
-      agentDisplay,
-    }),
+      "outcome is done, failed, or cancelled. agentDisplay is the per-bot name, at most 60 characters. " +
+      "statusLabel is an optional final label of at most 60 characters. Omit it or send null to clear " +
+      "the in-flight status label. A later board_done replaces that label again.",
+    input: jsonSchema(boardToolSchemas.done),
   },
-  async (ctx: Mutation, input) => api(ctx, boardDoneCall(input.key, input as BoardDoneInput)),
+  async (ctx: Mutation, raw) => {
+    const input = raw as { key: string } & BoardDoneInput;
+    return api(ctx, boardDoneCall(input.key, input));
+  },
 );
 
 const board_note = mutation(

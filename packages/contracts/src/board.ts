@@ -210,6 +210,11 @@ export const boardWorkUpsertSchema = z.object({
 });
 export type BoardWorkUpsertInput = z.infer<typeof boardWorkUpsertSchema>;
 
+/**
+ * Completes a work item. `statusLabel` does not follow the work-heartbeat keep-on-omit rule:
+ * omitting it, or sending null, clears the in-flight label so a finished item does not keep
+ * saying it is still running. A string replaces that label. A later completion replaces it again.
+ */
 export const boardDoneSchema = z.object({
   key: boardKeySchema,
   title: singleLine(BOARD_TITLE_MAX_CHARS).optional(),
@@ -218,6 +223,13 @@ export const boardDoneSchema = z.object({
   outcome: z.enum(["done", "failed", "cancelled"]).default("done"),
   links: z.array(boardLinkSchema).max(BOARD_MAX_LINKS).default([]),
   note: multiLine(600).optional(),
+  statusLabel: singleLine(60)
+    .nullable()
+    .optional()
+    .describe(
+      "Final status line, at most 60 characters. " +
+        "Omit or null clears the in-flight label; a string replaces it.",
+    ),
   agentDisplay: agentDisplaySchema.optional(),
 });
 export type BoardDoneInput = z.infer<typeof boardDoneSchema>;
