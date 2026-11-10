@@ -178,7 +178,7 @@ stays in the inbox; the summary is used in push previews. Project names are norm
 
 ## Ask the User (operator reference)
 
-Agent decisions go through `queue_post` / `canvas_ask` instead; do not use these recipes as a
+Agent decisions go through `queue_post` + `queue_wait` instead; do not use these recipes as a
 second decision door. Use this reference only for an explicitly requested SHark integration.
 
 Pass exactly one response type. Pick the shape from what you need:
@@ -378,10 +378,11 @@ All agent decisions land at **https://shuvdev.tail586a6d.ts.net:10002/** through
 `dc1-canvas` MCP entry (or `shared-dc1-canvas` if present). Read the `dc1-canvas` skill first.
 Do not post new `board_ask`, `ask`, or Inbox requests as alternative decision channels.
 
-- Prefer `queue_post` with a stable dedupe `key`, context, options and recommendation.
+- Use `queue_post` + `queue_wait` for decisions. Post with a stable dedupe `key`, context, options and recommendation.
   Pass a stable `agent` on every queue call, `session` on posts, and actual
   `source: {host,harness,thread_id}` (claimed; omit unknown fields).
-- `canvas_ask` / `canvas_wait` remain supported compatibility calls into the same queue.
+- `canvas_ask` / `canvas_wait` are deprecated but still work with an additive deprecation note.
+  Planned removal: 2026-12-10; use `queue_post` + `queue_wait`.
 - Continue independent work, then collect with `queue_wait`. Recover receipts with
   `queue_answers`, persist the cursor, and `queue_ack` only after applying the exact answer.
   Never infer approval from an expiry, withdrawal or dismissal. Only the person answers.
@@ -399,7 +400,7 @@ Do not post new `board_ask`, `ask`, or Inbox requests as alternative decision ch
   Keep a durable old-to-new id map; do not reopen already answered or cancelled asks.
 
 The board APIs remain available for existing integrations and migration, not default agent
-routing. No seven-day retirement clock or `canvas_ask` deprecation note is active yet.
+routing. The observation window was waived on 2026-11-10; nothing is removed now.
 
 ## Manage the Account
 
