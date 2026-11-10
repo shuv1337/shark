@@ -20,3 +20,5 @@ pii:packages/contracts/src/index.test.ts
 pii:packages/contracts/src/ip.ts
 pii:packages/contracts/src/url.test.ts
 pii:packages/sharkctl/test/permissions-hook.test.mjs
+# P3 skill names the user's one-queue destination so agents do not post to a second board.
+pii:skills/shark/SKILL.md
