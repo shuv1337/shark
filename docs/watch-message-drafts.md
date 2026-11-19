@@ -13,8 +13,9 @@ particular keyboard. Save returns to preview and never sends.
   a caller-supplied verification label is not independent proof of address ownership.
 - Watch fetches `/api/watch/message-drafts/next` (separate from legacy snapshot/cache).
 - Edit requires expected revision and action digest, replaces the body and increments revision.
-- Send/Deny requires the same revision and digest. Send atomically claims one immutable
-  revision and creates an operation ID. It is not proof of delivery.
+- Send/Deny requires the same revision and digest. Send atomically approves one immutable
+  revision. The creator bridge then claims that revision once at `/:id/claim`, creating an
+  operation ID. Neither transition is proof of delivery.
 - Bridge reads that claimed operation and sends only its frozen recipient and text. It must
   deduplicate by operation ID and must not automatically retry an ambiguous provider timeout.
 - Delivery receipt distinguishes delivered, failed and unknown. Denied/expired drafts never send.
