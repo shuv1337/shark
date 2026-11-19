@@ -25,7 +25,7 @@ const messageText = z
       value.trim().length > 0 &&
       !/[\p{Cc}\p{Cs}\u202a-\u202e\u2066-\u2069]/u.test(value.replace(/[\n\t]/g, "")),
   );
-const createSchema = z.strictObject({
+export const messageDraftCreateSchema = z.strictObject({
   recipient: recipientSchema,
   text: messageText,
   idempotencyKey: descriptor,
@@ -35,10 +35,10 @@ const match = {
   expectedRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   actionDigest: z.string().regex(/^[a-f0-9]{64}$/),
 };
-const revisionSchema = z.strictObject(match);
+export const messageDraftRevisionSchema = z.strictObject(match);
 const editSchema = z.strictObject({ ...match, text: messageText });
 const respondSchema = z.strictObject({ ...match, action: z.enum(["send", "deny"]) });
-const receiptSchema = z
+export const messageDraftReceiptSchema = z
   .strictObject({
     operationId: z.string().uuid(),
     status: z.enum(["delivered", "failed", "unknown"]),
@@ -91,7 +91,7 @@ function owner(id: string, userId: string, creatorTokenId?: string) {
   );
 }
 
-function currentRevision(input: z.infer<typeof revisionSchema>) {
+function currentRevision(input: z.infer<typeof messageDraftRevisionSchema>) {
   return and(
     eq(messageDraft.revision, input.expectedRevision),
     eq(messageDraft.actionDigest, input.actionDigest),
@@ -110,7 +110,7 @@ function privateResponses() {
 export const agentMessageDraftRoute = privateResponses()
   .use("*", requireApiToken)
   .post("/", requireScopes("interactions:create"), async (c) => {
-    const parsed = createSchema.safeParse(await c.req.json().catch(() => null));
+    const parsed = messageDraftCreateSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: "Invalid message draft" }, 400);
     const { idempotencyKey, recipient, text, expiresInSeconds } = parsed.data;
     const token = c.get("apiToken");
@@ -168,7 +168,7 @@ export const agentMessageDraftRoute = privateResponses()
     return row ? c.json({ draft: dto(row) }) : c.json({ error: "Draft not found" }, 404);
   })
   .post("/:id/claim", requireScopes("interactions:create", "interactions:read"), async (c) => {
-    const parsed = revisionSchema.safeParse(await c.req.json().catch(() => null));
+    const parsed = messageDraftRevisionSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: "Invalid draft claim" }, 400);
     const token = c.get("apiToken");
     const row = db.transaction((tx) =>
@@ -193,7 +193,7 @@ export const agentMessageDraftRoute = privateResponses()
     return row ? c.json({ draft: dto(row) }) : c.json({ error: "Draft not claimable" }, 409);
   })
   .post("/:id/receipt", requireScopes("interactions:create", "interactions:read"), async (c) => {
-    const parsed = receiptSchema.safeParse(await c.req.json().catch(() => null));
+    const parsed = messageDraftReceiptSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: "Invalid delivery receipt" }, 400);
     const token = c.get("apiToken");
     const { operationId, status, providerMessageId = null } = parsed.data;
