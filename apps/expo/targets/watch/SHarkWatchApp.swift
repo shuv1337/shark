@@ -42,6 +42,24 @@ private struct Snapshot: Codable {
   var openWork: [Work] { work ?? activeWork.map { [$0] } ?? [] }
 }
 
+// Draft bodies are deliberately memory-only, never added to SnapshotCache.
+private struct MessageDraft: Decodable, Identifiable {
+  struct Recipient: Decodable {
+    let id: String
+    let label: String
+    let address: String
+    let verificationSource: String
+  }
+  let id: String
+  let recipient: Recipient
+  let text: String
+  let revision: Int
+  let actionDigest: String
+  let expiresAt: Date
+  let status: String
+}
+private struct DraftResponse: Decodable { let draft: MessageDraft? }
+
 private struct AuthorizationStart: Decodable {
   let deviceCode: String
   let userCode: String
@@ -67,8 +85,13 @@ private final class WatchModel: ObservableObject {
   enum State { case loading, ready(Snapshot), stale(Snapshot), unavailable(String), authorizing(AuthorizationStart) }
   @Published var state: State = .loading
   @Published var isSubmitting = false
+  @Published var draft: MessageDraft?
+  @Published var draftNotice: String?
+  @Published var draftLoading = false
   @Published var hideDetails = UserDefaults.standard.bool(forKey: "shark.watch.hide-details")
   private var token: String? = Keychain.read(tokenKey)
+  private var draftGeneration = 0
+  private var privateDraftsActive = true
   private var lastSnapshot: Snapshot?
 
   init() {
@@ -85,6 +108,7 @@ private final class WatchModel: ObservableObject {
       lastSnapshot = snapshot
       SnapshotCache.write(snapshot)
       state = .ready(snapshot)
+      await refreshDraft()
     } catch {
       state = lastSnapshot.map(State.stale) ?? .unavailable("SHark is unavailable. Try again when your Watch is connected.")
     }
@@ -141,6 +165,71 @@ private final class WatchModel: ObservableObject {
     }
   }
 
+  func clearPrivateDraft() {
+    privateDraftsActive = false
+    draftGeneration += 1
+    draft = nil
+    draftNotice = nil
+  }
+
+  func activatePrivateDrafts() { privateDraftsActive = true }
+
+  func refreshDraft() async {
+    draft = nil
+    guard let token, privateDraftsActive else { return }
+    draftGeneration += 1
+    let generation = draftGeneration
+    draftLoading = true
+    defer { draftLoading = false }
+    do {
+      let result: DraftResponse = try await request("/api/watch/message-drafts/next", token: token)
+      guard privateDraftsActive, generation == draftGeneration else { return }
+      draft = result.draft
+    } catch {
+      guard privateDraftsActive, generation == draftGeneration else { return }
+      // An older server must keep legacy approvals usable, without enabling draft Send.
+      draftNotice = "Message drafts unavailable. Refresh to try again."
+    }
+  }
+
+  func editDraft(_ item: MessageDraft, text: String) async -> Bool {
+    guard let token, !isSubmitting, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+    isSubmitting = true
+    defer { isSubmitting = false }
+    do {
+      let result: DraftResponse = try await request(
+        "/api/watch/message-drafts/\(item.id)/edit", method: "POST", token: token,
+        body: ["expectedRevision": item.revision, "actionDigest": item.actionDigest, "text": text]
+      )
+      guard privateDraftsActive else { return false }
+      draft = result.draft
+      draftNotice = "Saved. Review the revised message before Send."
+      return true
+    } catch {
+      await refreshDraft()
+      draftNotice = "Edit was not confirmed. Review the current draft before trying again."
+      return false
+    }
+  }
+
+  func respondToDraft(_ action: String, item: MessageDraft) async {
+    guard let token, !isSubmitting else { return }
+    isSubmitting = true
+    defer { isSubmitting = false }
+    do {
+      let _: DraftResponse = try await request(
+        "/api/watch/message-drafts/\(item.id)/respond", method: "POST", token: token,
+        body: ["expectedRevision": item.revision, "actionDigest": item.actionDigest, "action": action]
+      )
+      draft = nil
+      draftNotice = action == "send" ? "Send authorized. Delivery is not yet confirmed." : "Draft denied. Nothing will be sent."
+    } catch {
+      await refreshDraft()
+      // Never retry a send automatically or describe an uncertain response as delivered.
+      draftNotice = "Response not confirmed. Refresh or check delivery status before retrying."
+    }
+  }
+
   func setPrivacy(_ value: Bool) {
     hideDetails = value
     UserDefaults.standard.set(value, forKey: "shark.watch.hide-details")
@@ -152,6 +241,7 @@ private struct Response: Decodable { let snapshot: Snapshot }
 private extension WatchModel {
   func request<T: Decodable>(_ path: String, method: String = "GET", token: String? = nil, body: [String: Any]? = nil) async throws -> T {
     var request = URLRequest(url: apiOrigin.appendingPathComponent(path))
+    request.cachePolicy = .reloadIgnoringLocalCacheData
     request.httpMethod = method
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -160,7 +250,14 @@ private extension WatchModel {
     let (data, response) = try await URLSession.shared.data(for: request)
     guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
     guard (200..<300).contains(http.statusCode) else { throw APIError(statusCode: http.statusCode) }
-    let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .custom { decoder in
+      let value = try decoder.singleValueContainer().decode(String.self)
+      let fractional = ISO8601DateFormatter()
+      fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+      if let date = fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value) { return date }
+      throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid date"))
+    }
     return try decoder.decode(T.self, from: data)
   }
 }
@@ -174,6 +271,11 @@ struct SHarkWatchApp: App {
 private struct WatchRoot: View {
   @ObservedObject var model: WatchModel
   @State private var requestedAction: String?
+  @Environment(\.scenePhase) private var scenePhase
+  @State private var editingDraft: MessageDraft?
+  @State private var draftText = ""
+  @State private var draftConfirmation: String?
+  @State private var confirmingDraft: MessageDraft?
   var body: some View {
     Group {
       switch model.state {
@@ -185,6 +287,36 @@ private struct WatchRoot: View {
       }
     }
     .task { await model.refresh() }
+    .onChange(of: scenePhase) { phase in
+      if phase == .active { model.activatePrivateDrafts(); Task { await model.refresh() } }
+      else {
+        model.clearPrivateDraft()
+        editingDraft = nil
+        confirmingDraft = nil
+        draftText = ""
+      }
+    }
+    .sheet(item: $editingDraft) { item in
+      ScrollView {
+        VStack(alignment: .leading, spacing: 10) {
+          Text("Edit message").font(.headline)
+          // Native text entry preserves the OS-selected keyboard/dictation method.
+          TextField("Message", text: $draftText)
+            .privacySensitive()
+          Text("Save returns to preview. It does not send.").font(.caption2)
+          Button("Save") {
+            Task {
+              if await model.editDraft(item, text: draftText) {
+                editingDraft = nil
+                draftText = ""
+              }
+            }
+          }.disabled(model.isSubmitting || draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+          Button("Cancel") { editingDraft = nil; draftText = "" }.disabled(model.isSubmitting)
+          if let notice = model.draftNotice { Text(notice).font(.caption2) }
+        }.padding()
+      }.privacySensitive()
+    }
   }
 
   private func content(_ snapshot: Snapshot, stale: Bool) -> some View {
@@ -200,6 +332,11 @@ private struct WatchRoot: View {
             if !model.hideDetails, !work.private, let detail = work.detail { Text(detail).font(.caption2).lineLimit(2) }
             if let progress = work.progress { ProgressView(value: progress) }
           }
+        }
+        if let notice = model.draftNotice { Text(notice).font(.caption2) }
+        if model.draftLoading { ProgressView("Checking drafts…") }
+        if let item = model.draft {
+          draftPreview(item, stale: stale)
         }
         if let item = snapshot.pendingInteraction {
           Divider(); Text("Needs your answer").font(.caption).foregroundStyle(.orange)
@@ -233,6 +370,41 @@ private struct WatchRoot: View {
         Toggle("Hide details", isOn: Binding(get: { model.hideDetails }, set: model.setPrivacy))
         Button("Refresh") { Task { await model.refresh() } }
       }.padding()
+    }
+  }
+
+  private func draftPreview(_ item: MessageDraft, stale: Bool) -> some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Divider()
+      Text("Message draft").font(.headline)
+      if model.hideDetails {
+        Text("Reveal details to review and send this private draft.").font(.caption)
+      } else {
+        Text("To: \(item.recipient.label)").font(.headline)
+        Text(item.recipient.address).font(.caption)
+        Text("Verified via \(item.recipient.verificationSource)").font(.caption2)
+        // No line limit or collapsed summary: Send sits below the complete exact body.
+        Text(item.text).font(.body).fixedSize(horizontal: false, vertical: true)
+        Text("Revision \(item.revision)").font(.caption2)
+        Button("Send") { confirmingDraft = item; draftConfirmation = "send" }.tint(.green)
+        Button("Edit") { draftText = item.text; editingDraft = item }
+        Button("Deny", role: .destructive) { confirmingDraft = item; draftConfirmation = "deny" }
+      }
+    }
+    .privacySensitive()
+    .disabled(stale || model.isSubmitting || model.draftLoading || item.status != "pending" || item.expiresAt <= Date())
+    .confirmationDialog("Confirm exact draft", isPresented: Binding(
+      get: { draftConfirmation != nil },
+      set: { if !$0 { draftConfirmation = nil; confirmingDraft = nil } }
+    )) {
+      Button(draftConfirmation == "send" ? "Send this revision" : "Deny draft") {
+        if let selected = confirmingDraft, let action = draftConfirmation {
+          Task { await model.respondToDraft(action, item: selected) }
+        }
+        draftConfirmation = nil
+        confirmingDraft = nil
+      }
+      Button("Cancel", role: .cancel) { draftConfirmation = nil; confirmingDraft = nil }
     }
   }
 
