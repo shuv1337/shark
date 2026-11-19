@@ -208,7 +208,8 @@ private final class WatchModel: ObservableObject {
   }
 
   func editDraft(_ item: MessageDraft, text: String) async -> Bool {
-    guard let token, !isSubmitting, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+    guard let token, privateDraftsActive, !isSubmitting, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+    let generation = draftGeneration
     isSubmitting = true
     defer { isSubmitting = false }
     do {
@@ -216,20 +217,24 @@ private final class WatchModel: ObservableObject {
         "/api/watch/message-drafts/\(item.id)/edit", method: "POST", token: token,
         body: ["expectedRevision": item.revision, "actionDigest": item.actionDigest, "text": text]
       )
-      guard privateDraftsActive else { return false }
+      guard privateDraftsActive, generation == draftGeneration else { return false }
       draft = result.draft
       draftNotice = "Saved. Review the revised message before Send."
       return true
     } catch {
+      guard privateDraftsActive, generation == draftGeneration else { return false }
+      let recoveryGeneration = draftGeneration + 1
       await refreshDraft()
+      guard privateDraftsActive, recoveryGeneration == draftGeneration else { return false }
       draftNotice = "Edit was not confirmed. Review the current draft before trying again."
       return false
     }
   }
 
   func respondToDraft(_ action: String, item: MessageDraft) async {
-    guard let token, !isSubmitting else { return }
+    guard let token, privateDraftsActive, !isSubmitting else { return }
     if action == "send" { lastSubmittedDraftID = item.id }
+    let generation = draftGeneration
     isSubmitting = true
     defer { isSubmitting = false }
     do {
@@ -237,11 +242,15 @@ private final class WatchModel: ObservableObject {
         "/api/watch/message-drafts/\(item.id)/respond", method: "POST", token: token,
         body: ["expectedRevision": item.revision, "actionDigest": item.actionDigest, "action": action]
       )
+      guard privateDraftsActive, generation == draftGeneration else { return }
       draft = nil
       if action == "send" { lastSubmittedDraftID = item.id }
       draftNotice = action == "send" ? "Send authorized. Delivery is not yet confirmed." : "Draft denied. Nothing will be sent."
     } catch {
+      guard privateDraftsActive, generation == draftGeneration else { return }
+      let recoveryGeneration = draftGeneration + 1
       await refreshDraft()
+      guard privateDraftsActive, recoveryGeneration == draftGeneration else { return }
       // Never retry a send automatically or describe an uncertain response as delivered.
       draftNotice = "Response not confirmed. Refresh or check delivery status before retrying."
     }

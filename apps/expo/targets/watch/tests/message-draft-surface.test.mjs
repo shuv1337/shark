@@ -32,3 +32,17 @@ test('draft mutation sends both revision and digest; delivery is not presumed', 
   assert.match(source, /Never retry a send automatically/);
   assert.match(source, /snapshot.pendingInteraction/); // legacy approval UI retained
 });
+test('delayed edit and response completions cannot overwrite a newer foreground generation', () => {
+  const edit = source.slice(source.indexOf('  func editDraft('), source.indexOf('  func respondToDraft('));
+  const respond = source.slice(source.indexOf('  func respondToDraft('), source.indexOf('  func setPrivacy('));
+  for (const method of [edit, respond]) {
+    assert.match(method, /let generation = draftGeneration/);
+    assert.equal((method.match(/guard privateDraftsActive, generation == draftGeneration/g) || []).length, 2);
+    assert.match(method, /let recoveryGeneration = draftGeneration \+ 1\s+await refreshDraft\(\)\s+guard privateDraftsActive, recoveryGeneration == draftGeneration/);
+    const success = method.slice(0, method.indexOf('    } catch'));
+    const mutation = Math.max(success.indexOf('      draft = result.draft'), success.indexOf('      draft = nil'));
+    assert.ok(success.indexOf('guard privateDraftsActive, generation == draftGeneration') < mutation);
+  }
+  const clear = source.slice(source.indexOf('  func clearPrivateDraft('), source.indexOf('  func activatePrivateDrafts('));
+  assert.match(clear, /draftGeneration \+= 1/);
+});
