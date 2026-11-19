@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { notificationEventTag } from "../lib/notification-withdrawal";
@@ -725,6 +726,272 @@ describe("Apple Watch MVP surface", () => {
     await db
       .delete(schema.boardWorkItem)
       .where(eq(schema.boardWorkItem.requesterTokenId, "tok_board"));
+  });
+
+  describe("long-dead work and pending approvals", () => {
+    const MINUTE = 60_000;
+    const DAY = 24 * 60 * MINUTE;
+    const DEFAULT_TTL_MS = 21_600_000;
+    type WatchBody = {
+      activeWork: { id: string; title: string; status: string } | null;
+      work: Array<{ id: string; title: string; status: string; detail: string | null }>;
+      pendingInteraction: { id: string } | null;
+      pendingInteractions: Array<{ id: string; kind: string; actionDigest: string }>;
+    };
+    const interactionIds: string[] = [];
+    const activityIds: string[] = [];
+
+    async function insertWork(
+      key: string,
+      heartbeatAgoMs: number,
+      options: { ttlSeconds?: number; updatedAt?: Date; state?: string } = {},
+    ) {
+      const now = Date.now();
+      const id = `bw_${key}`;
+      await db.insert(schema.boardWorkItem).values({
+        id,
+        userId: "user_1",
+        requesterTokenId: "tok_board",
+        agentLabel: "Board agent",
+        workKey: key,
+        title: `Work ${key}`,
+        state: options.state ?? "in_flight",
+        links: [],
+        lastHeartbeatAt: new Date(now - heartbeatAgoMs),
+        heartbeatTtlSeconds: options.ttlSeconds ?? DEFAULT_TTL_MS / 1000,
+        createdAt: new Date(now - heartbeatAgoMs),
+        updatedAt: options.updatedAt ?? new Date(now - heartbeatAgoMs),
+      });
+      return id;
+    }
+
+    async function insertPending(
+      id: string,
+      createdAt: Date,
+      options: { kind?: string; status?: string; expiresAt?: Date; userId?: string } = {},
+    ) {
+      const kind = options.kind ?? "approval";
+      interactionIds.push(id);
+      await db.insert(schema.interaction).values({
+        id,
+        userId: options.userId ?? "user_1",
+        requesterTokenId: "tok_full",
+        title: `Request ${id}`,
+        prompt: "Synthetic prompt",
+        kind,
+        status: options.status ?? "pending",
+        choices: kind === "approval" ? ["approve", "deny"] : kind === "yes_no" ? ["yes", "no"] : [],
+        actionDigest: createHash("sha256").update(id).digest("hex"),
+        expiresAt: options.expiresAt ?? new Date(Date.now() + 10 * MINUTE),
+        createdAt,
+      });
+    }
+
+    async function snapshot() {
+      const response = await watch("/snapshot");
+      expect(response.status).toBe(200);
+      return (await response.json()) as WatchBody;
+    }
+
+    function respond(id: string, action: string, actionDigest: string) {
+      return watch(`/interactions/${id}/respond`, {
+        method: "POST",
+        body: JSON.stringify({ action, actionDigest }),
+      });
+    }
+
+    afterEach(async () => {
+      await db
+        .delete(schema.boardWorkItem)
+        .where(eq(schema.boardWorkItem.requesterTokenId, "tok_board"));
+      if (activityIds.length > 0) {
+        await db.delete(schema.liveActivity).where(inArray(schema.liveActivity.id, activityIds));
+      }
+      if (interactionIds.length > 0) {
+        await db.delete(schema.interaction).where(inArray(schema.interaction.id, interactionIds));
+      }
+      activityIds.length = 0;
+      interactionIds.length = 0;
+    });
+
+    it("omits board work more than a day past its heartbeat deadline", async () => {
+      const fresh = await insertWork("watch-dead-fresh", 0);
+      const justStale = await insertWork("watch-dead-just-stale", DEFAULT_TTL_MS + MINUTE);
+      const nearlyDead = await insertWork("watch-dead-nearly", DEFAULT_TTL_MS + DAY - MINUTE);
+      await insertWork("watch-dead-gone", DEFAULT_TTL_MS + DAY + MINUTE);
+
+      const body = await snapshot();
+      expect(body.work.map((item) => item.id)).toEqual([fresh, justStale, nearlyDead]);
+      expect(body.work[0]?.status).not.toBe("Stale");
+      expect(body.work[1]?.status).toBe("Stale");
+      expect(body.work[2]?.status).toBe("Stale");
+    });
+
+    it("returns no work when every board item is long dead", async () => {
+      await insertWork("watch-dead-only-a", DEFAULT_TTL_MS + DAY + MINUTE);
+      await insertWork("watch-dead-only-b", 30 * DAY, { state: "queued" });
+
+      const body = await snapshot();
+      expect(body.work).toEqual([]);
+      expect(body.activeWork).toBeNull();
+    });
+
+    it("measures each item against its own heartbeat TTL", async () => {
+      const longLived = await insertWork("watch-dead-week-ttl", 2 * DAY, {
+        ttlSeconds: 7 * 24 * 60 * 60,
+      });
+      await insertWork("watch-dead-minute-ttl", 25 * 60 * MINUTE, { ttlSeconds: 60 });
+
+      const body = await snapshot();
+      expect(body.work).toEqual([expect.objectContaining({ id: longLived })]);
+      expect(body.work[0]?.status).not.toBe("Stale");
+    });
+
+    it("does not let a recent updatedAt revive work with an old heartbeat", async () => {
+      await insertWork("watch-dead-touched", DEFAULT_TTL_MS + DAY + MINUTE, {
+        updatedAt: new Date(),
+      });
+
+      expect((await snapshot()).work).toEqual([]);
+    });
+
+    it("lets a live activity paired with dead work show on its own", async () => {
+      const deadPublic = await insertWork("watch-dead-public", 3 * DAY);
+      const deadPrivate = await insertWork("watch-dead-private", 3 * DAY);
+      const now = new Date();
+      const activity = (
+        id: string,
+        key: string,
+        props: Record<string, unknown>,
+      ): typeof schema.liveActivity.$inferInsert => ({
+        id,
+        userId: "user_1",
+        requesterTokenId: "tok_board",
+        key,
+        schemaVersion: 1,
+        props,
+        status: "active",
+        sequence: 1,
+        acceptedCount: 1,
+        failedCount: 0,
+        expiresAt: new Date(now.getTime() + MINUTE),
+        createdAt: now,
+        updatedAt: now,
+      });
+      activityIds.push("act_watch_dead_public", "act_watch_dead_private");
+      await db.insert(schema.liveActivity).values([
+        activity("act_watch_dead_public", "watch-dead-public", {
+          title: "Live importer",
+          status: "Compiling",
+        }),
+        activity("act_watch_dead_private", "watch-dead-private", {
+          title: "Secret migration",
+          status: "Leaking status",
+          detail: "Sensitive",
+          privacyMode: "private",
+        }),
+      ]);
+
+      const body = await snapshot();
+      const ids = body.work.map((item) => item.id);
+      expect(ids).not.toContain(deadPublic);
+      expect(ids).not.toContain(deadPrivate);
+      expect(body.work).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "act_watch_dead_public",
+            title: "Live importer",
+            status: "Compiling",
+          }),
+          expect.objectContaining({
+            id: "act_watch_dead_private",
+            title: "Agent task",
+            status: "In progress",
+            detail: null,
+          }),
+        ]),
+      );
+      expect(body.work).toHaveLength(2);
+    });
+
+    it("lists up to five pending approvals newest first, with the legacy field first", async () => {
+      expect((await snapshot()).pendingInteractions).toEqual([]);
+      const base = Date.now() - 10 * MINUTE;
+      const at = (offsetSeconds: number) => new Date(base + offsetSeconds * 1000);
+      await insertPending("int_watch_list_1", at(1));
+      await insertPending("int_watch_list_2", at(2), { kind: "yes_no" });
+      await insertPending("int_watch_list_3", at(3));
+      await insertPending("int_watch_list_4a", at(4), { kind: "yes_no" });
+      await insertPending("int_watch_list_4b", at(4));
+      await insertPending("int_watch_list_5", at(5));
+      await insertPending("int_watch_list_6", at(6), { kind: "yes_no" });
+      await insertPending("int_watch_list_reply", at(9), { kind: "reply" });
+      await insertPending("int_watch_list_expired", at(9), { expiresAt: new Date(Date.now() - 1) });
+      await insertPending("int_watch_list_resolved", at(9), { status: "approved" });
+      await insertPending("int_watch_list_foreign", at(9), { userId: "user_2" });
+      await insertWork("watch-dead-with-approvals", DEFAULT_TTL_MS + DAY + MINUTE);
+
+      const body = await snapshot();
+      const expected = [
+        "int_watch_list_6",
+        "int_watch_list_5",
+        "int_watch_list_4b",
+        "int_watch_list_4a",
+        "int_watch_list_3",
+      ];
+      expect(body.pendingInteractions.map((item) => item.id)).toEqual(expected);
+      expect(body.pendingInteraction).toEqual(body.pendingInteractions[0]);
+      expect(body.work).toEqual([]);
+
+      const target = body.pendingInteractions[2];
+      const other = body.pendingInteractions[0];
+      if (!target || !other) throw new Error("expected pending interactions");
+      const mismatched = await respond(target.id, "approve", other.actionDigest);
+      expect(mismatched.status).toBe(409);
+      expect((await snapshot()).pendingInteractions.map((item) => item.id)).toEqual(expected);
+
+      const answered = await respond(target.id, "approve", target.actionDigest);
+      expect(answered.status).toBe(200);
+      const after = (await answered.json()) as { status: string; snapshot: WatchBody };
+      const remaining = [
+        "int_watch_list_6",
+        "int_watch_list_5",
+        "int_watch_list_4a",
+        "int_watch_list_3",
+        "int_watch_list_2",
+      ];
+      expect(after.status).toBe("approved");
+      expect(after.snapshot.pendingInteractions.map((item) => item.id)).toEqual(remaining);
+      expect(after.snapshot.pendingInteraction).toEqual(after.snapshot.pendingInteractions[0]);
+      expect(after.snapshot.work).toEqual([]);
+      const rows = await db
+        .select({ id: schema.interaction.id, status: schema.interaction.status })
+        .from(schema.interaction)
+        .where(inArray(schema.interaction.id, expected));
+      expect(rows.filter((row) => row.status !== "pending")).toEqual([
+        { id: "int_watch_list_4b", status: "approved" },
+      ]);
+
+      const repeated = await respond(target.id, "approve", target.actionDigest);
+      expect(repeated.status).toBe(409);
+      const conflict = (await repeated.json()) as { snapshot: WatchBody };
+      expect(conflict.snapshot.pendingInteractions.map((item) => item.id)).toEqual(remaining);
+      expect(conflict.snapshot.pendingInteraction).toEqual(
+        conflict.snapshot.pendingInteractions[0],
+      );
+      expect(conflict.snapshot.work).toEqual([]);
+    });
+
+    it("still offers a pending approval when all work is dead", async () => {
+      await insertWork("watch-dead-alone", 3 * DAY);
+      await insertPending("int_watch_alone", new Date());
+
+      const body = await snapshot();
+      expect(body.work).toEqual([]);
+      expect(body.activeWork).toBeNull();
+      expect(body.pendingInteractions.map((item) => item.id)).toEqual(["int_watch_alone"]);
+      expect(body.pendingInteraction).toMatchObject({ id: "int_watch_alone" });
+    });
   });
 
   it("shows blocked work parked on an ask as waiting for the user's answer", async () => {

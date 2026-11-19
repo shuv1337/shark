@@ -1,5 +1,6 @@
 import {
   BOARD_WORK_ACTIVE_STATES,
+  type WatchInteractionDto,
   type WatchSnapshotDto,
   type WatchWorkItemDto,
   watchInteractionResponseSchema,
@@ -18,6 +19,8 @@ import { resolveInteractionLiveActivity } from "./activities";
 const LIVE_STATUSES = ["starting", "active", "partial"] as const;
 const WATCH_WORK_LIMIT = 5;
 const WATCH_MESSAGE_LIMIT = 5;
+const WATCH_INTERACTION_LIMIT = 5;
+const WATCH_DEAD_WORK_GRACE_MS = 24 * 60 * 60 * 1000;
 const BOARD_STATE_LABELS: Record<(typeof BOARD_WORK_ACTIVE_STATES)[number], string> = {
   queued: "Queued",
   in_flight: "In progress",
@@ -30,6 +33,31 @@ const WITHDRAWN_STATUSES = ["withdrawn", "withdraw_partial", "withdraw_processin
 
 type LiveActivityRow = typeof liveActivity.$inferSelect;
 type BoardWorkRow = typeof boardWorkItem.$inferSelect;
+type InteractionRow = typeof interaction.$inferSelect;
+
+/**
+ * Board work more than a day past its heartbeat deadline is left off the Watch.
+ * Measured from the heartbeat, not updatedAt, which resolving an ask also bumps.
+ */
+function isDeadWork(row: BoardWorkRow, now: Date) {
+  return (
+    now.getTime() - row.lastHeartbeatAt.getTime() >
+    row.heartbeatTtlSeconds * 1000 + WATCH_DEAD_WORK_GRACE_MS
+  );
+}
+
+function toWatchInteraction(row: InteractionRow): WatchInteractionDto {
+  return {
+    id: row.id,
+    title: row.title,
+    prompt: row.prompt,
+    kind: row.kind as WatchInteractionDto["kind"],
+    actionDigest: row.actionDigest,
+    expiresAt: row.expiresAt.toISOString(),
+    primaryLabel: row.primaryLabel,
+    secondaryLabel: row.secondaryLabel,
+  };
+}
 
 function liveActivityProps(row: LiveActivityRow) {
   return row.props as {
@@ -141,7 +169,8 @@ async function snapshotFor(userId: string): Promise<WatchSnapshotDto> {
       ),
     )
     .orderBy(desc(boardWorkItem.updatedAt))
-    .all();
+    .all()
+    .filter((row) => !isDeadWork(row, now));
   const { pairs, unpaired } = pairActivities(boardWork, activities);
   const running: WatchWorkItemDto[] = unpaired.map(toLiveActivityWork);
   const queued: WatchWorkItemDto[] = [];
@@ -172,7 +201,7 @@ async function snapshotFor(userId: string): Promise<WatchSnapshotDto> {
     .orderBy(desc(inboxItem.occurredAt), desc(inboxItem.id))
     .limit(WATCH_MESSAGE_LIMIT)
     .all();
-  const pending = db
+  const pendingInteractions = db
     .select()
     .from(interaction)
     .where(
@@ -183,26 +212,17 @@ async function snapshotFor(userId: string): Promise<WatchSnapshotDto> {
         gt(interaction.expiresAt, now),
       ),
     )
-    .orderBy(desc(interaction.createdAt))
-    .limit(1)
-    .get();
+    .orderBy(desc(interaction.createdAt), desc(interaction.id))
+    .limit(WATCH_INTERACTION_LIMIT)
+    .all()
+    .map(toWatchInteraction);
 
   return {
     generatedAt: now.toISOString(),
     activeWork: work[0] ?? null,
     work,
-    pendingInteraction: pending
-      ? {
-          id: pending.id,
-          title: pending.title,
-          prompt: pending.prompt,
-          kind: pending.kind as "approval" | "yes_no",
-          actionDigest: pending.actionDigest,
-          expiresAt: pending.expiresAt.toISOString(),
-          primaryLabel: pending.primaryLabel,
-          secondaryLabel: pending.secondaryLabel,
-        }
-      : null,
+    pendingInteraction: pendingInteractions[0] ?? null,
+    pendingInteractions,
     recentMessages: messages.map((row) => ({
       id: row.id,
       source: row.sourceName,

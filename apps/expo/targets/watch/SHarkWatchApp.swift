@@ -37,9 +37,11 @@ private struct Snapshot: Codable {
   // Optional so a cached snapshot from an earlier build still decodes.
   let work: [Work]?
   let pendingInteraction: Interaction?
+  let pendingInteractions: [Interaction]?
   let recentMessages: [Message]?
 
   var openWork: [Work] { work ?? activeWork.map { [$0] } ?? [] }
+  var openInteractions: [Interaction] { pendingInteractions ?? pendingInteraction.map { [$0] } ?? [] }
 }
 
 // Draft bodies are deliberately memory-only, never added to SnapshotCache.
@@ -297,6 +299,7 @@ struct SHarkWatchApp: App {
 private struct WatchRoot: View {
   @ObservedObject var model: WatchModel
   @State private var requestedAction: String?
+  @State private var confirmingInteraction: Snapshot.Interaction?
   @Environment(\.scenePhase) private var scenePhase
   @State private var editingDraft: MessageDraft?
   @State private var draftText = ""
@@ -320,6 +323,8 @@ private struct WatchRoot: View {
         editingDraft = nil
         confirmingDraft = nil
         draftText = ""
+        confirmingInteraction = nil
+        requestedAction = nil
       }
     }
     .sheet(item: $editingDraft) { item in
@@ -350,13 +355,39 @@ private struct WatchRoot: View {
       VStack(alignment: .leading, spacing: 10) {
         Text("SHark").font(.headline).foregroundStyle(.orange)
         if stale { Text("Last known state — refresh before responding.").font(.caption2).foregroundStyle(.yellow) }
-        if snapshot.openWork.isEmpty { Text("No active work").foregroundStyle(.secondary) }
-        ForEach(snapshot.openWork) { work in
-          VStack(alignment: .leading, spacing: 2) {
-            Text(model.hideDetails || work.private ? "Agent task" : work.title).font(.headline)
-            Text(model.hideDetails || work.private ? "In progress" : work.status).font(.caption).foregroundStyle(.secondary)
-            if !model.hideDetails, !work.private, let detail = work.detail { Text(detail).font(.caption2).lineLimit(2) }
-            if let progress = work.progress { ProgressView(value: progress) }
+        if !snapshot.openInteractions.isEmpty {
+          VStack(alignment: .leading, spacing: 10) {
+            Text("Needs your answer").font(.caption).foregroundStyle(.orange)
+            ForEach(snapshot.openInteractions) { item in
+              VStack(alignment: .leading, spacing: 4) {
+                Text(model.hideDetails ? "An approval is waiting" : item.title).font(.headline)
+                if !model.hideDetails { Text(item.prompt).font(.caption).lineLimit(3) }
+                HStack {
+                  Button(item.primaryLabel ?? (item.kind == "approval" ? "Approve" : "Yes")) { confirmingInteraction = item; requestedAction = item.kind == "approval" ? "approve" : "yes" }.tint(.green)
+                  Button(item.secondaryLabel ?? (item.kind == "approval" ? "Deny" : "No")) { confirmingInteraction = item; requestedAction = item.kind == "approval" ? "deny" : "no" }.tint(.red)
+                }
+                .disabled(model.isSubmitting || stale)
+              }
+            }
+            if model.isSubmitting { ProgressView("Sending…") }
+          }
+          // The dialog answers the interaction captured on tap, so a refresh or reorder cannot retarget it.
+          .confirmationDialog("Confirm response", isPresented: Binding(
+            get: { requestedAction != nil && confirmingInteraction != nil },
+            set: { if !$0 { requestedAction = nil; confirmingInteraction = nil } }
+          )) {
+            Button("Confirm", role: requestedAction == "deny" || requestedAction == "no" ? .destructive : nil) {
+              if let selected = confirmingInteraction, let action = requestedAction {
+                Task { await model.respond(action, to: selected) }
+              }
+              requestedAction = nil
+              confirmingInteraction = nil
+            }
+            Button("Cancel", role: .cancel) { requestedAction = nil; confirmingInteraction = nil }
+          } message: {
+            if let selected = confirmingInteraction {
+              Text(model.hideDetails ? "An approval is waiting" : selected.title)
+            }
           }
         }
         if let notice = model.draftNotice { Text(notice).font(.caption2) }
@@ -364,20 +395,19 @@ private struct WatchRoot: View {
         if let item = model.draft {
           draftPreview(item, stale: stale)
         }
-        if let item = snapshot.pendingInteraction {
-          Divider(); Text("Needs your answer").font(.caption).foregroundStyle(.orange)
-          Text(model.hideDetails ? "An approval is waiting" : item.title).font(.headline)
-          if !model.hideDetails { Text(item.prompt).font(.caption).lineLimit(3) }
-          HStack {
-            Button(item.primaryLabel ?? (item.kind == "approval" ? "Approve" : "Yes")) { requestedAction = item.kind == "approval" ? "approve" : "yes" }.tint(.green)
-            Button(item.secondaryLabel ?? (item.kind == "approval" ? "Deny" : "No")) { requestedAction = item.kind == "approval" ? "deny" : "no" }.tint(.red)
+        if snapshot.openInteractions.isEmpty, model.draft == nil, !model.draftLoading {
+          Text("Nothing needs your answer").foregroundStyle(.secondary)
+        }
+        if !snapshot.openWork.isEmpty {
+          Divider(); Text("Active work").font(.caption).foregroundStyle(.orange)
+          ForEach(snapshot.openWork) { work in
+            VStack(alignment: .leading, spacing: 2) {
+              Text(model.hideDetails || work.private ? "Agent task" : work.title).font(.headline)
+              Text(model.hideDetails || work.private ? "In progress" : work.status).font(.caption).foregroundStyle(.secondary)
+              if !model.hideDetails, !work.private, let detail = work.detail { Text(detail).font(.caption2).lineLimit(2) }
+              if let progress = work.progress { ProgressView(value: progress) }
+            }
           }
-          .disabled(model.isSubmitting || stale)
-          .confirmationDialog("Confirm response", isPresented: Binding(get: { requestedAction != nil }, set: { if !$0 { requestedAction = nil } })) {
-            Button("Confirm", role: requestedAction == "deny" || requestedAction == "no" ? .destructive : nil) { if let action = requestedAction { Task { await model.respond(action, to: item) }; requestedAction = nil } }
-            Button("Cancel", role: .cancel) { requestedAction = nil }
-          }
-          if model.isSubmitting { ProgressView("Sending…") }
         }
         if let messages = snapshot.recentMessages, !messages.isEmpty {
           Divider(); Text("Recent").font(.caption).foregroundStyle(.orange)

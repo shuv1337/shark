@@ -1278,9 +1278,15 @@ export interface WatchSnapshotDto {
   generatedAt: string;
   /** The first entry of `work`, for Watch builds that read only this field. */
   activeWork: WatchWorkItemDto | null;
-  /** Live Activities and open board work, newest first, with queued board work last. */
+  /**
+   * Live Activities and open board work, newest first, with queued board work last.
+   * Board work more than a day past its heartbeat deadline is omitted.
+   */
   work: WatchWorkItemDto[];
+  /** The first entry of `pendingInteractions`, for Watch builds that read only this field. */
   pendingInteraction: WatchInteractionDto | null;
+  /** Up to five pending approval and yes/no requests, newest first. */
+  pendingInteractions: WatchInteractionDto[];
   recentMessages: WatchMessageDto[];
 }
 
