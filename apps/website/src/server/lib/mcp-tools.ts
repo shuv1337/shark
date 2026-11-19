@@ -693,7 +693,12 @@ export const MCP_TOOLS: McpToolSpec[] = [
  * Agent routes with no MCP tool, each with the reason. The drift test fails
  * when a route is neither a tool nor listed here.
  */
-export const MCP_EXCLUDED_OPERATIONS: Partial<Record<OperationKey, string>> = {};
+export const MCP_EXCLUDED_OPERATIONS: Partial<Record<OperationKey, string>> = {
+  "POST /message-drafts": "Dedicated verified-recipient bridge only; draft text is private.",
+  "GET /message-drafts/{id}": "Private bridge state and approved message contents.",
+  "POST /message-drafts/{id}/claim": "Reserved for the deterministic delivery bridge.",
+  "POST /message-drafts/{id}/receipt": "Reserved for the authenticated delivery bridge.",
+};
 
 /**
  * Human-only actions with no agent route at all, so no tool either. Listed
