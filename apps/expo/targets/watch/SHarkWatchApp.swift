@@ -90,6 +90,7 @@ private final class WatchModel: ObservableObject {
   @Published var draftLoading = false
   @Published var hideDetails = UserDefaults.standard.bool(forKey: "shark.watch.hide-details")
   private var token: String? = Keychain.read(tokenKey)
+  private var lastSubmittedDraftID: String?
   private var draftGeneration = 0
   private var privateDraftsActive = true
   private var lastSnapshot: Snapshot?
@@ -185,6 +186,17 @@ private final class WatchModel: ObservableObject {
       let result: DraftResponse = try await request("/api/watch/message-drafts/next", token: token)
       guard privateDraftsActive, generation == draftGeneration else { return }
       draft = result.draft
+      if let submittedID = lastSubmittedDraftID {
+        let receipt: DraftResponse = try await request("/api/watch/message-drafts/\(submittedID)", token: token)
+        guard privateDraftsActive, generation == draftGeneration else { return }
+        switch receipt.draft?.status {
+        case "delivered": draftNotice = "Delivery confirmed."
+        case "failed": draftNotice = "Delivery failed. No automatic retry."
+        case "unknown": draftNotice = "Delivery unknown. Check the conversation before trying again."
+        case "expired": draftNotice = "Draft expired before delivery was claimed. Nothing was sent."
+        default: draftNotice = "Send authorized. Delivery is not yet confirmed."
+        }
+      }
     } catch {
       guard privateDraftsActive, generation == draftGeneration else { return }
       // An older server must keep legacy approvals usable, without enabling draft Send.
@@ -222,6 +234,7 @@ private final class WatchModel: ObservableObject {
         body: ["expectedRevision": item.revision, "actionDigest": item.actionDigest, "action": action]
       )
       draft = nil
+      if action == "send" { lastSubmittedDraftID = item.id }
       draftNotice = action == "send" ? "Send authorized. Delivery is not yet confirmed." : "Draft denied. Nothing will be sent."
     } catch {
       await refreshDraft()
