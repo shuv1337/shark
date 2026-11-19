@@ -815,16 +815,18 @@ describe("Apple Watch MVP surface", () => {
     });
 
     it("omits board work more than a day past its heartbeat deadline", async () => {
+      const future = await insertWork("watch-dead-future", -5 * MINUTE);
       const fresh = await insertWork("watch-dead-fresh", 0);
       const justStale = await insertWork("watch-dead-just-stale", DEFAULT_TTL_MS + MINUTE);
       const nearlyDead = await insertWork("watch-dead-nearly", DEFAULT_TTL_MS + DAY - MINUTE);
       await insertWork("watch-dead-gone", DEFAULT_TTL_MS + DAY + MINUTE);
 
       const body = await snapshot();
-      expect(body.work.map((item) => item.id)).toEqual([fresh, justStale, nearlyDead]);
+      expect(body.work.map((item) => item.id)).toEqual([future, fresh, justStale, nearlyDead]);
       expect(body.work[0]?.status).not.toBe("Stale");
-      expect(body.work[1]?.status).toBe("Stale");
+      expect(body.work[1]?.status).not.toBe("Stale");
       expect(body.work[2]?.status).toBe("Stale");
+      expect(body.work[3]?.status).toBe("Stale");
     });
 
     it("returns no work when every board item is long dead", async () => {

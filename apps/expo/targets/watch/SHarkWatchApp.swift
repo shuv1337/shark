@@ -296,10 +296,14 @@ struct SHarkWatchApp: App {
   var body: some Scene { WindowGroup { WatchRoot(model: model) } }
 }
 
+private struct PendingConfirmation {
+  let interaction: Snapshot.Interaction
+  let action: String
+}
+
 private struct WatchRoot: View {
   @ObservedObject var model: WatchModel
-  @State private var requestedAction: String?
-  @State private var confirmingInteraction: Snapshot.Interaction?
+  @State private var pendingConfirmation: PendingConfirmation?
   @Environment(\.scenePhase) private var scenePhase
   @State private var editingDraft: MessageDraft?
   @State private var draftText = ""
@@ -323,8 +327,13 @@ private struct WatchRoot: View {
         editingDraft = nil
         confirmingDraft = nil
         draftText = ""
-        confirmingInteraction = nil
-        requestedAction = nil
+        pendingConfirmation = nil
+      }
+    }
+    // Leaving .ready yields nil; an answered or expired request drops its id.
+    .onChange(of: readySnapshot?.openInteractions.map(\.id)) { ids in
+      if let pending = pendingConfirmation, ids?.contains(pending.interaction.id) != true {
+        pendingConfirmation = nil
       }
     }
     .sheet(item: $editingDraft) { item in
@@ -350,6 +359,11 @@ private struct WatchRoot: View {
     }
   }
 
+  private var readySnapshot: Snapshot? {
+    if case .ready(let snapshot) = model.state { return snapshot }
+    return nil
+  }
+
   private func content(_ snapshot: Snapshot, stale: Bool) -> some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 10) {
@@ -363,31 +377,17 @@ private struct WatchRoot: View {
                 Text(model.hideDetails ? "An approval is waiting" : item.title).font(.headline)
                 if !model.hideDetails { Text(item.prompt).font(.caption).lineLimit(3) }
                 HStack {
-                  Button(item.primaryLabel ?? (item.kind == "approval" ? "Approve" : "Yes")) { confirmingInteraction = item; requestedAction = item.kind == "approval" ? "approve" : "yes" }.tint(.green)
-                  Button(item.secondaryLabel ?? (item.kind == "approval" ? "Deny" : "No")) { confirmingInteraction = item; requestedAction = item.kind == "approval" ? "deny" : "no" }.tint(.red)
+                  Button((model.hideDetails ? nil : item.primaryLabel) ?? (item.kind == "approval" ? "Approve" : "Yes")) {
+                    pendingConfirmation = PendingConfirmation(interaction: item, action: item.kind == "approval" ? "approve" : "yes")
+                  }.tint(.green)
+                  Button((model.hideDetails ? nil : item.secondaryLabel) ?? (item.kind == "approval" ? "Deny" : "No")) {
+                    pendingConfirmation = PendingConfirmation(interaction: item, action: item.kind == "approval" ? "deny" : "no")
+                  }.tint(.red)
                 }
-                .disabled(model.isSubmitting || stale)
+                .disabled(model.isSubmitting || stale || item.expiresAt <= Date())
               }
             }
             if model.isSubmitting { ProgressView("Sending…") }
-          }
-          // The dialog answers the interaction captured on tap, so a refresh or reorder cannot retarget it.
-          .confirmationDialog("Confirm response", isPresented: Binding(
-            get: { requestedAction != nil && confirmingInteraction != nil },
-            set: { if !$0 { requestedAction = nil; confirmingInteraction = nil } }
-          )) {
-            Button("Confirm", role: requestedAction == "deny" || requestedAction == "no" ? .destructive : nil) {
-              if let selected = confirmingInteraction, let action = requestedAction {
-                Task { await model.respond(action, to: selected) }
-              }
-              requestedAction = nil
-              confirmingInteraction = nil
-            }
-            Button("Cancel", role: .cancel) { requestedAction = nil; confirmingInteraction = nil }
-          } message: {
-            if let selected = confirmingInteraction {
-              Text(model.hideDetails ? "An approval is waiting" : selected.title)
-            }
           }
         }
         if let notice = model.draftNotice { Text(notice).font(.caption2) }
@@ -426,6 +426,24 @@ private struct WatchRoot: View {
         Toggle("Hide details", isOn: Binding(get: { model.hideDetails }, set: model.setPrivacy))
         Button("Refresh") { Task { await model.refresh() } }
       }.padding()
+    }
+    // Actions answer only the presented payload, so a refresh or reorder cannot retarget them.
+    .confirmationDialog(
+      "Confirm response",
+      isPresented: Binding(
+        get: { pendingConfirmation != nil && !stale && !model.isSubmitting },
+        set: { if !$0 { pendingConfirmation = nil } }
+      ),
+      titleVisibility: .visible,
+      presenting: pendingConfirmation
+    ) { pending in
+      Button("Confirm", role: pending.action == "deny" || pending.action == "no" ? .destructive : nil) {
+        guard !stale else { return }
+        Task { await model.respond(pending.action, to: pending.interaction) }
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: { pending in
+      Text(model.hideDetails ? "An approval is waiting" : pending.interaction.title)
     }
   }
 

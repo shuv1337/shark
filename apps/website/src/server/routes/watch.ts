@@ -5,7 +5,7 @@ import {
   type WatchWorkItemDto,
   watchInteractionResponseSchema,
 } from "@hark/contracts";
-import { and, desc, eq, gt, inArray, isNull, notInArray } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db";
 import { boardWorkItem, inboxItem, interaction, liveActivity } from "../db/schema";
@@ -38,6 +38,7 @@ type InteractionRow = typeof interaction.$inferSelect;
 /**
  * Board work more than a day past its heartbeat deadline is left off the Watch.
  * Measured from the heartbeat, not updatedAt, which resolving an ask also bumps.
+ * The board query applies the same cutoff in SQL so dead rows are not loaded.
  */
 function isDeadWork(row: BoardWorkRow, now: Date) {
   return (
@@ -166,6 +167,7 @@ async function snapshotFor(userId: string): Promise<WatchSnapshotDto> {
       and(
         eq(boardWorkItem.userId, userId),
         inArray(boardWorkItem.state, [...BOARD_WORK_ACTIVE_STATES]),
+        sql`${boardWorkItem.lastHeartbeatAt} + ${boardWorkItem.heartbeatTtlSeconds} * 1000 + ${WATCH_DEAD_WORK_GRACE_MS} >= ${now.getTime()}`,
       ),
     )
     .orderBy(desc(boardWorkItem.updatedAt))

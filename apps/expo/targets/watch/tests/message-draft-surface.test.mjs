@@ -44,7 +44,9 @@ test("draft mutation sends both revision and digest; delivery is not presumed", 
   );
   assert.match(source, /Delivery is not yet confirmed/);
   assert.match(source, /Never retry a send automatically/);
-  assert.match(snapshot, /pendingInteractions \?\? pendingInteraction\.map \{ \[\$0\] \}/); // legacy approval UI retained
+  // Approvals render from openInteractions, which falls back to an older server's single pendingInteraction.
+  assert.match(snapshot, /pendingInteractions \?\? pendingInteraction\.map \{ \[\$0\] \}/);
+  assert.match(source, /ForEach\(snapshot\.openInteractions\)/);
 });
 test("delayed edit and response completions cannot overwrite a newer foreground generation", () => {
   const edit = source.slice(
