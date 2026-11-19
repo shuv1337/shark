@@ -70,6 +70,11 @@ export const envSchema = z.object({
    * TRUSTED_CLIENT_IP_HEADER is set.
    */
   TRUSTED_FORWARDED_FOR_HOPS: z.coerce.number().int().min(0).max(5).default(0),
+  /** Feature rollback that leaves the draft schema and data in place. */
+  SHARK_MESSAGE_DRAFTS_ENABLED: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((value) => value === "true"),
   SERVICE_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(300),
   ACCOUNT_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(1500),
 });

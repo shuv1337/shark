@@ -112,3 +112,11 @@ describe("SHark runtime environment", () => {
     expect(() => assertRuntimeEnv(parsed)).toThrow("not valid base64url VAPID keys");
   });
 });
+
+it("defaults draft review on and only accepts explicit true or false", () => {
+  expect(parseEnv({}).SHARK_MESSAGE_DRAFTS_ENABLED).toBe(true);
+  expect(parseEnv({ SHARK_MESSAGE_DRAFTS_ENABLED: "false" }).SHARK_MESSAGE_DRAFTS_ENABLED).toBe(
+    false,
+  );
+  expect(() => parseEnv({ SHARK_MESSAGE_DRAFTS_ENABLED: "off" })).toThrow();
+});

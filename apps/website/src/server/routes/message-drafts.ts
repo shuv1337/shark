@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db";
 import { messageDraft } from "../db/schema";
+import { env } from "../env";
 import { type AgentEnv, requireApiToken, requireScopes } from "../middleware";
 
 const descriptor = z
@@ -101,6 +102,7 @@ function currentRevision(input: z.infer<typeof messageDraftRevisionSchema>) {
 function privateResponses() {
   return new Hono<AgentEnv>().use("*", async (c, next) => {
     c.header("Cache-Control", "no-store");
+    if (!env.SHARK_MESSAGE_DRAFTS_ENABLED) return c.json({ error: "Not found" }, 404);
     await next();
   });
 }
