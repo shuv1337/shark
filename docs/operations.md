@@ -218,3 +218,24 @@ operator review:
 Never retain emails, tokens, webhook URLs, push identifiers, OAuth codes, callback credentials,
 private keys, or notification/reply content in Git, CI output, logs, screenshots, or verification
 records.
+
+### Watch message drafts: feature rollback
+
+The message-draft API is enabled by default. Set `SHARK_MESSAGE_DRAFTS_ENABLED=false`
+and recreate the Shark container **using the same reviewed image digest** to make only
+the new agent and Watch draft routes return 404. For Compose installations, append a separate file with
+`--file` after the normal Compose file so the disabled environment value reaches
+the container:
+
+```yaml
+services:
+  shark:
+    environment:
+      SHARK_MESSAGE_DRAFTS_ENABLED: "false"
+```
+
+Existing prompts and readiness remain available, and the draft table and all rows
+remain in place. This does not cancel a transport operation already claimed by an
+external bridge. Do not deploy an older schema-30 image over a migrated schema-31
+database, and do not restore a pre-deploy backup over intervening writes as a feature
+rollback.

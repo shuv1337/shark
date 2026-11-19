@@ -85,6 +85,29 @@ beforeAll(async () => {
 afterAll(() => rmSync(clientDir, { recursive: true, force: true }));
 
 describe("private content boundary", () => {
+  it("can disable only the new draft routes without rolling back the database", async () => {
+    const { env } = await import("./env");
+    const prior = env.SHARK_MESSAGE_DRAFTS_ENABLED;
+    try {
+      for (const enabled of [true, false]) {
+        env.SHARK_MESSAGE_DRAFTS_ENABLED = enabled;
+        for (const [path, method] of [
+          ["/api/agent/message-drafts", "POST"],
+          ["/api/watch/message-drafts/next", "GET"],
+        ] as const) {
+          const response = await app.request(path, { method });
+          expect(response.status).toBe(enabled ? 401 : 404);
+          expect(response.headers.get("cache-control")).toBe("no-store");
+        }
+        expect((await app.request("/api/watch/snapshot")).status).toBe(401);
+        expect((await app.request("/api/agent/interactions")).status).toBe(401);
+        expect((await app.request("/api/health")).status).toBe(200);
+      }
+    } finally {
+      env.SHARK_MESSAGE_DRAFTS_ENABLED = prior;
+    }
+  });
+
   it("keeps only readiness anonymously readable", async () => {
     const health = await app.request("/api/health");
     expect(health.status).toBe(200);

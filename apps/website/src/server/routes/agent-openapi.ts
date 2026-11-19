@@ -47,6 +47,11 @@ import {
 import { Hono } from "hono";
 import { z } from "zod";
 import { type AgentEnv, requireApiToken } from "../middleware";
+import {
+  messageDraftCreateSchema,
+  messageDraftReceiptSchema,
+  messageDraftRevisionSchema,
+} from "./message-drafts";
 
 /**
  * Hand-maintained OpenAPI 3.1 description of every `/api/agent/**` route.
@@ -100,6 +105,29 @@ const schemas: Record<string, JsonSchema> = {
     ["activityId", "ownedByRequester", "recovery", "code", "issues", "required"],
   ),
   Ok: ok,
+  MessageDraft: object({
+    id: { type: "string", format: "uuid" },
+    recipient: object({ id: str, label: str, address: str, verificationSource: str }),
+    text: str,
+    revision: { ...int, minimum: 1 },
+    actionDigest: { ...str, pattern: "^[a-f0-9]{64}$" },
+    expiresAt: dateTime,
+    status: {
+      type: "string",
+      enum: [
+        "pending",
+        "approved",
+        "denied",
+        "expired",
+        "claimed",
+        "delivered",
+        "failed",
+        "unknown",
+      ],
+    },
+    operationId: { ...nullableStr, format: "uuid" },
+    providerMessageId: nullableStr,
+  }),
   TokenStatus: object({
     authenticated: { const: true },
     token: object({
@@ -607,6 +635,8 @@ export interface AgentOperation {
   params?: Array<{ name: string; in: "path" | "query" | "header"; schema: JsonSchema }>;
   /** Successful status and its response schema. */
   status?: 200 | 201;
+  replayStatus?: 200;
+  conflict?: string;
   response: JsonSchema;
   description?: string;
 }
@@ -891,6 +921,51 @@ export const agentOperations: Record<string, Partial<Record<AgentMethod, AgentOp
       scopes: ["interactions:create"],
       params: [idParam()],
       response: wrap("interaction", ref("Interaction")),
+    },
+  },
+  "/message-drafts": {
+    post: {
+      summary: "Create a private draft for owner review on Apple Watch",
+      description:
+        "The producer must verify the exact recipient. Replaying the same body and idempotencyKey returns the existing draft. Review and approval are human-only; this route never sends a message.",
+      scopes: ["interactions:create"],
+      request: messageDraftCreateSchema,
+      status: 201,
+      replayStatus: 200,
+      conflict: "Idempotency key already used with different content",
+      response: wrap("draft", ref("MessageDraft")),
+    },
+  },
+  "/message-drafts/{id}": {
+    get: {
+      summary: "Read a draft created by this token",
+      scopes: ["interactions:read"],
+      params: [idParam()],
+      response: wrap("draft", ref("MessageDraft")),
+    },
+  },
+  "/message-drafts/{id}/claim": {
+    post: {
+      summary: "Claim an exact, approved draft once for delivery",
+      description:
+        "Only an unexpired approval of the current revision can be claimed. If the claim response is lost, never retry the external send.",
+      scopes: ["interactions:create", "interactions:read"],
+      params: [idParam()],
+      request: messageDraftRevisionSchema,
+      conflict: "Draft absent, expired, already claimed, or not approved at this revision",
+      response: wrap("draft", ref("MessageDraft")),
+    },
+  },
+  "/message-drafts/{id}/receipt": {
+    post: {
+      summary: "Record the delivery result of a matching claim",
+      description:
+        "Delivered requires a provider message ID. Failed and unknown must omit it. An exact receipt replay returns the existing result.",
+      scopes: ["interactions:create", "interactions:read"],
+      params: [idParam()],
+      request: messageDraftReceiptSchema,
+      conflict: "No matching claim or receipt conflicts with the recorded result",
+      response: wrap("draft", ref("MessageDraft")),
     },
   },
   "/activities": {
@@ -1312,10 +1387,19 @@ function toPathItem(path: string): Record<string, unknown> {
           description: "Success",
           content: { "application/json": { schema: operation.response } },
         },
+        ...(operation.replayStatus
+          ? {
+              [operation.replayStatus]: {
+                description: "Existing result for an exact retry",
+                content: { "application/json": { schema: operation.response } },
+              },
+            }
+          : {}),
         "400": errorResponse("Invalid request"),
         "401": errorResponse("Missing, unknown, revoked, or expired token"),
         "403": errorResponse("The token lacks a required scope"),
         "404": errorResponse("Not found for this account"),
+        ...(operation.conflict ? { "409": errorResponse(operation.conflict) } : {}),
       },
     };
   }

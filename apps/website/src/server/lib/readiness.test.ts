@@ -28,6 +28,7 @@ function makeDatabase(options?: { migrationCount?: number; latest?: number }) {
       "event",
       "api_token",
       "interaction",
+      "message_draft",
       "live_activity",
       "live_activity_delivery",
       "inbox_item",
@@ -75,6 +76,12 @@ afterEach(() => {
 describe("databaseIsReady", () => {
   it("accepts the exact expected schema", () => {
     expect(databaseIsReady(makeDatabase())).toBe(true);
+  });
+
+  it("rejects a database missing message drafts despite a current ledger", () => {
+    const database = makeDatabase();
+    database.exec('drop table "message_draft"');
+    expect(databaseIsReady(database)).toBe(false);
   });
 
   it("rejects incomplete or unexpected migration state", () => {
