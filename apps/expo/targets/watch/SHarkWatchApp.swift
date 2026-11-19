@@ -82,7 +82,7 @@ private struct APIError: Error {
 
 @MainActor
 private final class WatchModel: ObservableObject {
-  enum State { case loading, ready(Snapshot), stale(Snapshot), unavailable(String), authorizing(AuthorizationStart) }
+  enum State { case loading, ready(Snapshot), stale(Snapshot), unavailable(String), reconnect(String), authorizing(AuthorizationStart) }
   @Published var state: State = .loading
   @Published var isSubmitting = false
   @Published var draft: MessageDraft?
@@ -94,6 +94,8 @@ private final class WatchModel: ObservableObject {
   private var draftGeneration = 0
   private var privateDraftsActive = true
   private var lastSnapshot: Snapshot?
+  private var authorizationAttempt: UUID?
+  private var isRefreshing = false
 
   init() {
     lastSnapshot = SnapshotCache.read()
@@ -102,7 +104,10 @@ private final class WatchModel: ObservableObject {
   }
 
   func refresh() async {
+    guard authorizationAttempt == nil, !isRefreshing else { return }
     guard let token else { await beginAuthorization(); return }
+    isRefreshing = true
+    defer { isRefreshing = false }
     state = .loading
     do {
       let snapshot: Snapshot = try await request("/api/watch/snapshot", token: token)
@@ -110,40 +115,81 @@ private final class WatchModel: ObservableObject {
       SnapshotCache.write(snapshot)
       state = .ready(snapshot)
       await refreshDraft()
+    } catch let error as APIError where error.statusCode == 401 {
+      draft = nil
+      state = .reconnect("SHark rejected this Watch’s sign-in. Reconnect to refresh.")
     } catch {
+      draft = nil
       state = lastSnapshot.map(State.stale) ?? .unavailable("SHark is unavailable. Try again when your Watch is connected.")
     }
   }
 
   func beginAuthorization() async {
+    guard authorizationAttempt == nil else { return }
+    let attempt = UUID()
+    authorizationAttempt = attempt
+    state = .loading
     do {
       let start: AuthorizationStart = try await request(
         "/api/device-authorization/start",
         method: "POST",
         body: ["clientName": "SHark Apple Watch", "scopes": ["watch:read", "watch:respond"], "expiresInSeconds": 7776000]
       )
+      guard authorizationAttempt == attempt else { return }
       state = .authorizing(start)
-      Task { await pollAuthorization(start) }
+      await pollAuthorization(start, attempt: attempt)
     } catch let error as APIError where error.statusCode == 400 {
-      state = .unavailable("Watch setup is not enabled on this SHark server yet.")
+      endAuthorization(attempt, message: "Watch setup is not enabled on this SHark server yet.")
     } catch {
-      state = .unavailable("Unable to reach SHark. Check your connection and try again.")
+      endAuthorization(attempt, message: "Couldn’t reach SHark to reconnect. Try again when connected.")
     }
   }
 
-  private func pollAuthorization(_ start: AuthorizationStart) async {
+  func cancelAuthorization() {
+    guard let attempt = authorizationAttempt else { return }
+    endAuthorization(attempt, message: "Sign-in canceled. Reconnect to refresh.")
+  }
+
+  private func endAuthorization(_ attempt: UUID, message: String) {
+    guard authorizationAttempt == attempt else { return }
+    authorizationAttempt = nil
+    state = .reconnect(message)
+  }
+
+  private func pollAuthorization(_ start: AuthorizationStart, attempt: UUID) async {
     let deadline = Date().addingTimeInterval(TimeInterval(start.expiresIn))
-    while Date() < deadline {
-      try? await Task.sleep(nanoseconds: UInt64(start.interval) * 1_000_000_000)
-      do {
-        let value: AuthorizationToken = try await request("/api/device-authorization/token", method: "POST", body: ["deviceCode": start.deviceCode])
-        token = value.accessToken
-        Keychain.write(value.accessToken, key: tokenKey)
-        await refresh()
+    while Date() < deadline && authorizationAttempt == attempt {
+      do { try await Task.sleep(nanoseconds: UInt64(max(1, start.interval)) * 1_000_000_000) }
+      catch {
+        endAuthorization(attempt, message: "Sign-in interrupted. Reconnect to refresh.")
         return
-      } catch { continue } // Pending authorization is intentionally indistinguishable from a transient error.
+      }
+      guard authorizationAttempt == attempt, Date() < deadline else { break }
+      let candidate: AuthorizationToken
+      do {
+        candidate = try await request("/api/device-authorization/token", method: "POST", body: ["deviceCode": start.deviceCode])
+      } catch { continue } // Pending approval or transient error; never alter the previous token.
+      guard authorizationAttempt == attempt else { return }
+      do {
+        // Verify account access before replacing the previous token or its cached state.
+        let snapshot: Snapshot = try await request("/api/watch/snapshot", token: candidate.accessToken)
+        guard authorizationAttempt == attempt else { return }
+        guard Keychain.write(candidate.accessToken, key: tokenKey) else {
+          endAuthorization(attempt, message: "Couldn’t save the new Watch sign-in. Reconnect to try again.")
+          return
+        }
+        token = candidate.accessToken
+        authorizationAttempt = nil
+        lastSnapshot = snapshot
+        SnapshotCache.write(snapshot)
+        state = .ready(snapshot)
+        await refreshDraft()
+      } catch {
+        endAuthorization(attempt, message: "Couldn’t verify the new Watch sign-in. Reconnect to try again.")
+      }
+      return
     }
-    state = .unavailable("Watch setup expired. Start again on this Watch.")
+    endAuthorization(attempt, message: "Watch setup expired. Reconnect to try again.")
   }
 
   func respond(_ action: String, to item: Snapshot.Interaction) async {
@@ -308,6 +354,12 @@ private struct WatchRoot: View {
       case .loading: ProgressView("Updating SHark…")
       case .unavailable(let message): unavailable(message)
       case .authorizing(let authorization): setup(authorization)
+      case .reconnect(let message):
+        VStack(spacing: 8) {
+          Text(message).multilineTextAlignment(.center)
+          Button("Reconnect") { Task { await model.beginAuthorization() } }
+          Button("Retry refresh") { Task { await model.refresh() } }
+        }.padding()
       case .ready(let snapshot): content(snapshot, stale: false)
       case .stale(let snapshot): content(snapshot, stale: true)
       }
@@ -446,6 +498,7 @@ private struct WatchRoot: View {
         .fixedSize(horizontal: false, vertical: true)
       Text(authorization.userCode).font(.title3.monospaced()).bold()
       Text("Waiting for approval…").font(.caption).foregroundStyle(.secondary)
+      Button("Cancel") { model.cancelAuthorization() }
     }.padding()
   }
 
@@ -460,12 +513,18 @@ private enum Keychain {
     var item: CFTypeRef?; guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
     return String(data: data, encoding: .utf8)
   }
-  static func write(_ value: String, key: String) {
+  static func write(_ value: String, key: String) -> Bool {
     let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key]
-    SecItemDelete(query as CFDictionary)
-    var item = query; item[kSecValueData as String] = Data(value.utf8); item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-    SecItemAdd(item as CFDictionary, nil)
+    let update: [String: Any] = [kSecValueData as String: Data(value.utf8)]
+    let status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
+    if status == errSecSuccess { return true }
+    guard status == errSecItemNotFound else { return false }
+    var item = query
+    item[kSecValueData as String] = Data(value.utf8)
+    item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+    return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
   }
+
 }
 
 private enum SnapshotCache {
