@@ -41,6 +41,7 @@ import {
 import { liveActivityRegistrationRoute } from "./routes/live-activity-registration";
 import { macosRoute } from "./routes/macos";
 import { createMcpRoute, MCP_MAX_BODY_BYTES } from "./routes/mcp";
+import { agentMessageDraftRoute, watchMessageDraftRoute } from "./routes/message-drafts";
 import { oauthClientsRoute, oauthWellKnownRoute } from "./routes/oauth";
 import {
   oncallAgentRoute,
@@ -253,7 +254,9 @@ app.route("/api/agent/billing", billingAgentRoute);
 app.route("/api/agent/inbox", inboxAgentRoute);
 app.route("/api/agent/activity-feed", activityFeedAgentRoute);
 app.route("/api/agent", agentOpenApiRoute);
+app.route("/api/agent/message-drafts", agentMessageDraftRoute);
 app.route("/api/agent", agentRoute);
+app.route("/api/watch/message-drafts", watchMessageDraftRoute);
 app.route("/api/watch", watchRoute);
 app.route("/api/macos", macosRoute);
 app.route("/api/activities", activitiesSessionRoute);

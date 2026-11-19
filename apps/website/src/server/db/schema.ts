@@ -1324,3 +1324,37 @@ export const oauthConsent = sqliteTable(
     index("oauth_consent_user_idx").on(table.userId),
   ],
 );
+
+export const messageDraft = sqliteTable(
+  "message_draft",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    creatorTokenId: text("creator_token_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    creationDigest: text("creation_digest").notNull(),
+    recipient: text("recipient", { mode: "json" })
+      .$type<{ id: string; label: string; address: string; verificationSource: string }>()
+      .notNull(),
+    text: text("text").notNull(),
+    revision: integer("revision").notNull(),
+    actionDigest: text("action_digest").notNull(),
+    status: text("status", {
+      enum: ["pending", "approved", "denied", "claimed", "delivered", "failed", "unknown"],
+    }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    operationId: text("operation_id"),
+    providerMessageId: text("provider_message_id"),
+  },
+  (table) => [
+    uniqueIndex("message_draft_creator_idempotency_idx").on(
+      table.userId,
+      table.creatorTokenId,
+      table.idempotencyKey,
+    ),
+    index("message_draft_pending_idx").on(table.userId, table.status, table.createdAt),
+  ],
+);

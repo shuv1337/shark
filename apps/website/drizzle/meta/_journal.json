@@ -211,6 +211,13 @@
       "when": 1792321200000,
       "tag": "0029_oncall_delivery_status",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1795055014388,
+      "tag": "0030_message_drafts",
+      "breakpoints": true
     }
   ]
 }
