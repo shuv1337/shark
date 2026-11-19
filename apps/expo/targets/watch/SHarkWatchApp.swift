@@ -194,7 +194,10 @@ private final class WatchModel: ObservableObject {
         case "failed": draftNotice = "Delivery failed. No automatic retry."
         case "unknown": draftNotice = "Delivery unknown. Check the conversation before trying again."
         case "expired": draftNotice = "Draft expired before delivery was claimed. Nothing was sent."
-        default: draftNotice = "Send authorized. Delivery is not yet confirmed."
+        case "approved", "claimed": draftNotice = "Send authorized. Delivery is not yet confirmed."
+        case "pending": draftNotice = "Draft still needs a confirmed Send."
+        case "denied": draftNotice = "Draft denied. Nothing will be sent."
+        default: draftNotice = "Delivery status unavailable."
         }
       }
     } catch {
@@ -226,6 +229,7 @@ private final class WatchModel: ObservableObject {
 
   func respondToDraft(_ action: String, item: MessageDraft) async {
     guard let token, !isSubmitting else { return }
+    if action == "send" { lastSubmittedDraftID = item.id }
     isSubmitting = true
     defer { isSubmitting = false }
     do {
