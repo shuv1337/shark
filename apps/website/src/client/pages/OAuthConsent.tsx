@@ -199,8 +199,8 @@ export function OAuthConsent() {
                     {request.apiScopes.some(isHighImpactScope) ? (
                       <p className="mt-3 text-[13px] leading-5 text-ink-faint">
                         High-impact permissions start unticked. Tick them only if you want{" "}
-                        {clientName} to have them. Leaving these unticked means SHark will ask again
-                        next time this app connects.
+                        {clientName} to have them. SHark remembers your choice if you leave them
+                        unticked.
                       </p>
                     ) : null}
                   </fieldset>

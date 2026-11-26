@@ -5,6 +5,7 @@ import {
   MCP_PATH,
   OAUTH_API_SCOPES,
   OAUTH_DEFAULT_SCOPES,
+  OAUTH_HIGH_IMPACT_SCOPES,
   OAUTH_OFFLINE_ACCESS_SCOPE,
   OAUTH_SCOPES,
   type OAuthClientGrantDto,
@@ -47,6 +48,35 @@ export const OAUTH_CONSENT_PAGE = "/oauth/consent";
 export const OAUTH_TOKEN_ENDPOINT_PATH = "/api/auth/oauth2/token";
 
 const API_SCOPE_SET = new Set<string>(OAUTH_API_SCOPES);
+const HIGH_IMPACT_SCOPE_SET = new Set<string>(OAUTH_HIGH_IMPACT_SCOPES);
+
+/**
+ * Matches a client's requested scopes against a previously stored consent.
+ * Leaving high-impact scopes unticked is a valid remembered choice: a stored
+ * consent covers a re-authorization when it includes every requested
+ * non-high-impact scope (including `offline_access` if requested) and at
+ * least one API scope whenever API scopes are requested. Only the
+ * intersection of requested and stored scopes is granted.
+ */
+export function matchRememberedConsentScopes(
+  requestedScopes: readonly string[],
+  consentedScopes: readonly string[],
+): string[] | null {
+  if (requestedScopes.length === 0 || consentedScopes.length === 0) return null;
+  const consented = new Set(consentedScopes);
+  for (const scope of requestedScopes) {
+    if (!consented.has(scope) && !HIGH_IMPACT_SCOPE_SET.has(scope)) return null;
+  }
+  const granted = [...new Set(requestedScopes.filter((scope) => consented.has(scope)))];
+  if (granted.length === 0) return null;
+  if (
+    requestedScopes.some((scope) => API_SCOPE_SET.has(scope)) &&
+    !granted.some((scope) => API_SCOPE_SET.has(scope))
+  ) {
+    return null;
+  }
+  return granted;
+}
 
 export function appOrigin(): string {
   return new URL(env.APP_URL).origin;

@@ -1,0 +1,59 @@
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 7091595f3c16e1cf51776b4f5c039ff2d360cd67..920058f3c90b67cbc415907342ca452eb5e1df70 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -3996,12 +3996,30 @@ async function authorizeEndpoint(ctx, opts, settings) {
+ 			}] : []
+ 		]
+ 	});
+-	if (!consent || !requestedScopes.every((val) => consent.scopes.includes(val))) {
++	if (!consent) {
+ 		if (promptNone) return redirectWithPromptNoneError(ctx, opts, query, "consent_required", "End-User consent is required");
+ 		return redirectWithPromptCode(ctx, opts, "consent", { sessionId: session.session.id });
+ 	}
++	let grantedScopes = requestedScopes;
++	if (!requestedScopes.every((val) => consent.scopes.includes(val))) {
++		const matched = await opts.matchConsent?.({
++			requestedScopes,
++			consentedScopes: consent.scopes,
++			client,
++			user: session.user
++		});
++		if (!Array.isArray(matched) || matched.length === 0 || !matched.every((val) => typeof val === "string" && requestedScopes.includes(val) && consent.scopes.includes(val))) {
++			if (promptNone) return redirectWithPromptNoneError(ctx, opts, query, "consent_required", "End-User consent is required");
++			return redirectWithPromptCode(ctx, opts, "consent", { sessionId: session.session.id });
++		}
++		grantedScopes = [...new Set(matched)];
++	}
++	const authorizationQuery = grantedScopes === requestedScopes ? query : {
++		...query,
++		scope: grantedScopes.join(" ")
++	};
+ 	return redirectWithAuthorizationCode(ctx, opts, {
+-		query,
++		query: authorizationQuery,
+ 		clientId: client.clientId,
+ 		userId: session.user.id,
+ 		sessionId: session.session.id,
+diff --git a/dist/oauth-BFBataE_.d.mts b/dist/oauth-BFBataE_.d.mts
+index 21db9f619b24c6ddf16a2b7e805bab38426672d1..787b411954af99ed29ba8577d69f2f1dcba198fd 100644
+--- a/dist/oauth-BFBataE_.d.mts
++++ b/dist/oauth-BFBataE_.d.mts
+@@ -540,6 +540,17 @@ interface OAuthOptions<Scopes extends readonly Scope[] = InternallySupportedScop
+    * ```
+    */
+   consentPage: string;
++  /**
++   * Optional matcher when a stored consent does not cover every requested scope.
++   * Return the subset of requested scopes that are already consented to skip
++   * re-prompting, or null/undefined to prompt for consent again.
++   */
++  matchConsent?: (context: {
++    requestedScopes: string[];
++    consentedScopes: string[];
++    client: SchemaClient<Scopes>;
++    user: User & Record<string, unknown>;
++  }) => Awaitable<string[] | null | undefined>;
+   /**
+    * Sign Up page settings associated with `prompt: "create"`
+    * @see https://openid.net/specs/openid-connect-prompt-create-1_0.html

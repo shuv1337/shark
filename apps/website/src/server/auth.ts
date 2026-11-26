@@ -13,6 +13,7 @@ import { CLIENT_IP_HEADER } from "./lib/client-ip";
 import {
   clientDefaultScopes,
   hashOAuthToken,
+  matchRememberedConsentScopes,
   mcpResourceUrl,
   OAUTH_ACCESS_TOKEN_PREFIX,
   OAUTH_ACCESS_TOKEN_TTL_SECONDS,
@@ -295,6 +296,8 @@ export const auth = betterAuth({
     oauthProvider({
       loginPage: OAUTH_CONSENT_PAGE,
       consentPage: OAUTH_CONSENT_PAGE,
+      matchConsent: ({ requestedScopes, consentedScopes }) =>
+        matchRememberedConsentScopes(requestedScopes, consentedScopes),
       scopes: [...OAUTH_SCOPES],
       // Tokens are only ever issued for the MCP server; oauthResourceBinding
       // makes every token request say so.
