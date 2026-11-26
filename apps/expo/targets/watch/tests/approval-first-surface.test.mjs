@@ -63,9 +63,21 @@ test("the dialog answers only the payload it presents", () => {
   assert.doesNotMatch(dialogActions, /pendingConfirmation|\bitem\b|snapshot\.|openInteractions/);
 });
 
-test("the dialog is mounted on WatchRoot.body and not inside content", () => {
+test("the dialog is mounted on its own anchor inside WatchRoot's ZStack and not inside content", () => {
   assert.ok(dialogAt >= 0);
   assert.equal(content.search(/\.confirmationDialog\(\s*"Confirm response"/), -1);
+  const zstackAt = rootBody.indexOf("ZStack {");
+  assert.ok(zstackAt >= 0);
+  assert.doesNotMatch(rootBody, /var body: some View \{\s*Group \{/);
+  const zstack = rootBody.slice(zstackAt, blockEnd(rootBody, zstackAt));
+  assert.match(
+    zstack,
+    /Color\.clear[\s\S]*?\.allowsHitTesting\(false\)[\s\S]*?\.accessibilityHidden\(true\)[\s\S]*?\.confirmationDialog\(\s*"Confirm response"/,
+  );
+  assert.doesNotMatch(
+    rootBody.slice(dialogAt + dialog.length, dialogAt + dialog.length + 120),
+    /^\s*\.confirmationDialog\(/,
+  );
 });
 
 test("a stale, submitting, or expired screen cannot confirm", () => {

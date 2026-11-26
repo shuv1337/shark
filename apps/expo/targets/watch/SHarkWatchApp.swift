@@ -321,7 +321,7 @@ private struct WatchRoot: View {
   @State private var draftText = ""
   @State private var pendingDraftConfirmation: PendingDraftConfirmation?
   var body: some View {
-    Group {
+    ZStack {
       switch model.state {
       case .loading: ProgressView("Updating SHark…")
       case .unavailable(let message): unavailable(message)
@@ -329,6 +329,49 @@ private struct WatchRoot: View {
       case .ready(let snapshot): content(snapshot, stale: false)
       case .stale(let snapshot): content(snapshot, stale: true)
       }
+      Color.clear
+        .frame(width: 0, height: 0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        // Actions answer only the presented payload, so a refresh or reorder cannot retarget them.
+        .confirmationDialog(
+          "Confirm response",
+          isPresented: Binding(
+            get: { pendingConfirmation != nil && readySnapshot != nil && !model.isSubmitting },
+            set: { if !$0 { pendingConfirmation = nil } }
+          ),
+          titleVisibility: .visible,
+          presenting: pendingConfirmation
+        ) { pending in
+          Button("Confirm", role: pending.action == "deny" || pending.action == "no" ? .destructive : nil) {
+            guard readySnapshot != nil, !model.isSubmitting, pending.interaction.expiresAt > Date() else { return }
+            Task { await model.respond(pending.action, to: pending.interaction) }
+          }
+          Button("Cancel", role: .cancel) {}
+        } message: { pending in
+          Text(model.hideDetails ? "An approval is waiting" : pending.interaction.title)
+        }
+      Color.clear
+        .frame(width: 0, height: 0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .confirmationDialog(
+          "Confirm exact draft",
+          isPresented: Binding(
+            get: { pendingDraftConfirmation != nil && readySnapshot != nil && !model.hideDetails && !model.isSubmitting && !model.draftLoading },
+            set: { if !$0 { pendingDraftConfirmation = nil } }
+          ),
+          titleVisibility: .visible,
+          presenting: pendingDraftConfirmation
+        ) { pending in
+          Button(pending.action == "send" ? "Send this revision" : "Deny draft", role: pending.action == "deny" ? .destructive : nil) {
+            guard readySnapshot != nil, !model.hideDetails, !model.isSubmitting, !model.draftLoading, pending.draft.status == "pending", pending.draft.expiresAt > Date() else { return }
+            Task { await model.respondToDraft(pending.action, item: pending.draft) }
+          }
+          Button("Cancel", role: .cancel) {}
+        } message: { pending in
+          Text("To \(pending.draft.recipient.label) · Revision \(pending.draft.revision)")
+        }
     }
     .task { await model.refresh() }
     .onChange(of: scenePhase) { phase in
@@ -378,41 +421,6 @@ private struct WatchRoot: View {
           if let notice = model.draftNotice { Text(notice).font(.caption2) }
         }.padding()
       }.privacySensitive()
-    }
-    // Actions answer only the presented payload, so a refresh or reorder cannot retarget them.
-    .confirmationDialog(
-      "Confirm response",
-      isPresented: Binding(
-        get: { pendingConfirmation != nil && readySnapshot != nil && !model.isSubmitting },
-        set: { if !$0 { pendingConfirmation = nil } }
-      ),
-      titleVisibility: .visible,
-      presenting: pendingConfirmation
-    ) { pending in
-      Button("Confirm", role: pending.action == "deny" || pending.action == "no" ? .destructive : nil) {
-        guard readySnapshot != nil, !model.isSubmitting, pending.interaction.expiresAt > Date() else { return }
-        Task { await model.respond(pending.action, to: pending.interaction) }
-      }
-      Button("Cancel", role: .cancel) {}
-    } message: { pending in
-      Text(model.hideDetails ? "An approval is waiting" : pending.interaction.title)
-    }
-    .confirmationDialog(
-      "Confirm exact draft",
-      isPresented: Binding(
-        get: { pendingDraftConfirmation != nil && readySnapshot != nil && !model.hideDetails && !model.isSubmitting && !model.draftLoading },
-        set: { if !$0 { pendingDraftConfirmation = nil } }
-      ),
-      titleVisibility: .visible,
-      presenting: pendingDraftConfirmation
-    ) { pending in
-      Button(pending.action == "send" ? "Send this revision" : "Deny draft", role: pending.action == "deny" ? .destructive : nil) {
-        guard readySnapshot != nil, !model.hideDetails, !model.isSubmitting, !model.draftLoading, pending.draft.status == "pending", pending.draft.expiresAt > Date() else { return }
-        Task { await model.respondToDraft(pending.action, item: pending.draft) }
-      }
-      Button("Cancel", role: .cancel) {}
-    } message: { pending in
-      Text("To \(pending.draft.recipient.label) · Revision \(pending.draft.revision)")
     }
   }
 

@@ -128,9 +128,23 @@ test("draft confirmation binds payload on WatchRoot.body and clears on inactive 
   const identityChange = rootBody.slice(identityChangeAt, blockEnd(rootBody, identityChangeAt));
   assert.match(identityChange, /pendingDraftConfirmation = nil/);
 
+  const zstackAt = rootBody.indexOf("ZStack {");
+  assert.ok(zstackAt >= 0);
+  const zstack = rootBody.slice(zstackAt, blockEnd(rootBody, zstackAt));
+  const betweenDialogs = zstack.slice(
+    zstack.search(/\.confirmationDialog\(\s*"Confirm response"/),
+    zstack.search(/\.confirmationDialog\(\s*"Confirm exact draft"/),
+  );
+  assert.match(
+    betweenDialogs,
+    /Color\.clear[\s\S]*?\.allowsHitTesting\(false\)[\s\S]*?\.accessibilityHidden\(true\)/,
+  );
+
   const readyIdentityAt = source.indexOf("private var readyDraftIdentity: ReadyDraftIdentity?");
   assert.ok(readyIdentityAt >= 0);
   const readyIdentity = source.slice(readyIdentityAt, blockEnd(source, readyIdentityAt));
   assert.match(readyIdentity, /guard readySnapshot != nil, !model\.hideDetails/);
   assert.match(readyIdentity, /draft\.status == "pending"/);
+  assert.match(readyIdentity, /revision: draft\.revision/);
+  assert.match(readyIdentity, /actionDigest: draft\.actionDigest/);
 });
