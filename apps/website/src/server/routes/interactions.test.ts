@@ -857,6 +857,27 @@ describe("Apple Watch MVP surface", () => {
       expect((await snapshot()).work).toEqual([]);
     });
 
+    it("enforces the exact millisecond dead-work cutoff in SQL", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-11-26T12:00:00.000Z"));
+        const defaultExact = await insertWork("watch-dead-default-exact", DEFAULT_TTL_MS + DAY);
+        await insertWork("watch-dead-default-past", DEFAULT_TTL_MS + DAY + 1);
+        const customExact = await insertWork("watch-dead-custom-exact", 60_000 + DAY, {
+          ttlSeconds: 60,
+        });
+        await insertWork("watch-dead-custom-past", 60_000 + DAY + 1, { ttlSeconds: 60 });
+
+        const body = await snapshot();
+        expect(body.work.map((item) => ({ id: item.id, status: item.status }))).toEqual([
+          { id: customExact, status: "Stale" },
+          { id: defaultExact, status: "Stale" },
+        ]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("lets a live activity paired with dead work show on its own", async () => {
       const deadPublic = await insertWork("watch-dead-public", 3 * DAY);
       const deadPrivate = await insertWork("watch-dead-private", 3 * DAY);

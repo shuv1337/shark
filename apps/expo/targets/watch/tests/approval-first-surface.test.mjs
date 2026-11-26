@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import { test } from "vitest";
 
 const source = readFileSync(new URL("../SHarkWatchApp.swift", import.meta.url), "utf8");
+const rootBody = source.slice(
+  source.indexOf("var body: some View"),
+  source.indexOf("private var readySnapshot:"),
+);
 const content = source.slice(
   source.indexOf("private func content("),
   source.indexOf("private func draftPreview("),
@@ -22,8 +26,9 @@ function blockEnd(text, start) {
   throw new Error("unbalanced braces");
 }
 
-const dialogAt = content.search(/\.confirmationDialog\(\s*"Confirm response"/);
-const dialog = content.slice(dialogAt);
+const dialogAt = rootBody.search(/\.confirmationDialog\(\s*"Confirm response"/);
+const dialogEnd = rootBody.indexOf("} message:", dialogAt);
+const dialog = rootBody.slice(dialogAt, blockEnd(rootBody, dialogEnd));
 const dialogActions = dialog.slice(dialog.indexOf(") { pending in"), dialog.indexOf("} message:"));
 
 test("approvals come before drafts, work and recent messages", () => {
@@ -58,16 +63,21 @@ test("the dialog answers only the payload it presents", () => {
   assert.doesNotMatch(dialogActions, /pendingConfirmation|\bitem\b|snapshot\.|openInteractions/);
 });
 
-test("the dialog stays mounted outside the approvals conditional", () => {
-  const conditional = content.indexOf("if !snapshot.openInteractions.isEmpty {");
-  assert.ok(conditional >= 0);
-  assert.ok(dialogAt > blockEnd(content, conditional));
+test("the dialog is mounted on WatchRoot.body and not inside content", () => {
+  assert.ok(dialogAt >= 0);
+  assert.equal(content.search(/\.confirmationDialog\(\s*"Confirm response"/), -1);
 });
 
-test("a stale or submitting screen cannot confirm", () => {
-  assert.match(dialog, /get: \{ pendingConfirmation != nil && !stale && !model\.isSubmitting \}/);
+test("a stale, submitting, or expired screen cannot confirm", () => {
+  assert.match(
+    dialog,
+    /get: \{ pendingConfirmation != nil && readySnapshot != nil && !model\.isSubmitting \}/,
+  );
   const confirm = dialogActions.slice(dialogActions.indexOf('Button("Confirm"'));
-  assert.match(confirm, /guard !stale else \{ return \}\s+Task \{ await model\.respond/);
+  assert.match(
+    confirm,
+    /guard readySnapshot != nil, !model\.isSubmitting, pending\.interaction\.expiresAt > Date\(\) else \{ return \}\s+Task \{ await model\.respond/,
+  );
 });
 
 test("the selection is cleared when the scene, state or request goes away", () => {

@@ -82,3 +82,55 @@ test("delayed edit and response completions cannot overwrite a newer foreground 
   );
   assert.match(clear, /draftGeneration \+= 1/);
 });
+test("draft confirmation binds payload on WatchRoot.body and clears on inactive or identity change", () => {
+  function blockEnd(text, start) {
+    let depth = 0;
+    for (let index = text.indexOf("{", start); index < text.length; index += 1) {
+      if (text[index] === "{") depth += 1;
+      if (text[index] === "}" && --depth === 0) return index;
+    }
+    throw new Error("unbalanced braces");
+  }
+  const rootBody = source.slice(
+    source.indexOf("var body: some View"),
+    source.indexOf("private var readySnapshot:"),
+  );
+  const dialogAt = rootBody.search(/\.confirmationDialog\(\s*"Confirm exact draft"/);
+  assert.ok(dialogAt >= 0);
+  assert.equal(preview.search(/\.confirmationDialog\(\s*"Confirm exact draft"/), -1);
+  const dialogEnd = rootBody.indexOf("} message:", dialogAt);
+  const dialog = rootBody.slice(dialogAt, blockEnd(rootBody, dialogEnd));
+  const dialogActions = dialog.slice(
+    dialog.indexOf(") { pending in"),
+    dialog.indexOf("} message:"),
+  );
+  assert.match(dialog, /presenting: pendingDraftConfirmation\s*\) \{ pending in/);
+  assert.match(dialogActions, /model\.respondToDraft\(pending\.action, item: pending\.draft\)/);
+  assert.doesNotMatch(
+    dialogActions,
+    /pendingDraftConfirmation|confirmingDraft|draftConfirmation|\bmodel\.draft\b|\bitem\b(?!:)/,
+  );
+  assert.match(
+    dialog,
+    /get: \{ pendingDraftConfirmation != nil && readySnapshot != nil && !model\.hideDetails && !model\.isSubmitting && !model\.draftLoading \}/,
+  );
+  assert.match(
+    dialogActions,
+    /guard readySnapshot != nil, !model\.hideDetails, !model\.isSubmitting, !model\.draftLoading, pending\.draft\.status == "pending", pending\.draft\.expiresAt > Date\(\) else \{ return \}\s+Task \{ await model\.respondToDraft/,
+  );
+
+  const phaseAt = rootBody.indexOf(".onChange(of: scenePhase)");
+  const phase = rootBody.slice(phaseAt, blockEnd(rootBody, phaseAt));
+  assert.match(phase.slice(phase.indexOf("else {")), /pendingDraftConfirmation = nil/);
+
+  const identityChangeAt = rootBody.indexOf(".onChange(of: readyDraftIdentity)");
+  assert.ok(identityChangeAt >= 0);
+  const identityChange = rootBody.slice(identityChangeAt, blockEnd(rootBody, identityChangeAt));
+  assert.match(identityChange, /pendingDraftConfirmation = nil/);
+
+  const readyIdentityAt = source.indexOf("private var readyDraftIdentity: ReadyDraftIdentity?");
+  assert.ok(readyIdentityAt >= 0);
+  const readyIdentity = source.slice(readyIdentityAt, blockEnd(source, readyIdentityAt));
+  assert.match(readyIdentity, /guard readySnapshot != nil, !model\.hideDetails/);
+  assert.match(readyIdentity, /draft\.status == "pending"/);
+});

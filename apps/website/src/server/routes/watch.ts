@@ -20,6 +20,12 @@ const LIVE_STATUSES = ["starting", "active", "partial"] as const;
 const WATCH_WORK_LIMIT = 5;
 const WATCH_MESSAGE_LIMIT = 5;
 const WATCH_INTERACTION_LIMIT = 5;
+/**
+ * Board work more than a day past its heartbeat deadline is left off the Watch.
+ * Measured from the heartbeat, not updatedAt, which resolving an ask also bumps.
+ * The cutoff runs directly in SQL on `lastHeartbeatAt` (epoch ms) +
+ * `heartbeatTtlSeconds * 1000` + `WATCH_DEAD_WORK_GRACE_MS`.
+ */
 const WATCH_DEAD_WORK_GRACE_MS = 24 * 60 * 60 * 1000;
 const BOARD_STATE_LABELS: Record<(typeof BOARD_WORK_ACTIVE_STATES)[number], string> = {
   queued: "Queued",
@@ -34,18 +40,6 @@ const WITHDRAWN_STATUSES = ["withdrawn", "withdraw_partial", "withdraw_processin
 type LiveActivityRow = typeof liveActivity.$inferSelect;
 type BoardWorkRow = typeof boardWorkItem.$inferSelect;
 type InteractionRow = typeof interaction.$inferSelect;
-
-/**
- * Board work more than a day past its heartbeat deadline is left off the Watch.
- * Measured from the heartbeat, not updatedAt, which resolving an ask also bumps.
- * The board query applies the same cutoff in SQL so dead rows are not loaded.
- */
-function isDeadWork(row: BoardWorkRow, now: Date) {
-  return (
-    now.getTime() - row.lastHeartbeatAt.getTime() >
-    row.heartbeatTtlSeconds * 1000 + WATCH_DEAD_WORK_GRACE_MS
-  );
-}
 
 function toWatchInteraction(row: InteractionRow): WatchInteractionDto {
   return {
@@ -171,8 +165,7 @@ async function snapshotFor(userId: string): Promise<WatchSnapshotDto> {
       ),
     )
     .orderBy(desc(boardWorkItem.updatedAt))
-    .all()
-    .filter((row) => !isDeadWork(row, now));
+    .all();
   const { pairs, unpaired } = pairActivities(boardWork, activities);
   const running: WatchWorkItemDto[] = unpaired.map(toLiveActivityWork);
   const queued: WatchWorkItemDto[] = [];
