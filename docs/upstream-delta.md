@@ -184,11 +184,17 @@ Deliberate merge resolutions:
   validation and its normal revoked-token family invalidation. Re-admission cannot revive that
   token. Known missing-session grant errors become `invalid_grant`; unrelated provider errors
   and opaque storage failures remain errors of their original class, including 500 responses.
-- The consent page leaves high-impact scopes (`OAUTH_HIGH_IMPACT_SCOPES`) unticked, but
-  `OAUTH_DEFAULT_SCOPES` still requests them, and Better Auth skips consent only when the stored
-  consent covers every requested scope. Leaving them unticked therefore shows consent again on each
-  re-authorization: at least every 30 days when the refresh token expires, and whenever the client
-  re-registers.
+- The consent page leaves high-impact scopes (`OAUTH_HIGH_IMPACT_SCOPES`) unticked, even when
+  `OAUTH_DEFAULT_SCOPES` requests them. `@better-auth/oauth-provider@1.6.25` is patched
+  (`patches/@better-auth__oauth-provider@1.6.25.patch`) to support a `matchConsent` option on
+  `authorizeEndpoint` (covering both direct `/oauth2/authorize` and post-login resume paths), which
+  `auth.ts` wires to `matchRememberedConsentScopes` (`lib/oauth.ts`). A stored consent covers a
+  re-authorization request when it includes every requested non-high-impact scope (including
+  `offline_access` if requested) and at least one API scope whenever API scopes are requested,
+  skipping the consent prompt while restricting the issued authorization code, access token, and
+  refresh token to the intersection of requested and stored scopes. Explicit `prompt=consent`
+  still forces the full consent prompt (allowing step-up upgrades), and offboarding and dashboard
+  disconnect still delete stored consents so re-connection prompts again.
 - The Apple Watch and Mac companion scopes (`watch:*`, `macos:*`) are never OAuth scopes: they can
   answer prompts. Board scopes are grantable, and every board route has an MCP tool.
 - Intentional anonymous exceptions, all of which return no account content:

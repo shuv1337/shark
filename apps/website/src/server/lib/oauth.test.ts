@@ -1,3 +1,4 @@
+import { OAUTH_DEFAULT_SCOPES, OAUTH_HIGH_IMPACT_SCOPES } from "@hark/contracts";
 import { beforeAll, describe, expect, it } from "vitest";
 
 process.env.NODE_ENV = "test";
@@ -243,5 +244,70 @@ describe("client links", () => {
     ]) {
       expect(oauth.httpsUrlOrNull(value), String(value)).toBeNull();
     }
+  });
+});
+
+describe("remembered consent scope matching", () => {
+  const highImpact = new Set<string>(OAUTH_HIGH_IMPACT_SCOPES);
+  const nonHighImpactDefaults = OAUTH_DEFAULT_SCOPES.filter((scope) => !highImpact.has(scope));
+
+  it("matches default scopes against a consent with all high-impact scopes unticked", () => {
+    expect(oauth.matchRememberedConsentScopes(OAUTH_DEFAULT_SCOPES, nonHighImpactDefaults)).toEqual(
+      nonHighImpactDefaults,
+    );
+  });
+
+  it("preserves partially granted high-impact scopes and omits ungranted ones", () => {
+    const consented = [...nonHighImpactDefaults, "teams:write"];
+    expect(oauth.matchRememberedConsentScopes(OAUTH_DEFAULT_SCOPES, consented)).toEqual([
+      ...OAUTH_DEFAULT_SCOPES.filter((scope) => !highImpact.has(scope) || scope === "teams:write"),
+    ]);
+  });
+
+  it("intersects narrower requests and never expands to unrequested stored scopes", () => {
+    expect(
+      oauth.matchRememberedConsentScopes(
+        ["teams:read", "teams:write"],
+        ["teams:read", "notifications:send", "offline_access"],
+      ),
+    ).toEqual(["teams:read"]);
+  });
+
+  it("returns null when any requested non-high-impact scope or offline_access is missing", () => {
+    expect(
+      oauth.matchRememberedConsentScopes(
+        ["teams:read", "notifications:send", "teams:write"],
+        ["teams:read"],
+      ),
+    ).toBeNull();
+    expect(
+      oauth.matchRememberedConsentScopes(
+        ["teams:read", "teams:write", "offline_access"],
+        ["teams:read"],
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null for step-up requests asking only for refused high-impact scopes", () => {
+    expect(
+      oauth.matchRememberedConsentScopes(["teams:write"], ["teams:read", "offline_access"]),
+    ).toBeNull();
+    expect(
+      oauth.matchRememberedConsentScopes(
+        ["teams:write", "offline_access"],
+        ["teams:read", "offline_access"],
+      ),
+    ).toBeNull();
+  });
+
+  it("deduplicates repeated scopes and returns null for empty inputs", () => {
+    expect(
+      oauth.matchRememberedConsentScopes(
+        ["teams:read", "teams:read", "teams:write", "offline_access"],
+        ["teams:read", "offline_access"],
+      ),
+    ).toEqual(["teams:read", "offline_access"]);
+    expect(oauth.matchRememberedConsentScopes([], ["teams:read"])).toBeNull();
+    expect(oauth.matchRememberedConsentScopes(["teams:read"], [])).toBeNull();
   });
 });

@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
-import { OAUTH_DEFAULT_SCOPES } from "@hark/contracts";
+import { OAUTH_DEFAULT_SCOPES, OAUTH_HIGH_IMPACT_SCOPES } from "@hark/contracts";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 process.env.NODE_ENV = "test";
@@ -168,5 +169,43 @@ describe("offboarding real OAuth authorization codes", () => {
     expect(rejected.body).not.toHaveProperty("access_token");
     expect(await db.select().from(schema.oauthAccessToken)).toEqual([]);
     expect(await db.select().from(schema.oauthRefreshToken)).toEqual([]);
+  });
+
+  it("deletes remembered subset consent so re-admission re-prompts", async () => {
+    const highImpact = new Set<string>(OAUTH_HIGH_IMPACT_SCOPES);
+    const subset = OAUTH_DEFAULT_SCOPES.filter((scope) => !highImpact.has(scope));
+    await db
+      .update(schema.oauthConsent)
+      .set({ scopes: JSON.stringify(subset) })
+      .where(eq(schema.oauthConsent.id, "consent_leaver"));
+
+    // Before offboarding, subset consent skips prompting and issues a code directly.
+    const beforeOffboard = await authorize();
+    expect(beforeOffboard.code).toBeTruthy();
+
+    env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length, "somebody-else@example.com");
+    expect(offboardPersistedAccess(USER_ID)).toMatchObject({ oauthConsents: 1 });
+    expect(await db.select().from(schema.oauthConsent)).toEqual([]);
+
+    // Re-admission: the next authorize must redirect to /oauth/consent instead of issuing a code.
+    env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length);
+    const verifier = randomBytes(32).toString("base64url");
+    const challenge = createHash("sha256").update(verifier).digest("base64url");
+    const query = new URLSearchParams({
+      response_type: "code",
+      client_id: clientId,
+      redirect_uri: REDIRECT_URI,
+      scope: SCOPE,
+      state: "synthetic-state",
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+      resource,
+    });
+    const response = await auth.handler(
+      new Request(`${ORIGIN}/api/auth/oauth2/authorize?${query}`, { headers: { cookie } }),
+    );
+    expect(response.status).toBe(302);
+    const location = new URL(response.headers.get("location") ?? "", ORIGIN);
+    expect(location.pathname).toBe("/oauth/consent");
   });
 });

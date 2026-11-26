@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { OAUTH_DEFAULT_SCOPES, OAUTH_HIGH_IMPACT_SCOPES } from "@hark/contracts";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -117,8 +118,13 @@ async function register(clientName: string): Promise<string> {
   return String(body.client_id);
 }
 
-/** Starts an authorization as the signed-in user; returns the consent page's signed query. */
-async function authorize(clientId: string, challenge: string, scope = REQUESTED): Promise<string> {
+/** Starts an authorization as the signed-in user; returns the raw 302 Location URL. */
+async function authorizeRedirect(
+  clientId: string,
+  challenge: string,
+  scope = REQUESTED,
+  extra: Record<string, string> = {},
+): Promise<URL> {
   const query = new URLSearchParams({
     response_type: "code",
     client_id: clientId,
@@ -128,10 +134,21 @@ async function authorize(clientId: string, challenge: string, scope = REQUESTED)
     code_challenge: challenge,
     code_challenge_method: "S256",
     resource: RESOURCE,
+    ...extra,
   });
   const response = await app.request(`/api/auth/oauth2/authorize?${query}`, signedIn());
   expect(response.status).toBe(302);
-  const consent = new URL(response.headers.get("location") ?? "", ORIGIN);
+  return new URL(response.headers.get("location") ?? "", ORIGIN);
+}
+
+/** Starts an authorization as the signed-in user; returns the consent page's signed query. */
+async function authorize(
+  clientId: string,
+  challenge: string,
+  scope = REQUESTED,
+  extra: Record<string, string> = {},
+): Promise<string> {
+  const consent = await authorizeRedirect(clientId, challenge, scope, extra);
   expect(consent.pathname).toBe("/oauth/consent");
   expect(consent.searchParams.get("client_id")).toBe(clientId);
   expect(consent.searchParams.get("scope")).toBe(scope);
@@ -724,5 +741,179 @@ describe("MCP OAuth end to end", () => {
 
     env.ALLOWED_EMAILS.splice(0, env.ALLOWED_EMAILS.length, "someone-else@example.com");
     expect(await mcpStatus(tokens.access_token)).toBe(401);
+  });
+
+  it("remembers unticked high-impact scopes on re-authorization without widening grants", async () => {
+    const clientId = await register("Remembered Subset Client");
+    const firstPkce = pkce();
+    await decide(await authorize(clientId, firstPkce.challenge), true, GRANTED);
+
+    // Re-authorizing with the same scopes skips /oauth/consent and issues a code directly.
+    const secondPkce = pkce();
+    const direct = await authorizeRedirect(clientId, secondPkce.challenge);
+    expect(`${direct.origin}${direct.pathname}`).toBe(REDIRECT_URI);
+    expect(direct.searchParams.get("state")).toBe("synthetic-state");
+    const code = direct.searchParams.get("code");
+    expect(code).toBeTruthy();
+
+    const exchanged = await exchange(clientId, code ?? "", secondPkce.verifier);
+    expect(exchanged.status, String(exchanged.body.error_description)).toBe(200);
+    const tokens = exchanged.body as unknown as TokenSet;
+    expect(tokens.scope).toBe(GRANTED);
+
+    const client = await mcpClient(tokens.access_token);
+    expect((await client.callTool({ name: "teams_list", arguments: {} })).isError).toBeFalsy();
+    const denied = await client.callTool({ name: "teams_create", arguments: { name: "Nope" } });
+    expect(denied.isError).toBe(true);
+    expect(JSON.stringify(denied.content)).toContain("SHark API error 403");
+    await client.close();
+
+    const rotated = await refresh(clientId, tokens.refresh_token);
+    expect(rotated.status).toBe(200);
+    expect(rotated.body.scope).toBe(GRANTED);
+  });
+
+  it("remembers OAUTH_DEFAULT_SCOPES when high-impact scopes are left unticked", async () => {
+    const clientId = await register("Default Subset Client");
+    const defaultScope = OAUTH_DEFAULT_SCOPES.join(" ");
+    const highImpact = new Set<string>(OAUTH_HIGH_IMPACT_SCOPES);
+    const nonHighImpactDefaultScope = OAUTH_DEFAULT_SCOPES.filter(
+      (scope) => !highImpact.has(scope),
+    ).join(" ");
+
+    const firstPkce = pkce();
+    await decide(
+      await authorize(clientId, firstPkce.challenge, defaultScope),
+      true,
+      nonHighImpactDefaultScope,
+    );
+
+    const secondPkce = pkce();
+    const direct = await authorizeRedirect(clientId, secondPkce.challenge, defaultScope);
+    expect(`${direct.origin}${direct.pathname}`).toBe(REDIRECT_URI);
+    const exchanged = await exchange(
+      clientId,
+      direct.searchParams.get("code") ?? "",
+      secondPkce.verifier,
+    );
+    expect(exchanged.status, String(exchanged.body.error_description)).toBe(200);
+    expect(exchanged.body.scope).toBe(nonHighImpactDefaultScope);
+  });
+
+  it("grants only the requested intersection on narrower re-authorization", async () => {
+    const clientId = await register("Narrower Client");
+    const firstPkce = pkce();
+    await decide(
+      await authorize(
+        clientId,
+        firstPkce.challenge,
+        "teams:read notifications:send offline_access",
+      ),
+      true,
+      "teams:read notifications:send offline_access",
+    );
+
+    const secondPkce = pkce();
+    const direct = await authorizeRedirect(
+      clientId,
+      secondPkce.challenge,
+      "teams:read teams:write",
+    );
+    expect(`${direct.origin}${direct.pathname}`).toBe(REDIRECT_URI);
+    const exchanged = await exchange(
+      clientId,
+      direct.searchParams.get("code") ?? "",
+      secondPkce.verifier,
+    );
+    expect(exchanged.status, String(exchanged.body.error_description)).toBe(200);
+    expect(exchanged.body.scope).toBe("teams:read");
+    expect(exchanged.body.refresh_token).toBeUndefined();
+  });
+
+  it("prompts on explicit prompt=consent so a user can upgrade high-impact scopes", async () => {
+    const clientId = await register("Upgrade Client");
+    await decide(await authorize(clientId, pkce().challenge), true, GRANTED);
+
+    const upgradePkce = pkce();
+    const consentQuery = await authorize(clientId, upgradePkce.challenge, REQUESTED, {
+      prompt: "consent",
+    });
+    const upgraded = await decide(consentQuery, true, REQUESTED);
+    const exchanged = await exchange(
+      clientId,
+      upgraded.searchParams.get("code") ?? "",
+      upgradePkce.verifier,
+    );
+    expect(exchanged.status, String(exchanged.body.error_description)).toBe(200);
+    expect(exchanged.body.scope).toBe(REQUESTED);
+  });
+
+  it("prompts or fails prompt=none for unconsented non-high-impact or step-up-only scopes", async () => {
+    const clientId = await register("Step-Up Client");
+    await decide(await authorize(clientId, pkce().challenge), true, GRANTED);
+
+    for (const scope of [
+      "teams:read notifications:send",
+      "teams:write",
+      "teams:write offline_access",
+    ]) {
+      const promptConsent = await authorizeRedirect(clientId, pkce().challenge, scope);
+      expect(promptConsent.pathname, scope).toBe("/oauth/consent");
+
+      const promptNone = await authorizeRedirect(clientId, pkce().challenge, scope, {
+        prompt: "none",
+      });
+      expect(`${promptNone.origin}${promptNone.pathname}`, scope).toBe(REDIRECT_URI);
+      expect(promptNone.searchParams.get("error"), scope).toBe("consent_required");
+      expect(promptNone.searchParams.has("code"), scope).toBe(false);
+    }
+
+    // Covered subset succeeds silently with prompt=none and carries only the remembered subset.
+    const coveredPkce = pkce();
+    const promptNoneOk = await authorizeRedirect(clientId, coveredPkce.challenge, REQUESTED, {
+      prompt: "none",
+    });
+    expect(`${promptNoneOk.origin}${promptNoneOk.pathname}`).toBe(REDIRECT_URI);
+    const exchanged = await exchange(
+      clientId,
+      promptNoneOk.searchParams.get("code") ?? "",
+      coveredPkce.verifier,
+    );
+    expect(exchanged.status, String(exchanged.body.error_description)).toBe(200);
+    expect(exchanged.body.scope).toBe(GRANTED);
+
+    // Invalid scope alongside valid scopes still fails with invalid_scope.
+    const invalid = await authorizeRedirect(
+      clientId,
+      pkce().challenge,
+      "teams:read teams:write bogus:scope",
+    );
+    expect(`${invalid.origin}${invalid.pathname}`).toBe(REDIRECT_URI);
+    expect(invalid.searchParams.get("error")).toBe("invalid_scope");
+  });
+
+  it("re-prompts after dashboard disconnect clears remembered subset consent", async () => {
+    const clientId = await register("Disconnect Subset Client");
+    const firstPkce = pkce();
+    const firstRedirect = await decide(
+      await authorize(clientId, firstPkce.challenge),
+      true,
+      GRANTED,
+    );
+    const firstExchange = await exchange(
+      clientId,
+      firstRedirect.searchParams.get("code") ?? "",
+      firstPkce.verifier,
+    );
+    expect(firstExchange.status).toBe(200);
+
+    const removed = await app.request(
+      `/api/oauth/clients/${clientId}`,
+      signedIn({ method: "DELETE" }),
+    );
+    expect(removed.status).toBe(200);
+
+    const nextRedirect = await authorizeRedirect(clientId, pkce().challenge);
+    expect(nextRedirect.pathname).toBe("/oauth/consent");
   });
 });
